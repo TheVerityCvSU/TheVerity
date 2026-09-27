@@ -959,7 +959,7 @@ const getStyles = (isDark, isMobile) => ({
     letterSpacing: '0.01em'
   },
   detailsBox: {
-    backgroundColor: isDark ? '#282828' : '#c4c8cd',
+    backgroundColor: isDark ? '#282828' : '#f3f4f6',
     border: isDark ? '1px solid #3E3E3E' : 'none',
     borderRadius: '24px',
     padding: '28px 32px',

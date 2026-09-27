@@ -152,10 +152,6 @@ function initSqlite() {
             alt_tab_copy_paste_count INTEGER DEFAULT 0
         );
 
-        try {
-            await db.run("ALTER TABLE security_flags ADD COLUMN alt_tab_copy_paste_count INTEGER DEFAULT 0");
-        } catch (_) {}
-
         CREATE TABLE IF NOT EXISTS audit_logs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             timestamp TEXT DEFAULT CURRENT_TIMESTAMP,
@@ -221,15 +217,24 @@ function initSqlite() {
         INSERT OR IGNORE INTO admin_users (name, email, password, role, status)
         VALUES ('System Admin', 'admin@verity.com', 'admin', 'Admin', 'Active');
 
-        INSERT OR IGNORE INTO admin_users (name, email, password, role, lastLogin, status, avatar)
-        SELECT name, email, password, role, lastLogin, status, avatar FROM users WHERE LOWER(role) = 'admin' OR LOWER(email) = 'admin@verity.com';
-
-        DELETE FROM users WHERE LOWER(role) = 'admin' OR LOWER(email) = 'admin@verity.com';
+        INSERT OR IGNORE INTO admin_users (name, email, password, role, status)
+        VALUES ('System Admin', 'admin@verity.com', 'admin', 'Admin', 'Active');
     `);
 
     try { sqliteDb.exec(`ALTER TABLE classrooms ADD COLUMN instructor_email TEXT;`); } catch (e) {}
     try { sqliteDb.exec(`ALTER TABLE classrooms ADD COLUMN theme TEXT;`); } catch (e) {}
     try { sqliteDb.exec(`ALTER TABLE users ADD COLUMN avatar TEXT;`); } catch (e) {}
+    try { sqliteDb.exec(`ALTER TABLE security_flags ADD COLUMN alt_tab_copy_paste_count INTEGER DEFAULT 0;`); } catch (e) {}
+
+    try {
+        sqliteDb.exec(`
+            INSERT OR IGNORE INTO admin_users (name, email, password, role, lastLogin, status, avatar)
+            SELECT name, email, password, role, lastLogin, status, avatar FROM users WHERE LOWER(role) = 'admin' OR LOWER(email) = 'admin@verity.com';
+            DELETE FROM users WHERE LOWER(role) = 'admin' OR LOWER(email) = 'admin@verity.com';
+        `);
+    } catch (e) {
+        console.warn('[Database] admin_users migration notice:', e.message);
+    }
 
     // Ensure all classrooms have a unique class code and create unique index
     try {

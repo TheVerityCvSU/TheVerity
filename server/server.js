@@ -1191,11 +1191,49 @@ const saveClassworkToDb = async (classroomId, classwork) => {
     }
 };
 
+// --- ACCESS CONTROL HELPERS ---
+async function checkClassroomAccess(req, classroomId) {
+    if (req.user?.role === 'Admin') return true;
+    if (req.user?.role === 'Teacher') {
+        const c = await db.get('SELECT instructor_email, instructor FROM classrooms WHERE id = ?', classroomId);
+        if (!c) return false;
+        const teacherEmail = (req.user.email || '').trim().toLowerCase();
+        const teacherName = (req.user.name || '').trim().toLowerCase();
+        const cEmail = (c.instructor_email || '').trim().toLowerCase();
+        const cName = (c.instructor || '').trim().toLowerCase();
+        if (cEmail) return teacherEmail && cEmail === teacherEmail;
+        return teacherName && cName && cName === teacherName;
+    }
+    if (req.user?.role === 'Student') {
+        const studentEmail = (req.user.email || '').trim().toLowerCase();
+        const studentId = req.user.id || 0;
+        const e = await db.get('SELECT 1 FROM enrollments WHERE classroom_id = ? AND ((student_email IS NOT NULL AND LOWER(student_email) = ?) OR (student_id IS NOT NULL AND student_id = ?))', classroomId, studentEmail, studentId);
+        return !!e;
+    }
+    return false;
+}
+
+async function checkAssignmentAccess(req, assignmentId) {
+    if (req.user?.role === 'Admin') return true;
+    const cw = await db.get('SELECT classroom_id FROM classwork WHERE id = ?', assignmentId);
+    if (!cw) return false;
+    return checkClassroomAccess(req, cw.classroom_id);
+}
+
 // --- CLASSWORK PERSISTENCE ENDPOINTS ---
 app.get('/classwork', authenticateToken, async (req, res) => {
     try {
         const classwork = await getClassworkFromDb();
-        res.status(200).json({ classwork });
+        if (req.user?.role === 'Admin') {
+            return res.status(200).json({ classwork });
+        }
+        const filtered = [];
+        for (const cw of classwork) {
+            if (await checkClassroomAccess(req, cw.classroom_id)) {
+                filtered.push(cw);
+            }
+        }
+        res.status(200).json({ classwork: filtered });
     } catch (e) {
         console.error('Error fetching all classwork:', e);
         res.status(500).json({ classwork: [] });
@@ -1204,6 +1242,9 @@ app.get('/classwork', authenticateToken, async (req, res) => {
 
 app.get('/classwork/:classroomId', authenticateToken, async (req, res) => {
     try {
+        if (!(await checkClassroomAccess(req, req.params.classroomId))) {
+            return res.status(403).json({ message: 'Access denied' });
+        }
         const classwork = await getClassworkFromDb(req.params.classroomId);
         res.status(200).json({ classwork });
     } catch (e) {
@@ -1214,6 +1255,9 @@ app.get('/classwork/:classroomId', authenticateToken, async (req, res) => {
 
 app.put('/classwork/:classroomId', authenticateToken, requireRole('Teacher', 'Admin'), async (req, res) => {
     const { classroomId } = req.params;
+    if (!(await checkClassroomAccess(req, classroomId))) {
+        return res.status(403).json({ message: 'Access denied' });
+    }
     const { classwork } = req.body;
     if (!Array.isArray(classwork)) return res.status(400).json({ message: 'classwork must be an array' });
 
@@ -1247,8 +1291,8 @@ app.get('/classrooms', authenticateToken, async (req, res) => {
             const teacherName = (req.user.name || '').trim().toLowerCase();
             rawClassrooms = await db.all(`
                 SELECT * FROM classrooms
-                WHERE (instructor_email IS NOT NULL AND LOWER(instructor_email) = ?)
-                   OR (instructor IS NOT NULL AND LOWER(instructor) = ?)
+                WHERE (instructor_email IS NOT NULL AND instructor_email != '' AND LOWER(instructor_email) = ?)
+                   OR ((instructor_email IS NULL OR instructor_email = '') AND instructor IS NOT NULL AND instructor != '' AND LOWER(instructor) = ?)
                 ORDER BY id ASC
             `, teacherEmail, teacherName);
         } else {
@@ -1314,6 +1358,10 @@ app.put('/classrooms', authenticateToken, requireRole('Teacher', 'Admin'), async
         const savedClassrooms = [];
 
         for (const c of classrooms) {
+            if (c.id) {
+                const existing = await db.get('SELECT id FROM classrooms WHERE id = ?', c.id);
+                if (existing && !(await checkClassroomAccess(req, c.id))) continue;
+            }
             // Ignore phantom classrooms
             if (c.name && /^Classroom \d+$/i.test(c.name.trim()) && (!c.section || !c.section.trim()) && (!c.subject || !c.subject.trim())) {
                 continue;
@@ -1390,6 +1438,9 @@ app.put('/classrooms', authenticateToken, requireRole('Teacher', 'Admin'), async
 app.patch('/classrooms/:id/theme', authenticateToken, requireRole('Teacher', 'Admin'), async (req, res) => {
     try {
         const { id } = req.params;
+        if (!(await checkClassroomAccess(req, id))) {
+            return res.status(403).json({ message: 'Access denied' });
+        }
         const { theme } = req.body;
         if (!theme) return res.status(400).json({ message: 'Theme is required' });
 
@@ -1413,6 +1464,9 @@ app.patch('/classrooms/:id/theme', authenticateToken, requireRole('Teacher', 'Ad
 
 app.delete('/classrooms/:id', authenticateToken, requireRole('Teacher', 'Admin'), async (req, res) => {
     try {
+        if (!(await checkClassroomAccess(req, req.params.id))) {
+            return res.status(403).json({ message: 'Access denied' });
+        }
         if (req.user.role === 'Teacher') {
             let allowDelete = false;
             try {
@@ -1444,6 +1498,9 @@ app.delete('/classrooms/:id', authenticateToken, requireRole('Teacher', 'Admin')
 // --- SUBMISSIONS ---
 app.get('/submissions/:assignmentId', authenticateToken, requireRole('Teacher', 'Admin', 'Student'), async (req, res) => {
     try {
+        if (!(await checkAssignmentAccess(req, req.params.assignmentId))) {
+            return res.status(403).json({ message: 'Access denied' });
+        }
         let rows;
         if (req.user.role === 'Student') {
             // Students are strictly scoped to only view their own submission (fixes IDOR)
@@ -1493,6 +1550,9 @@ app.post('/submissions/:assignmentId', authenticateToken, requireRole('Student')
 
 app.delete('/submissions/:assignmentId/:studentName', authenticateToken, requireRole('Teacher', 'Admin', 'Student'), async (req, res) => {
     try {
+        if (!(await checkAssignmentAccess(req, req.params.assignmentId))) {
+            return res.status(403).json({ message: 'Access denied' });
+        }
         const studentName = decodeURIComponent(req.params.studentName);
         if (req.user.role === 'Student') {
             // Students may only delete their own submission
@@ -1517,6 +1577,9 @@ app.delete('/submissions/:assignmentId/:studentName', authenticateToken, require
 // --- GRADES ---
 app.get('/grades/:assignmentId', authenticateToken, requireRole('Teacher', 'Admin', 'Student'), async (req, res) => {
     try {
+        if (!(await checkAssignmentAccess(req, req.params.assignmentId))) {
+            return res.status(403).json({ message: 'Access denied' });
+        }
         const rows = await db.all('SELECT * FROM grades WHERE assignment_id = ?', req.params.assignmentId);
         const gradesMap = {};
         rows.forEach(r => {
@@ -1544,6 +1607,9 @@ app.get('/grades/:assignmentId', authenticateToken, requireRole('Teacher', 'Admi
 
 app.post('/grades/:assignmentId', authenticateToken, requireRole('Teacher', 'Admin'), async (req, res) => {
     try {
+        if (!(await checkAssignmentAccess(req, req.params.assignmentId))) {
+            return res.status(403).json({ message: 'Access denied' });
+        }
         const { studentId, grade, feedback } = req.body || {};
         if (!studentId) return res.status(400).json({ message: 'studentId is required' });
         await db.run(`
@@ -1562,6 +1628,9 @@ app.post('/grades/:assignmentId', authenticateToken, requireRole('Teacher', 'Adm
 
 app.post('/grades/:assignmentId/bulk', authenticateToken, requireRole('Teacher', 'Admin'), async (req, res) => {
     try {
+        if (!(await checkAssignmentAccess(req, req.params.assignmentId))) {
+            return res.status(403).json({ message: 'Access denied' });
+        }
         const { grades } = req.body || {};
         if (!Array.isArray(grades)) return res.status(400).json({ message: 'grades must be an array' });
         const now = new Date().toISOString();
@@ -1585,6 +1654,9 @@ app.post('/grades/:assignmentId/bulk', authenticateToken, requireRole('Teacher',
 
 app.get('/classroom-students/:classroomId', authenticateToken, async (req, res) => {
     try {
+        if (!(await checkClassroomAccess(req, req.params.classroomId))) {
+            return res.status(403).json({ message: 'Access denied' });
+        }
         const { classroomId } = req.params;
         const classroom = await db.get('SELECT * FROM classrooms WHERE id = ?', classroomId);
 
@@ -1808,6 +1880,9 @@ app.post('/classrooms/join', authenticateToken, async (req, res) => {
 
 app.delete('/grades/:assignmentId/:studentId', authenticateToken, requireRole('Teacher', 'Admin'), async (req, res) => {
     try {
+        if (!(await checkAssignmentAccess(req, req.params.assignmentId))) {
+            return res.status(403).json({ message: 'Access denied' });
+        }
         const studentId = decodeURIComponent(req.params.studentId);
         await db.run(
             'DELETE FROM grades WHERE assignment_id = ? AND (student_id = ? OR LOWER(student_id) = LOWER(?))',
@@ -1821,7 +1896,20 @@ app.delete('/grades/:assignmentId/:studentId', authenticateToken, requireRole('T
 
 app.get('/submission-counts', authenticateToken, requireRole('Teacher', 'Admin'), async (req, res) => {
     try {
-        const subs = await db.all('SELECT assignment_id, COUNT(id) as c FROM submissions GROUP BY assignment_id');
+        let subs;
+        if (req.user?.role === 'Admin') {
+            subs = await db.all('SELECT assignment_id, COUNT(id) as c FROM submissions GROUP BY assignment_id');
+        } else {
+            subs = await db.all(`
+                SELECT s.assignment_id, COUNT(s.id) as c 
+                FROM submissions s
+                JOIN classwork cw ON s.assignment_id = cw.id
+                JOIN classrooms cr ON cw.classroom_id = cr.id
+                WHERE (cr.instructor_email IS NOT NULL AND cr.instructor_email != '' AND LOWER(cr.instructor_email) = ?)
+                   OR ((cr.instructor_email IS NULL OR cr.instructor_email = '') AND cr.instructor IS NOT NULL AND cr.instructor != '' AND LOWER(cr.instructor) = ?)
+                GROUP BY s.assignment_id
+            `, (req.user.email || '').trim().toLowerCase(), (req.user.name || '').trim().toLowerCase());
+        }
         const counts = {};
         subs.forEach(s => counts[s.assignment_id] = Number(s.c));
         const studentRow = await db.get("SELECT COUNT(id) as c FROM users WHERE role = 'Student'");

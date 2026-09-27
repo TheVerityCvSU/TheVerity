@@ -9,6 +9,7 @@ import { apiFetch } from '../utils/api';
 import Skeleton from '../components/Skeleton';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { useSidebarNav } from '../hooks/useSidebarNav';
+import { useMediaQuery } from '../hooks/useMediaQuery';
 import { THEME_PRESETS, getClassroomTheme, saveClassroomTheme } from '../utils/classroomUtils';
 import ImagePreviewModal from '../components/ImagePreviewModal';
 import VideoPreviewModal from '../components/VideoPreviewModal';
@@ -76,7 +77,8 @@ export default function ClassroomView({
   onLogout
 }) {
   const { isDark } = useDarkMode();
-  const styles = getStyles(isDark);
+  const isMobile = useMediaQuery('(max-width: 768px)');
+  const styles = getStyles(isDark, isMobile);
   const [previewImage, setPreviewImage] = useState(null);
   const [previewVideo, setPreviewVideo] = useState(null);
   const isPhantom = (c) => !c || !c.name || (/^Classroom \d+$/i.test(String(c.name).trim()) && (!c.section || !String(c.section).trim()) && (!c.subject || !String(c.subject).trim()));
@@ -665,7 +667,8 @@ export default function ClassroomView({
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
         
         {/* SIDEBAR NAVIGATION */}
-        <aside {...sidebarProps} style={styles.sidebar(collapsed)}>
+        {!isMobile && (
+          <aside {...sidebarProps} style={styles.sidebar(collapsed)}>
           <nav style={{ display: 'flex', flexDirection: 'column', gap: '10px', flex: 1, position: 'relative' }}>
             <div style={{
               position: 'absolute',
@@ -794,6 +797,7 @@ export default function ClassroomView({
             </div>
           </nav>
         </aside>
+        )}
 
         {/* ═══ MAIN CONTENT AREA ═══ */}
         <div style={styles.mainContent}>
@@ -1408,12 +1412,54 @@ export default function ClassroomView({
         isDark={isDark}
       />
 
+      {/* MOBILE BOTTOM NAVIGATION */}
+      {isMobile && (
+        <nav style={{
+          display: 'flex',
+          justifyContent: 'space-around',
+          alignItems: 'center',
+          backgroundColor: isDark ? '#262626' : '#ffffff',
+          borderTop: isDark ? '1px solid #3f3f46' : '1px solid #e5e7eb',
+          height: '65px',
+          flexShrink: 0,
+          paddingBottom: 'env(safe-area-inset-bottom, 0px)',
+          zIndex: 60
+        }}>
+          {[
+            { id: 'classrooms', Icon: Home, label: 'Home', action: () => { if (onNavigateView) onNavigateView('classrooms'); else onBack(); } },
+            { id: 'calendar', Icon: Calendar, label: 'Calendar', action: () => { if (onNavigateView) onNavigateView('calendar'); else onBack(); } },
+            { id: 'archived', Icon: Archive, label: 'Archived', action: () => { if (onNavigateView) onNavigateView('archived'); else onBack(); } }
+          ].map(({ id, Icon, label, action }) => {
+            return (
+              <button
+                key={id}
+                onClick={action}
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  background: 'none',
+                  border: 'none',
+                  color: isDark ? '#a3a3a3' : '#64748b',
+                  cursor: 'pointer',
+                  padding: '8px',
+                  minWidth: '64px'
+                }}
+              >
+                <Icon size={22} style={{ marginBottom: '4px' }} />
+                <span style={{ fontSize: '0.65rem', fontWeight: '500' }}>{label}</span>
+              </button>
+            );
+          })}
+        </nav>
+      )}
+
     </div>
   );
 }
 
 // STYLES matching TeacherClasswork design system
-const getStyles = (isDark) => ({
+const getStyles = (isDark, isMobile = false) => ({
   container: { 
     height: '100vh', 
     minHeight: '100vh', 
@@ -1427,12 +1473,12 @@ const getStyles = (isDark) => ({
     transition: 'background-color 0.25s ease'
   },
   header: {
-    height: '72px',
+    height: isMobile ? '60px' : '72px',
     flexShrink: 0,
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'space-between',
-    padding: '0 24px',
+    padding: isMobile ? '0 16px' : '0 24px',
     backgroundColor: isDark ? '#3C3C3C' : '#EEF0F3',
     borderBottom: 'none',
     zIndex: 50,
@@ -1488,7 +1534,7 @@ const getStyles = (isDark) => ({
   },
   mainContent: {
     flex: 1,
-    padding: '20px 24px 24px',
+    padding: isMobile ? '10px 16px 16px' : '20px 24px 24px',
     display: 'flex',
     flexDirection: 'column',
     minWidth: 0,
@@ -1597,11 +1643,12 @@ const getStyles = (isDark) => ({
   },
   streamBodyGrid: {
     display: 'flex',
+    flexDirection: isMobile ? 'column' : 'row',
     gap: '24px',
     alignItems: 'flex-start'
   },
   streamLeftCol: {
-    width: '210px',
+    width: isMobile ? '100%' : '210px',
     flexShrink: 0,
     display: 'flex',
     flexDirection: 'column',

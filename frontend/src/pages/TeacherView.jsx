@@ -1,10 +1,12 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import Editor from '@monaco-editor/react';
-import { Home, ArrowLeft, Maximize2, Play, Pause } from 'lucide-react';
+import { Home, ArrowLeft, Maximize2, Play, Pause, Settings, X, Moon, Sun, Bell, Square } from 'lucide-react';
 import { apiFetch } from '../utils/api';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useDarkMode } from '../hooks/useDarkMode';
 
 export default function TeacherView({ socket, assignment, classroom, initialStudent, onBack, onLogout, mode = 'live' }) {
+  const { isDark, toggle: toggleDarkMode } = useDarkMode();
   const [students, setStudents] = useState(() => {
     if (initialStudent && (initialStudent.id || initialStudent.name)) {
       const sId = initialStudent.id || initialStudent.name;
@@ -34,6 +36,11 @@ export default function TeacherView({ socket, assignment, classroom, initialStud
   const [isPlaying, setIsPlaying] = useState(false);
   const [evalOutput, setEvalOutput] = useState("");
   const [evaluating, setEvaluating] = useState(false);
+  const [showGradeModal, setShowGradeModal] = useState(false);
+  const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [editorFontSize, setEditorFontSize] = useState(() => parseInt(localStorage.getItem('verity_editor_font_size') || '16', 10));
+  const [gradeInput, setGradeInput] = useState(assignment?.points ? String(assignment.points) : '100');
+  const [feedbackInput, setFeedbackInput] = useState('');
   const [displayProgress, setDisplayProgress] = useState(0); // smooth float 0..(history.length-1)
   const playTimerRef = useRef(null);
   const animFrameRef = useRef(null);
@@ -193,17 +200,25 @@ export default function TeacherView({ socket, assignment, classroom, initialStud
     if (mode === 'live') {
       socket.on('teacher_update_code', (data) => {
         setStudents(prev => {
-          const existing = prev[data.studentId] || { id: data.studentId, name: data.name, code: "", logs: [], status: "Live" };
-          return { ...prev, [data.studentId]: { ...existing, code: data.code } };
+          const sKey = Object.keys(prev).find(k => prev[k].id === data.studentId || prev[k].name === data.name || prev[k].name === data.studentId) || data.studentId;
+          const existing = prev[sKey] || { id: data.studentId, name: data.name, code: "", logs: [], status: "Live" };
+          const next = { ...prev };
+          if (sKey !== data.studentId && next[data.studentId]) delete next[data.studentId];
+          next[sKey] = { ...existing, code: data.code, status: existing.status === 'Submitted' || existing.status === 'Graded' ? existing.status : 'Live' };
+          return next;
         });
         checkSelection(data.studentId);
       });
 
       socket.on('teacher_receive_alert', (data) => {
         setStudents(prev => {
-          const existing = prev[data.studentId] || { id: data.studentId, name: data.name || data.studentId, code: "", logs: [], status: "Live" };
+          const sKey = Object.keys(prev).find(k => prev[k].id === data.studentId || prev[k].name === data.name || prev[k].name === data.studentId) || data.studentId;
+          const existing = prev[sKey] || { id: data.studentId, name: data.name || data.studentId, code: "", logs: [], status: "Live" };
           const newLog = { id: Date.now(), action: data.action, time: data.time, color: data.color };
-          return { ...prev, [data.studentId]: { ...existing, logs: [newLog, ...existing.logs] } };
+          const next = { ...prev };
+          if (sKey !== data.studentId && next[data.studentId]) delete next[data.studentId];
+          next[sKey] = { ...existing, logs: [newLog, ...existing.logs], status: existing.status === 'Submitted' || existing.status === 'Graded' ? existing.status : 'Live' };
+          return next;
         });
         checkSelection(data.studentId);
         
@@ -226,8 +241,12 @@ export default function TeacherView({ socket, assignment, classroom, initialStud
 
       socket.on('teacher_terminal_update', (data) => {
         setStudents(prev => {
-          const existing = prev[data.studentId] || { id: data.studentId, name: data.studentId, code: "", logs: [], status: "Live" };
-          return { ...prev, [data.studentId]: { ...existing, terminal: data.output } };
+          const sKey = Object.keys(prev).find(k => prev[k].id === data.studentId || prev[k].name === data.studentId) || data.studentId;
+          const existing = prev[sKey] || { id: data.studentId, name: data.studentId, code: "", logs: [], status: "Live" };
+          const next = { ...prev };
+          if (sKey !== data.studentId && next[data.studentId]) delete next[data.studentId];
+          next[sKey] = { ...existing, terminal: data.output };
+          return next;
         });
         checkSelection(data.studentId);
       });
@@ -297,16 +316,52 @@ export default function TeacherView({ socket, assignment, classroom, initialStud
 
   const allLogs = useMemo(() => {
     const logs = [];
+    
+    const sanitizeAction = (actionStr) => {
+      if (typeof actionStr !== 'string') return actionStr;
+      if (actionStr.includes('Exit tab') || actionStr.includes('Alt+Tab')) return 'Alt Tab';
+      return actionStr;
+    };
+
+    const getLogColor = (actionStr) => {
+      const lower = actionStr.toLowerCase();
+      if (lower.includes('alt tab') || lower.includes('alt+tab') || lower.includes('exit')) return '#eab308'; // Yellow
+      if (lower.includes('paste') || lower.includes('copy') || lower.includes('clipboard')) return '#ef4444'; // Red
+      return '#ef4444';
+    };
+
     Object.values(students).forEach(student => {
+      if (mode === 'playback' && student.id !== selectedStudentId) return;
+
       if (Array.isArray(student.logs)) {
         student.logs.forEach(log => {
-          logs.push({ ...log, studentName: student.name });
+          const sanitizedAction = sanitizeAction(log.action);
+          logs.push({ ...log, studentName: student.name, action: sanitizedAction, message: sanitizeAction(log.message), color: getLogColor(sanitizedAction) });
         });
+      }
+      
+      if (mode === 'playback') {
+        const hist = student.codeHistory || student.history || [];
+        if (Array.isArray(hist)) {
+          hist.forEach(h => {
+            if (h.warning) {
+              const sanitizedWarning = sanitizeAction(h.warning);
+              logs.push({
+                id: h.time || Date.now(),
+                message: sanitizedWarning,
+                action: sanitizedWarning,
+                time: new Date(h.time).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }).toLowerCase(),
+                color: getLogColor(sanitizedWarning),
+                studentName: student.name
+              });
+            }
+          });
+        }
       }
     });
     // Sort descending by ID (which is a timestamp)
     return logs.sort((a, b) => b.id - a.id);
-  }, [students]);
+  }, [students, mode, selectedStudentId]);
 
   const history = activeStudent.codeHistory || activeStudent.history || [];
   const hasPlayback = mode === 'playback' && (activeStudent.status === 'Submitted' || history.length > 0) && Array.isArray(history) && history.length > 0;
@@ -400,9 +455,155 @@ export default function TeacherView({ socket, assignment, classroom, initialStud
     socket.emit('compile_code', { code: activeStudent.code });
   };
 
+  const handleStopCode = () => {
+    socket.emit('stop_code');
+    setEvaluating(false);
+  };
+
+  const handleSaveGrade = async () => {
+    if (!assignment?.id || !selectedStudentId) return;
+    try {
+      const gradesKey = `verity_grades_${assignment.id}`;
+      const savedGrades = JSON.parse(localStorage.getItem(gradesKey)) || {};
+      const updated = {
+        ...savedGrades,
+        [selectedStudentId]: { grade: gradeInput, feedback: feedbackInput, gradedAt: true }
+      };
+      localStorage.setItem(gradesKey, JSON.stringify(updated));
+
+      if (import.meta.env.VITE_API_URL) {
+        await fetch(`${import.meta.env.VITE_API_URL}/grades/${assignment.id}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('token')}` },
+          body: JSON.stringify({ studentId: selectedStudentId, grade: gradeInput, feedback: feedbackInput })
+        }).catch(err => console.error("Error saving grade to API", err));
+      }
+
+      setStudents(prev => {
+        const next = { ...prev };
+        if (next[selectedStudentId]) {
+          next[selectedStudentId] = { ...next[selectedStudentId], status: 'Graded' };
+        }
+        return next;
+      });
+
+      setToast({ message: `Successfully graded ${activeStudent.name}!`, type: 'success' });
+      setTimeout(() => setToast(null), 3500);
+      setShowGradeModal(false);
+    } catch (e) {
+      console.error(e);
+      setToast({ message: "Failed to save grade", type: 'warning' });
+      setTimeout(() => setToast(null), 3500);
+    }
+  };
+
   return (
-    <div style={styles.container}>
+    <div style={getStyles(isDark).container}>
       
+      {showGradeModal && (
+        <div style={getStyles(isDark).modalOverlay} onClick={() => setShowGradeModal(false)}>
+          <div style={getStyles(isDark).modalCard} onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '16px' }}>
+              <div>
+                <h3 style={{ margin: 0, color: isDark ? '#E8EAED' : '#1e293b', fontSize: '1.2rem' }}>Grade {activeStudent.name}</h3>
+                <p style={{ margin: '4px 0 0 0', color: isDark ? '#a3a3a3' : '#64748b', fontSize: '0.85rem' }}>
+                  Assign a grade for this activity.
+                </p>
+              </div>
+              <button onClick={() => setShowGradeModal(false)} style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: isDark ? '#a3a3a3' : '#64748b' }}>
+                <X size={20} />
+              </button>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+              <div>
+                <label style={getStyles(isDark).fieldLabel}>Grade (out of {assignment?.points || 100}):</label>
+                <input
+                  type="number"
+                  min="0"
+                  max={assignment?.points || 100}
+                  value={gradeInput}
+                  onChange={(e) => setGradeInput(e.target.value)}
+                  style={getStyles(isDark).input}
+                />
+              </div>
+              <div>
+                <label style={getStyles(isDark).fieldLabel}>Feedback:</label>
+                <textarea
+                  value={feedbackInput}
+                  onChange={(e) => setFeedbackInput(e.target.value)}
+                  style={{ ...getStyles(isDark).input, height: '80px', resize: 'vertical' }}
+                  placeholder="e.g. Great job on this activity!"
+                />
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '10px' }}>
+                <button type="button" onClick={() => setShowGradeModal(false)} style={getStyles(isDark).cancelBtn}>Cancel</button>
+                <button type="button" onClick={handleSaveGrade} style={getStyles(isDark).saveGradeBtn}>Save Grade</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showSettingsModal && (
+        <div style={getStyles(isDark).modalOverlay} onClick={() => setShowSettingsModal(false)}>
+          <div style={{...getStyles(isDark).modalCard, width: '90%', maxWidth: '420px', display: 'flex', flexDirection: 'column', gap: '20px'}} onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <Settings size={22} color={isDark ? '#10b981' : '#0ea5e9'} />
+                <h3 style={{ margin: 0, fontSize: '1.25rem', fontWeight: '700', color: isDark ? '#E8EAED' : '#1e293b' }}>Settings</h3>
+              </div>
+              <button onClick={() => setShowSettingsModal(false)} style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: isDark ? '#a3a3a3' : '#64748b', padding: '4px' }}>
+                <X size={20} />
+              </button>
+            </div>
+
+            {/* Dark Mode Toggle */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px', borderRadius: '14px', backgroundColor: isDark ? '#222222' : '#f8fafc', border: isDark ? '1px solid #3c3c3c' : '1px solid #e2e8f0' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                {isDark ? <Moon size={22} color="#10b981" /> : <Sun size={22} color="#f59e0b" />}
+                <div>
+                  <div style={{ fontWeight: '600', fontSize: '0.95rem', color: isDark ? '#E8EAED' : '#1e293b' }}>{isDark ? 'Dark Mode' : 'Light Mode'}</div>
+                  <div style={{ fontSize: '0.8rem', color: isDark ? '#a3a3a3' : '#64748b', marginTop: '2px' }}>{isDark ? 'Dark theme active' : 'Light theme active'}</div>
+                </div>
+              </div>
+              <button type="button" onClick={toggleDarkMode} style={{ position: 'relative', width: '50px', height: '28px', borderRadius: '9999px', border: 'none', cursor: 'pointer', backgroundColor: isDark ? '#10b981' : '#cbd5e1', transition: 'background-color 0.25s ease', padding: 0 }}>
+                <span style={{ position: 'absolute', top: '3px', left: isDark ? '25px' : '3px', width: '22px', height: '22px', borderRadius: '50%', backgroundColor: '#ffffff', boxShadow: '0 2px 4px rgba(0,0,0,0.2)', transition: 'left 0.25s ease' }} />
+              </button>
+            </div>
+
+            {/* Font Size Selector */}
+            <div style={{ padding: '16px', borderRadius: '14px', backgroundColor: isDark ? '#222222' : '#f8fafc', border: isDark ? '1px solid #3c3c3c' : '1px solid #e2e8f0', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontWeight: '600', fontSize: '0.9rem', color: isDark ? '#E8EAED' : '#1e293b' }}>Editor Font Size</span>
+                <span style={{ fontSize: '0.85rem', fontWeight: 'bold', color: '#10b981' }}>{editorFontSize}px</span>
+              </div>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                {[13, 14, 16, 18, 20].map((sz) => (
+                  <button
+                    key={sz}
+                    onClick={() => {
+                      setEditorFontSize(sz);
+                      try { localStorage.setItem('verity_editor_font_size', String(sz)); } catch {}
+                    }}
+                    style={{
+                      flex: 1, padding: '8px 0', borderRadius: '8px', cursor: 'pointer', transition: 'all 0.15s ease', fontSize: '0.85rem',
+                      border: `1px solid ${editorFontSize === sz ? '#10b981' : (isDark ? '#484848' : '#cbd5e1')}`,
+                      backgroundColor: editorFontSize === sz ? (isDark ? '#064e3b' : '#ecfdf5') : (isDark ? '#333333' : '#ffffff'),
+                      color: editorFontSize === sz ? '#10b981' : (isDark ? '#E8EAED' : '#475569'),
+                      fontWeight: editorFontSize === sz ? '700' : '500'
+                    }}
+                  >
+                    {sz}px
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <button onClick={() => setShowSettingsModal(false)} style={{ ...getStyles(isDark).saveGradeBtn, width: '100%', marginTop: '10px' }}>Done</button>
+          </div>
+        </div>
+      )}
+
       <AnimatePresence>
         {toast && (
           <motion.div
@@ -427,37 +628,37 @@ export default function TeacherView({ socket, assignment, classroom, initialStud
           </motion.div>
         )}
       </AnimatePresence>
-      <div style={styles.leftSidebar}>
-        <div style={styles.rosterSection}>
+      <div style={getStyles(isDark).leftSidebar}>
+        <div style={getStyles(isDark).rosterSection}>
           <button
-              onClick={onBack || onLogout}
-              style={{ display: 'flex', alignItems: 'center', gap: '6px', background: 'transparent', border: 'none', cursor: 'pointer', padding: '4px 0', marginBottom: '20px' }}
-              title={onBack ? "Back" : "Back to Dashboard"}
-            >
-              <ArrowLeft size={18} color="#1f2937" style={{ flexShrink: 0 }} />
-              <span style={{ fontSize: '0.9rem', fontWeight: 'bold', color: '#4b5563', lineHeight: 1 }}>Back</span>
-            </button>
+            onClick={onBack || onLogout}
+            style={{ ...getStyles(isDark).backButton, marginBottom: '20px' }}
+            title={onBack ? "Back" : "Back to Dashboard"}
+          >
+            <ArrowLeft size={18} />
+            <span>Back</span>
+          </button>
 
-          <h2 style={styles.heading}>{mode === 'playback' ? 'Submitted Students' : 'Student Roster'}</h2>
+          <h2 style={getStyles(isDark).heading}>{mode === 'playback' ? 'Submitted Students' : 'Student Roster'}</h2>
 
-          <div style={styles.pillContainer}>
-            {Object.values(students).length === 0 ? (
+          <div style={getStyles(isDark).pillContainer}>
+            {Object.values(students).filter(s => mode !== 'live' || (s.status !== 'Submitted' && s.status !== 'Graded')).length === 0 ? (
               <p style={{ color: '#9ca3af', fontSize: '0.9rem' }}>Waiting for students...</p>
             ) : (
-              Object.values(students).map(student => {
+              Object.values(students).filter(s => mode !== 'live' || (s.status !== 'Submitted' && s.status !== 'Graded')).map(student => {
                 const isActive = student.id === selectedStudentId;
                 return (
                   <div
                     key={student.id}
                     onClick={() => setSelectedStudentId(student.id)}
                     style={{
-                      ...styles.studentPill,
+                      ...getStyles(isDark).studentPill,
                       border: isActive ? '2px solid #22c55e' : '2px solid transparent',
-                      backgroundColor: isActive ? '#e5e7eb' : '#d1d5db'
+                      backgroundColor: isActive ? (isDark ? '#4b5563' : '#e5e7eb') : (isDark ? '#374151' : '#d1d5db')
                     }}
                   >
                     {student.name}
-                    <span style={{ fontSize: '0.7rem', marginLeft: 'auto', color: student.status === 'Submitted' ? '#10b981' : '#6b7280' }}>
+                    <span style={{ fontSize: '0.7rem', marginLeft: 'auto', color: (student.status === 'Submitted' || student.status === 'Graded') ? '#10b981' : '#6b7280' }}>
                       {student.status}
                     </span>
                   </div>
@@ -468,21 +669,21 @@ export default function TeacherView({ socket, assignment, classroom, initialStud
 
         </div>
 
-        <div style={styles.warningSection}>
+        <div style={getStyles(isDark).warningSection}>
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '15px' }}>
-            <span style={{ fontSize: '1.1rem', color: 'white' }}>Warning</span>
-            <span style={{ fontSize: '1.1rem', color: 'white' }}>Time</span>
+            <span style={{ fontSize: '1.1rem', color: isDark ? '#f3f4f6' : '#1f2937', fontWeight: 'bold' }}>Warning</span>
+            <span style={{ fontSize: '1.1rem', color: isDark ? '#f3f4f6' : '#1f2937', fontWeight: 'bold' }}>Time</span>
           </div>
-          <div style={styles.logContainer}>
+          <div style={getStyles(isDark).logContainer}>
             {allLogs.length === 0 ? (
               <span style={{ color: '#9ca3af', fontStyle: 'italic', fontSize: '0.9rem' }}>No warnings...</span>
             ) : (
               allLogs.map(log => (
-                <div key={`${log.id}-${log.studentName}`} style={styles.logRow}>
-                  <span style={{ color: log.color, paddingRight: '10px' }}>
+                <div key={`${log.id}-${log.studentName}`} style={getStyles(isDark).logRow}>
+                  <span style={{ color: log.color, paddingRight: '15px', flex: 1, minWidth: 0, wordBreak: 'break-word' }}>
                     <span style={{ fontWeight: 'bold' }}>{log.studentName}</span> ({log.action})
                   </span>
-                  <span style={{ color: '#e5e7eb', flexShrink: 0 }}>{log.time}</span>
+                  <span style={{ color: isDark ? '#a3a3a3' : '#6b7280', flexShrink: 0, backgroundColor: 'transparent', whiteSpace: 'nowrap' }}>{log.time}</span>
                 </div>
               ))
             )}
@@ -490,40 +691,65 @@ export default function TeacherView({ socket, assignment, classroom, initialStud
         </div>
       </div>
 
-      <div style={styles.mainArea}>
-        <div style={styles.toolbar}>
-          {activeStudent.status === 'Submitted' ? (
-            <button onClick={handleEvaluate} disabled={evaluating} style={{ ...styles.evaluateButton, opacity: evaluating ? 0.6 : 1 }}>
-              {evaluating ? 'Evaluating…' : 'Evaluate'}
-            </button>
-          ) : (
-            <div className="recording-dot-blink" style={styles.recordingDot} title="Live Monitoring Active"></div>
-          )}
+      <div style={getStyles(isDark).mainArea}>
+        <div style={{ ...getStyles(isDark).toolbar, justifyContent: 'space-between' }}>
+          <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+            {(activeStudent.status === 'Submitted' || activeStudent.status === 'Graded') && (
+              <>
+                <button onClick={handleEvaluate} disabled={evaluating} style={getStyles(isDark).runButton}>
+                  <Play size={16} fill="currentColor" /> Run
+                </button>
+                <button onClick={handleStopCode} disabled={!evaluating} style={{ ...getStyles(isDark).stopButton, opacity: evaluating ? 1 : 0.5, cursor: evaluating ? 'pointer' : 'not-allowed' }}>
+                  <Square size={14} fill="currentColor" /> Stop
+                </button>
+              </>
+            )}
+          </div>
+          
+          <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+            {(activeStudent.status === 'Submitted' || activeStudent.status === 'Graded') ? (
+              <>
+                <button onClick={() => setShowGradeModal(true)} style={getStyles(isDark).gradeButton}>
+                  {activeStudent.status === 'Graded' ? 'Update Grade' : 'Grade Student'}
+                </button>
+                <button onClick={() => setShowSettingsModal(true)} style={{ background: 'transparent', border: 'none', cursor: 'pointer', marginLeft: '10px', display: 'flex', alignItems: 'center' }} title="Settings">
+                  <Settings size={22} color={isDark ? '#a3a3a3' : '#64748b'} />
+                </button>
+              </>
+            ) : (
+              <>
+                <div className="recording-dot-blink" style={getStyles(isDark).recordingDot} title="Live Monitoring Active"></div>
+                <button onClick={() => setShowSettingsModal(true)} style={{ background: 'transparent', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center' }} title="Settings">
+                  <Settings size={22} color={isDark ? '#a3a3a3' : '#64748b'} />
+                </button>
+              </>
+            )}
+          </div>
         </div>
 
-        <div style={styles.editorWrapper}>
+        <div style={{ ...getStyles(isDark).editorWrapper, position: 'relative' }}>
           <Editor
             height="100%"
             language="csharp"
-            theme="vs-dark"
+            theme={isDark ? "vs-dark" : "light"}
             value={displayCode}
-            options={{ fontSize: 18, minimap: { enabled: false }, readOnly: true }}
+            options={{ fontSize: editorFontSize, minimap: { enabled: false }, readOnly: true }}
           />
         </div>
 
         {hasPlayback && (
-          <div style={styles.scrubberBar}>
+          <div style={getStyles(isDark).scrubberBar}>
             <style>{`
               .vcr-scrubber {
                 -webkit-appearance: none;
                 appearance: none;
                 width: 100%;
-                height: 8px;
-                border-radius: 4px;
+                height: 4px;
+                border-radius: 2px;
                 background: linear-gradient(
                   to right,
                   #ef4444 var(--progress, 0%),
-                  #d1d5db var(--progress, 0%)
+                  ${isDark ? '#4b5563' : '#d1d5db'} var(--progress, 0%)
                 );
                 outline: none;
                 cursor: pointer;
@@ -544,11 +770,11 @@ export default function TeacherView({ socket, assignment, classroom, initialStud
               }
             `}</style>
             <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%', alignItems: 'center', marginBottom: '6px' }}>
-              <span style={{ fontSize: '0.8rem', fontWeight: 'bold', color: '#374151', display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <span style={{ fontSize: '0.8rem', fontWeight: 'bold', color: isDark ? '#d1d5db' : '#374151', display: 'flex', alignItems: 'center', gap: '6px' }}>
                 <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: isPlaying ? '#ef4444' : '#16a34a', display: 'inline-block' }}></span>
                 VCR PLAYBACK {isPlaying ? '• PLAYING' : ''}
               </span>
-              <span style={{ fontSize: '0.8rem', color: '#4b5563', fontWeight: '600' }}>
+              <span style={{ fontSize: '0.8rem', color: isDark ? '#9ca3af' : '#4b5563', fontWeight: '600' }}>
                 Keystroke {(playbackIndex < 0 ? history.length : playbackIndex + 1)} of {history.length}
               </span>
             </div>
@@ -569,23 +795,23 @@ export default function TeacherView({ socket, assignment, classroom, initialStud
                 '--progress': `${((isPlaying ? displayProgress : (playbackIndex < 0 ? history.length - 1 : playbackIndex)) / Math.max(history.length - 1, 1)) * 100}%`
               }}
             />
-            <div style={styles.vcrControls}>
-              <button onClick={togglePlay} style={styles.playButton} title={isPlaying ? 'Pause' : 'Play'}>
+            <div style={getStyles(isDark).vcrControls}>
+              <button onClick={togglePlay} style={getStyles(isDark).playButton} title={isPlaying ? 'Pause' : 'Play'}>
                 {isPlaying
-                  ? <Pause size={30} fill="#16a34a" color="#16a34a" />
-                  : <Play size={30} fill="#16a34a" color="#16a34a" />}
+                  ? <Pause size={20} fill="#16a34a" color="#16a34a" />
+                  : <Play size={20} fill="#16a34a" color="#16a34a" />}
               </button>
             </div>
           </div>
         )}
 
-        <div style={styles.terminalWrapper}>
-          <div style={styles.terminalHeader}>
+        <div style={getStyles(isDark).terminalWrapper}>
+          <div style={getStyles(isDark).terminalHeader}>
             <span style={{ fontWeight: 'bold', marginRight: '10px' }}>V</span>
-            <Maximize2 size={14} color="#000" style={{ cursor: 'pointer' }} />
+            <Maximize2 size={14} color={isDark ? "#fff" : "#000"} style={{ cursor: 'pointer' }} />
           </div>
-          <div style={styles.terminalBody}>
-            <span style={{ whiteSpace: 'pre-wrap', color: 'black' }}>
+          <div style={getStyles(isDark).terminalBody}>
+            <span style={{ whiteSpace: 'pre-wrap', color: isDark ? '#e5e7eb' : 'black' }}>
               {evalOutput
                 ? evalOutput
                 : (activeStudent.status === 'Submitted'
@@ -599,27 +825,36 @@ export default function TeacherView({ socket, assignment, classroom, initialStud
   );
 }
 
-const styles = {
-  container: { height: '100%', width: '100%', display: 'flex', fontFamily: 'Arial, Helvetica, sans-serif', backgroundColor: '#e5e7eb' },
-  leftSidebar: { width: '300px', display: 'flex', flexDirection: 'column', borderRight: '1px solid #d1d5db', backgroundColor: '#f3f4f6' },
+const getStyles = (isDark) => ({
+  container: { height: '100%', width: '100%', display: 'flex', fontFamily: 'Arial, Helvetica, sans-serif', backgroundColor: isDark ? '#262626' : '#e5e7eb' },
+  leftSidebar: { width: '300px', display: 'flex', flexDirection: 'column', borderRight: isDark ? '1px solid #4A4A4A' : '1px solid #d1d5db', backgroundColor: isDark ? '#323232' : '#f3f4f6' },
   rosterSection: { flex: 1, padding: '30px' },
   homeButton: { background: 'transparent', border: 'none', cursor: 'pointer', padding: 0, marginBottom: '20px' },
-  heading: { color: 'black', margin: '0 0 20px 0', fontSize: '1.2rem', fontWeight: 'normal' },
+  heading: { color: isDark ? '#E8EAED' : 'black', margin: '0 0 20px 0', fontSize: '1.2rem', fontWeight: 'normal' },
   pillContainer: { display: 'flex', flexDirection: 'column', gap: '15px' },
-  studentPill: { height: '35px', borderRadius: '50px', display: 'flex', alignItems: 'center', padding: '0 15px', color: '#4b5563', fontWeight: 'bold', cursor: 'pointer', boxShadow: 'inset 2px 2px 5px rgba(0,0,0,0.1)' },
-  warningSection: { height: '250px', backgroundColor: '#4b5563', padding: '30px', display: 'flex', flexDirection: 'column' },
+  studentPill: { height: '35px', borderRadius: '50px', display: 'flex', alignItems: 'center', padding: '0 15px', color: isDark ? '#E8EAED' : '#4b5563', fontWeight: 'bold', cursor: 'pointer', boxShadow: 'inset 2px 2px 5px rgba(0,0,0,0.1)' },
+  warningSection: { height: '250px', backgroundColor: isDark ? '#282828' : '#ffffff', borderTop: isDark ? '1px solid #4A4A4A' : '1px solid #d1d5db', padding: '30px', display: 'flex', flexDirection: 'column' },
   logContainer: { overflowY: 'auto', flex: 1, paddingRight: '5px' },
   logRow: { display: 'flex', justifyContent: 'space-between', marginBottom: '12px', fontSize: '1rem' },
   mainArea: { flex: 1, display: 'flex', flexDirection: 'column' },
-  toolbar: { height: '56px', backgroundColor: '#f3f4f6', display: 'flex', justifyContent: 'flex-end', alignItems: 'center', padding: '0 20px' },
+  toolbar: { height: '56px', backgroundColor: isDark ? '#323232' : '#f3f4f6', display: 'flex', justifyContent: 'flex-end', alignItems: 'center', padding: '0 20px', borderBottom: isDark ? '1px solid #4A4A4A' : 'none' },
   recordingDot: { width: '12px', height: '12px', backgroundColor: '#dc2626', borderRadius: '50%', boxShadow: '0 0 8px rgba(220, 38, 38, 0.8)' },
-  evaluateButton: { padding: '10px 28px', backgroundColor: '#22c55e', color: 'white', border: 'none', borderRadius: '50px', fontWeight: 'bold', fontSize: '1.1rem', cursor: 'pointer', boxShadow: '0 4px 8px rgba(34,197,94,0.3)' },
-  editorWrapper: { flex: 2, backgroundColor: '#1e1e1e' },
-  scrubberBar: { backgroundColor: '#e5e7eb', padding: '15px 30px 5px 30px', borderTop: '2px solid #d1d5db', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '5px' },
+  evaluateButton: { padding: '8px 20px', backgroundColor: '#0ea5e9', color: 'white', border: 'none', borderRadius: '5px', fontWeight: 'bold', fontSize: '0.95rem', cursor: 'pointer', transition: 'all 0.2s ease' },
+  gradeButton: { padding: '8px 20px', backgroundColor: '#10b981', color: 'white', border: 'none', borderRadius: '5px', fontWeight: 'bold', fontSize: '0.95rem', cursor: 'pointer', transition: 'all 0.2s ease' },
+  runButton: { padding: '8px 20px', backgroundColor: '#10b981', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '6px' },
+  stopButton: { padding: '8px 20px', backgroundColor: '#dc2626', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '6px' },
+  editorWrapper: { flex: 2, backgroundColor: isDark ? '#1e1e1e' : '#fffffe' },
+  scrubberBar: { backgroundColor: isDark ? '#262626' : '#e5e7eb', padding: '10px 20px 4px 20px', borderTop: isDark ? '2px solid #4A4A4A' : '2px solid #d1d5db', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '5px' },
   vcrControls: { display: 'flex', justifyContent: 'center', alignItems: 'center', width: '100%' },
   playButton: { background: 'transparent', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '4px' },
-  terminalWrapper: { flex: 1, display: 'flex', flexDirection: 'column', backgroundColor: 'white', borderTop: '2px solid #d1d5db' },
-  terminalHeader: { padding: '5px 15px', backgroundColor: 'white', borderBottom: '1px solid #e5e7eb', display: 'flex', alignItems: 'center', color: 'black' },
-  terminalBody: { flex: 1, padding: '15px', overflowY: 'auto', fontFamily: 'monospace', fontSize: '1rem', color: 'black', textAlign: 'left' },
-  backButton: { display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '7px 14px', backgroundColor: 'white', border: '1px solid #d1d5db', borderRadius: '6px', cursor: 'pointer', color: '#374151', fontWeight: '600', fontSize: '0.85rem' }
-};
+  terminalWrapper: { flex: 1, display: 'flex', flexDirection: 'column', backgroundColor: isDark ? '#323232' : 'white', borderTop: isDark ? '2px solid #4A4A4A' : '2px solid #d1d5db' },
+  terminalHeader: { padding: '5px 15px', backgroundColor: isDark ? '#262626' : 'white', borderBottom: isDark ? '1px solid #4A4A4A' : '1px solid #e5e7eb', display: 'flex', alignItems: 'center', color: isDark ? '#fff' : 'black' },
+  terminalBody: { flex: 1, padding: '15px', overflowY: 'auto', fontFamily: 'monospace', fontSize: '1rem', color: isDark ? '#E8EAED' : 'black', textAlign: 'left' },
+  backButton: { display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '4px 0', backgroundColor: 'transparent', border: 'none', cursor: 'pointer', color: isDark ? '#d1d5db' : '#4b5563', fontWeight: 'bold', fontSize: '0.9rem', transition: 'color 0.2s ease' },
+  modalOverlay: { position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center' },
+  modalCard: { backgroundColor: isDark ? '#1e1e1e' : 'white', borderRadius: '12px', padding: '25px', width: '90%', maxWidth: '400px', boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1)' },
+  input: { width: '100%', padding: '10px 14px', borderRadius: '8px', border: isDark ? '1px solid #4A4A4A' : '1px solid #d1d5db', backgroundColor: isDark ? '#262626' : 'white', color: isDark ? '#E8EAED' : '#1e293b', fontSize: '0.95rem', boxSizing: 'border-box' },
+  saveGradeBtn: { padding: '10px 20px', backgroundColor: '#10b981', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold' },
+  cancelBtn: { padding: '10px 20px', backgroundColor: 'transparent', color: isDark ? '#a3a3a3' : '#64748b', border: 'none', cursor: 'pointer', fontWeight: 'bold' },
+  fieldLabel: { display: 'block', marginBottom: '6px', fontSize: '0.9rem', fontWeight: 'bold', color: isDark ? '#E8EAED' : '#475569' }
+});

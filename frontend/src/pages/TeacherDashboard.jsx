@@ -10,6 +10,7 @@ import { apiFetch } from '../utils/api';
 import Skeleton from '../components/Skeleton';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { useSidebarNav } from '../hooks/useSidebarNav';
+import { useMediaQuery } from '../hooks/useMediaQuery';
 
 const getStorageKey = (user) => {
   const identifier = user?.email || user?.id || (user?.name ? user.name.toLowerCase().replace(/\s+/g, '_') : null);
@@ -22,9 +23,11 @@ export { isPhantomClassroom, mergeClassroomsPreservingOrder, generateClassCode }
 export default function TeacherDashboard({ currentUser, onLogout, onEnterClassroom }) {
   const { isDark } = useDarkMode();
   const { collapsed, toggleSidebar, sidebarProps, isPinned } = useSidebarNav();
+  const isMobile = useMediaQuery('(max-width: 768px)');
   const styles = {
     container: {
       height: '100vh',
+      height: '100dvh',
       minHeight: '100vh',
       width: '100%',
       display: 'flex',
@@ -36,12 +39,12 @@ export default function TeacherDashboard({ currentUser, onLogout, onEnterClassro
       transition: 'background-color 0.25s ease'
     },
     header: {
-      height: '72px',
+      height: isMobile ? '60px' : '72px',
       flexShrink: 0,
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'space-between',
-      padding: '0 24px',
+      padding: isMobile ? '0 16px' : '0 24px',
       backgroundColor: isDark ? '#3C3C3C' : '#EEF0F3',
       borderBottom: 'none',
       zIndex: 50,
@@ -95,7 +98,7 @@ export default function TeacherDashboard({ currentUser, onLogout, onEnterClassro
     navItem: { position: 'relative', zIndex: 1, display: 'flex', alignItems: 'center', padding: '12px 20px', color: '#6b7280', fontWeight: '600', cursor: 'pointer', transition: 'all 0.2s ease', borderRadius: '14px', background: 'transparent', boxShadow: 'none', whiteSpace: 'nowrap' },
     activeNavItem: { color: '#10b981', fontWeight: '700' },
     settingsIcon: { color: '#9ca3af', cursor: 'pointer', display: 'flex', alignItems: 'center' },
-    mainContent: { flex: 1, padding: '20px 24px 24px', display: 'flex', flexDirection: 'column', minWidth: 0, overflow: 'hidden' },
+    mainContent: { flex: 1, padding: isMobile ? '10px 16px 16px' : '20px 24px 24px', display: 'flex', flexDirection: 'column', minWidth: 0, overflow: 'hidden' },
     topBar: { display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '15px', marginBottom: '20px' },
     logoutButton: { display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 15px', backgroundColor: '#fee2e2', color: '#ef4444', border: 'none', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' },
     profileCircle: { width: '50px', height: '50px', backgroundColor: '#d1d5db', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '2px 2px 5px rgba(0,0,0,0.1)' },
@@ -248,12 +251,15 @@ export default function TeacherDashboard({ currentUser, onLogout, onEnterClassro
           const data = await res.json();
           const serverList = (Array.isArray(data) ? data : (data.classrooms || [])).filter(c => !isPhantomClassroom(c));
           // Filter strictly for this teacher
-          const teacherClasses = serverList.filter(c => 
-            (currentUser?.email && c.instructor_email && c.instructor_email.toLowerCase() === currentUser.email.toLowerCase()) || 
-            (currentUser?.email && c.instructorEmail && c.instructorEmail.toLowerCase() === currentUser.email.toLowerCase()) || 
-            (currentUser?.name && c.instructor && c.instructor.toLowerCase() === currentUser.name.toLowerCase()) ||
-            (!c.instructor_email && !c.instructor)
-          );
+          const teacherClasses = serverList.filter(c => {
+            const hasEmail = c.instructor_email || c.instructorEmail;
+            if (hasEmail) {
+              const emailStr = (c.instructor_email || c.instructorEmail).toLowerCase();
+              return currentUser?.email && emailStr === currentUser.email.toLowerCase();
+            }
+            const nameStr = (c.instructor || '').toLowerCase();
+            return (currentUser?.name && nameStr && nameStr === currentUser.name.toLowerCase()) || !nameStr;
+          });
           setClassrooms(teacherClasses);
           try {
             localStorage.setItem(getStorageKey(currentUser), JSON.stringify(teacherClasses));
@@ -433,29 +439,31 @@ export default function TeacherDashboard({ currentUser, onLogout, onEnterClassro
       {/* ═══ GLOBAL TOP HEADER (Instructor Pattern) ═══ */}
       <header style={styles.header}>
         <div style={{ display: 'flex', alignItems: 'center' }}>
-          <button
-            onClick={toggleSidebar}
-            style={{
-              background: 'none',
-              border: 'none',
-              padding: '6px',
-              borderRadius: '8px',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              color: isDark ? '#d4d4d4' : '#64748b',
-              flexShrink: 0,
-              marginRight: '16px'
-            }}
-            title={isPinned ? "Unpin sidebar" : "Pin sidebar"}
-            className="icon-btn-anim"
-          >
-            <Menu size={24} color={isDark ? '#d4d4d4' : '#64748b'} />
-          </button>
+          {!isMobile && (
+            <button
+              onClick={toggleSidebar}
+              style={{
+                background: 'none',
+                border: 'none',
+                padding: '6px',
+                borderRadius: '8px',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                color: isDark ? '#d4d4d4' : '#64748b',
+                flexShrink: 0,
+                marginRight: '16px'
+              }}
+              title={isPinned ? "Unpin sidebar" : "Pin sidebar"}
+              className="icon-btn-anim"
+            >
+              <Menu size={24} color={isDark ? '#d4d4d4' : '#64748b'} />
+            </button>
+          )}
 
           <div
-            style={{ display: 'flex', alignItems: 'baseline', fontSize: '2.5rem', fontWeight: '900', fontStyle: 'italic', cursor: 'pointer' }}
+            style={{ display: 'flex', alignItems: 'baseline', fontSize: isMobile ? '2rem' : '2.5rem', fontWeight: '900', fontStyle: 'italic', cursor: 'pointer' }}
             onClick={() => handleSetView('classrooms')}
           >
             <span style={{ color: '#10b981' }}>V</span>
@@ -472,7 +480,8 @@ export default function TeacherDashboard({ currentUser, onLogout, onEnterClassro
       {/* ═══ MAIN LAYOUT WITH SIDEBAR ═══ */}
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
         {/* ═══ SIDEBAR NAVIGATION ═══ */}
-        <aside {...sidebarProps} style={styles.sidebar(collapsed)}>
+        {!isMobile && (
+          <aside {...sidebarProps} style={styles.sidebar(collapsed)}>
           <nav style={{ display: 'flex', flexDirection: 'column', gap: '10px', flex: 1, position: 'relative' }}>
             {/* Liquid sliding indicator */}
             <div style={{
@@ -584,6 +593,7 @@ export default function TeacherDashboard({ currentUser, onLogout, onEnterClassro
             </div>
           </nav>
         </aside>
+        )}
 
         {/* MAIN CONTENT AREA */}
         <div style={styles.mainContent}>
@@ -718,6 +728,45 @@ export default function TeacherDashboard({ currentUser, onLogout, onEnterClassro
         </div>
       </div>
     </div>
+
+      {/* MOBILE BOTTOM NAVIGATION */}
+      {isMobile && (
+        <nav style={{
+          display: 'flex',
+          justifyContent: 'space-around',
+          alignItems: 'center',
+          backgroundColor: isDark ? '#262626' : '#ffffff',
+          borderTop: isDark ? '1px solid #3f3f46' : '1px solid #e5e7eb',
+          height: '65px',
+          flexShrink: 0,
+          paddingBottom: 'env(safe-area-inset-bottom, 0px)',
+          zIndex: 60
+        }}>
+          {[...navItems, { id: 'settings', Icon: Settings, label: 'Settings' }].map(({ id, Icon, label }) => {
+            const active = activeView === id || (id === 'settings' && activeView === 'classroomSettings');
+            return (
+              <button
+                key={id}
+                onClick={() => handleSetView(id)}
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  background: 'none',
+                  border: 'none',
+                  color: active ? '#10b981' : (isDark ? '#a3a3a3' : '#64748b'),
+                  cursor: 'pointer',
+                  padding: '8px',
+                  minWidth: '64px'
+                }}
+              >
+                <Icon size={22} style={{ marginBottom: '4px' }} />
+                <span style={{ fontSize: '0.65rem', fontWeight: active ? '700' : '500' }}>{label}</span>
+              </button>
+            );
+          })}
+        </nav>
+      )}
 
       {/* CREATE CLASSROOM MODAL (Overlay) */}
       {isModalOpen && (

@@ -5,6 +5,7 @@ import { ArrowLeft, Save, Play, Square, Settings, TerminalSquare, Check, AlertTr
 import { apiFetch } from '../utils/api';
 import localStore from '../services/localStore';
 import { useDarkMode } from '../hooks/useDarkMode';
+import { useMediaQuery } from '../hooks/useMediaQuery';
 import ImagePreviewModal from '../components/ImagePreviewModal';
 import VideoPreviewModal from '../components/VideoPreviewModal';
 import VideoAttachment from '../components/VideoAttachment';
@@ -51,6 +52,7 @@ export default function StudentView({ socket, currentUser, username, assignment,
   const [instruction, setInstruction] = useState(assignment?.details || "");
   const [strictCompiler, setStrictCompiler] = useState(false);
   const { isDark, toggle: toggleDarkMode } = useDarkMode();
+  const isMobile = useMediaQuery('(max-width: 768px)');
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [previewImage, setPreviewImage] = useState(null);
   const [previewVideo, setPreviewVideo] = useState(null);
@@ -414,6 +416,7 @@ export default function StudentView({ socket, currentUser, username, assignment,
   const addProctorLog = (message, color) => {
     const timeString = new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }).toLowerCase();
     setProctorLogs(prevLogs => [{ id: Date.now(), message, time: timeString, color }, ...prevLogs]);
+    setCodeHistory(prev => [...prev, { time: Date.now(), warning: message, code: codeRef.current }]);
     const payload = {
       studentId: studentId || safeUsername,
       name: currentUser?.name || safeUsername,
@@ -455,12 +458,12 @@ export default function StudentView({ socket, currentUser, username, assignment,
 
     const handleVisibilityChange = () => {
       if (document.hidden) {
-        handleTabExit("Exit tab (Alt+Tab)");
+        handleTabExit("Alt Tab");
       }
     };
 
     const handleWindowBlur = () => {
-      handleTabExit("Exit tab (Window blur / Alt+Tab)");
+      handleTabExit("Alt Tab");
     };
 
     document.addEventListener("visibilitychange", handleVisibilityChange);
@@ -915,11 +918,16 @@ export default function StudentView({ socket, currentUser, username, assignment,
   return (
     <div style={{
       ...styles.container,
-      ...(isDark ? { backgroundColor: '#1e1e1e' } : {})
+      ...(isDark ? { backgroundColor: '#1e1e1e' } : {}),
+      flexDirection: isMobile ? 'column' : 'row'
     }}>
       <div style={{
         ...styles.leftSidebar,
-        ...(isDark ? { backgroundColor: '#282828', borderRight: '1px solid #3c3c3c' } : {})
+        ...(isDark ? { backgroundColor: '#282828', borderRight: isMobile ? 'none' : '1px solid #3c3c3c' } : {}),
+        width: isMobile ? '100%' : '300px',
+        height: isMobile ? '40vh' : '100%',
+        borderRight: isMobile ? 'none' : '1px solid #d1d5db',
+        borderBottom: isMobile ? '1px solid #d1d5db' : 'none'
       }}>
         <div style={{
           ...styles.instructionSection,
@@ -969,8 +977,8 @@ export default function StudentView({ socket, currentUser, username, assignment,
             ) : (
               proctorLogs.map(log => (
                 <div key={log.id} style={styles.logRow}>
-                  <span style={{ color: log.color, fontWeight: 'bold' }}>{log.message}</span>
-                  <span style={{ color: isDark ? '#a3a3a3' : '#e5e7eb' }}>{log.time}</span>
+                  <span style={{ color: log.color, fontWeight: 'bold', paddingRight: '15px', flex: 1, minWidth: 0, wordBreak: 'break-word' }}>{log.message}</span>
+                  <span style={{ color: isDark ? '#a3a3a3' : '#e5e7eb', background: 'none', backgroundColor: 'transparent', flexShrink: 0, whiteSpace: 'nowrap' }}>{log.time}</span>
                 </div>
               ))
             )}
