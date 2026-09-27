@@ -29,6 +29,15 @@ export default function StudentView({ socket, currentUser, username, assignment,
     `verity_sub_${classroomId}_${assignmentId}`
   ].filter(Boolean);
 
+  const getHistoryKeys = () => [
+    `verity_history_${classroomId}_${assignmentId}_${studentId}`,
+    `verity_history_${classroomId}_${assignmentId}_${safeUsername}`,
+    currentUser?.name ? `verity_history_${classroomId}_${assignmentId}_${currentUser.name}` : null,
+    currentUser?.email ? `verity_history_${classroomId}_${assignmentId}_${currentUser.email}` : null,
+    `verity_history_${assignmentId}_${studentId}`,
+    `verity_history_${assignmentId}_${safeUsername}`
+  ].filter(Boolean);
+
   const draftKey = `verity_code_${assignmentId}_${studentId}`;
 
   const initialCode = `using System;\n\nnamespace HelloWorld\n{\n    class Program\n    {\n        static void Main(string[] args)\n        {\n            Console.WriteLine("Hello, World!");\n        }\n    }\n}`;
@@ -41,7 +50,85 @@ export default function StudentView({ socket, currentUser, username, assignment,
     return assignment?.starterCode || initialCode;
   });
 
-  const [codeHistory, setCodeHistory] = useState([]);
+  const loadInitialHistory = (currentCode) => {
+    // 1. Check persistent history keys
+    const hKeys = [
+      `verity_history_${classroomId}_${assignmentId}_${studentId}`,
+      `verity_history_${classroomId}_${assignmentId}_${safeUsername}`,
+      currentUser?.name ? `verity_history_${classroomId}_${assignmentId}_${currentUser.name}` : null,
+      currentUser?.email ? `verity_history_${classroomId}_${assignmentId}_${currentUser.email}` : null,
+      `verity_history_${assignmentId}_${studentId}`,
+      `verity_history_${assignmentId}_${safeUsername}`
+    ].filter(Boolean);
+    for (const k of hKeys) {
+      try {
+        const item = localStorage.getItem(k);
+        if (item) {
+          const parsed = JSON.parse(item);
+          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        }
+      } catch { }
+    }
+
+    // 2. Check draft storage in localStorage
+    const dKeys = [
+      `verity_draft_${assignmentId}_${studentId}`,
+      `verity_draft_${assignmentId}_${safeUsername}`
+    ];
+    for (const k of dKeys) {
+      try {
+        const item = localStorage.getItem(k);
+        if (item) {
+          const parsed = JSON.parse(item);
+          if (Array.isArray(parsed?.history) && parsed.history.length > 0) return parsed.history;
+        }
+      } catch { }
+    }
+
+    // 3. Check existing submissions in localStorage (e.g. from prior submit before unsubmit)
+    const sKeys = [
+      `verity_sub_${classroomId}_${assignmentId}_${studentId}`,
+      `verity_sub_${classroomId}_${assignmentId}_${safeUsername}`,
+      currentUser?.name ? `verity_sub_${classroomId}_${assignmentId}_${currentUser.name}` : null,
+      currentUser?.email ? `verity_sub_${classroomId}_${assignmentId}_${currentUser.email}` : null,
+      `verity_sub_${classroomId}_${assignmentId}`
+    ].filter(Boolean);
+    for (const k of sKeys) {
+      try {
+        const item = localStorage.getItem(k);
+        if (item) {
+          const parsed = JSON.parse(item);
+          if (Array.isArray(parsed?.codeHistory) && parsed.codeHistory.length > 0) return parsed.codeHistory;
+          if (Array.isArray(parsed?.history) && parsed.history.length > 0) return parsed.history;
+        }
+      } catch { }
+    }
+
+    // Fallback: start initial point
+    return [{ time: Date.now(), code: currentCode }];
+  };
+
+  const [codeHistory, setCodeHistory] = useState(() => loadInitialHistory(code));
+  const codeHistoryRef = useRef(codeHistory);
+  codeHistoryRef.current = codeHistory;
+
+  const persistHistory = (hist, currentCodeVal) => {
+    if (!Array.isArray(hist) || hist.length === 0) return;
+    const curCode = currentCodeVal !== undefined ? currentCodeVal : (codeRef?.current || code);
+    
+    // Save to all history keys in localStorage
+    getHistoryKeys().forEach(k => {
+      try { localStorage.setItem(k, JSON.stringify(hist)); } catch { }
+    });
+
+    // Save to localStore (SQLite / IPC / browser fallback)
+    try {
+      localStore.saveDraft(assignmentId, studentId, curCode, hist);
+      if (studentId !== safeUsername) {
+        localStore.saveDraft(assignmentId, safeUsername, curCode, hist);
+      }
+    } catch { }
+  };
   const [output, setOutput] = useState("");
   const [inputValue, setInputValue] = useState("");
   const [isRunning, setIsRunning] = useState(false);
@@ -228,7 +315,13 @@ export default function StudentView({ socket, currentUser, username, assignment,
           setCode(draft.code);
           codeRef.current = draft.code;
           if (Array.isArray(draft.history) && draft.history.length > 0) {
-            setCodeHistory(draft.history);
+            setCodeHistory(prev => {
+              if (draft.history.length > prev.length) {
+                persistHistory(draft.history, draft.code);
+                return draft.history;
+              }
+              return prev;
+            });
           }
         }
       } catch { /* ignore */ }
@@ -335,13 +428,13 @@ export default function StudentView({ socket, currentUser, username, assignment,
 
   const handleSaveCode = () => {
     const currentCode = codeRef.current;
+    const curHist = codeHistoryRef.current?.length > 0 ? codeHistoryRef.current : codeHistory;
     try {
       localStorage.setItem(draftKey, currentCode);
-      localStore.saveDraft(assignmentId, studentId, currentCode, codeHistory);
       if (studentId !== safeUsername) {
         localStorage.setItem(`verity_code_${assignmentId}_${safeUsername}`, currentCode);
-        localStore.saveDraft(assignmentId, safeUsername, currentCode, codeHistory);
       }
+      persistHistory(curHist, currentCode);
     } catch { /* ignore */ }
 
     if (socket) {
@@ -384,9 +477,13 @@ export default function StudentView({ socket, currentUser, username, assignment,
 
   const [submitted, setSubmitted] = useState(() => checkLocalSubmitted());
 
-  // Tell the server we left the workspace if we click back or navigate away
+  // Tell the server we left the workspace if we click back or navigate away,
+  // and make sure current keystroke history is flushed to persistent storage.
   useEffect(() => {
     return () => {
+      if (codeHistoryRef.current && codeHistoryRef.current.length > 0) {
+        persistHistory(codeHistoryRef.current, codeRef.current);
+      }
       if (socket) {
         socket.emit('student_leave_workspace');
       }
@@ -397,18 +494,33 @@ export default function StudentView({ socket, currentUser, username, assignment,
   // so pasting that same text back into the editor doesn't get flagged.
   const copiedInternallyRef = useRef(new Set());
 
-  // 1. INSTANTLY ANNOUNCE PRESENCE TO TEACHER ON LOAD
+  // 1. INSTANTLY ANNOUNCE PRESENCE TO TEACHER ON LOAD WITHOUT OVERWRITING PLAYBACK
   useEffect(() => {
-    setCodeHistory([{ time: Date.now(), code: code }]);
+    const currentCodeVal = codeRef.current || code;
+    setCodeHistory(prev => {
+      if (Array.isArray(prev) && prev.length > 0) {
+        const lastEntry = prev[prev.length - 1];
+        if (lastEntry && lastEntry.code !== currentCodeVal) {
+          const appended = [...prev, { time: Date.now(), code: currentCodeVal }];
+          persistHistory(appended, currentCodeVal);
+          return appended;
+        }
+        persistHistory(prev, currentCodeVal);
+        return prev;
+      }
+      const initial = [{ time: Date.now(), code: currentCodeVal }];
+      persistHistory(initial, currentCodeVal);
+      return initial;
+    });
 
     socket.emit('student_typing', {
       studentId: safeUsername,
       name: safeUsername,
-      code: code,
+      code: currentCodeVal,
       classroomId: classroom?.id,
       assignmentId: assignment?.id
     });
-  }, [socket, safeUsername, classroom, assignment]);
+  }, [socket, safeUsername, classroom?.id, assignment?.id]);
 
   // 2. PROCTORING ALERTS
   const lastTabExitLogRef = useRef(0);
@@ -416,7 +528,11 @@ export default function StudentView({ socket, currentUser, username, assignment,
   const addProctorLog = (message, color) => {
     const timeString = new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }).toLowerCase();
     setProctorLogs(prevLogs => [{ id: Date.now(), message, time: timeString, color }, ...prevLogs]);
-    setCodeHistory(prev => [...prev, { time: Date.now(), warning: message, code: codeRef.current }]);
+    setCodeHistory(prev => {
+      const updated = [...prev, { time: Date.now(), warning: message, code: codeRef.current }];
+      persistHistory(updated, codeRef.current);
+      return updated;
+    });
     const payload = {
       studentId: studentId || safeUsername,
       name: currentUser?.name || safeUsername,
@@ -687,6 +803,16 @@ export default function StudentView({ socket, currentUser, username, assignment,
           });
         } else {
           setSubmitted(true);
+          const sHist = mySub.codeHistory || mySub.history;
+          if (Array.isArray(sHist) && sHist.length > 0) {
+            setCodeHistory(prev => {
+              if (sHist.length > prev.length) {
+                persistHistory(sHist, mySub.finalCode || codeRef.current);
+                return sHist;
+              }
+              return prev;
+            });
+          }
         }
       })
       .catch(() => {
@@ -718,6 +844,10 @@ export default function StudentView({ socket, currentUser, username, assignment,
       const eventId = (data.studentId || '').toLowerCase();
 
       if (eventName === targetName || eventName === targetId || eventId === targetName || eventId === targetId) {
+        // Retain codeHistory in state and persistent storage
+        if (codeHistoryRef.current && codeHistoryRef.current.length > 0) {
+          persistHistory(codeHistoryRef.current, codeRef.current);
+        }
         setSubmitted(false);
         getSubKeys().forEach(k => {
           try { localStorage.removeItem(k); } catch { }
@@ -784,13 +914,16 @@ export default function StudentView({ socket, currentUser, username, assignment,
     }
     setSubmitted(true);
     const aId = assignment?.id ?? 'default';
+    const subHistory = codeHistoryRef.current?.length > 0 ? codeHistoryRef.current : codeHistory;
+    persistHistory(subHistory, code);
+
     const subRecord = {
       studentName: safeUsername,
       studentId: studentId,
       assignmentId: assignment?.id ?? null,
       classroomId: classroom?.id ?? null,
       finalCode: code,
-      codeHistory: codeHistory,
+      codeHistory: subHistory,
       submittedAt: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
     };
     getSubKeys().forEach(k => {
@@ -805,7 +938,7 @@ export default function StudentView({ socket, currentUser, username, assignment,
         studentName: safeUsername,
         studentId: studentId,
         finalCode: code,
-        codeHistory: codeHistory,
+        codeHistory: subHistory,
         classroomId: classroom?.id ?? null
       })
     }).catch(() => {});
@@ -817,13 +950,17 @@ export default function StudentView({ socket, currentUser, username, assignment,
       assignmentId: assignment?.id ?? null,
       finalCode: code,
       logs: proctorLogs,
-      codeHistory: codeHistory,
+      codeHistory: subHistory,
       classroomId: classroom?.id,
     });
   };
 
   const handleUnsubmit = () => {
     if (!window.confirm("Are you sure you want to unsubmit? You will be able to edit and re-submit your code.")) return;
+
+    // CRITICAL: Ensure codeHistory is preserved and NOT reset when unsubmitting!
+    const curHist = codeHistoryRef.current?.length > 0 ? codeHistoryRef.current : codeHistory;
+    persistHistory(curHist, code);
 
     setSubmitted(false);
     getSubKeys().forEach(k => {
@@ -1086,9 +1223,17 @@ export default function StudentView({ socket, currentUser, username, assignment,
               codeRef.current = newCode;
               try { 
                 localStorage.setItem(draftKey, newCode);
-                localStore.saveDraft(assignmentId, studentId, newCode);
+                if (studentId !== safeUsername) {
+                  localStorage.setItem(`verity_code_${assignmentId}_${safeUsername}`, newCode);
+                }
               } catch { /* ignore */ }
-              setCodeHistory(prev => [...prev, { time: Date.now(), code: newCode }]);
+
+              const newEntry = { time: Date.now(), code: newCode };
+              setCodeHistory(prev => {
+                const nextHist = [...prev, newEntry];
+                persistHistory(nextHist, newCode);
+                return nextHist;
+              });
               socket.emit('student_typing', {
                 studentId: safeUsername,
                 name: safeUsername,

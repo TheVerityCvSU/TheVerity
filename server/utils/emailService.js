@@ -1,4 +1,14 @@
 const nodemailer = require('nodemailer');
+const path = require('path');
+const fs = require('fs');
+
+// Ensure environment variables are loaded
+try {
+  const envPath = path.resolve(__dirname, '../.env');
+  if (fs.existsSync(envPath)) {
+    require('dotenv').config({ path: envPath });
+  }
+} catch (_) {}
 
 function escapeHtml(str) {
   if (!str) return '';
@@ -10,33 +20,54 @@ function escapeHtml(str) {
     .replace(/'/g, '&#039;');
 }
 
+let cachedTransporter = null;
+
 /**
  * Creates and returns a Nodemailer transporter based on environment configuration.
  */
 function createTransporter() {
   const host = process.env.SMTP_HOST;
   const port = process.env.SMTP_PORT ? parseInt(process.env.SMTP_PORT, 10) : 587;
-  const user = process.env.SMTP_USER || process.env.EMAIL_USER;
-  const pass = process.env.SMTP_PASS || process.env.EMAIL_PASS;
-  const service = process.env.SMTP_SERVICE || process.env.EMAIL_SERVICE;
+  const user = (process.env.SMTP_USER || process.env.EMAIL_USER || '').trim();
+  const pass = (process.env.SMTP_PASS || process.env.EMAIL_PASS || '').trim().replace(/\s+/g, '');
+  const service = (process.env.SMTP_SERVICE || process.env.EMAIL_SERVICE || '').trim().toLowerCase();
 
-  if (service || (host && user)) {
-    const config = service
-      ? {
-          service,
-          auth: { user, pass }
-        }
-      : {
-          host,
-          port,
-          secure: process.env.SMTP_SECURE === 'true' || port === 465,
-          auth: { user, pass }
-        };
-    return nodemailer.createTransport(config);
+  if (!user || !pass) {
+    return null;
   }
 
-  // Fallback: Console / stream transporter for local development without SMTP credentials
+  if (service === 'gmail' || (!host && user.endsWith('@gmail.com'))) {
+    return nodemailer.createTransport({
+      service: 'gmail',
+      family: 4, // Force IPv4 to prevent 30s IPv6 DNS timeouts on Windows networks
+      connectionTimeout: 10000,
+      greetingTimeout: 10000,
+      socketTimeout: 15000,
+      auth: { user, pass }
+    });
+  }
+
+  if (host && user) {
+    return nodemailer.createTransport({
+      host,
+      port,
+      secure: process.env.SMTP_SECURE === 'true' || port === 465,
+      family: 4,
+      connectionTimeout: 10000,
+      greetingTimeout: 10000,
+      socketTimeout: 15000,
+      auth: { user, pass }
+    });
+  }
+
   return null;
+}
+
+function getTransporter() {
+  if (!cachedTransporter) {
+    cachedTransporter = createTransporter();
+  }
+  return cachedTransporter;
 }
 
 /**
@@ -143,12 +174,13 @@ async function sendOtpEmail({ email, name, otp }) {
   console.log(`⏰ Expires in: 15 minutes`);
   console.log('========================================\n');
 
-  const transporter = createTransporter();
-  const from = process.env.SMTP_FROM || process.env.EMAIL_FROM || '"The Verity Team" <noreply@verity.edu>';
+  const transporter = getTransporter();
+  const user = (process.env.SMTP_USER || process.env.EMAIL_USER || '').trim();
+  const from = process.env.SMTP_FROM || process.env.EMAIL_FROM || (user ? `"The Verity Team" <${user}>` : '"The Verity Team" <noreply@verity.edu>');
 
   if (!transporter) {
     console.log(`ℹ️ [EMAIL SERVICE] SMTP not configured. OTP logged above for development.`);
-    return { success: true, simulated: true, otp };
+    return { success: false, simulated: true, otp, error: 'SMTP not configured' };
   }
 
   try {
@@ -160,11 +192,10 @@ async function sendOtpEmail({ email, name, otp }) {
       html
     });
     console.log(`✅ [EMAIL SERVICE] Email sent successfully to ${email}. MessageId: ${info.messageId}`);
-    return { success: true, messageId: info.messageId };
+    return { success: true, messageId: info.messageId, otp };
   } catch (error) {
     console.error(`❌ [EMAIL SERVICE] Failed to send email to ${email}:`, error.message);
-    // Still return success in local dev so registration is not totally blocked if credentials fail
-    return { success: false, error: error.message, simulated: true, otp };
+    return { success: false, error: error.message, simulated: false, otp };
   }
 }
 

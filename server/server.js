@@ -15,7 +15,7 @@ const envCandidates = [
 for (const p of envCandidates) {
     if (fs.existsSync(p)) {
         try {
-            require('dotenv').config({ path: p });
+            require('dotenv').config({ path: p, override: true });
         } catch (_) {}
     }
 }
@@ -116,7 +116,7 @@ const adminLoginRateLimiter = (req, res, next) => {
 // --- MIDDLEWARE ---
 const authenticateToken = (req, res, next) => {
     const authHeader = req.headers['authorization'];
-    const token = authHeader && authHeader.split(' ')[1];
+    const token = (authHeader && authHeader.split(' ')[1]) || req.query.token;
     if (!token) return res.status(401).json({ message: 'Access denied. No token provided.' });
 
     jwt.verify(token, JWT_SECRET, (err, user) => {
@@ -381,11 +381,26 @@ app.post('/auth/send-otp', async (req, res) => {
         );
 
         // 5. Send Email
-        await sendOtpEmail({
+        const emailResult = await sendOtpEmail({
             email: cleanEmail,
             name: trimmedName,
             otp: otpCode
         });
+
+        if (!emailResult.success) {
+            console.error(`[AUTH] Failed to send OTP to ${cleanEmail}:`, emailResult.error);
+            if (emailResult.simulated) {
+                return res.status(200).json({
+                    message: `SMTP not configured on server. Dev verification code: ${otpCode}`,
+                    email: cleanEmail,
+                    devOtp: otpCode,
+                    expiresInMinutes: 15
+                });
+            }
+            return res.status(500).json({
+                message: `Failed to deliver verification email: ${emailResult.error || 'Delivery failed'}. Please check your email configuration.`
+            });
+        }
 
         res.status(200).json({
             message: 'Verification code sent to your email',
@@ -528,11 +543,26 @@ app.post('/auth/resend-otp', async (req, res) => {
             otpCode, expiresAt, record.id
         );
 
-        await sendOtpEmail({
+        const emailResult = await sendOtpEmail({
             email: cleanEmail,
-            name: userData.name,
+            name: (userData && userData.name) || 'User',
             otp: otpCode
         });
+
+        if (!emailResult.success) {
+            console.error(`[AUTH] Failed to resend OTP to ${cleanEmail}:`, emailResult.error);
+            if (emailResult.simulated) {
+                return res.status(200).json({
+                    message: `SMTP not configured on server. Dev verification code: ${otpCode}`,
+                    email: cleanEmail,
+                    devOtp: otpCode,
+                    expiresInMinutes: 15
+                });
+            }
+            return res.status(500).json({
+                message: `Failed to resend verification email: ${emailResult.error || 'Delivery failed'}.`
+            });
+        }
 
         res.status(200).json({ message: 'A new verification code has been sent to your email.' });
     } catch (e) {
@@ -1943,7 +1973,7 @@ app.get('/stats', authenticateToken, requireRole('Admin'), async (req, res) => {
         try {
             const startOfDay = `${tKey}T00:00:00.000Z`;
             const auditAltTabRow = await db.get(
-                `SELECT COUNT(id) as c FROM audit_logs WHERE (type LIKE '%Alt-Tab%' OR type LIKE '%Copy-Paste%' OR type LIKE '%Copy/Paste%' OR type LIKE '%Exit Tab%' OR LOWER("desc") LIKE '%alt%tab%' OR LOWER("desc") LIKE '%paste%' OR LOWER("desc") LIKE '%clipboard%') AND timestamp >= ?`,
+                `SELECT COUNT(id) as c FROM audit_logs WHERE (type LIKE '%Alt-Tab%' OR type LIKE '%Copy-Paste%' OR type LIKE '%Copy/Paste%' OR type LIKE '%Exit Tab%' OR LOWER("desc") LIKE '%alt%tab%' OR LOWER("desc") LIKE '%paste%' OR LOWER("desc") LIKE '%clipboard%') AND type NOT LIKE '%System Exit%' AND LOWER("desc") NOT LIKE '%system exit%' AND timestamp >= ?`,
                 startOfDay
             );
             const auditSecRow = await db.get(
@@ -2542,18 +2572,20 @@ io.on('connection', (socket) => {
         try {
             const key = todayKey();
             const actionStr = (data?.action || '').toLowerCase();
-            const isExitTab = actionStr.includes('tab') || actionStr.includes('exit') || actionStr.includes('blur');
+            const descStr = (data?.desc || '').toLowerCase();
+            const isSystemExit = actionStr.includes('system exit') || descStr.includes('system exit') || descStr.includes('exited system') || descStr.includes('exited the system');
+            const isExitTab = !isSystemExit && (actionStr.includes('tab') || actionStr.includes('exit') || actionStr.includes('blur') || descStr.includes('tab') || descStr.includes('blur'));
             const isCopyPaste = actionStr.includes('paste') || actionStr.includes('clipboard') || actionStr.includes('copy');
             const isAltTabCopyPaste = isExitTab || isCopyPaste;
 
             if (isAltTabCopyPaste) {
-                // Count under Alt-Tab / Copy-Paste flags (do NOT increment Security Flags Today count)
+                // Count under Alt-Tab / Copy-Paste flags
                 await db.run(
                     'INSERT INTO security_flags (date_string, count, alt_tab_copy_paste_count) VALUES (?, 0, 1) ON CONFLICT(date_string) DO UPDATE SET alt_tab_copy_paste_count = COALESCE(security_flags.alt_tab_copy_paste_count, 0) + 1',
                     key
                 );
             } else {
-                // Count under high-severity Security Flags Today
+                // Count under high-severity Security Flags Today (including System Exit Violation)
                 await db.run(
                     'INSERT INTO security_flags (date_string, count, alt_tab_copy_paste_count) VALUES (?, 1, 0) ON CONFLICT(date_string) DO UPDATE SET count = COALESCE(security_flags.count, 0) + 1',
                     key
@@ -2568,7 +2600,10 @@ io.on('connection', (socket) => {
                 let logType = 'Security Flag Alert';
                 let logSeverity = 'High';
                 
-                if (isCopyPaste) {
+                if (isSystemExit) {
+                    logType = 'System Exit Violation';
+                    logSeverity = 'High';
+                } else if (isCopyPaste) {
                     logType = 'Copy/Paste Violation';
                     logSeverity = 'High';
                 } else if (isExitTab) {
@@ -2582,7 +2617,7 @@ io.on('connection', (socket) => {
                     userName,
                     logType,
                     logSeverity,
-                    `${data.action || 'Violation alert'} in classroom ${data.classroomId || 'workspace'}`
+                    data.desc || (data.classroomId ? `${data.action || 'Violation alert'} in classroom ${data.classroomId}` : (data.action || 'Violation alert'))
                 );
             }
 
@@ -2590,6 +2625,7 @@ io.on('connection', (socket) => {
             io.emit('admin_security_alert', {
                 ...data,
                 isAltTabCopyPaste,
+                isSystemExit,
                 timestamp: nowIso
             });
             io.emit('admin_stats_update');
@@ -2670,7 +2706,7 @@ io.on('connection', (socket) => {
         }
     });
 
-    socket.on('disconnect', () => {
+    socket.on('disconnect', async () => {
         if (activeProcess) {
             try { activeProcess.kill(); } catch (_) {}
             activeProcess = null;
@@ -2678,6 +2714,46 @@ io.on('connection', (socket) => {
         if (socket.data.studentKey) {
             delete activeStudents[socket.data.studentKey];
             socket.broadcast.emit('teacher_student_left', { studentId: socket.data.studentId });
+        }
+
+        // If a student disconnects, check if an exit log was already posted in the last 4 seconds
+        if (socket.user && socket.user.role === 'Student') {
+            const userName = socket.user.name || socket.user.email || 'Student';
+            try {
+                const recentWindow = new Date(Date.now() - 4000).toISOString();
+                const recent = await db.get(
+                    `SELECT id FROM audit_logs WHERE ("user" = ? OR "user" = ?) AND timestamp >= ? LIMIT 1`,
+                    userName, socket.user.email || userName, recentWindow
+                );
+                if (!recent) {
+                    const key = todayKey();
+                    const nowIso = new Date().toISOString();
+                    await db.run(
+                        'INSERT INTO security_flags (date_string, count, alt_tab_copy_paste_count) VALUES (?, 1, 0) ON CONFLICT(date_string) DO UPDATE SET count = COALESCE(security_flags.count, 0) + 1',
+                        key
+                    );
+                    await db.run(
+                        'INSERT INTO audit_logs (timestamp, "user", type, severity, "desc") VALUES (?, ?, ?, ?, ?)',
+                        nowIso,
+                        userName,
+                        'System Exit Violation',
+                        'High',
+                        `Student exited the system: ${userName} closed or disconnected application (outside workspace)`
+                    );
+                    io.emit('admin_security_alert', {
+                        user: userName,
+                        name: userName,
+                        studentId: socket.user.id || userName,
+                        type: 'System Exit Violation',
+                        desc: `Student exited the system: ${userName} closed or disconnected application`,
+                        severity: 'High',
+                        isAltTabCopyPaste: false,
+                        isSystemExit: true,
+                        timestamp: nowIso
+                    });
+                    io.emit('admin_stats_update');
+                }
+            } catch (_) {}
         }
     });
 });
@@ -2718,7 +2794,8 @@ app.post('/audit-logs', authenticateToken, async (req, res) => {
             const key = todayKey();
             const descLower = (desc || '').toLowerCase();
             const typeLower = (type || '').toLowerCase();
-            const isAltTabCopyPaste = descLower.includes('tab') || descLower.includes('paste') || descLower.includes('clipboard') || descLower.includes('copy') || descLower.includes('exit') || typeLower.includes('alt-tab') || typeLower.includes('copy-paste');
+            const isSystemExit = typeLower.includes('system exit') || descLower.includes('system exit') || descLower.includes('exited system') || descLower.includes('exited the system');
+            const isAltTabCopyPaste = !isSystemExit && (descLower.includes('tab') || descLower.includes('paste') || descLower.includes('clipboard') || descLower.includes('copy') || descLower.includes('exit tab') || typeLower.includes('alt-tab') || typeLower.includes('copy-paste'));
 
             if (isAltTabCopyPaste) {
                 await db.run(
@@ -2741,6 +2818,7 @@ app.post('/audit-logs', authenticateToken, async (req, res) => {
                 desc,
                 action: desc,
                 isAltTabCopyPaste,
+                isSystemExit,
                 timestamp
             });
             io.emit('admin_stats_update');

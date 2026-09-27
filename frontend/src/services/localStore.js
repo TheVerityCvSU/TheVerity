@@ -24,7 +24,19 @@ export const localStore = {
         }
         try {
             const key = `verity_draft_${assignmentId}_${studentId}`;
-            const draft = { assignmentId, studentId, code, history, updated_at: new Date().toISOString() };
+            let histToUse = history;
+            if (!histToUse || (Array.isArray(histToUse) && histToUse.length === 0)) {
+                const item = localStorage.getItem(key);
+                if (item) {
+                    try {
+                        const parsed = JSON.parse(item);
+                        if (Array.isArray(parsed?.history) && parsed.history.length > 0) {
+                            histToUse = parsed.history;
+                        }
+                    } catch (_) {}
+                }
+            }
+            const draft = { assignmentId, studentId, code, history: histToUse || [], updated_at: new Date().toISOString() };
             localStorage.setItem(key, JSON.stringify(draft));
             return { success: true, updated_at: draft.updated_at };
         } catch (e) {

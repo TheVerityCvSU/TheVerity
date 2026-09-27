@@ -10,11 +10,33 @@ export default function TeacherView({ socket, assignment, classroom, initialStud
   const [students, setStudents] = useState(() => {
     if (initialStudent && (initialStudent.id || initialStudent.name)) {
       const sId = initialStudent.id || initialStudent.name;
-      const hist = Array.isArray(initialStudent.history) && initialStudent.history.length > 0
+      let hist = Array.isArray(initialStudent.history) && initialStudent.history.length > 0
         ? initialStudent.history
         : (Array.isArray(initialStudent.codeHistory) && initialStudent.codeHistory.length > 0
           ? initialStudent.codeHistory
           : (initialStudent.finalCode ? [{ time: Date.now(), code: initialStudent.finalCode }] : []));
+
+      const cId = classroom?.id ?? 'default';
+      const aId = assignment?.id ?? 'default';
+      const possibleKeys = [
+        `verity_history_${cId}_${aId}_${sId}`,
+        `verity_history_${aId}_${sId}`,
+        `verity_history_${cId}_${aId}_${initialStudent.name}`,
+        `verity_history_${aId}_${initialStudent.name}`
+      ];
+      for (const pk of possibleKeys) {
+        try {
+          const raw = localStorage.getItem(pk);
+          if (raw) {
+            const parsed = JSON.parse(raw);
+            if (Array.isArray(parsed) && parsed.length > hist.length) {
+              hist = parsed;
+              break;
+            }
+          }
+        } catch {}
+      }
+
       return {
         [sId]: {
           id: sId,
@@ -140,25 +162,54 @@ export default function TeacherView({ socket, assignment, classroom, initialStud
     if (initialStudent && (initialStudent.id || initialStudent.name)) {
       const sId = initialStudent.id || initialStudent.name;
       setSelectedStudentId(sId);
-      const hist = Array.isArray(initialStudent.history) && initialStudent.history.length > 0
+      let hist = Array.isArray(initialStudent.history) && initialStudent.history.length > 0
         ? initialStudent.history
         : (Array.isArray(initialStudent.codeHistory) && initialStudent.codeHistory.length > 0
           ? initialStudent.codeHistory
           : (initialStudent.finalCode ? [{ time: Date.now(), code: initialStudent.finalCode }] : []));
-      setStudents((prev) => ({
-        ...prev,
-        [sId]: {
-          ...(prev[sId] || {}),
-          id: sId,
-          name: initialStudent.name || sId,
-          status: 'Submitted',
-          code: initialStudent.finalCode || initialStudent.code || (hist.length > 0 ? hist[hist.length - 1]?.code : '') || '',
-          codeHistory: hist.length > 0 ? hist : (prev[sId]?.codeHistory || [{ time: Date.now(), code: initialStudent.finalCode || '' }]),
-          logs: initialStudent.logs || prev[sId]?.logs || []
-        }
-      }));
+
+      const cId = classroom?.id ?? 'default';
+      const aId = assignment?.id ?? 'default';
+      const possibleKeys = [
+        `verity_history_${cId}_${aId}_${sId}`,
+        `verity_history_${aId}_${sId}`,
+        `verity_history_${cId}_${aId}_${initialStudent.name}`,
+        `verity_history_${aId}_${initialStudent.name}`
+      ];
+      for (const pk of possibleKeys) {
+        try {
+          const raw = localStorage.getItem(pk);
+          if (raw) {
+            const parsed = JSON.parse(raw);
+            if (Array.isArray(parsed) && parsed.length > hist.length) {
+              hist = parsed;
+              break;
+            }
+          }
+        } catch {}
+      }
+
+      setStudents((prev) => {
+        const existing = prev[sId] || {};
+        const longerHist = (Array.isArray(existing.codeHistory) && existing.codeHistory.length > hist.length)
+          ? existing.codeHistory
+          : (hist.length > 0 ? hist : [{ time: Date.now(), code: initialStudent.finalCode || '' }]);
+
+        return {
+          ...prev,
+          [sId]: {
+            ...existing,
+            id: sId,
+            name: initialStudent.name || sId,
+            status: 'Submitted',
+            code: initialStudent.finalCode || initialStudent.code || (longerHist.length > 0 ? longerHist[longerHist.length - 1]?.code : '') || '',
+            codeHistory: longerHist,
+            logs: initialStudent.logs || existing.logs || []
+          }
+        };
+      });
     }
-  }, [initialStudent]);
+  }, [initialStudent, classroom?.id, assignment?.id]);
 
   useEffect(() => {
     if (!selectedStudentId && Object.keys(students).length > 0) {
@@ -204,7 +255,15 @@ export default function TeacherView({ socket, assignment, classroom, initialStud
           const existing = prev[sKey] || { id: data.studentId, name: data.name, code: "", logs: [], status: "Live" };
           const next = { ...prev };
           if (sKey !== data.studentId && next[data.studentId]) delete next[data.studentId];
-          next[sKey] = { ...existing, code: data.code, status: existing.status === 'Submitted' || existing.status === 'Graded' ? existing.status : 'Live' };
+          const newHist = Array.isArray(existing.codeHistory) && existing.codeHistory.length > 0
+            ? [...existing.codeHistory, { time: Date.now(), code: data.code }]
+            : [{ time: Date.now(), code: data.code }];
+          next[sKey] = {
+            ...existing,
+            code: data.code,
+            codeHistory: newHist,
+            status: existing.status === 'Submitted' || existing.status === 'Graded' ? existing.status : 'Live'
+          };
           return next;
         });
         checkSelection(data.studentId);
@@ -289,15 +348,51 @@ export default function TeacherView({ socket, assignment, classroom, initialStud
       }
     });
 
-    return () => {
-      if (mode === 'live') {
-        socket.off('teacher_update_code');
-        socket.off('teacher_receive_alert');
-        socket.off('teacher_terminal_update');
-        socket.off('teacher_student_left');
-      }
-      socket.off('teacher_receive_submission');
-    };
+      socket.on('teacher_student_unsubmitted', (data) => {
+        if (!data) return;
+        const sName = data.studentName || data.studentId;
+        setStudents(prev => {
+          const sKey = Object.keys(prev).find(k => prev[k].id === sName || prev[k].name === sName) || sName;
+          const existing = prev[sKey];
+          if (!existing) return prev;
+          return {
+            ...prev,
+            [sKey]: {
+              ...existing,
+              status: 'Live'
+            }
+          };
+        });
+      });
+
+      socket.on('student_unsubmitted', (data) => {
+        if (!data) return;
+        const sName = data.studentName || data.studentId;
+        setStudents(prev => {
+          const sKey = Object.keys(prev).find(k => prev[k].id === sName || prev[k].name === sName) || sName;
+          const existing = prev[sKey];
+          if (!existing) return prev;
+          return {
+            ...prev,
+            [sKey]: {
+              ...existing,
+              status: 'Live'
+            }
+          };
+        });
+      });
+
+      return () => {
+        if (mode === 'live') {
+          socket.off('teacher_update_code');
+          socket.off('teacher_receive_alert');
+          socket.off('teacher_terminal_update');
+          socket.off('teacher_student_left');
+        }
+        socket.off('teacher_receive_submission');
+        socket.off('teacher_student_unsubmitted');
+        socket.off('student_unsubmitted');
+      };
   }, [socket, mode, classroom?.id, assignment?.id]);
 
   // Output from "Evaluate" (running the submitted code) comes back on this socket.

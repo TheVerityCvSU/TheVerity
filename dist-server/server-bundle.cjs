@@ -89458,29 +89458,59 @@ var require_nodemailer = __commonJS({
 var require_emailService = __commonJS({
   "server/utils/emailService.js"(exports2, module2) {
     var nodemailer = require_nodemailer();
+    var path2 = require("path");
+    var fs3 = require("fs");
+    try {
+      const envPath = path2.resolve(__dirname, "../.env");
+      if (fs3.existsSync(envPath)) {
+        require_dist().config({ path: envPath });
+      }
+    } catch (_) {
+    }
     function escapeHtml(str) {
       if (!str) return "";
       return String(str).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
     }
+    var cachedTransporter = null;
     function createTransporter() {
       const host = process.env.SMTP_HOST;
       const port = process.env.SMTP_PORT ? parseInt(process.env.SMTP_PORT, 10) : 587;
-      const user = process.env.SMTP_USER || process.env.EMAIL_USER;
-      const pass = process.env.SMTP_PASS || process.env.EMAIL_PASS;
-      const service = process.env.SMTP_SERVICE || process.env.EMAIL_SERVICE;
-      if (service || host && user) {
-        const config = service ? {
-          service,
+      const user = (process.env.SMTP_USER || process.env.EMAIL_USER || "").trim();
+      const pass = (process.env.SMTP_PASS || process.env.EMAIL_PASS || "").trim().replace(/\s+/g, "");
+      const service = (process.env.SMTP_SERVICE || process.env.EMAIL_SERVICE || "").trim().toLowerCase();
+      if (!user || !pass) {
+        return null;
+      }
+      if (service === "gmail" || !host && user.endsWith("@gmail.com")) {
+        return nodemailer.createTransport({
+          service: "gmail",
+          family: 4,
+          // Force IPv4 to prevent 30s IPv6 DNS timeouts on Windows networks
+          connectionTimeout: 1e4,
+          greetingTimeout: 1e4,
+          socketTimeout: 15e3,
           auth: { user, pass }
-        } : {
+        });
+      }
+      if (host && user) {
+        return nodemailer.createTransport({
           host,
           port,
           secure: process.env.SMTP_SECURE === "true" || port === 465,
+          family: 4,
+          connectionTimeout: 1e4,
+          greetingTimeout: 1e4,
+          socketTimeout: 15e3,
           auth: { user, pass }
-        };
-        return nodemailer.createTransport(config);
+        });
       }
       return null;
+    }
+    function getTransporter() {
+      if (!cachedTransporter) {
+        cachedTransporter = createTransporter();
+      }
+      return cachedTransporter;
     }
     function generateOtpEmailHtml({ name, otp }) {
       const safeName = escapeHtml(name || "there");
@@ -89589,11 +89619,12 @@ You're receiving this email because a verification code was requested to create 
       console.log(`\u{1F449} CODE: ${otp}`);
       console.log(`\u23F0 Expires in: 15 minutes`);
       console.log("========================================\n");
-      const transporter = createTransporter();
-      const from = process.env.SMTP_FROM || process.env.EMAIL_FROM || '"The Verity Team" <noreply@verity.edu>';
+      const transporter = getTransporter();
+      const user = (process.env.SMTP_USER || process.env.EMAIL_USER || "").trim();
+      const from = process.env.SMTP_FROM || process.env.EMAIL_FROM || (user ? `"The Verity Team" <${user}>` : '"The Verity Team" <noreply@verity.edu>');
       if (!transporter) {
         console.log(`\u2139\uFE0F [EMAIL SERVICE] SMTP not configured. OTP logged above for development.`);
-        return { success: true, simulated: true, otp };
+        return { success: false, simulated: true, otp, error: "SMTP not configured" };
       }
       try {
         const info = await transporter.sendMail({
@@ -89604,10 +89635,10 @@ You're receiving this email because a verification code was requested to create 
           html
         });
         console.log(`\u2705 [EMAIL SERVICE] Email sent successfully to ${email}. MessageId: ${info.messageId}`);
-        return { success: true, messageId: info.messageId };
+        return { success: true, messageId: info.messageId, otp };
       } catch (error) {
         console.error(`\u274C [EMAIL SERVICE] Failed to send email to ${email}:`, error.message);
-        return { success: false, error: error.message, simulated: true, otp };
+        return { success: false, error: error.message, simulated: false, otp };
       }
     }
     module2.exports = {
@@ -95042,10 +95073,6 @@ var require_db4 = __commonJS({
             alt_tab_copy_paste_count INTEGER DEFAULT 0
         );
 
-        try {
-            await db.run("ALTER TABLE security_flags ADD COLUMN alt_tab_copy_paste_count INTEGER DEFAULT 0");
-        } catch (_) {}
-
         CREATE TABLE IF NOT EXISTS audit_logs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             timestamp TEXT DEFAULT CURRENT_TIMESTAMP,
@@ -95111,10 +95138,8 @@ var require_db4 = __commonJS({
         INSERT OR IGNORE INTO admin_users (name, email, password, role, status)
         VALUES ('System Admin', 'admin@verity.com', 'admin', 'Admin', 'Active');
 
-        INSERT OR IGNORE INTO admin_users (name, email, password, role, lastLogin, status, avatar)
-        SELECT name, email, password, role, lastLogin, status, avatar FROM users WHERE LOWER(role) = 'admin' OR LOWER(email) = 'admin@verity.com';
-
-        DELETE FROM users WHERE LOWER(role) = 'admin' OR LOWER(email) = 'admin@verity.com';
+        INSERT OR IGNORE INTO admin_users (name, email, password, role, status)
+        VALUES ('System Admin', 'admin@verity.com', 'admin', 'Admin', 'Active');
     `);
         try {
           sqliteDb.exec(`ALTER TABLE classrooms ADD COLUMN instructor_email TEXT;`);
@@ -95127,6 +95152,19 @@ var require_db4 = __commonJS({
         try {
           sqliteDb.exec(`ALTER TABLE users ADD COLUMN avatar TEXT;`);
         } catch (e2) {
+        }
+        try {
+          sqliteDb.exec(`ALTER TABLE security_flags ADD COLUMN alt_tab_copy_paste_count INTEGER DEFAULT 0;`);
+        } catch (e2) {
+        }
+        try {
+          sqliteDb.exec(`
+            INSERT OR IGNORE INTO admin_users (name, email, password, role, lastLogin, status, avatar)
+            SELECT name, email, password, role, lastLogin, status, avatar FROM users WHERE LOWER(role) = 'admin' OR LOWER(email) = 'admin@verity.com';
+            DELETE FROM users WHERE LOWER(role) = 'admin' OR LOWER(email) = 'admin@verity.com';
+        `);
+        } catch (e2) {
+          console.warn("[Database] admin_users migration notice:", e2.message);
         }
         try {
           const rows = sqliteDb.prepare("SELECT id, code FROM classrooms").all();
@@ -95409,7 +95447,7 @@ var envCandidates = [
 for (const p of envCandidates) {
   if (fs2.existsSync(p)) {
     try {
-      require_dist().config({ path: p });
+      require_dist().config({ path: p, override: true });
     } catch (_) {
     }
   }
@@ -95487,7 +95525,7 @@ var adminLoginRateLimiter = (req, res, next) => {
 };
 var authenticateToken = (req, res, next) => {
   const authHeader = req.headers["authorization"];
-  const token = authHeader && authHeader.split(" ")[1];
+  const token = authHeader && authHeader.split(" ")[1] || req.query.token;
   if (!token) return res.status(401).json({ message: "Access denied. No token provided." });
   jwt.verify(token, JWT_SECRET, (err, user) => {
     if (err) return res.status(403).json({ message: "Invalid token." });
@@ -95714,11 +95752,25 @@ app.post("/auth/send-otp", async (req, res) => {
       userData,
       expiresAt
     );
-    await sendOtpEmail({
+    const emailResult = await sendOtpEmail({
       email: cleanEmail,
       name: trimmedName,
       otp: otpCode
     });
+    if (!emailResult.success) {
+      console.error(`[AUTH] Failed to send OTP to ${cleanEmail}:`, emailResult.error);
+      if (emailResult.simulated) {
+        return res.status(200).json({
+          message: `SMTP not configured on server. Dev verification code: ${otpCode}`,
+          email: cleanEmail,
+          devOtp: otpCode,
+          expiresInMinutes: 15
+        });
+      }
+      return res.status(500).json({
+        message: `Failed to deliver verification email: ${emailResult.error || "Delivery failed"}. Please check your email configuration.`
+      });
+    }
     res.status(200).json({
       message: "Verification code sent to your email",
       email: cleanEmail,
@@ -95838,11 +95890,25 @@ app.post("/auth/resend-otp", async (req, res) => {
       expiresAt,
       record.id
     );
-    await sendOtpEmail({
+    const emailResult = await sendOtpEmail({
       email: cleanEmail,
-      name: userData.name,
+      name: userData && userData.name || "User",
       otp: otpCode
     });
+    if (!emailResult.success) {
+      console.error(`[AUTH] Failed to resend OTP to ${cleanEmail}:`, emailResult.error);
+      if (emailResult.simulated) {
+        return res.status(200).json({
+          message: `SMTP not configured on server. Dev verification code: ${otpCode}`,
+          email: cleanEmail,
+          devOtp: otpCode,
+          expiresInMinutes: 15
+        });
+      }
+      return res.status(500).json({
+        message: `Failed to resend verification email: ${emailResult.error || "Delivery failed"}.`
+      });
+    }
     res.status(200).json({ message: "A new verification code has been sent to your email." });
   } catch (e2) {
     res.status(500).json({ message: e2.message || "Failed to resend code" });
@@ -96448,10 +96514,45 @@ var saveClassworkToDb = async (classroomId, classwork) => {
         `, id, Number(classroomId) || classroomId, cw.title || "", JSON.stringify(descObj), cw.dueDate || "", cw.type || "");
   }
 };
+async function checkClassroomAccess(req, classroomId) {
+  if (req.user?.role === "Admin") return true;
+  if (req.user?.role === "Teacher") {
+    const c = await db.get("SELECT instructor_email, instructor FROM classrooms WHERE id = ?", classroomId);
+    if (!c) return false;
+    const teacherEmail = (req.user.email || "").trim().toLowerCase();
+    const teacherName = (req.user.name || "").trim().toLowerCase();
+    const cEmail = (c.instructor_email || "").trim().toLowerCase();
+    const cName = (c.instructor || "").trim().toLowerCase();
+    if (cEmail) return teacherEmail && cEmail === teacherEmail;
+    return teacherName && cName && cName === teacherName;
+  }
+  if (req.user?.role === "Student") {
+    const studentEmail = (req.user.email || "").trim().toLowerCase();
+    const studentId = req.user.id || 0;
+    const e2 = await db.get("SELECT 1 FROM enrollments WHERE classroom_id = ? AND ((student_email IS NOT NULL AND LOWER(student_email) = ?) OR (student_id IS NOT NULL AND student_id = ?))", classroomId, studentEmail, studentId);
+    return !!e2;
+  }
+  return false;
+}
+async function checkAssignmentAccess(req, assignmentId) {
+  if (req.user?.role === "Admin") return true;
+  const cw = await db.get("SELECT classroom_id FROM classwork WHERE id = ?", assignmentId);
+  if (!cw) return false;
+  return checkClassroomAccess(req, cw.classroom_id);
+}
 app.get("/classwork", authenticateToken, async (req, res) => {
   try {
     const classwork = await getClassworkFromDb();
-    res.status(200).json({ classwork });
+    if (req.user?.role === "Admin") {
+      return res.status(200).json({ classwork });
+    }
+    const filtered = [];
+    for (const cw of classwork) {
+      if (await checkClassroomAccess(req, cw.classroom_id)) {
+        filtered.push(cw);
+      }
+    }
+    res.status(200).json({ classwork: filtered });
   } catch (e2) {
     console.error("Error fetching all classwork:", e2);
     res.status(500).json({ classwork: [] });
@@ -96459,6 +96560,9 @@ app.get("/classwork", authenticateToken, async (req, res) => {
 });
 app.get("/classwork/:classroomId", authenticateToken, async (req, res) => {
   try {
+    if (!await checkClassroomAccess(req, req.params.classroomId)) {
+      return res.status(403).json({ message: "Access denied" });
+    }
     const classwork = await getClassworkFromDb(req.params.classroomId);
     res.status(200).json({ classwork });
   } catch (e2) {
@@ -96468,6 +96572,9 @@ app.get("/classwork/:classroomId", authenticateToken, async (req, res) => {
 });
 app.put("/classwork/:classroomId", authenticateToken, requireRole("Teacher", "Admin"), async (req, res) => {
   const { classroomId } = req.params;
+  if (!await checkClassroomAccess(req, classroomId)) {
+    return res.status(403).json({ message: "Access denied" });
+  }
   const { classwork } = req.body;
   if (!Array.isArray(classwork)) return res.status(400).json({ message: "classwork must be an array" });
   try {
@@ -96498,8 +96605,8 @@ app.get("/classrooms", authenticateToken, async (req, res) => {
       const teacherName = (req.user.name || "").trim().toLowerCase();
       rawClassrooms = await db.all(`
                 SELECT * FROM classrooms
-                WHERE (instructor_email IS NOT NULL AND LOWER(instructor_email) = ?)
-                   OR (instructor IS NOT NULL AND LOWER(instructor) = ?)
+                WHERE (instructor_email IS NOT NULL AND instructor_email != '' AND LOWER(instructor_email) = ?)
+                   OR ((instructor_email IS NULL OR instructor_email = '') AND instructor IS NOT NULL AND instructor != '' AND LOWER(instructor) = ?)
                 ORDER BY id ASC
             `, teacherEmail, teacherName);
     } else {
@@ -96554,6 +96661,10 @@ app.put("/classrooms", authenticateToken, requireRole("Teacher", "Admin"), async
     const assignedInBatch = /* @__PURE__ */ new Set();
     const savedClassrooms = [];
     for (const c of classrooms) {
+      if (c.id) {
+        const existing = await db.get("SELECT id FROM classrooms WHERE id = ?", c.id);
+        if (existing && !await checkClassroomAccess(req, c.id)) continue;
+      }
       if (c.name && /^Classroom \d+$/i.test(c.name.trim()) && (!c.section || !c.section.trim()) && (!c.subject || !c.subject.trim())) {
         continue;
       }
@@ -96625,6 +96736,9 @@ app.put("/classrooms", authenticateToken, requireRole("Teacher", "Admin"), async
 app.patch("/classrooms/:id/theme", authenticateToken, requireRole("Teacher", "Admin"), async (req, res) => {
   try {
     const { id } = req.params;
+    if (!await checkClassroomAccess(req, id)) {
+      return res.status(403).json({ message: "Access denied" });
+    }
     const { theme } = req.body;
     if (!theme) return res.status(400).json({ message: "Theme is required" });
     const themeStr = typeof theme === "object" ? JSON.stringify(theme) : theme;
@@ -96644,6 +96758,9 @@ app.patch("/classrooms/:id/theme", authenticateToken, requireRole("Teacher", "Ad
 });
 app.delete("/classrooms/:id", authenticateToken, requireRole("Teacher", "Admin"), async (req, res) => {
   try {
+    if (!await checkClassroomAccess(req, req.params.id)) {
+      return res.status(403).json({ message: "Access denied" });
+    }
     if (req.user.role === "Teacher") {
       let allowDelete = false;
       try {
@@ -96677,6 +96794,9 @@ app.delete("/classrooms/:id", authenticateToken, requireRole("Teacher", "Admin")
 });
 app.get("/submissions/:assignmentId", authenticateToken, requireRole("Teacher", "Admin", "Student"), async (req, res) => {
   try {
+    if (!await checkAssignmentAccess(req, req.params.assignmentId)) {
+      return res.status(403).json({ message: "Access denied" });
+    }
     let rows;
     if (req.user.role === "Student") {
       rows = await db.all(
@@ -96731,6 +96851,9 @@ app.post("/submissions/:assignmentId", authenticateToken, requireRole("Student")
 });
 app.delete("/submissions/:assignmentId/:studentName", authenticateToken, requireRole("Teacher", "Admin", "Student"), async (req, res) => {
   try {
+    if (!await checkAssignmentAccess(req, req.params.assignmentId)) {
+      return res.status(403).json({ message: "Access denied" });
+    }
     const studentName = decodeURIComponent(req.params.studentName);
     if (req.user.role === "Student") {
       const isSelf = studentName === req.user.name || studentName === req.user.email || studentName.toLowerCase() === (req.user.name || "").toLowerCase() || studentName.toLowerCase() === (req.user.email || "").toLowerCase();
@@ -96751,6 +96874,9 @@ app.delete("/submissions/:assignmentId/:studentName", authenticateToken, require
 });
 app.get("/grades/:assignmentId", authenticateToken, requireRole("Teacher", "Admin", "Student"), async (req, res) => {
   try {
+    if (!await checkAssignmentAccess(req, req.params.assignmentId)) {
+      return res.status(403).json({ message: "Access denied" });
+    }
     const rows = await db.all("SELECT * FROM grades WHERE assignment_id = ?", req.params.assignmentId);
     const gradesMap = {};
     rows.forEach((r2) => {
@@ -96770,6 +96896,9 @@ app.get("/grades/:assignmentId", authenticateToken, requireRole("Teacher", "Admi
 });
 app.post("/grades/:assignmentId", authenticateToken, requireRole("Teacher", "Admin"), async (req, res) => {
   try {
+    if (!await checkAssignmentAccess(req, req.params.assignmentId)) {
+      return res.status(403).json({ message: "Access denied" });
+    }
     const { studentId, grade, feedback } = req.body || {};
     if (!studentId) return res.status(400).json({ message: "studentId is required" });
     await db.run(`
@@ -96787,6 +96916,9 @@ app.post("/grades/:assignmentId", authenticateToken, requireRole("Teacher", "Adm
 });
 app.post("/grades/:assignmentId/bulk", authenticateToken, requireRole("Teacher", "Admin"), async (req, res) => {
   try {
+    if (!await checkAssignmentAccess(req, req.params.assignmentId)) {
+      return res.status(403).json({ message: "Access denied" });
+    }
     const { grades } = req.body || {};
     if (!Array.isArray(grades)) return res.status(400).json({ message: "grades must be an array" });
     const now = (/* @__PURE__ */ new Date()).toISOString();
@@ -96809,6 +96941,9 @@ app.post("/grades/:assignmentId/bulk", authenticateToken, requireRole("Teacher",
 });
 app.get("/classroom-students/:classroomId", authenticateToken, async (req, res) => {
   try {
+    if (!await checkClassroomAccess(req, req.params.classroomId)) {
+      return res.status(403).json({ message: "Access denied" });
+    }
     const { classroomId } = req.params;
     const classroom = await db.get("SELECT * FROM classrooms WHERE id = ?", classroomId);
     let instructor = null;
@@ -96998,6 +97133,9 @@ app.post("/classrooms/join", authenticateToken, async (req, res) => {
 });
 app.delete("/grades/:assignmentId/:studentId", authenticateToken, requireRole("Teacher", "Admin"), async (req, res) => {
   try {
+    if (!await checkAssignmentAccess(req, req.params.assignmentId)) {
+      return res.status(403).json({ message: "Access denied" });
+    }
     const studentId = decodeURIComponent(req.params.studentId);
     await db.run(
       "DELETE FROM grades WHERE assignment_id = ? AND (student_id = ? OR LOWER(student_id) = LOWER(?))",
@@ -97012,7 +97150,20 @@ app.delete("/grades/:assignmentId/:studentId", authenticateToken, requireRole("T
 });
 app.get("/submission-counts", authenticateToken, requireRole("Teacher", "Admin"), async (req, res) => {
   try {
-    const subs = await db.all("SELECT assignment_id, COUNT(id) as c FROM submissions GROUP BY assignment_id");
+    let subs;
+    if (req.user?.role === "Admin") {
+      subs = await db.all("SELECT assignment_id, COUNT(id) as c FROM submissions GROUP BY assignment_id");
+    } else {
+      subs = await db.all(`
+                SELECT s.assignment_id, COUNT(s.id) as c 
+                FROM submissions s
+                JOIN classwork cw ON s.assignment_id = cw.id
+                JOIN classrooms cr ON cw.classroom_id = cr.id
+                WHERE (cr.instructor_email IS NOT NULL AND cr.instructor_email != '' AND LOWER(cr.instructor_email) = ?)
+                   OR ((cr.instructor_email IS NULL OR cr.instructor_email = '') AND cr.instructor IS NOT NULL AND cr.instructor != '' AND LOWER(cr.instructor) = ?)
+                GROUP BY s.assignment_id
+            `, (req.user.email || "").trim().toLowerCase(), (req.user.name || "").trim().toLowerCase());
+    }
     const counts = {};
     subs.forEach((s2) => counts[s2.assignment_id] = Number(s2.c));
     const studentRow = await db.get("SELECT COUNT(id) as c FROM users WHERE role = 'Student'");
@@ -97040,7 +97191,7 @@ app.get("/stats", authenticateToken, requireRole("Admin"), async (req, res) => {
     try {
       const startOfDay = `${tKey}T00:00:00.000Z`;
       const auditAltTabRow = await db.get(
-        `SELECT COUNT(id) as c FROM audit_logs WHERE (type LIKE '%Alt-Tab%' OR type LIKE '%Copy-Paste%' OR type LIKE '%Copy/Paste%' OR type LIKE '%Exit Tab%' OR LOWER("desc") LIKE '%alt%tab%' OR LOWER("desc") LIKE '%paste%' OR LOWER("desc") LIKE '%clipboard%') AND timestamp >= ?`,
+        `SELECT COUNT(id) as c FROM audit_logs WHERE (type LIKE '%Alt-Tab%' OR type LIKE '%Copy-Paste%' OR type LIKE '%Copy/Paste%' OR type LIKE '%Exit Tab%' OR LOWER("desc") LIKE '%alt%tab%' OR LOWER("desc") LIKE '%paste%' OR LOWER("desc") LIKE '%clipboard%') AND type NOT LIKE '%System Exit%' AND LOWER("desc") NOT LIKE '%system exit%' AND timestamp >= ?`,
         startOfDay
       );
       const auditSecRow = await db.get(
@@ -97583,7 +97734,9 @@ io.on("connection", (socket) => {
     try {
       const key = todayKey();
       const actionStr = (data?.action || "").toLowerCase();
-      const isExitTab = actionStr.includes("tab") || actionStr.includes("exit") || actionStr.includes("blur");
+      const descStr = (data?.desc || "").toLowerCase();
+      const isSystemExit = actionStr.includes("system exit") || descStr.includes("system exit") || descStr.includes("exited system") || descStr.includes("exited the system");
+      const isExitTab = !isSystemExit && (actionStr.includes("tab") || actionStr.includes("exit") || actionStr.includes("blur") || descStr.includes("tab") || descStr.includes("blur"));
       const isCopyPaste = actionStr.includes("paste") || actionStr.includes("clipboard") || actionStr.includes("copy");
       const isAltTabCopyPaste = isExitTab || isCopyPaste;
       if (isAltTabCopyPaste) {
@@ -97602,7 +97755,10 @@ io.on("connection", (socket) => {
         const userName = data.name || data.email || data.studentId;
         let logType = "Security Flag Alert";
         let logSeverity = "High";
-        if (isCopyPaste) {
+        if (isSystemExit) {
+          logType = "System Exit Violation";
+          logSeverity = "High";
+        } else if (isCopyPaste) {
           logType = "Copy/Paste Violation";
           logSeverity = "High";
         } else if (isExitTab) {
@@ -97615,12 +97771,13 @@ io.on("connection", (socket) => {
           userName,
           logType,
           logSeverity,
-          `${data.action || "Violation alert"} in classroom ${data.classroomId || "workspace"}`
+          data.desc || (data.classroomId ? `${data.action || "Violation alert"} in classroom ${data.classroomId}` : data.action || "Violation alert")
         );
       }
       io.emit("admin_security_alert", {
         ...data,
         isAltTabCopyPaste,
+        isSystemExit,
         timestamp: nowIso
       });
       io.emit("admin_stats_update");
@@ -97698,7 +97855,7 @@ io.on("connection", (socket) => {
       socket.data.studentId = null;
     }
   });
-  socket.on("disconnect", () => {
+  socket.on("disconnect", async () => {
     if (activeProcess) {
       try {
         activeProcess.kill();
@@ -97709,6 +97866,47 @@ io.on("connection", (socket) => {
     if (socket.data.studentKey) {
       delete activeStudents[socket.data.studentKey];
       socket.broadcast.emit("teacher_student_left", { studentId: socket.data.studentId });
+    }
+    if (socket.user && socket.user.role === "Student") {
+      const userName = socket.user.name || socket.user.email || "Student";
+      try {
+        const recentWindow = new Date(Date.now() - 4e3).toISOString();
+        const recent = await db.get(
+          `SELECT id FROM audit_logs WHERE ("user" = ? OR "user" = ?) AND timestamp >= ? LIMIT 1`,
+          userName,
+          socket.user.email || userName,
+          recentWindow
+        );
+        if (!recent) {
+          const key = todayKey();
+          const nowIso = (/* @__PURE__ */ new Date()).toISOString();
+          await db.run(
+            "INSERT INTO security_flags (date_string, count, alt_tab_copy_paste_count) VALUES (?, 1, 0) ON CONFLICT(date_string) DO UPDATE SET count = COALESCE(security_flags.count, 0) + 1",
+            key
+          );
+          await db.run(
+            'INSERT INTO audit_logs (timestamp, "user", type, severity, "desc") VALUES (?, ?, ?, ?, ?)',
+            nowIso,
+            userName,
+            "System Exit Violation",
+            "High",
+            `Student exited the system: ${userName} closed or disconnected application (outside workspace)`
+          );
+          io.emit("admin_security_alert", {
+            user: userName,
+            name: userName,
+            studentId: socket.user.id || userName,
+            type: "System Exit Violation",
+            desc: `Student exited the system: ${userName} closed or disconnected application`,
+            severity: "High",
+            isAltTabCopyPaste: false,
+            isSystemExit: true,
+            timestamp: nowIso
+          });
+          io.emit("admin_stats_update");
+        }
+      } catch (_) {
+      }
     }
   });
 });
@@ -97749,7 +97947,8 @@ app.post("/audit-logs", authenticateToken, async (req, res) => {
       const key = todayKey();
       const descLower = (desc || "").toLowerCase();
       const typeLower = (type || "").toLowerCase();
-      const isAltTabCopyPaste = descLower.includes("tab") || descLower.includes("paste") || descLower.includes("clipboard") || descLower.includes("copy") || descLower.includes("exit") || typeLower.includes("alt-tab") || typeLower.includes("copy-paste");
+      const isSystemExit = typeLower.includes("system exit") || descLower.includes("system exit") || descLower.includes("exited system") || descLower.includes("exited the system");
+      const isAltTabCopyPaste = !isSystemExit && (descLower.includes("tab") || descLower.includes("paste") || descLower.includes("clipboard") || descLower.includes("copy") || descLower.includes("exit tab") || typeLower.includes("alt-tab") || typeLower.includes("copy-paste"));
       if (isAltTabCopyPaste) {
         await db.run(
           `INSERT INTO security_flags (date_string, count, alt_tab_copy_paste_count) VALUES (?, 0, 1) ON CONFLICT(date_string) DO UPDATE SET alt_tab_copy_paste_count = COALESCE(security_flags.alt_tab_copy_paste_count, 0) + 1`,
@@ -97769,6 +97968,7 @@ app.post("/audit-logs", authenticateToken, async (req, res) => {
         desc,
         action: desc,
         isAltTabCopyPaste,
+        isSystemExit,
         timestamp
       });
       io.emit("admin_stats_update");

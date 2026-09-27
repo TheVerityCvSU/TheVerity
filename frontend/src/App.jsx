@@ -353,8 +353,150 @@ export default function App() {
     }
   }, []);
 
+  // Proctoring & System Exit monitor for students even outside the workspace
+  useEffect(() => {
+    if (currentUser?.role !== 'Student') return;
+
+    let lastExitTabTime = 0;
+    const handleWindowExit = () => {
+      // If student is currently inside student_workspace, StudentView handles workspace proctoring
+      if (currentScreen === 'student_workspace') return;
+      const now = Date.now();
+      if (now - lastExitTabTime < 1500) return; // 1.5s debounce
+      lastExitTabTime = now;
+
+      const studentName = currentUser.name || currentUser.email || 'Student';
+      const studentId = currentUser.id || currentUser.email || studentName;
+      const screenLabel = currentScreen ? currentScreen.replace('_', ' ') : 'dashboard';
+
+      // 1. Live socket alert so Admin immediately receives notification & stats update
+      if (socket && typeof socket.emit === 'function') {
+        socket.emit('proctor_alert', {
+          studentId,
+          name: studentName,
+          email: currentUser.email || '',
+          action: `Alt Tab outside workspace (${screenLabel})`,
+          desc: `Alt Tab / Window Exit: ${studentName} exited the application window outside workspace (${screenLabel})`,
+          color: '#eab308'
+        });
+      }
+
+      // 2. Persist directly to audit_logs
+      apiFetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/audit-logs`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          user: studentName,
+          type: 'Exit Tab Violation',
+          severity: 'Warning',
+          desc: `Alt Tab / Window Exit: ${studentName} exited the application window outside workspace (${screenLabel})`
+        })
+      }).catch(() => {});
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.hidden) handleWindowExit();
+    };
+    const handleBlur = () => {
+      handleWindowExit();
+    };
+
+    window.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('blur', handleBlur);
+
+    // Detect when student exits the system entirely (closing window/tab, navigating away, pagehide)
+    const handleSystemExit = () => {
+      const studentName = currentUser.name || currentUser.email || 'Student';
+      const studentId = currentUser.id || currentUser.email || studentName;
+      const screenLabel = currentScreen ? currentScreen.replace('_', ' ') : 'dashboard';
+      const token = localStorage.getItem('verity_token') || localStorage.getItem('token');
+      const inWorkspace = currentScreen === 'student_workspace';
+      const desc = inWorkspace 
+        ? `Student exited the system: ${studentName} closed or exited the application while in workspace`
+        : `Student exited the system: ${studentName} closed or exited the application outside workspace (${screenLabel})`;
+
+      if (socket && typeof socket.emit === 'function') {
+        socket.emit('proctor_alert', {
+          studentId,
+          name: studentName,
+          email: currentUser.email || '',
+          action: 'Exited System',
+          desc,
+          color: '#ef4444'
+        });
+      }
+
+      const payload = JSON.stringify({
+        user: studentName,
+        type: 'System Exit Violation',
+        severity: 'High',
+        desc
+      });
+
+      const url = `${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/audit-logs?token=${encodeURIComponent(token || '')}`;
+
+      try {
+        if (navigator.sendBeacon) {
+          const blob = new Blob([payload], { type: 'application/json' });
+          navigator.sendBeacon(url, blob);
+        }
+      } catch (_) {}
+
+      try {
+        fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/audit-logs`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+          },
+          body: payload,
+          keepalive: true
+        }).catch(() => {});
+      } catch (_) {}
+    };
+
+    window.addEventListener('beforeunload', handleSystemExit);
+    window.addEventListener('pagehide', handleSystemExit);
+
+    return () => {
+      window.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('blur', handleBlur);
+      window.removeEventListener('beforeunload', handleSystemExit);
+      window.removeEventListener('pagehide', handleSystemExit);
+    };
+  }, [currentUser, currentScreen, socket]);
+
   // 3. SECURE LOGOUT (Wipes the memory)
   const handleLogout = () => {
+    if (currentUser?.role === 'Student') {
+      const studentName = currentUser.name || currentUser.email || 'Student';
+      const studentId = currentUser.id || currentUser.email || studentName;
+      const screenLabel = currentScreen ? currentScreen.replace('_', ' ') : 'session';
+      const desc = `Student exited the system: ${studentName} logged out of session (${screenLabel})`;
+
+      if (socket && typeof socket.emit === 'function') {
+        socket.emit('proctor_alert', {
+          studentId,
+          name: studentName,
+          email: currentUser.email || '',
+          action: 'Exited System (Logout)',
+          desc,
+          color: '#ef4444'
+        });
+      }
+
+      apiFetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/audit-logs`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          user: studentName,
+          type: 'System Exit Violation',
+          severity: 'High',
+          desc
+        })
+      }).catch(() => {});
+    }
+
     releaseLockdown();
     const wasAdmin = currentUser?.role === 'Admin' || (typeof window !== 'undefined' && (window.location.pathname.startsWith('/admin') || Boolean(window.IS_ADMIN_APP)));
     setCurrentUser(null);

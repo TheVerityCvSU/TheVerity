@@ -231,9 +231,29 @@ export default function TeacherGrading({ classroom, assignment, onBack, onLogout
               if (s.finalCode && !studentMap[sName].finalCode) {
                 studentMap[sName].finalCode = s.finalCode;
               }
-              if (Array.isArray(s.codeHistory) && s.codeHistory.length > (studentMap[sName].history?.length || 0)) {
-                studentMap[sName].history = s.codeHistory;
+              const h = s.codeHistory || s.history;
+              if (Array.isArray(h) && h.length > (studentMap[sName].history?.length || 0)) {
+                studentMap[sName].history = h;
               }
+            }
+          });
+
+          // Also check persistent history keys in localStorage to ensure the complete playback history is loaded
+          Object.keys(studentMap).forEach((sName) => {
+            const hKeys = [
+              `verity_history_${cId}_${aId}_${sName}`,
+              `verity_history_${aId}_${sName}`
+            ];
+            for (const hk of hKeys) {
+              try {
+                const raw = localStorage.getItem(hk);
+                if (raw) {
+                  const parsed = JSON.parse(raw);
+                  if (Array.isArray(parsed) && parsed.length > (studentMap[sName].history?.length || 0)) {
+                    studentMap[sName].history = parsed;
+                  }
+                }
+              } catch {}
             }
           });
 
@@ -331,7 +351,19 @@ export default function TeacherGrading({ classroom, assignment, onBack, onLogout
             if (key && (key.startsWith(`verity_sub_${cId}_${aId}_`) || key.startsWith(`verity_sub_default_${aId}_`))) {
               const val = JSON.parse(localStorage.getItem(key));
               const valName = (val?.studentName || val?.studentId || '').toLowerCase();
-              if (valName === removedName) localStorage.removeItem(key);
+              if (valName === removedName) {
+                const hist = val?.codeHistory || val?.history;
+                if (Array.isArray(hist) && hist.length > 0) {
+                  try {
+                    const hKey = `verity_history_${cId}_${aId}_${val?.studentName || val?.studentId}`;
+                    const curH = localStorage.getItem(hKey);
+                    if (!curH || JSON.parse(curH).length < hist.length) {
+                      localStorage.setItem(hKey, JSON.stringify(hist));
+                    }
+                  } catch {}
+                }
+                localStorage.removeItem(key);
+              }
             }
           }
         } catch { }

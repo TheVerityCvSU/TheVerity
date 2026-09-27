@@ -98,7 +98,24 @@ const localDbAPI = {
     // Save draft code for assignment
     saveDraft(assignmentId, studentId, code, history = []) {
         const updated_at = new Date().toISOString();
-        const histStr = typeof history === 'string' ? history : JSON.stringify(history);
+        let histToSave = history;
+        if (!histToSave || (Array.isArray(histToSave) && histToSave.length === 0)) {
+            if (db && !useJsonFallback) {
+                try {
+                    const existing = db.prepare('SELECT history FROM drafts WHERE assignment_id = ? AND student_id = ?')
+                        .get(String(assignmentId), String(studentId));
+                    if (existing && existing.history) {
+                        histToSave = existing.history;
+                    }
+                } catch (_) {}
+            } else {
+                const key = `${assignmentId}:${studentId}`;
+                if (fallbackData.drafts[key]?.history?.length > 0) {
+                    histToSave = fallbackData.drafts[key].history;
+                }
+            }
+        }
+        const histStr = typeof histToSave === 'string' ? histToSave : JSON.stringify(histToSave || []);
         if (db && !useJsonFallback) {
             const stmt = db.prepare(`
                 INSERT INTO drafts (assignment_id, student_id, code, history, updated_at)
@@ -112,7 +129,9 @@ const localDbAPI = {
             return { success: true, updated_at };
         } else {
             const key = `${assignmentId}:${studentId}`;
-            fallbackData.drafts[key] = { assignmentId, studentId, code, history, updated_at };
+            let parsedHist = [];
+            try { parsedHist = typeof histToSave === 'string' ? JSON.parse(histToSave) : (histToSave || []); } catch (_) {}
+            fallbackData.drafts[key] = { assignmentId, studentId, code, history: parsedHist, updated_at };
             saveFallback();
             return { success: true, updated_at };
         }

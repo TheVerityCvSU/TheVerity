@@ -11,6 +11,7 @@ import ImagePreviewModal from '../components/ImagePreviewModal';
 import VideoPreviewModal from '../components/VideoPreviewModal';
 import VideoAttachment from '../components/VideoAttachment';
 import AttachmentCard from '../components/AttachmentCard';
+import { localStore } from '../services/localStore';
 
 const getStorageKey = (user) => {
   const identifier = user?.email || user?.id || (user?.name ? user.name.toLowerCase().replace(/\s+/g, '_') : null);
@@ -255,6 +256,44 @@ export default function StudentActivityDetail({
         const eventId = (data.studentId || '').toLowerCase();
 
         if (eventName === targetName || eventName === targetId || eventId === targetName || eventId === targetId) {
+          // Backup existing submission history to persistent history keys before removing
+          const hKeys = [
+            `verity_history_${classroomId}_${assignmentId}_${studentId}`,
+            `verity_history_${classroomId}_${assignmentId}_${safeUsername}`,
+            currentUser?.name ? `verity_history_${classroomId}_${assignmentId}_${currentUser.name}` : null,
+            currentUser?.email ? `verity_history_${classroomId}_${assignmentId}_${currentUser.email}` : null,
+            `verity_history_${assignmentId}_${studentId}`,
+            `verity_history_${assignmentId}_${safeUsername}`
+          ].filter(Boolean);
+
+          let foundHist = null;
+          for (const k of allKeys) {
+            try {
+              const item = localStorage.getItem(k);
+              if (item) {
+                const parsed = JSON.parse(item);
+                const h = parsed?.codeHistory || parsed?.history;
+                if (Array.isArray(h) && h.length > (foundHist?.length || 0)) {
+                  foundHist = h;
+                }
+              }
+            } catch {}
+          }
+
+          if (Array.isArray(foundHist) && foundHist.length > 0) {
+            hKeys.forEach(hk => {
+              try {
+                const cur = localStorage.getItem(hk);
+                if (!cur || JSON.parse(cur).length < foundHist.length) {
+                  localStorage.setItem(hk, JSON.stringify(foundHist));
+                }
+              } catch {}
+            });
+            try {
+              localStore.saveDraft(assignmentId, studentId, localStorage.getItem(draftCodeKey) || '', foundHist);
+            } catch {}
+          }
+
           setSubmission(null);
           allKeys.forEach(k => {
             try { localStorage.removeItem(k); } catch { }
@@ -286,12 +325,55 @@ export default function StudentActivityDetail({
       currentCode = assignment?.starterCode || "";
     }
 
+    // Resolve complete history from persistent history keys / localStore / submission
+    const hKeys = [
+      `verity_history_${classroomId}_${assignmentId}_${studentId}`,
+      `verity_history_${classroomId}_${assignmentId}_${safeUsername}`,
+      currentUser?.name ? `verity_history_${classroomId}_${assignmentId}_${currentUser.name}` : null,
+      currentUser?.email ? `verity_history_${classroomId}_${assignmentId}_${currentUser.email}` : null,
+      `verity_history_${assignmentId}_${studentId}`,
+      `verity_history_${assignmentId}_${safeUsername}`
+    ].filter(Boolean);
+
+    let resolvedHistory = [];
+    for (const hk of hKeys) {
+      try {
+        const item = localStorage.getItem(hk);
+        if (item) {
+          const parsed = JSON.parse(item);
+          if (Array.isArray(parsed) && parsed.length > resolvedHistory.length) {
+            resolvedHistory = parsed;
+          }
+        }
+      } catch {}
+    }
+
+    if (resolvedHistory.length === 0) {
+      const priorH = submission?.codeHistory || submission?.history;
+      if (Array.isArray(priorH) && priorH.length > 0) {
+        resolvedHistory = priorH;
+      }
+    }
+
+    if (resolvedHistory.length === 0) {
+      resolvedHistory = [{ time: Date.now(), code: currentCode }];
+    }
+
+    // Ensure persistent history has this
+    hKeys.forEach(hk => {
+      try { localStorage.setItem(hk, JSON.stringify(resolvedHistory)); } catch {}
+    });
+    try {
+      localStore.saveDraft(assignmentId, studentId, currentCode, resolvedHistory);
+    } catch {}
+
     const subData = {
       studentName: safeUsername,
       studentId: studentId,
       assignmentId: assignmentId,
       classroomId: classroomId,
       finalCode: currentCode,
+      codeHistory: resolvedHistory,
       submittedAt: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
     };
 
@@ -307,6 +389,19 @@ export default function StudentActivityDetail({
     });
     setSubmission(subData);
 
+    // Save to backend database
+    apiFetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/submissions/${assignmentId}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        studentName: safeUsername,
+        studentId: studentId,
+        finalCode: currentCode,
+        codeHistory: resolvedHistory,
+        classroomId: classroomId
+      })
+    }).catch(() => {});
+
     if (socket) {
       socket.emit('submit_exam', {
         studentName: safeUsername,
@@ -314,7 +409,7 @@ export default function StudentActivityDetail({
         assignmentId: assignmentId,
         finalCode: currentCode,
         classroomId: classroomId,
-        codeHistory: [{ time: Date.now(), code: currentCode }]
+        codeHistory: resolvedHistory
       });
     }
   };
@@ -322,6 +417,31 @@ export default function StudentActivityDetail({
   // Handle Unsubmit action
   const handleUnsubmit = () => {
     if (!window.confirm("Are you sure you want to unsubmit? You will be able to edit and re-submit your code.")) return;
+
+    // Preserve existing history into persistent history keys before removing submission
+    const existingHist = submission?.codeHistory || submission?.history;
+    const hKeys = [
+      `verity_history_${classroomId}_${assignmentId}_${studentId}`,
+      `verity_history_${classroomId}_${assignmentId}_${safeUsername}`,
+      currentUser?.name ? `verity_history_${classroomId}_${assignmentId}_${currentUser.name}` : null,
+      currentUser?.email ? `verity_history_${classroomId}_${assignmentId}_${currentUser.email}` : null,
+      `verity_history_${assignmentId}_${studentId}`,
+      `verity_history_${assignmentId}_${safeUsername}`
+    ].filter(Boolean);
+
+    if (Array.isArray(existingHist) && existingHist.length > 0) {
+      hKeys.forEach(hk => {
+        try {
+          const cur = localStorage.getItem(hk);
+          if (!cur || JSON.parse(cur).length < existingHist.length) {
+            localStorage.setItem(hk, JSON.stringify(existingHist));
+          }
+        } catch {}
+      });
+      try {
+        localStore.saveDraft(assignmentId, studentId, submission?.finalCode || '', existingHist);
+      } catch {}
+    }
 
     const keysToRemove = [
       submissionKey,
@@ -337,11 +457,11 @@ export default function StudentActivityDetail({
     setSubmission(null);
 
     // Call backend endpoint & socket
-    apiFetch(`${import.meta.env.VITE_API_URL}/submissions/${assignmentId}/${encodeURIComponent(safeUsername)}`, {
+    apiFetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/submissions/${assignmentId}/${encodeURIComponent(safeUsername)}`, {
       method: 'DELETE'
     }).catch(() => {});
     if (studentId && studentId !== safeUsername) {
-      apiFetch(`${import.meta.env.VITE_API_URL}/submissions/${assignmentId}/${encodeURIComponent(studentId)}`, {
+      apiFetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/submissions/${assignmentId}/${encodeURIComponent(studentId)}`, {
         method: 'DELETE'
       }).catch(() => {});
     }
