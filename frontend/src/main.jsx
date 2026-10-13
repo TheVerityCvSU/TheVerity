@@ -1,6 +1,7 @@
 import React, { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import './index.css';
+import './utils/monacoConfig.js'; // offline Monaco (no CDN)
 import App from './App.jsx';
 import { GoogleOAuthProvider } from '@react-oauth/google';
 import { MotionConfig } from 'framer-motion';
@@ -47,8 +48,7 @@ createRoot(document.getElementById('root')).render(
   <StrictMode>
     <GoogleOAuthProvider clientId={import.meta.env.VITE_GOOGLE_CLIENT_ID}>
       <ErrorBoundary>
-        {/* TEMPORARY: reducedMotion="always" disables all Framer Motion animations without deleting any code */}
-        <MotionConfig reducedMotion="always">
+        <MotionConfig reducedMotion="never">
           <App />
         </MotionConfig>
       </ErrorBoundary>

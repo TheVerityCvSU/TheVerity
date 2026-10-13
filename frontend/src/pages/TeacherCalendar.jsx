@@ -630,10 +630,8 @@ export default function TeacherCalendar({ classrooms }) {
                   color: isDark ? '#d1d5db' : '#334155',
                   maxHeight: '140px',
                   overflowY: 'auto',
-                  whiteSpace: 'pre-wrap'
-                }}>
-                  {selectedActivity.details}
-                </div>
+                  whiteSpace: 'normal'
+                }} dangerouslySetInnerHTML={{ __html: selectedActivity.details }} />
               </div>
             )}
 

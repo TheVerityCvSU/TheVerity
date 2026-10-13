@@ -1,0 +1,2 @@
+diff --git a/frontend/src/pages/StudentDashboard.jsx b/frontend/src/pages/StudentDashboard.jsx')) {\n    fs.writeFileSync('patch.diff', obj.content);\n    console.log('Patch saved');\n  }\n}\n\"","Cwd":"c:\\Users\\vicfa\\The-Verity\\frontend","WaitMsBeforeAsync":500,"toolAction":"Running command","toolSummary":"Command execution"}}]}
+

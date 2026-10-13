@@ -6,6 +6,8 @@ import {
 import { useDarkMode } from '../hooks/useDarkMode';
 import { useCurrentUser } from '../hooks/useCurrentUser';
 import Skeleton from '../components/Skeleton';
+import ChangeEmailModal from '../components/ChangeEmailModal';
+import ChangePasswordModal from '../components/ChangePasswordModal';
 
 const PRESET_AVATARS = [
   {
@@ -55,17 +57,26 @@ const APPEARANCE_SECTION = {
   ],
 };
 
+const PROFILE_PICTURE_SECTION = {
+  icon: Camera,
+  title: 'Profile Picture',
+  blurb: 'Update your profile photo and choose a personalized avatar.',
+  fields: [],
+};
+
 const SECTIONS = {
   Student: [
     APPEARANCE_SECTION,
+    PROFILE_PICTURE_SECTION,
     {
       icon: User,
-      title: 'Profile Management',
-      blurb: 'Update your profile photo, display name, email, and password credentials.',
+      title: 'User Details',
+      blurb: 'Update your display name, email, and password credentials.',
       fields: [
-        { label: 'Full Name', placeholder: 'Juan Dela Cruz' },
-        { label: 'Email Address', placeholder: 'student@verity.edu' },
-        { label: 'New Password', placeholder: '••••••••', type: 'password' },
+        { label: 'First Name', placeholder: 'Juan' },
+        { label: 'Last Name', placeholder: 'Dela Cruz' },
+        { label: 'Email Address', placeholder: 'student@verity.edu', type: 'email_with_change' },
+        { label: 'Password', placeholder: '••••••••', type: 'password_with_change' },
       ],
     },
     {
@@ -92,16 +103,17 @@ const SECTIONS = {
   ],
   Instructor: [
     APPEARANCE_SECTION,
+    PROFILE_PICTURE_SECTION,
     {
       icon: User,
-      title: 'Profile Management',
-      blurb: 'Update your profile photo, instructor credentials, and contact details.',
+      title: 'User Details',
+      blurb: 'Update your instructor credentials and contact details.',
       fields: [
-        { label: 'Full Name', placeholder: 'Prof. Maria Santos' },
-        { label: 'Email Address', placeholder: 'instructor@verity.edu' },
+        { label: 'First Name', placeholder: 'Maria' },
+        { label: 'Last Name', placeholder: 'Santos' },
+        { label: 'Email Address', placeholder: 'instructor@verity.edu', type: 'email_with_change' },
         { label: 'Department / Specialization', placeholder: 'Computer Science & Engineering' },
-        { label: 'Office Hours', placeholder: 'Mon/Wed 2:00 PM - 4:00 PM' },
-        { label: 'New Password', placeholder: '••••••••', type: 'password' },
+        { label: 'Password', placeholder: '••••••••', type: 'password_with_change' },
       ],
     },
     {
@@ -129,15 +141,17 @@ const SECTIONS = {
   ],
   Administrator: [
     APPEARANCE_SECTION,
+    PROFILE_PICTURE_SECTION,
     {
       icon: User,
-      title: 'Profile Management',
-      blurb: 'Update your administrative profile photo and security credentials.',
+      title: 'User Details',
+      blurb: 'Update your administrative security credentials.',
       fields: [
-        { label: 'Full Name', placeholder: 'System Administrator' },
-        { label: 'Email Address', placeholder: 'admin@verity.edu' },
+        { label: 'First Name', placeholder: 'System' },
+        { label: 'Last Name', placeholder: 'Administrator' },
+        { label: 'Email Address', placeholder: 'admin@verity.edu', type: 'email_with_change' },
         { label: 'Emergency Contact', placeholder: '+63 900 000 0000' },
-        { label: 'New Password', placeholder: '••••••••', type: 'password' },
+        { label: 'Password', placeholder: '••••••••', type: 'password_with_change' },
       ],
     },
     {
@@ -518,13 +532,15 @@ export default function SettingsPanel({ role = 'Student', onBack, loading = fals
       const parsed = saved ? JSON.parse(saved) : {};
       const user = currentUser || JSON.parse(localStorage.getItem('currentUser') || '{}');
       if (user?.name) {
-        parsed['Profile Management:Full Name'] = user.name;
+        const nameParts = user.name.split(' ');
+        parsed['User Details:First Name'] = nameParts[0];
+        parsed['User Details:Last Name'] = nameParts.slice(1).join(' ');
       }
       if (user?.email) {
-        parsed['Profile Management:Email Address'] = user.email;
+        parsed['User Details:Email Address'] = user.email;
       }
       // Hold avatar temporarily until Save is clicked
-      parsed['Profile Management:Avatar'] = user?.avatar || user?.profilePicture || null;
+      parsed['Profile Picture:Avatar'] = user?.avatar || user?.profilePicture || null;
       return parsed;
     } catch {
       return {};
@@ -532,6 +548,9 @@ export default function SettingsPanel({ role = 'Student', onBack, loading = fals
   });
 
   const [savedSection, setSavedSection] = useState(null);
+  const [isEmailModalOpen, setIsEmailModalOpen] = useState(false);
+  const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
+  const [securityNotice, setSecurityNotice] = useState(null);
 
   // Sync currentUser fields into form values whenever the user object updates.
   // The useState initializer only runs once on mount, so if currentUser loads
@@ -540,12 +559,16 @@ export default function SettingsPanel({ role = 'Student', onBack, loading = fals
     if (!currentUser) return;
     setValues(prev => {
       const updated = { ...prev };
-      if (currentUser.name) updated['Profile Management:Full Name'] = currentUser.name;
-      if (currentUser.email) updated['Profile Management:Email Address'] = currentUser.email;
+      if (currentUser.name) {
+        const nameParts = currentUser.name.split(' ');
+        updated['User Details:First Name'] = nameParts[0];
+        updated['User Details:Last Name'] = nameParts.slice(1).join(' ');
+      }
+      if (currentUser.email) updated['User Details:Email Address'] = currentUser.email;
       // Only overwrite avatar if the form hasn't been modified by the user (i.e. still matches stored user)
       const storedAvatar = currentUser.avatar || currentUser.profilePicture || null;
-      if (prev['Profile Management:Avatar'] === undefined || prev['Profile Management:Avatar'] === null) {
-        updated['Profile Management:Avatar'] = storedAvatar;
+      if (prev['Profile Picture:Avatar'] === undefined || prev['Profile Picture:Avatar'] === null) {
+        updated['Profile Picture:Avatar'] = storedAvatar;
       }
       return updated;
     });
@@ -554,20 +577,20 @@ export default function SettingsPanel({ role = 'Student', onBack, loading = fals
   const handleSave = async (sectionTitle) => {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(values));
-      if (sectionTitle === 'Profile Management') {
-        const nameVal = values[`${sectionTitle}:Full Name`];
-        const emailVal = values[`${sectionTitle}:Email Address`];
-        const avatarVal = values[`${sectionTitle}:Avatar`];
+      if (sectionTitle === 'User Details') {
+        const firstVal = values[`${sectionTitle}:First Name`];
+        const lastVal = values[`${sectionTitle}:Last Name`];
         const payload = {};
-        if (nameVal && nameVal.trim()) payload.name = nameVal.trim();
-        if (emailVal && emailVal.trim()) payload.email = emailVal.trim();
-        // Always include avatar in payload (even null, so photo removal persists to DB)
-        payload.avatar = avatarVal !== undefined ? avatarVal : null;
+        const fullName = [firstVal, lastVal].filter(Boolean).join(' ');
+        if (fullName.trim()) payload.name = fullName.trim();
+        // Note: Email changes are exclusively managed via verified ChangeEmailModal
         if (Object.keys(payload).length > 0) {
-          // updateCurrentUser handles both local state update AND DB persistence in one call.
-          // Calling apiFetch separately here would cause a duplicate request race condition.
           await updateCurrentUser(payload);
         }
+      } else if (sectionTitle === 'Profile Picture') {
+        const avatarVal = values[`${sectionTitle}:Avatar`];
+        const payload = { avatar: avatarVal !== undefined ? avatarVal : null };
+        await updateCurrentUser(payload);
       }
     } catch (err) {
       console.error('Failed to save settings:', err);
@@ -580,14 +603,36 @@ export default function SettingsPanel({ role = 'Student', onBack, loading = fals
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', height: '100%', padding: '0 clamp(15px, 5vw, 50px)', overflowY: 'auto' }}>
-      {/* Header */}
-      <div style={styles.header}>
-        <div style={styles.headerTitle}>
-          <h1 style={{ ...styles.title, ...(isDark ? { color: '#E8EAED' } : {}) }}>Settings</h1>
+      <div style={{ width: '100%', maxWidth: '800px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+        {/* Header */}
+        <div style={styles.header}>
+          <div style={styles.headerTitle}>
+            <h1 style={{ ...styles.title, ...(isDark ? { color: '#E8EAED' } : {}) }}>Settings</h1>
+          </div>
         </div>
-      </div>
 
-      {/* Settings sections */}
+        {/* Security Notification Banner */}
+        {securityNotice && (
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '10px',
+              padding: '12px 18px',
+              borderRadius: '12px',
+              backgroundColor: isDark ? 'rgba(16,185,129,0.18)' : '#ecfdf5',
+              border: '1px solid #34d399',
+              color: isDark ? '#34d399' : '#059669',
+              fontWeight: '600',
+              fontSize: '0.9rem'
+            }}
+          >
+            <CheckCircle2 size={18} />
+            <span>{securityNotice.msg}</span>
+          </div>
+        )}
+
+        {/* Settings sections */}
       {loading ? (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
           <Skeleton.Settings />
@@ -597,7 +642,7 @@ export default function SettingsPanel({ role = 'Student', onBack, loading = fals
         sections.map((section) => {
           const SectionIcon = section.icon;
           const isAppearance = section.title === 'Appearance & Display';
-          const isProfile = section.title === 'Profile Management';
+          const isProfile = section.title === 'Profile Picture';
 
         return (
           <div
@@ -631,12 +676,12 @@ export default function SettingsPanel({ role = 'Student', onBack, loading = fals
             </div>
 
             <div style={styles.fields}>
-              {/* Profile Picture Changer right at the top of Profile Management */}
+              {/* Profile Picture Changer right at the top of Profile Picture section */}
               {isProfile && (
                 <ProfilePictureChanger
                   isDark={isDark}
-                  avatar={values['Profile Management:Avatar']}
-                  onAvatarChange={(av) => setValues(prev => ({ ...prev, 'Profile Management:Avatar': av }))}
+                  avatar={values['Profile Picture:Avatar']}
+                  onAvatarChange={(av) => setValues(prev => ({ ...prev, 'Profile Picture:Avatar': av }))}
                 />
               )}
 
@@ -723,6 +768,62 @@ export default function SettingsPanel({ role = 'Student', onBack, loading = fals
                   );
                 }
 
+                if (f.type === 'email_with_change' || f.type === 'password_with_change') {
+                  const isEmail = f.type === 'email_with_change';
+                  const displayValue = isEmail ? (values[key] || currentUser?.email || '') : '••••••••••••';
+                  return (
+                    <label
+                      key={f.label}
+                      style={{
+                        ...styles.fieldLabel,
+                        ...(isDark ? { color: '#E8EAED' } : {})
+                      }}
+                    >
+                      {f.label}
+                      <div style={{ display: 'flex', gap: '8px', alignItems: 'stretch' }}>
+                        <input
+                          type={isEmail ? 'email' : 'password'}
+                          placeholder={f.placeholder}
+                          value={displayValue}
+                          disabled
+                          readOnly
+                          style={{
+                            ...styles.input,
+                            flex: 1,
+                            opacity: 0.7,
+                            cursor: 'default',
+                            backgroundColor: isDark ? '#2A2A2A' : '#f3f4f6',
+                            ...(isDark ? {
+                              borderColor: '#4D4D4D',
+                              color: '#E8EAED'
+                            } : {})
+                          }}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (isEmail) setIsEmailModalOpen(true);
+                            else setIsPasswordModalOpen(true);
+                          }}
+                          style={{
+                            padding: '0 18px',
+                            borderRadius: '8px',
+                            backgroundColor: isDark ? '#4A4A4A' : '#e5e7eb',
+                            color: isDark ? '#E8EAED' : '#475569',
+                            border: 'none',
+                            fontWeight: '600',
+                            fontSize: '0.86rem',
+                            cursor: 'pointer',
+                            transition: 'background-color 0.2s',
+                          }}
+                        >
+                          Change
+                        </button>
+                      </div>
+                    </label>
+                  );
+                }
+
                 return (
                   <label
                     key={f.label}
@@ -776,6 +877,47 @@ export default function SettingsPanel({ role = 'Student', onBack, loading = fals
         );
       })
       )}
+      </div>
+
+      {/* Change Email Modal */}
+      <ChangeEmailModal
+        isOpen={isEmailModalOpen}
+        onClose={() => setIsEmailModalOpen(false)}
+        currentEmail={values['User Details:Email Address'] || currentUser?.email || ''}
+        onSuccess={(newEmail) => {
+          setValues(prev => {
+            const nextVals = {
+              ...prev,
+              'User Details:Email Address': newEmail
+            };
+            try {
+              localStorage.setItem(STORAGE_KEY, JSON.stringify(nextVals));
+            } catch (_) {}
+            return nextVals;
+          });
+          updateCurrentUser({ email: newEmail });
+          setSecurityNotice({
+            type: 'success',
+            msg: `Email successfully verified and updated to ${newEmail}!`
+          });
+          setTimeout(() => setSecurityNotice(null), 4000);
+        }}
+        isDark={isDark}
+      />
+
+      {/* Change Password Modal */}
+      <ChangePasswordModal
+        isOpen={isPasswordModalOpen}
+        onClose={() => setIsPasswordModalOpen(false)}
+        onSuccess={(msg) => {
+          setSecurityNotice({
+            type: 'success',
+            msg: msg || 'Password updated successfully!'
+          });
+          setTimeout(() => setSecurityNotice(null), 4000);
+        }}
+        isDark={isDark}
+      />
     </div>
   );
 }
@@ -787,7 +929,7 @@ const styles = {
 
   sectionCard: {
     backgroundColor: 'white', borderRadius: '24px', padding: '36px',
-    boxShadow: '0 10px 25px rgba(0,0,0,0.05)', maxWidth: '720px',
+    boxShadow: '0 10px 25px rgba(0,0,0,0.05)', width: '100%', boxSizing: 'border-box',
     display: 'flex', flexDirection: 'column', gap: '24px',
     transition: 'background-color 0.25s ease, border-color 0.25s ease',
   },

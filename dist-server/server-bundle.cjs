@@ -89648,6 +89648,934 @@ You're receiving this email because a verification code was requested to create 
   }
 });
 
+// server/node_modules/better-sqlite3/lib/util.js
+var require_util3 = __commonJS({
+  "server/node_modules/better-sqlite3/lib/util.js"(exports2) {
+    "use strict";
+    exports2.getBooleanOption = (options, key) => {
+      let value = false;
+      if (key in options && typeof (value = options[key]) !== "boolean") {
+        throw new TypeError(`Expected the "${key}" option to be a boolean`);
+      }
+      return value;
+    };
+    exports2.cppdb = /* @__PURE__ */ Symbol();
+    exports2.inspect = /* @__PURE__ */ Symbol.for("nodejs.util.inspect.custom");
+  }
+});
+
+// server/node_modules/better-sqlite3/lib/sqlite-error.js
+var require_sqlite_error = __commonJS({
+  "server/node_modules/better-sqlite3/lib/sqlite-error.js"(exports2, module2) {
+    "use strict";
+    var descriptor = { value: "SqliteError", writable: true, enumerable: false, configurable: true };
+    function SqliteError(message, code) {
+      if (new.target !== SqliteError) {
+        return new SqliteError(message, code);
+      }
+      if (typeof code !== "string") {
+        throw new TypeError("Expected second argument to be a string");
+      }
+      Error.call(this, message);
+      descriptor.value = "" + message;
+      Object.defineProperty(this, "message", descriptor);
+      Error.captureStackTrace(this, SqliteError);
+      this.code = code;
+    }
+    Object.setPrototypeOf(SqliteError, Error);
+    Object.setPrototypeOf(SqliteError.prototype, Error.prototype);
+    Object.defineProperty(SqliteError.prototype, "name", descriptor);
+    module2.exports = SqliteError;
+  }
+});
+
+// server/node_modules/file-uri-to-path/index.js
+var require_file_uri_to_path = __commonJS({
+  "server/node_modules/file-uri-to-path/index.js"(exports2, module2) {
+    var sep = require("path").sep || "/";
+    module2.exports = fileUriToPath;
+    function fileUriToPath(uri) {
+      if ("string" != typeof uri || uri.length <= 7 || "file://" != uri.substring(0, 7)) {
+        throw new TypeError("must pass in a file:// URI to convert to a file path");
+      }
+      var rest = decodeURI(uri.substring(7));
+      var firstSlash = rest.indexOf("/");
+      var host = rest.substring(0, firstSlash);
+      var path2 = rest.substring(firstSlash + 1);
+      if ("localhost" == host) host = "";
+      if (host) {
+        host = sep + sep + host;
+      }
+      path2 = path2.replace(/^(.+)\|/, "$1:");
+      if (sep == "\\") {
+        path2 = path2.replace(/\//g, "\\");
+      }
+      if (/^.+\:/.test(path2)) {
+      } else {
+        path2 = sep + path2;
+      }
+      return host + path2;
+    }
+  }
+});
+
+// server/node_modules/bindings/bindings.js
+var require_bindings = __commonJS({
+  "server/node_modules/bindings/bindings.js"(exports2, module2) {
+    var fs3 = require("fs");
+    var path2 = require("path");
+    var fileURLToPath = require_file_uri_to_path();
+    var join = path2.join;
+    var dirname = path2.dirname;
+    var exists = fs3.accessSync && function(path3) {
+      try {
+        fs3.accessSync(path3);
+      } catch (e2) {
+        return false;
+      }
+      return true;
+    } || fs3.existsSync || path2.existsSync;
+    var defaults = {
+      arrow: process.env.NODE_BINDINGS_ARROW || " \u2192 ",
+      compiled: process.env.NODE_BINDINGS_COMPILED_DIR || "compiled",
+      platform: process.platform,
+      arch: process.arch,
+      nodePreGyp: "node-v" + process.versions.modules + "-" + process.platform + "-" + process.arch,
+      version: process.versions.node,
+      bindings: "bindings.node",
+      try: [
+        // node-gyp's linked version in the "build" dir
+        ["module_root", "build", "bindings"],
+        // node-waf and gyp_addon (a.k.a node-gyp)
+        ["module_root", "build", "Debug", "bindings"],
+        ["module_root", "build", "Release", "bindings"],
+        // Debug files, for development (legacy behavior, remove for node v0.9)
+        ["module_root", "out", "Debug", "bindings"],
+        ["module_root", "Debug", "bindings"],
+        // Release files, but manually compiled (legacy behavior, remove for node v0.9)
+        ["module_root", "out", "Release", "bindings"],
+        ["module_root", "Release", "bindings"],
+        // Legacy from node-waf, node <= 0.4.x
+        ["module_root", "build", "default", "bindings"],
+        // Production "Release" buildtype binary (meh...)
+        ["module_root", "compiled", "version", "platform", "arch", "bindings"],
+        // node-qbs builds
+        ["module_root", "addon-build", "release", "install-root", "bindings"],
+        ["module_root", "addon-build", "debug", "install-root", "bindings"],
+        ["module_root", "addon-build", "default", "install-root", "bindings"],
+        // node-pre-gyp path ./lib/binding/{node_abi}-{platform}-{arch}
+        ["module_root", "lib", "binding", "nodePreGyp", "bindings"]
+      ]
+    };
+    function bindings(opts) {
+      if (typeof opts == "string") {
+        opts = { bindings: opts };
+      } else if (!opts) {
+        opts = {};
+      }
+      Object.keys(defaults).map(function(i3) {
+        if (!(i3 in opts)) opts[i3] = defaults[i3];
+      });
+      if (!opts.module_root) {
+        opts.module_root = exports2.getRoot(exports2.getFileName());
+      }
+      if (path2.extname(opts.bindings) != ".node") {
+        opts.bindings += ".node";
+      }
+      var requireFunc = typeof __webpack_require__ === "function" ? __non_webpack_require__ : require;
+      var tries = [], i2 = 0, l = opts.try.length, n, b, err;
+      for (; i2 < l; i2++) {
+        n = join.apply(
+          null,
+          opts.try[i2].map(function(p) {
+            return opts[p] || p;
+          })
+        );
+        tries.push(n);
+        try {
+          b = opts.path ? requireFunc.resolve(n) : requireFunc(n);
+          if (!opts.path) {
+            b.path = n;
+          }
+          return b;
+        } catch (e2) {
+          if (e2.code !== "MODULE_NOT_FOUND" && e2.code !== "QUALIFIED_PATH_RESOLUTION_FAILED" && !/not find/i.test(e2.message)) {
+            throw e2;
+          }
+        }
+      }
+      err = new Error(
+        "Could not locate the bindings file. Tried:\n" + tries.map(function(a) {
+          return opts.arrow + a;
+        }).join("\n")
+      );
+      err.tries = tries;
+      throw err;
+    }
+    module2.exports = exports2 = bindings;
+    exports2.getFileName = function getFileName(calling_file) {
+      var origPST = Error.prepareStackTrace, origSTL = Error.stackTraceLimit, dummy = {}, fileName;
+      Error.stackTraceLimit = 10;
+      Error.prepareStackTrace = function(e2, st) {
+        for (var i2 = 0, l = st.length; i2 < l; i2++) {
+          fileName = st[i2].getFileName();
+          if (fileName !== __filename) {
+            if (calling_file) {
+              if (fileName !== calling_file) {
+                return;
+              }
+            } else {
+              return;
+            }
+          }
+        }
+      };
+      Error.captureStackTrace(dummy);
+      dummy.stack;
+      Error.prepareStackTrace = origPST;
+      Error.stackTraceLimit = origSTL;
+      var fileSchema = "file://";
+      if (fileName.indexOf(fileSchema) === 0) {
+        fileName = fileURLToPath(fileName);
+      }
+      return fileName;
+    };
+    exports2.getRoot = function getRoot(file) {
+      var dir = dirname(file), prev;
+      while (true) {
+        if (dir === ".") {
+          dir = process.cwd();
+        }
+        if (exists(join(dir, "package.json")) || exists(join(dir, "node_modules"))) {
+          return dir;
+        }
+        if (prev === dir) {
+          throw new Error(
+            'Could not find module root given file: "' + file + '". Do you have a `package.json` file? '
+          );
+        }
+        prev = dir;
+        dir = join(dir, "..");
+      }
+    };
+  }
+});
+
+// server/node_modules/better-sqlite3/lib/methods/wrappers.js
+var require_wrappers = __commonJS({
+  "server/node_modules/better-sqlite3/lib/methods/wrappers.js"(exports2) {
+    "use strict";
+    var { cppdb } = require_util3();
+    exports2.prepare = function prepare(sql) {
+      return this[cppdb].prepare(sql, this, false);
+    };
+    exports2.exec = function exec2(sql) {
+      this[cppdb].exec(sql);
+      return this;
+    };
+    exports2.close = function close() {
+      this[cppdb].close();
+      return this;
+    };
+    exports2.loadExtension = function loadExtension(...args) {
+      this[cppdb].loadExtension(...args);
+      return this;
+    };
+    exports2.defaultSafeIntegers = function defaultSafeIntegers(...args) {
+      this[cppdb].defaultSafeIntegers(...args);
+      return this;
+    };
+    exports2.unsafeMode = function unsafeMode(...args) {
+      this[cppdb].unsafeMode(...args);
+      return this;
+    };
+    exports2.getters = {
+      name: {
+        get: function name() {
+          return this[cppdb].name;
+        },
+        enumerable: true
+      },
+      open: {
+        get: function open() {
+          return this[cppdb].open;
+        },
+        enumerable: true
+      },
+      inTransaction: {
+        get: function inTransaction() {
+          return this[cppdb].inTransaction;
+        },
+        enumerable: true
+      },
+      readonly: {
+        get: function readonly() {
+          return this[cppdb].readonly;
+        },
+        enumerable: true
+      },
+      memory: {
+        get: function memory() {
+          return this[cppdb].memory;
+        },
+        enumerable: true
+      }
+    };
+  }
+});
+
+// server/node_modules/better-sqlite3/lib/methods/transaction.js
+var require_transaction = __commonJS({
+  "server/node_modules/better-sqlite3/lib/methods/transaction.js"(exports2, module2) {
+    "use strict";
+    var { cppdb } = require_util3();
+    var controllers = /* @__PURE__ */ new WeakMap();
+    module2.exports = function transaction(fn) {
+      if (typeof fn !== "function") throw new TypeError("Expected first argument to be a function");
+      const db2 = this[cppdb];
+      const controller = getController(db2, this);
+      const { apply } = Function.prototype;
+      const properties = {
+        default: { value: wrapTransaction(apply, fn, db2, controller.default) },
+        deferred: { value: wrapTransaction(apply, fn, db2, controller.deferred) },
+        immediate: { value: wrapTransaction(apply, fn, db2, controller.immediate) },
+        exclusive: { value: wrapTransaction(apply, fn, db2, controller.exclusive) },
+        database: { value: this, enumerable: true }
+      };
+      Object.defineProperties(properties.default.value, properties);
+      Object.defineProperties(properties.deferred.value, properties);
+      Object.defineProperties(properties.immediate.value, properties);
+      Object.defineProperties(properties.exclusive.value, properties);
+      return properties.default.value;
+    };
+    var getController = (db2, self2) => {
+      let controller = controllers.get(db2);
+      if (!controller) {
+        const shared = {
+          commit: db2.prepare("COMMIT", self2, false),
+          rollback: db2.prepare("ROLLBACK", self2, false),
+          savepoint: db2.prepare("SAVEPOINT `	_bs3.	`", self2, false),
+          release: db2.prepare("RELEASE `	_bs3.	`", self2, false),
+          rollbackTo: db2.prepare("ROLLBACK TO `	_bs3.	`", self2, false)
+        };
+        controllers.set(db2, controller = {
+          default: Object.assign({ begin: db2.prepare("BEGIN", self2, false) }, shared),
+          deferred: Object.assign({ begin: db2.prepare("BEGIN DEFERRED", self2, false) }, shared),
+          immediate: Object.assign({ begin: db2.prepare("BEGIN IMMEDIATE", self2, false) }, shared),
+          exclusive: Object.assign({ begin: db2.prepare("BEGIN EXCLUSIVE", self2, false) }, shared)
+        });
+      }
+      return controller;
+    };
+    var wrapTransaction = (apply, fn, db2, { begin, commit, rollback, savepoint, release, rollbackTo }) => function sqliteTransaction() {
+      let before, after, undo;
+      if (db2.inTransaction) {
+        before = savepoint;
+        after = release;
+        undo = rollbackTo;
+      } else {
+        before = begin;
+        after = commit;
+        undo = rollback;
+      }
+      before.run();
+      try {
+        const result = apply.call(fn, this, arguments);
+        if (result && typeof result.then === "function") {
+          throw new TypeError("Transaction function cannot return a promise");
+        }
+        after.run();
+        return result;
+      } catch (ex) {
+        if (db2.inTransaction) {
+          undo.run();
+          if (undo !== rollback) after.run();
+        }
+        throw ex;
+      }
+    };
+  }
+});
+
+// server/node_modules/better-sqlite3/lib/methods/pragma.js
+var require_pragma = __commonJS({
+  "server/node_modules/better-sqlite3/lib/methods/pragma.js"(exports2, module2) {
+    "use strict";
+    var { getBooleanOption, cppdb } = require_util3();
+    module2.exports = function pragma(source, options) {
+      if (options == null) options = {};
+      if (typeof source !== "string") throw new TypeError("Expected first argument to be a string");
+      if (typeof options !== "object") throw new TypeError("Expected second argument to be an options object");
+      const simple = getBooleanOption(options, "simple");
+      const stmt = this[cppdb].prepare(`PRAGMA ${source}`, this, true);
+      return simple ? stmt.pluck().get() : stmt.all();
+    };
+  }
+});
+
+// server/node_modules/better-sqlite3/lib/methods/backup.js
+var require_backup = __commonJS({
+  "server/node_modules/better-sqlite3/lib/methods/backup.js"(exports2, module2) {
+    "use strict";
+    var fs3 = require("fs");
+    var path2 = require("path");
+    var { promisify: promisify2 } = require("util");
+    var { cppdb } = require_util3();
+    var fsAccess = promisify2(fs3.access);
+    module2.exports = async function backup(filename, options) {
+      if (options == null) options = {};
+      if (typeof filename !== "string") throw new TypeError("Expected first argument to be a string");
+      if (typeof options !== "object") throw new TypeError("Expected second argument to be an options object");
+      filename = filename.trim();
+      const attachedName = "attached" in options ? options.attached : "main";
+      const handler = "progress" in options ? options.progress : null;
+      if (!filename) throw new TypeError("Backup filename cannot be an empty string");
+      if (filename === ":memory:") throw new TypeError('Invalid backup filename ":memory:"');
+      if (typeof attachedName !== "string") throw new TypeError('Expected the "attached" option to be a string');
+      if (!attachedName) throw new TypeError('The "attached" option cannot be an empty string');
+      if (handler != null && typeof handler !== "function") throw new TypeError('Expected the "progress" option to be a function');
+      await fsAccess(path2.dirname(filename)).catch(() => {
+        throw new TypeError("Cannot save backup because the directory does not exist");
+      });
+      const isNewFile = await fsAccess(filename).then(() => false, () => true);
+      return runBackup(this[cppdb].backup(this, attachedName, filename, isNewFile), handler || null);
+    };
+    var runBackup = (backup, handler) => {
+      let rate = 0;
+      let useDefault = true;
+      return new Promise((resolve, reject) => {
+        setImmediate(function step() {
+          try {
+            const progress = backup.transfer(rate);
+            if (!progress.remainingPages) {
+              backup.close();
+              resolve(progress);
+              return;
+            }
+            if (useDefault) {
+              useDefault = false;
+              rate = 100;
+            }
+            if (handler) {
+              const ret = handler(progress);
+              if (ret !== void 0) {
+                if (typeof ret === "number" && ret === ret) rate = Math.max(0, Math.min(2147483647, Math.round(ret)));
+                else throw new TypeError("Expected progress callback to return a number or undefined");
+              }
+            }
+            setImmediate(step);
+          } catch (err) {
+            backup.close();
+            reject(err);
+          }
+        });
+      });
+    };
+  }
+});
+
+// server/node_modules/better-sqlite3/lib/methods/serialize.js
+var require_serialize = __commonJS({
+  "server/node_modules/better-sqlite3/lib/methods/serialize.js"(exports2, module2) {
+    "use strict";
+    var { cppdb } = require_util3();
+    module2.exports = function serialize(options) {
+      if (options == null) options = {};
+      if (typeof options !== "object") throw new TypeError("Expected first argument to be an options object");
+      const attachedName = "attached" in options ? options.attached : "main";
+      if (typeof attachedName !== "string") throw new TypeError('Expected the "attached" option to be a string');
+      if (!attachedName) throw new TypeError('The "attached" option cannot be an empty string');
+      return this[cppdb].serialize(attachedName);
+    };
+  }
+});
+
+// server/node_modules/better-sqlite3/lib/methods/function.js
+var require_function = __commonJS({
+  "server/node_modules/better-sqlite3/lib/methods/function.js"(exports2, module2) {
+    "use strict";
+    var { getBooleanOption, cppdb } = require_util3();
+    module2.exports = function defineFunction(name, options, fn) {
+      if (options == null) options = {};
+      if (typeof options === "function") {
+        fn = options;
+        options = {};
+      }
+      if (typeof name !== "string") throw new TypeError("Expected first argument to be a string");
+      if (typeof fn !== "function") throw new TypeError("Expected last argument to be a function");
+      if (typeof options !== "object") throw new TypeError("Expected second argument to be an options object");
+      if (!name) throw new TypeError("User-defined function name cannot be an empty string");
+      const safeIntegers = "safeIntegers" in options ? +getBooleanOption(options, "safeIntegers") : 2;
+      const deterministic = getBooleanOption(options, "deterministic");
+      const directOnly = getBooleanOption(options, "directOnly");
+      const varargs = getBooleanOption(options, "varargs");
+      let argCount = -1;
+      if (!varargs) {
+        argCount = fn.length;
+        if (!Number.isInteger(argCount) || argCount < 0) throw new TypeError("Expected function.length to be a positive integer");
+        if (argCount > 100) throw new RangeError("User-defined functions cannot have more than 100 arguments");
+      }
+      this[cppdb].function(fn, name, argCount, safeIntegers, deterministic, directOnly);
+      return this;
+    };
+  }
+});
+
+// server/node_modules/better-sqlite3/lib/methods/aggregate.js
+var require_aggregate = __commonJS({
+  "server/node_modules/better-sqlite3/lib/methods/aggregate.js"(exports2, module2) {
+    "use strict";
+    var { getBooleanOption, cppdb } = require_util3();
+    module2.exports = function defineAggregate(name, options) {
+      if (typeof name !== "string") throw new TypeError("Expected first argument to be a string");
+      if (typeof options !== "object" || options === null) throw new TypeError("Expected second argument to be an options object");
+      if (!name) throw new TypeError("User-defined function name cannot be an empty string");
+      const start2 = "start" in options ? options.start : null;
+      const step = getFunctionOption(options, "step", true);
+      const inverse = getFunctionOption(options, "inverse", false);
+      const result = getFunctionOption(options, "result", false);
+      const safeIntegers = "safeIntegers" in options ? +getBooleanOption(options, "safeIntegers") : 2;
+      const deterministic = getBooleanOption(options, "deterministic");
+      const directOnly = getBooleanOption(options, "directOnly");
+      const varargs = getBooleanOption(options, "varargs");
+      let argCount = -1;
+      if (!varargs) {
+        argCount = Math.max(getLength(step), inverse ? getLength(inverse) : 0);
+        if (argCount > 0) argCount -= 1;
+        if (argCount > 100) throw new RangeError("User-defined functions cannot have more than 100 arguments");
+      }
+      this[cppdb].aggregate(start2, step, inverse, result, name, argCount, safeIntegers, deterministic, directOnly);
+      return this;
+    };
+    var getFunctionOption = (options, key, required) => {
+      const value = key in options ? options[key] : null;
+      if (typeof value === "function") return value;
+      if (value != null) throw new TypeError(`Expected the "${key}" option to be a function`);
+      if (required) throw new TypeError(`Missing required option "${key}"`);
+      return null;
+    };
+    var getLength = ({ length }) => {
+      if (Number.isInteger(length) && length >= 0) return length;
+      throw new TypeError("Expected function.length to be a positive integer");
+    };
+  }
+});
+
+// server/node_modules/better-sqlite3/lib/methods/table.js
+var require_table = __commonJS({
+  "server/node_modules/better-sqlite3/lib/methods/table.js"(exports2, module2) {
+    "use strict";
+    var { cppdb } = require_util3();
+    module2.exports = function defineTable(name, factory) {
+      if (typeof name !== "string") throw new TypeError("Expected first argument to be a string");
+      if (!name) throw new TypeError("Virtual table module name cannot be an empty string");
+      let eponymous = false;
+      if (typeof factory === "object" && factory !== null) {
+        eponymous = true;
+        factory = defer(parseTableDefinition(factory, "used", name));
+      } else {
+        if (typeof factory !== "function") throw new TypeError("Expected second argument to be a function or a table definition object");
+        factory = wrapFactory(factory);
+      }
+      this[cppdb].table(factory, name, eponymous);
+      return this;
+    };
+    function wrapFactory(factory) {
+      return function virtualTableFactory(moduleName, databaseName, tableName, ...args) {
+        const thisObject = {
+          module: moduleName,
+          database: databaseName,
+          table: tableName
+        };
+        const def = apply.call(factory, thisObject, args);
+        if (typeof def !== "object" || def === null) {
+          throw new TypeError(`Virtual table module "${moduleName}" did not return a table definition object`);
+        }
+        return parseTableDefinition(def, "returned", moduleName);
+      };
+    }
+    function parseTableDefinition(def, verb, moduleName) {
+      if (!hasOwnProperty.call(def, "rows")) {
+        throw new TypeError(`Virtual table module "${moduleName}" ${verb} a table definition without a "rows" property`);
+      }
+      if (!hasOwnProperty.call(def, "columns")) {
+        throw new TypeError(`Virtual table module "${moduleName}" ${verb} a table definition without a "columns" property`);
+      }
+      const rows = def.rows;
+      if (typeof rows !== "function" || Object.getPrototypeOf(rows) !== GeneratorFunctionPrototype) {
+        throw new TypeError(`Virtual table module "${moduleName}" ${verb} a table definition with an invalid "rows" property (should be a generator function)`);
+      }
+      let columns = def.columns;
+      if (!Array.isArray(columns) || !(columns = [...columns]).every((x2) => typeof x2 === "string")) {
+        throw new TypeError(`Virtual table module "${moduleName}" ${verb} a table definition with an invalid "columns" property (should be an array of strings)`);
+      }
+      if (columns.length !== new Set(columns).size) {
+        throw new TypeError(`Virtual table module "${moduleName}" ${verb} a table definition with duplicate column names`);
+      }
+      if (!columns.length) {
+        throw new RangeError(`Virtual table module "${moduleName}" ${verb} a table definition with zero columns`);
+      }
+      let parameters;
+      if (hasOwnProperty.call(def, "parameters")) {
+        parameters = def.parameters;
+        if (!Array.isArray(parameters) || !(parameters = [...parameters]).every((x2) => typeof x2 === "string")) {
+          throw new TypeError(`Virtual table module "${moduleName}" ${verb} a table definition with an invalid "parameters" property (should be an array of strings)`);
+        }
+      } else {
+        parameters = inferParameters(rows);
+      }
+      if (parameters.length !== new Set(parameters).size) {
+        throw new TypeError(`Virtual table module "${moduleName}" ${verb} a table definition with duplicate parameter names`);
+      }
+      if (parameters.length > 32) {
+        throw new RangeError(`Virtual table module "${moduleName}" ${verb} a table definition with more than the maximum number of 32 parameters`);
+      }
+      for (const parameter of parameters) {
+        if (columns.includes(parameter)) {
+          throw new TypeError(`Virtual table module "${moduleName}" ${verb} a table definition with column "${parameter}" which was ambiguously defined as both a column and parameter`);
+        }
+      }
+      let safeIntegers = 2;
+      if (hasOwnProperty.call(def, "safeIntegers")) {
+        const bool = def.safeIntegers;
+        if (typeof bool !== "boolean") {
+          throw new TypeError(`Virtual table module "${moduleName}" ${verb} a table definition with an invalid "safeIntegers" property (should be a boolean)`);
+        }
+        safeIntegers = +bool;
+      }
+      let directOnly = false;
+      if (hasOwnProperty.call(def, "directOnly")) {
+        directOnly = def.directOnly;
+        if (typeof directOnly !== "boolean") {
+          throw new TypeError(`Virtual table module "${moduleName}" ${verb} a table definition with an invalid "directOnly" property (should be a boolean)`);
+        }
+      }
+      const columnDefinitions = [
+        ...parameters.map(identifier).map((str) => `${str} HIDDEN`),
+        ...columns.map(identifier)
+      ];
+      return [
+        `CREATE TABLE x(${columnDefinitions.join(", ")});`,
+        wrapGenerator(rows, new Map(columns.map((x2, i2) => [x2, parameters.length + i2])), moduleName),
+        parameters,
+        safeIntegers,
+        directOnly
+      ];
+    }
+    function wrapGenerator(generator, columnMap, moduleName) {
+      return function* virtualTable(...args) {
+        const output = args.map((x2) => Buffer.isBuffer(x2) ? Buffer.from(x2) : x2);
+        for (let i2 = 0; i2 < columnMap.size; ++i2) {
+          output.push(null);
+        }
+        for (const row of generator(...args)) {
+          if (Array.isArray(row)) {
+            extractRowArray(row, output, columnMap.size, moduleName);
+            yield output;
+          } else if (typeof row === "object" && row !== null) {
+            extractRowObject(row, output, columnMap, moduleName);
+            yield output;
+          } else {
+            throw new TypeError(`Virtual table module "${moduleName}" yielded something that isn't a valid row object`);
+          }
+        }
+      };
+    }
+    function extractRowArray(row, output, columnCount, moduleName) {
+      if (row.length !== columnCount) {
+        throw new TypeError(`Virtual table module "${moduleName}" yielded a row with an incorrect number of columns`);
+      }
+      const offset = output.length - columnCount;
+      for (let i2 = 0; i2 < columnCount; ++i2) {
+        output[i2 + offset] = row[i2];
+      }
+    }
+    function extractRowObject(row, output, columnMap, moduleName) {
+      let count = 0;
+      for (const key of Object.keys(row)) {
+        const index = columnMap.get(key);
+        if (index === void 0) {
+          throw new TypeError(`Virtual table module "${moduleName}" yielded a row with an undeclared column "${key}"`);
+        }
+        output[index] = row[key];
+        count += 1;
+      }
+      if (count !== columnMap.size) {
+        throw new TypeError(`Virtual table module "${moduleName}" yielded a row with missing columns`);
+      }
+    }
+    function inferParameters({ length }) {
+      if (!Number.isInteger(length) || length < 0) {
+        throw new TypeError("Expected function.length to be a positive integer");
+      }
+      const params = [];
+      for (let i2 = 0; i2 < length; ++i2) {
+        params.push(`$${i2 + 1}`);
+      }
+      return params;
+    }
+    var { hasOwnProperty } = Object.prototype;
+    var { apply } = Function.prototype;
+    var GeneratorFunctionPrototype = Object.getPrototypeOf(function* () {
+    });
+    var identifier = (str) => `"${str.replace(/"/g, '""')}"`;
+    var defer = (x2) => () => x2;
+  }
+});
+
+// server/node_modules/better-sqlite3/lib/methods/inspect.js
+var require_inspect = __commonJS({
+  "server/node_modules/better-sqlite3/lib/methods/inspect.js"(exports2, module2) {
+    "use strict";
+    var DatabaseInspection = function Database() {
+    };
+    module2.exports = function inspect(depth, opts) {
+      return Object.assign(new DatabaseInspection(), this);
+    };
+  }
+});
+
+// server/node_modules/better-sqlite3/lib/database.js
+var require_database = __commonJS({
+  "server/node_modules/better-sqlite3/lib/database.js"(exports2, module2) {
+    "use strict";
+    var fs3 = require("fs");
+    var path2 = require("path");
+    var util = require_util3();
+    var SqliteError = require_sqlite_error();
+    var DEFAULT_ADDON;
+    function Database(filenameGiven, options) {
+      if (new.target == null) {
+        return new Database(filenameGiven, options);
+      }
+      let buffer;
+      if (Buffer.isBuffer(filenameGiven)) {
+        buffer = filenameGiven;
+        filenameGiven = ":memory:";
+      }
+      if (filenameGiven == null) filenameGiven = "";
+      if (options == null) options = {};
+      if (typeof filenameGiven !== "string") throw new TypeError("Expected first argument to be a string");
+      if (typeof options !== "object") throw new TypeError("Expected second argument to be an options object");
+      if ("readOnly" in options) throw new TypeError('Misspelled option "readOnly" should be "readonly"');
+      if ("memory" in options) throw new TypeError('Option "memory" was removed in v7.0.0 (use ":memory:" filename instead)');
+      const filename = filenameGiven.trim();
+      const anonymous = filename === "" || filename === ":memory:";
+      const readonly = util.getBooleanOption(options, "readonly");
+      const fileMustExist = util.getBooleanOption(options, "fileMustExist");
+      const timeout = "timeout" in options ? options.timeout : 5e3;
+      const verbose = "verbose" in options ? options.verbose : null;
+      const nativeBinding = "nativeBinding" in options ? options.nativeBinding : null;
+      if (readonly && anonymous && !buffer) throw new TypeError("In-memory/temporary databases cannot be readonly");
+      if (!Number.isInteger(timeout) || timeout < 0) throw new TypeError('Expected the "timeout" option to be a positive integer');
+      if (timeout > 2147483647) throw new RangeError('Option "timeout" cannot be greater than 2147483647');
+      if (verbose != null && typeof verbose !== "function") throw new TypeError('Expected the "verbose" option to be a function');
+      if (nativeBinding != null && typeof nativeBinding !== "string" && typeof nativeBinding !== "object") throw new TypeError('Expected the "nativeBinding" option to be a string or addon object');
+      let addon;
+      if (nativeBinding == null) {
+        addon = DEFAULT_ADDON || (DEFAULT_ADDON = require_bindings()("better_sqlite3.node"));
+      } else if (typeof nativeBinding === "string") {
+        const requireFunc = typeof __non_webpack_require__ === "function" ? __non_webpack_require__ : require;
+        addon = requireFunc(path2.resolve(nativeBinding).replace(/(\.node)?$/, ".node"));
+      } else {
+        addon = nativeBinding;
+      }
+      if (!addon.isInitialized) {
+        addon.setErrorConstructor(SqliteError);
+        addon.isInitialized = true;
+      }
+      if (!anonymous && !fs3.existsSync(path2.dirname(filename))) {
+        throw new TypeError("Cannot open database because the directory does not exist");
+      }
+      Object.defineProperties(this, {
+        [util.cppdb]: { value: new addon.Database(filename, filenameGiven, anonymous, readonly, fileMustExist, timeout, verbose || null, buffer || null) },
+        ...wrappers.getters
+      });
+    }
+    var wrappers = require_wrappers();
+    Database.prototype.prepare = wrappers.prepare;
+    Database.prototype.transaction = require_transaction();
+    Database.prototype.pragma = require_pragma();
+    Database.prototype.backup = require_backup();
+    Database.prototype.serialize = require_serialize();
+    Database.prototype.function = require_function();
+    Database.prototype.aggregate = require_aggregate();
+    Database.prototype.table = require_table();
+    Database.prototype.loadExtension = wrappers.loadExtension;
+    Database.prototype.exec = wrappers.exec;
+    Database.prototype.close = wrappers.close;
+    Database.prototype.defaultSafeIntegers = wrappers.defaultSafeIntegers;
+    Database.prototype.unsafeMode = wrappers.unsafeMode;
+    Database.prototype[util.inspect] = require_inspect();
+    module2.exports = Database;
+  }
+});
+
+// server/node_modules/better-sqlite3/lib/index.js
+var require_lib4 = __commonJS({
+  "server/node_modules/better-sqlite3/lib/index.js"(exports2, module2) {
+    "use strict";
+    module2.exports = require_database();
+    module2.exports.SqliteError = require_sqlite_error();
+  }
+});
+
+// server/db/sqlite-adapter.js
+var require_sqlite_adapter = __commonJS({
+  "server/db/sqlite-adapter.js"(exports2, module2) {
+    var path2 = require("path");
+    var fs3 = require("fs");
+    function normalizeParams(args) {
+      if (args.length === 0) return [];
+      if (args.length === 1 && Array.isArray(args[0])) return args[0];
+      return args;
+    }
+    function normalizeRow(row) {
+      if (!row || typeof row !== "object") return row;
+      const r2 = { ...row };
+      if (r2.lastlogin !== void 0 && r2.lastLogin === void 0) r2.lastLogin = r2.lastlogin;
+      if (r2.duedate !== void 0 && r2.dueDate === void 0) r2.dueDate = r2.duedate;
+      if (r2.submittedat !== void 0 && r2.submittedAt === void 0) r2.submittedAt = r2.submittedat;
+      if (r2.c !== void 0 && !isNaN(Number(r2.c))) r2.c = Number(r2.c);
+      if (r2.id !== void 0 && !isNaN(Number(r2.id))) r2.id = Number(r2.id);
+      if (r2.classroom_id !== void 0 && !isNaN(Number(r2.classroom_id))) r2.classroom_id = Number(r2.classroom_id);
+      if (r2.assignment_id !== void 0 && !isNaN(Number(r2.assignment_id))) r2.assignment_id = Number(r2.assignment_id);
+      return r2;
+    }
+    function wrapSqlite(rawDb, engine) {
+      const sanitize = (params) => params.map((p) => p === void 0 ? null : p);
+      return {
+        engine,
+        get raw() {
+          return rawDb;
+        },
+        pragma(cmd) {
+          if (typeof rawDb.pragma === "function") {
+            try {
+              return rawDb.pragma(cmd);
+            } catch (_) {
+            }
+          }
+          try {
+            return rawDb.exec(`PRAGMA ${cmd};`);
+          } catch (_) {
+          }
+        },
+        exec(sql) {
+          return rawDb.exec(sql);
+        },
+        prepare(sql) {
+          const rawStmt = rawDb.prepare(sql);
+          return {
+            all(...args) {
+              const params = sanitize(normalizeParams(args));
+              const rows = rawStmt.all(...params);
+              return (rows || []).map(normalizeRow);
+            },
+            get(...args) {
+              const params = sanitize(normalizeParams(args));
+              const row = rawStmt.get(...params);
+              return row ? normalizeRow(row) : void 0;
+            },
+            run(...args) {
+              const params = sanitize(normalizeParams(args));
+              const res = rawStmt.run(...params);
+              return {
+                lastInsertRowid: res && res.lastInsertRowid !== void 0 && !isNaN(Number(res.lastInsertRowid)) ? Number(res.lastInsertRowid) : res ? res.lastInsertRowid : null,
+                changes: res && res.changes !== void 0 ? res.changes : 0
+              };
+            }
+          };
+        },
+        transaction(fn) {
+          if (typeof rawDb.transaction === "function") {
+            return rawDb.transaction(fn);
+          }
+          return (...args) => {
+            rawDb.exec("BEGIN");
+            try {
+              const res = fn(...args);
+              rawDb.exec("COMMIT");
+              return res;
+            } catch (e2) {
+              rawDb.exec("ROLLBACK");
+              throw e2;
+            }
+          };
+        },
+        close() {
+          if (typeof rawDb.close === "function") {
+            try {
+              rawDb.close();
+            } catch (_) {
+            }
+          }
+        }
+      };
+    }
+    function createMemoryFallback() {
+      console.warn("[SQLiteAdapter] Using in-memory fallback store.");
+      return {
+        engine: "memory-fallback",
+        pragma: () => {
+        },
+        exec: () => {
+        },
+        prepare: () => ({
+          all: () => [],
+          get: () => void 0,
+          run: () => ({ lastInsertRowid: 1, changes: 1 })
+        }),
+        transaction: (fn) => (...args) => fn(...args),
+        close: () => {
+        }
+      };
+    }
+    function openSqliteDatabase(dbFile) {
+      if (dbFile && dbFile !== ":memory:") {
+        const dir = path2.dirname(dbFile);
+        if (!fs3.existsSync(dir)) {
+          try {
+            fs3.mkdirSync(dir, { recursive: true });
+          } catch (_) {
+          }
+        }
+      }
+      let rawDb = null;
+      let engine = null;
+      try {
+        let Database;
+        try {
+          Database = require("better-sqlite3");
+        } catch (_) {
+          Database = require_lib4();
+        }
+        rawDb = new Database(dbFile);
+        engine = "better-sqlite3";
+      } catch (_) {
+      }
+      if (!rawDb) {
+        try {
+          const { DatabaseSync } = require("node:sqlite");
+          rawDb = new DatabaseSync(dbFile);
+          engine = "node:sqlite";
+        } catch (err) {
+          console.warn("[SQLiteAdapter] node:sqlite initialization notice:", err.message);
+        }
+      }
+      if (!rawDb) {
+        return createMemoryFallback();
+      }
+      return wrapSqlite(rawDb, engine);
+    }
+    module2.exports = {
+      openSqliteDatabase,
+      normalizeRow,
+      normalizeParams
+    };
+  }
+});
+
 // server/node_modules/postgres-array/index.js
 var require_postgres_array = __commonJS({
   "server/node_modules/postgres-array/index.js"(exports2) {
@@ -93240,7 +94168,7 @@ var require_helper = __commonJS({
 });
 
 // server/node_modules/pgpass/lib/index.js
-var require_lib4 = __commonJS({
+var require_lib5 = __commonJS({
   "server/node_modules/pgpass/lib/index.js"(exports2, module2) {
     "use strict";
     var path2 = require("path");
@@ -93506,7 +94434,7 @@ var require_client2 = __commonJS({
           cb();
         } else {
           try {
-            const pgPass = require_lib4();
+            const pgPass = require_lib5();
             pgPass(this.connectionParameters, (pass) => {
               if (void 0 !== pass) {
                 pgPassDeprecationNotice();
@@ -94027,7 +94955,7 @@ var require_pg_pool = __commonJS({
         this.options.maxLifetimeSeconds = this.options.maxLifetimeSeconds || 0;
         this.log = this.options.log || function() {
         };
-        this.Client = this.options.Client || Client || require_lib5().Client;
+        this.Client = this.options.Client || Client || require_lib6().Client;
         this.Promise = this.options.Promise || global.Promise;
         if (typeof this.options.idleTimeoutMillis === "undefined") {
           this.options.idleTimeoutMillis = 1e4;
@@ -94858,7 +95786,7 @@ var require_native = __commonJS({
 });
 
 // server/node_modules/pg/lib/index.js
-var require_lib5 = __commonJS({
+var require_lib6 = __commonJS({
   "server/node_modules/pg/lib/index.js"(exports2, module2) {
     "use strict";
     var Client = require_client2();
@@ -94928,6 +95856,7 @@ var require_db4 = __commonJS({
   "server/db/index.js"(exports2, module2) {
     var path2 = require("path");
     var fs3 = require("fs");
+    var { openSqliteDatabase } = require_sqlite_adapter();
     var envCandidates2 = [
       process.env.ENV_FILE_PATH,
       path2.join(__dirname, "..", "server", ".env"),
@@ -94992,13 +95921,58 @@ var require_db4 = __commonJS({
       takenSet.add(fallback);
       return fallback;
     }
-    function initSqlite() {
-      if (sqliteDb) return;
+    function seedFromDatabaseJson(adapter, dataDir) {
       try {
-        const Database = require("better-sqlite3");
+        const candidatePaths = [
+          path2.join(dataDir, "database.json"),
+          path2.join(__dirname, "..", "database.json"),
+          path2.join(__dirname, "database.json"),
+          path2.join(process.cwd(), "server", "database.json"),
+          path2.join(process.cwd(), "database.json"),
+          process.resourcesPath ? path2.join(process.resourcesPath, "database.json") : null
+        ].filter(Boolean);
+        const jsonFile = candidatePaths.find((p) => fs3.existsSync(p));
+        if (!jsonFile) return;
+        const data = JSON.parse(fs3.readFileSync(jsonFile, "utf8"));
+        const userCount = adapter.prepare("SELECT count(*) as c FROM users").get()?.c || 0;
+        if (userCount === 0 && Array.isArray(data.users) && data.users.length > 0) {
+          const insertUser = adapter.prepare("INSERT OR IGNORE INTO users (id, name, email, password, role, lastLogin, status) VALUES (?, ?, ?, ?, ?, ?, ?)");
+          const insertUserNoId = adapter.prepare("INSERT OR IGNORE INTO users (name, email, password, role, lastLogin, status) VALUES (?, ?, ?, ?, ?, ?)");
+          data.users.forEach((u) => {
+            if (u.id) insertUser.run(u.id, u.name, u.email, u.password, u.role, u.lastLogin, u.status);
+            else insertUserNoId.run(u.name, u.email, u.password, u.role, u.lastLogin, u.status);
+          });
+          console.log(`[Database] Seeded ${data.users.length} users into SQLite from database.json.`);
+        }
+        const classCount = adapter.prepare("SELECT count(*) as c FROM classrooms").get()?.c || 0;
+        if (classCount === 0 && Array.isArray(data.classrooms) && data.classrooms.length > 0) {
+          const insertClassroom = adapter.prepare("INSERT OR IGNORE INTO classrooms (id, code, section, name, subject, instructor) VALUES (?, ?, ?, ?, ?, ?)");
+          data.classrooms.forEach((c) => {
+            insertClassroom.run(c.id, c.code || "", c.section || "", c.name || "", c.subject || "", c.instructor || "");
+          });
+          console.log(`[Database] Seeded ${data.classrooms.length} classrooms into SQLite from database.json.`);
+        }
+        const cwCount = adapter.prepare("SELECT count(*) as c FROM classwork").get()?.c || 0;
+        if (cwCount === 0 && data.classwork && typeof data.classwork === "object") {
+          const insertClasswork = adapter.prepare("INSERT OR IGNORE INTO classwork (id, classroom_id, title, description, dueDate, type) VALUES (?, ?, ?, ?, ?, ?)");
+          for (const [classroomId, cwArray] of Object.entries(data.classwork)) {
+            if (Array.isArray(cwArray)) {
+              cwArray.forEach((cw) => {
+                insertClasswork.run(cw.id, parseInt(classroomId, 10), cw.title, cw.description, cw.dueDate, cw.type || "");
+              });
+            }
+          }
+        }
+      } catch (e2) {
+        console.warn("[Database] Seeding notice:", e2.message);
+      }
+    }
+    function initSqlite() {
+      if (sqliteDb) return sqliteDb;
+      try {
         const DATA_DIR2 = process.env.DATA_DIR || path2.join(__dirname, "..");
         const DB_FILE = path2.join(DATA_DIR2, "database.sqlite");
-        sqliteDb = new Database(DB_FILE);
+        sqliteDb = openSqliteDatabase(DB_FILE);
         if (process.platform === "win32") {
           try {
             sqliteDb.pragma("journal_mode = WAL");
@@ -95124,6 +96098,31 @@ var require_db4 = __commonJS({
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
 
+        CREATE TABLE IF NOT EXISTS proctor_session_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            classroom_id TEXT,
+            assignment_id TEXT,
+            student_id TEXT,
+            student_name TEXT,
+            action TEXT,
+            message TEXT,
+            time TEXT,
+            color TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS announcements (
+            id BIGINT PRIMARY KEY,
+            classroom_id BIGINT,
+            title TEXT,
+            details TEXT,
+            author TEXT,
+            posted BIGINT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_announcements_classroom ON announcements(classroom_id);
+
         CREATE TABLE IF NOT EXISTS admin_users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL,
@@ -95188,7 +96187,9 @@ var require_db4 = __commonJS({
           console.warn("[Database] Classroom code migration notice (SQLite):", migErr.message);
         }
         provider = "sqlite";
-        console.log(`[Database] Connected to SQLite (Local Storage): ${DB_FILE}`);
+        seedFromDatabaseJson(sqliteDb, DATA_DIR2);
+        console.log(`[Database] Connected to SQLite (Local Storage, engine: ${sqliteDb.engine}): ${DB_FILE}`);
+        return sqliteDb;
       } catch (err) {
         console.error("[Database] Failed to initialize SQLite:", err.message);
       }
@@ -95219,7 +96220,7 @@ var require_db4 = __commonJS({
     var parsedDb = parseDatabaseUrl(DATABASE_URL);
     var cleanedUrl = parsedDb ? parsedDb.url : null;
     async function initPostgres(connStr = cleanedUrl) {
-      const { Pool } = require_lib5();
+      const { Pool } = require_lib6();
       const isSupabase = connStr.includes("supabase.co") || connStr.includes("pooler.supabase.com");
       const sslConfig = isSupabase || process.env.PG_SSL === "true" || !connStr.includes("localhost") ? { rejectUnauthorized: false } : void 0;
       pgPool = new Pool({
@@ -95252,13 +96253,22 @@ var require_db4 = __commonJS({
         client.release();
       }
     }
+    function isNetworkError(err) {
+      if (!err) return false;
+      const msg = String(err.message || "").toLowerCase();
+      const code = String(err.code || "");
+      return code === "ECONNREFUSED" || code === "ECONNRESET" || code === "ETIMEDOUT" || code === "ENOTFOUND" || code === "EAI_AGAIN" || code === "57P01" || msg.includes("connection terminated") || msg.includes("client has already been closed") || msg.includes("timeout") || msg.includes("getaddrinfo") || msg.includes("connection error");
+    }
     var readyPromise = (async () => {
+      initSqlite();
       if (cleanedUrl) {
         if (parsedDb && parsedDb.hasPlaceholder) {
           console.error('\u274C [Database] Configuration Error: Your DATABASE_URL still contains the placeholder "[YOUR-PASSWORD]".');
           console.error("\u{1F449} Please go to Render Dashboard -> Environment -> edit DATABASE_URL and replace [YOUR-PASSWORD] with your actual Supabase database password.");
+          provider = "sqlite";
         } else if (!cleanedUrl.startsWith("postgres://") && !cleanedUrl.startsWith("postgresql://")) {
           console.error(`\u274C [Database] Provided DATABASE_URL is not recognized as a PostgreSQL URL (must start with postgresql:// or postgres://).`);
+          provider = "sqlite";
         } else {
           try {
             console.log("[Database] Attempting connection to PostgreSQL...");
@@ -95271,6 +96281,7 @@ var require_db4 = __commonJS({
               console.warn('\u26A0\uFE0F  [Database] Fix: In your Supabase Dashboard, click "Connect" -> select "Connection Pooler" (pooler.supabase.com:6543 or 5432) which supports IPv4!');
             }
             console.warn("[Database] Falling back to local SQLite so your app stays fully functional.");
+            provider = "sqlite";
           }
         }
       } else {
@@ -95279,8 +96290,8 @@ var require_db4 = __commonJS({
         } else {
           console.log("[Database] No DATABASE_URL found. Running with local SQLite database.");
         }
+        provider = "sqlite";
       }
-      initSqlite();
     })();
     var db2 = {
       ready: () => readyPromise,
@@ -95295,11 +96306,38 @@ var require_db4 = __commonJS({
         await readyPromise;
         const params = normalizeParams(args);
         if (provider === "postgres") {
-          const pgSql = convertPlaceholders(sql);
-          const res = await pgPool.query(pgSql, params);
-          return res.rows.map(normalizeRow);
+          try {
+            const pgSql = convertPlaceholders(sql);
+            const res = await pgPool.query(pgSql, params);
+            let rows = res.rows.map(normalizeRow);
+            if (rows.length === 0 && /FROM\s+(?:users|admin_users)\b/i.test(sql) && sqliteDb) {
+              try {
+                const localRows = sqliteDb.prepare(sql).all(...params);
+                if (localRows.length > 0) rows = localRows.map(normalizeRow);
+              } catch (_) {
+              }
+            }
+            return rows;
+          } catch (err) {
+            if (isNetworkError(err)) {
+              console.warn(`[Database] PostgreSQL connection lost (${err.message}). Switching to local SQLite.`);
+              provider = "sqlite";
+              initSqlite();
+              return sqliteDb.prepare(sql).all(...params);
+            }
+            throw err;
+          }
         } else {
-          return sqliteDb.prepare(sql).all(...params);
+          if (!sqliteDb) initSqlite();
+          let rows = sqliteDb.prepare(sql).all(...params);
+          if (rows.length === 0 && /FROM\s+(?:users|admin_users)\b/i.test(sql) && pgPool) {
+            try {
+              const pgRes = await pgPool.query(convertPlaceholders(sql), params);
+              if (pgRes.rows.length > 0) rows = pgRes.rows.map(normalizeRow);
+            } catch (_) {
+            }
+          }
+          return rows;
         }
       },
       // Execute query and return the first matching row or undefined
@@ -95307,11 +96345,42 @@ var require_db4 = __commonJS({
         await readyPromise;
         const params = normalizeParams(args);
         if (provider === "postgres") {
-          const pgSql = convertPlaceholders(sql);
-          const res = await pgPool.query(pgSql, params);
-          return res.rows[0] ? normalizeRow(res.rows[0]) : void 0;
+          try {
+            const pgSql = convertPlaceholders(sql);
+            const res = await pgPool.query(pgSql, params);
+            let row = res.rows[0] ? normalizeRow(res.rows[0]) : void 0;
+            if (!row && /FROM\s+(?:users|admin_users)\b/i.test(sql) && sqliteDb) {
+              try {
+                const localRow = sqliteDb.prepare(sql).get(...params);
+                if (localRow) {
+                  row = normalizeRow(localRow);
+                }
+              } catch (_) {
+              }
+            }
+            return row;
+          } catch (err) {
+            if (isNetworkError(err)) {
+              console.warn(`[Database] PostgreSQL connection lost (${err.message}). Switching to local SQLite.`);
+              provider = "sqlite";
+              initSqlite();
+              return sqliteDb.prepare(sql).get(...params);
+            }
+            throw err;
+          }
         } else {
-          return sqliteDb.prepare(sql).get(...params);
+          if (!sqliteDb) initSqlite();
+          let row = sqliteDb.prepare(sql).get(...params);
+          if (!row && /FROM\s+(?:users|admin_users)\b/i.test(sql) && pgPool) {
+            try {
+              const pgRes = await pgPool.query(convertPlaceholders(sql), params);
+              if (pgRes.rows[0]) {
+                row = normalizeRow(pgRes.rows[0]);
+              }
+            } catch (_) {
+            }
+          }
+          return row;
         }
       },
       // Execute INSERT, UPDATE, DELETE and return { lastInsertRowid, changes }
@@ -95319,40 +96388,83 @@ var require_db4 = __commonJS({
         await readyPromise;
         const params = normalizeParams(args);
         if (provider === "postgres") {
-          let pgSql = convertPlaceholders(sql);
-          const isInsert = /^\s*INSERT\s+INTO/i.test(pgSql);
-          const hasReturning = /RETURNING/i.test(pgSql);
-          const isIdLessTable = /INSERT\s+INTO\s+(?:system_settings|security_flags)\b/i.test(pgSql);
-          if (isInsert && !hasReturning && !isIdLessTable) {
-            pgSql += " RETURNING id";
-          }
-          let res;
           try {
-            res = await pgPool.query(pgSql, params);
+            let pgSql = convertPlaceholders(sql);
+            const isInsert = /^\s*INSERT\s+INTO/i.test(pgSql);
+            const hasReturning = /RETURNING/i.test(pgSql);
+            const isIdLessTable = /INSERT\s+INTO\s+(?:system_settings|security_flags)\b/i.test(pgSql);
+            if (isInsert && !hasReturning && !isIdLessTable) {
+              pgSql += " RETURNING id";
+            }
+            let res;
+            try {
+              res = await pgPool.query(pgSql, params);
+            } catch (err) {
+              if (err && err.code === "42703" && pgSql.includes("RETURNING id")) {
+                res = await pgPool.query(convertPlaceholders(sql), params);
+              } else {
+                throw err;
+              }
+            }
+            const rawId = res.rows && res.rows[0] && res.rows[0].id ? res.rows[0].id : null;
+            const lastId = rawId !== null && !isNaN(Number(rawId)) ? Number(rawId) : rawId;
+            if (sqliteDb) {
+              try {
+                sqliteDb.prepare(sql).run(...params);
+              } catch (_) {
+              }
+            }
+            return {
+              lastInsertRowid: lastId,
+              changes: res.rowCount || 0
+            };
           } catch (err) {
-            if (err && err.code === "42703" && pgSql.includes("RETURNING id")) {
-              res = await pgPool.query(convertPlaceholders(sql), params);
-            } else {
-              throw err;
+            if (isNetworkError(err)) {
+              console.warn(`[Database] PostgreSQL connection lost (${err.message}). Switching to local SQLite.`);
+              provider = "sqlite";
+              initSqlite();
+              return sqliteDb.prepare(sql).run(...params);
+            }
+            throw err;
+          }
+        } else {
+          if (!sqliteDb) initSqlite();
+          const stmt = sqliteDb.prepare(sql);
+          const res = stmt.run(...params);
+          if (pgPool) {
+            try {
+              let pgSql = convertPlaceholders(sql);
+              const isInsert = /^\s*INSERT\s+INTO/i.test(pgSql);
+              const hasReturning = /RETURNING/i.test(pgSql);
+              const isIdLessTable = /INSERT\s+INTO\s+(?:system_settings|security_flags)\b/i.test(pgSql);
+              if (isInsert && !hasReturning && !isIdLessTable) {
+                pgSql += " RETURNING id";
+              }
+              pgPool.query(pgSql, params).catch(() => {
+              });
+            } catch (_) {
             }
           }
-          const rawId = res.rows && res.rows[0] && res.rows[0].id ? res.rows[0].id : null;
-          const lastId = rawId !== null && !isNaN(Number(rawId)) ? Number(rawId) : rawId;
-          return {
-            lastInsertRowid: lastId,
-            changes: res.rowCount || 0
-          };
-        } else {
-          const stmt = sqliteDb.prepare(sql);
-          return stmt.run(...params);
+          return res;
         }
       },
       // Execute raw multiple SQL statements (DDL)
       async exec(sql) {
         await readyPromise;
         if (provider === "postgres") {
-          return pgPool.query(sql);
+          try {
+            return await pgPool.query(sql);
+          } catch (err) {
+            if (isNetworkError(err)) {
+              console.warn(`[Database] PostgreSQL connection lost (${err.message}). Switching to local SQLite.`);
+              provider = "sqlite";
+              initSqlite();
+              return sqliteDb.exec(sql);
+            }
+            throw err;
+          }
         } else {
+          if (!sqliteDb) initSqlite();
           return sqliteDb.exec(sql);
         }
       },
@@ -95368,56 +96480,68 @@ var require_db4 = __commonJS({
       async transaction(callback) {
         await readyPromise;
         if (provider === "postgres") {
-          const client = await pgPool.connect();
           try {
-            await client.query("BEGIN");
-            const txObj = {
-              get: async (sql, ...args) => {
-                const params = normalizeParams(args);
-                const res = await client.query(convertPlaceholders(sql), params);
-                return res.rows[0] ? normalizeRow(res.rows[0]) : void 0;
-              },
-              all: async (sql, ...args) => {
-                const params = normalizeParams(args);
-                const res = await client.query(convertPlaceholders(sql), params);
-                return res.rows.map(normalizeRow);
-              },
-              run: async (sql, ...args) => {
-                const params = normalizeParams(args);
-                let pgSql = convertPlaceholders(sql);
-                const isInsert = /^\s*INSERT\s+INTO/i.test(pgSql);
-                const hasReturning = /RETURNING/i.test(pgSql);
-                if (isInsert && !hasReturning) {
-                  pgSql += " RETURNING id";
-                }
-                const res = await client.query(pgSql, params);
-                const rawId = res.rows && res.rows[0] && res.rows[0].id ? res.rows[0].id : null;
-                const lastId = rawId !== null && !isNaN(Number(rawId)) ? Number(rawId) : rawId;
-                return {
-                  lastInsertRowid: lastId,
-                  changes: res.rowCount || 0
-                };
-              },
-              prepare: (sql) => ({
-                get: (...args) => txObj.get(sql, ...args),
-                all: (...args) => txObj.all(sql, ...args),
-                run: (...args) => txObj.run(sql, ...args)
-              })
-            };
-            const result = await callback(txObj);
-            await client.query("COMMIT");
-            return result;
-          } catch (e2) {
-            await client.query("ROLLBACK");
-            throw e2;
-          } finally {
-            client.release();
+            const client = await pgPool.connect();
+            try {
+              await client.query("BEGIN");
+              const txObj = {
+                get: async (sql, ...args) => {
+                  const params = normalizeParams(args);
+                  const res = await client.query(convertPlaceholders(sql), params);
+                  return res.rows[0] ? normalizeRow(res.rows[0]) : void 0;
+                },
+                all: async (sql, ...args) => {
+                  const params = normalizeParams(args);
+                  const res = await client.query(convertPlaceholders(sql), params);
+                  return res.rows.map(normalizeRow);
+                },
+                run: async (sql, ...args) => {
+                  const params = normalizeParams(args);
+                  let pgSql = convertPlaceholders(sql);
+                  const isInsert = /^\s*INSERT\s+INTO/i.test(pgSql);
+                  const hasReturning = /RETURNING/i.test(pgSql);
+                  if (isInsert && !hasReturning) {
+                    pgSql += " RETURNING id";
+                  }
+                  const res = await client.query(pgSql, params);
+                  const rawId = res.rows && res.rows[0] && res.rows[0].id ? res.rows[0].id : null;
+                  const lastId = rawId !== null && !isNaN(Number(rawId)) ? Number(rawId) : rawId;
+                  return {
+                    lastInsertRowid: lastId,
+                    changes: res.rowCount || 0
+                  };
+                },
+                prepare: (sql) => ({
+                  get: (...args) => txObj.get(sql, ...args),
+                  all: (...args) => txObj.all(sql, ...args),
+                  run: (...args) => txObj.run(sql, ...args)
+                })
+              };
+              const result = await callback(txObj);
+              await client.query("COMMIT");
+              return result;
+            } catch (e2) {
+              await client.query("ROLLBACK");
+              throw e2;
+            } finally {
+              client.release();
+            }
+          } catch (connErr) {
+            if (isNetworkError(connErr)) {
+              console.warn(`[Database] PostgreSQL connection lost (${connErr.message}). Switching to local SQLite.`);
+              provider = "sqlite";
+              initSqlite();
+              return sqliteDb.transaction(async () => {
+                return callback(db2);
+              })();
+            }
+            throw connErr;
           }
         } else {
-          const tx = sqliteDb.transaction((txCallback) => {
-            return txCallback();
-          });
-          return callback(db2);
+          if (!sqliteDb) initSqlite();
+          return sqliteDb.transaction(async () => {
+            return callback(db2);
+          })();
         }
       },
       // Close connections
@@ -96005,20 +97129,38 @@ app.post("/login", async (req, res) => {
     }
     const { email, password } = req.body;
     const cleanEmail = (email || "").trim().toLowerCase();
+    const rawPassword = password !== void 0 ? String(password) : "";
+    const cleanPassword = rawPassword.trim();
     const isAdminAcc = await db.get("SELECT id FROM admin_users WHERE LOWER(email) = ?", cleanEmail);
     if (isAdminAcc) {
-      return res.status(401).json({ message: "Invalid credentials" });
+      return res.status(401).json({
+        message: "This account has Administrator privileges. Please sign in through the Admin Portal (/admin)."
+      });
     }
-    const user = await db.get("SELECT * FROM users WHERE LOWER(email) = ? AND password = ?", cleanEmail, password);
+    let user = await db.get("SELECT * FROM users WHERE LOWER(email) = ? AND password = ?", cleanEmail, rawPassword);
+    if (!user && cleanPassword && cleanPassword !== rawPassword) {
+      user = await db.get("SELECT * FROM users WHERE LOWER(email) = ? AND password = ?", cleanEmail, cleanPassword);
+    }
     if (!user) {
-      return res.status(401).json({ message: "Invalid credentials" });
+      const userExists = await db.get("SELECT id, password, role FROM users WHERE LOWER(email) = ?", cleanEmail);
+      if (userExists) {
+        if (userExists.password === "google_sso_user") {
+          return res.status(401).json({
+            message: "This account was registered with Google Sign-In. Please sign in with Google or reset your password."
+          });
+        }
+        return res.status(401).json({ message: "Invalid credentials. Please verify your password." });
+      }
+      return res.status(401).json({ message: "Invalid credentials. No account found with this email address." });
     }
     if (user.role === "Admin" || user.role === "admin") {
       try {
         await db.run("DELETE FROM users WHERE id = ?", user.id);
       } catch (_) {
       }
-      return res.status(401).json({ message: "Invalid credentials" });
+      return res.status(401).json({
+        message: "This account has Administrator privileges. Please sign in through the Admin Portal (/admin)."
+      });
     }
     if (user.status === "Pending") {
       return res.status(403).json({ message: "Your account is pending admin approval" });
@@ -96300,7 +97442,79 @@ app.get("/users", authenticateToken, requireRole("Admin"), async (req, res) => {
     res.status(500).json({ message: e2.message });
   }
 });
-app.delete("/users/:email", authenticateToken, requireRole("Admin"), async (req, res) => {
+app.get("/users/profile", authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const user = await db.get("SELECT id, name, email, role, avatar, status FROM users WHERE id = ?", userId);
+    if (!user) return res.status(404).json({ message: "User not found" });
+    res.status(200).json({ user });
+  } catch (e2) {
+    res.status(500).json({ message: e2.message });
+  }
+});
+app.put("/users/profile", authenticateToken, async (req, res) => {
+  try {
+    const { name, avatar } = req.body || {};
+    const userId = req.user.id;
+    let current = await db.get("SELECT * FROM users WHERE id = ?", userId);
+    let isAdmin = false;
+    if (!current && req.user.role === "Admin") {
+      current = await db.get("SELECT * FROM admin_users WHERE id = ?", userId);
+      isAdmin = true;
+    }
+    if (!current) return res.status(404).json({ message: "User not found" });
+    const updatedName = name && name.trim() ? name.trim() : current.name;
+    const updatedEmail = current.email;
+    const updatedAvatar = avatar !== void 0 ? avatar : current.avatar;
+    if (isAdmin) {
+      await db.run(
+        "UPDATE admin_users SET name = ?, avatar = ? WHERE id = ?",
+        updatedName,
+        updatedAvatar,
+        userId
+      );
+    } else {
+      await db.run(
+        "UPDATE users SET name = ?, avatar = ? WHERE id = ?",
+        updatedName,
+        updatedAvatar,
+        userId
+      );
+      if (current.role === "Teacher") {
+        await db.run(
+          "UPDATE classrooms SET instructor = ? WHERE LOWER(instructor_email) = LOWER(?) OR instructor = ?",
+          updatedName,
+          current.email,
+          current.name
+        ).catch(() => {
+        });
+      }
+    }
+    const user = {
+      id: userId,
+      name: updatedName,
+      email: updatedEmail,
+      role: current.role,
+      avatar: updatedAvatar,
+      status: current.status
+    };
+    io.emit("user_avatar_updated", {
+      userId,
+      name: updatedName,
+      email: updatedEmail,
+      avatar: updatedAvatar,
+      role: current.role
+    });
+    if (current.role === "Teacher") {
+      io.emit("classrooms_updated");
+    }
+    res.status(200).json({ message: "Profile updated successfully", user });
+  } catch (e2) {
+    res.status(500).json({ message: e2.message });
+  }
+});
+app.delete("/users/:email", authenticateToken, requireRole("Admin"), async (req, res, next) => {
+  if (req.params.email === "profile") return next();
   try {
     const email = decodeURIComponent(req.params.email);
     const info = await db.run("DELETE FROM users WHERE LOWER(email) = LOWER(?)", email);
@@ -96310,7 +97524,8 @@ app.delete("/users/:email", authenticateToken, requireRole("Admin"), async (req,
     res.status(500).json({ message: e2.message });
   }
 });
-app.put("/users/:email/status", authenticateToken, requireRole("Admin"), async (req, res) => {
+app.put("/users/:email/status", authenticateToken, requireRole("Admin"), async (req, res, next) => {
+  if (req.params.email === "profile") return next();
   try {
     const email = decodeURIComponent(req.params.email);
     const { status } = req.body;
@@ -96321,7 +97536,8 @@ app.put("/users/:email/status", authenticateToken, requireRole("Admin"), async (
     res.status(500).json({ message: e2.message });
   }
 });
-app.put("/users/:email", authenticateToken, requireRole("Admin"), async (req, res) => {
+app.put("/users/:email", authenticateToken, requireRole("Admin"), async (req, res, next) => {
+  if (req.params.email === "profile") return next();
   try {
     const targetEmail = decodeURIComponent(req.params.email).toLowerCase();
     const { name, email, role, status, password } = req.body || {};
@@ -96372,73 +97588,201 @@ app.put("/users/:email", authenticateToken, requireRole("Admin"), async (req, re
     res.status(500).json({ message: e2.message });
   }
 });
-app.get("/users/profile", authenticateToken, async (req, res) => {
+app.post("/users/send-email-change-otp", authenticateToken, async (req, res) => {
   try {
-    const userId = req.user.id;
-    const user = await db.get("SELECT id, name, email, role, avatar, status FROM users WHERE id = ?", userId);
-    if (!user) return res.status(404).json({ message: "User not found" });
-    res.status(200).json({ user });
+    const { newEmail } = req.body || {};
+    if (!newEmail || !newEmail.trim()) {
+      return res.status(400).json({ message: "New email address is required" });
+    }
+    const cleanEmail = newEmail.trim().toLowerCase();
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(cleanEmail)) {
+      return res.status(400).json({ message: "Please enter a valid email address" });
+    }
+    const currentEmail = (req.user.email || "").trim().toLowerCase();
+    if (cleanEmail === currentEmail) {
+      return res.status(400).json({ message: "New email must be different from your current email" });
+    }
+    const existingUser = await db.get("SELECT id FROM users WHERE LOWER(email) = ? AND id != ?", cleanEmail, req.user.id);
+    const existingAdmin = await db.get("SELECT id FROM admin_users WHERE LOWER(email) = ? AND id != ?", cleanEmail, req.user.id);
+    if (existingUser || existingAdmin) {
+      return res.status(400).json({ message: "This email is already in use by another account" });
+    }
+    const otpCode = crypto2.randomInt(1e5, 1e6).toString();
+    const expiresAt = Date.now() + 15 * 60 * 1e3;
+    await db.run("DELETE FROM otp_verifications WHERE LOWER(email) = ?", cleanEmail);
+    const sessionData = JSON.stringify({
+      userId: req.user.id,
+      currentEmail: req.user.email,
+      newEmail: cleanEmail,
+      action: "change_email"
+    });
+    await db.run(
+      "INSERT INTO otp_verifications (email, otp_code, user_data, expires_at) VALUES (?, ?, ?, ?)",
+      cleanEmail,
+      otpCode,
+      sessionData,
+      expiresAt
+    );
+    const emailResult = await sendOtpEmail({
+      email: cleanEmail,
+      name: req.user.name || "User",
+      otp: otpCode
+    });
+    if (!emailResult.success) {
+      console.error(`[AUTH] Failed to send email change OTP to ${cleanEmail}:`, emailResult.error);
+      if (emailResult.simulated) {
+        return res.status(200).json({
+          message: `SMTP not configured on server. Dev verification code: ${otpCode}`,
+          email: cleanEmail,
+          devOtp: otpCode,
+          expiresInMinutes: 15
+        });
+      }
+      return res.status(500).json({
+        message: `Failed to deliver verification email: ${emailResult.error || "Delivery failed"}.`
+      });
+    }
+    res.status(200).json({
+      message: `Verification code sent to ${cleanEmail}`,
+      email: cleanEmail,
+      expiresInMinutes: 15
+    });
   } catch (e2) {
-    res.status(500).json({ message: e2.message });
+    console.error("Error sending email change OTP:", e2);
+    res.status(500).json({ message: e2.message || "Failed to send verification code" });
   }
 });
-app.put("/users/profile", authenticateToken, async (req, res) => {
+app.post("/users/verify-email-change", authenticateToken, async (req, res) => {
   try {
-    const { name, email, avatar } = req.body || {};
+    const { newEmail, otp, newPassword } = req.body || {};
+    if (!newEmail || !otp) {
+      return res.status(400).json({ message: "New email and verification code are required" });
+    }
+    const cleanEmail = newEmail.trim().toLowerCase();
+    const cleanOtp = String(otp).trim();
+    const record = await db.get(
+      "SELECT * FROM otp_verifications WHERE LOWER(email) = ? ORDER BY id DESC LIMIT 1",
+      cleanEmail
+    );
+    if (!record) {
+      return res.status(400).json({ message: "No verification code found. Please request a new code." });
+    }
+    const now = Date.now();
+    const expiresAt = Number(record.expires_at || record.expiresat || 0);
+    if (now > expiresAt) {
+      await db.run("DELETE FROM otp_verifications WHERE id = ?", record.id);
+      return res.status(400).json({ message: "This verification code has expired. Please request a new one." });
+    }
+    if (String(record.otp_code || record.otpcode).trim() !== cleanOtp) {
+      return res.status(400).json({ message: "Invalid verification code. Please check your email and try again." });
+    }
     const userId = req.user.id;
     const current = await db.get("SELECT * FROM users WHERE id = ?", userId);
-    if (!current) return res.status(404).json({ message: "User not found" });
-    const updatedName = name && name.trim() ? name.trim() : current.name;
-    const updatedEmail = email && email.trim() ? email.trim().toLowerCase() : current.email;
-    const updatedAvatar = avatar !== void 0 ? avatar : current.avatar;
+    if (!current) {
+      const adminCurrent = await db.get("SELECT * FROM admin_users WHERE id = ?", userId);
+      if (!adminCurrent) return res.status(404).json({ message: "User account not found" });
+      await db.run("UPDATE admin_users SET email = ? WHERE id = ?", cleanEmail, userId);
+      if (newPassword && newPassword.trim()) {
+        await db.run("UPDATE admin_users SET password = ? WHERE id = ?", newPassword.trim(), userId);
+      }
+      await db.run("DELETE FROM otp_verifications WHERE id = ?", record.id);
+      const updatedUser2 = { ...adminCurrent, email: cleanEmail };
+      const token2 = jwt.sign(
+        { id: updatedUser2.id, email: cleanEmail, role: "Admin", name: updatedUser2.name, isAdmin: true },
+        JWT_SECRET
+      );
+      return res.status(200).json({ message: "Email address updated successfully", user: updatedUser2, token: token2 });
+    }
+    await db.run("UPDATE users SET email = ? WHERE id = ?", cleanEmail, userId);
+    if (newPassword && newPassword.trim()) {
+      await db.run("UPDATE users SET password = ? WHERE id = ?", newPassword.trim(), userId);
+    }
     await db.run(
-      "UPDATE users SET name = ?, email = ?, avatar = ? WHERE id = ?",
-      updatedName,
-      updatedEmail,
-      updatedAvatar,
-      userId
-    );
+      "UPDATE enrollments SET student_email = ? WHERE LOWER(student_email) = LOWER(?)",
+      cleanEmail,
+      current.email
+    ).catch(() => {
+    });
     if (current.role === "Teacher") {
       await db.run(
-        "UPDATE classrooms SET instructor = ?, instructor_email = ? WHERE LOWER(instructor_email) = LOWER(?) OR instructor = ?",
-        updatedName,
-        updatedEmail,
-        current.email,
-        current.name
+        "UPDATE classrooms SET instructor_email = ? WHERE LOWER(instructor_email) = LOWER(?)",
+        cleanEmail,
+        current.email
       ).catch(() => {
       });
     }
     if (current.role === "Admin") {
-      await db.run(
-        "UPDATE admin_users SET name = ?, email = ?, avatar = ? WHERE id = ?",
-        updatedName,
-        updatedEmail,
-        updatedAvatar,
-        userId
-      ).catch(() => {
+      await db.run("UPDATE admin_users SET email = ? WHERE id = ?", cleanEmail, userId).catch(() => {
       });
     }
-    const user = {
-      id: userId,
-      name: updatedName,
-      email: updatedEmail,
+    await db.run("DELETE FROM otp_verifications WHERE id = ?", record.id);
+    const updatedUser = {
+      id: current.id,
+      name: current.name,
+      email: cleanEmail,
       role: current.role,
-      avatar: updatedAvatar,
+      avatar: current.avatar,
       status: current.status
     };
+    const token = jwt.sign(
+      { id: updatedUser.id, email: cleanEmail, role: updatedUser.role, name: updatedUser.name },
+      JWT_SECRET
+    );
     io.emit("user_avatar_updated", {
-      userId,
-      name: updatedName,
-      email: updatedEmail,
-      avatar: updatedAvatar,
-      role: current.role
+      userId: updatedUser.id,
+      name: updatedUser.name,
+      email: cleanEmail,
+      avatar: updatedUser.avatar,
+      role: updatedUser.role
     });
-    if (current.role === "Teacher") {
-      io.emit("classrooms_updated");
-    }
-    res.status(200).json({ message: "Profile updated successfully", user });
+    res.status(200).json({ message: "Email address updated successfully", user: updatedUser, token });
   } catch (e2) {
-    res.status(500).json({ message: e2.message });
+    console.error("Error verifying email change:", e2);
+    res.status(500).json({ message: e2.message || "Failed to update email" });
+  }
+});
+app.post("/users/change-password", authenticateToken, async (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body || {};
+    if (!newPassword || !newPassword.trim()) {
+      return res.status(400).json({ message: "New password is required" });
+    }
+    const userId = req.user.id;
+    let user = await db.get("SELECT * FROM users WHERE id = ?", userId);
+    let isAdmin = false;
+    if (!user && req.user.role === "Admin") {
+      user = await db.get("SELECT * FROM admin_users WHERE id = ?", userId);
+      isAdmin = true;
+    }
+    if (!user) {
+      return res.status(404).json({ message: "User account not found" });
+    }
+    const isGoogleSso = user.password === "google_sso_user";
+    if (!isGoogleSso) {
+      if (!currentPassword) {
+        return res.status(400).json({ message: "Current password is required" });
+      }
+      if (user.password !== currentPassword && user.password !== currentPassword.trim()) {
+        return res.status(400).json({ message: "Current password is incorrect" });
+      }
+      if (currentPassword.trim() === newPassword.trim()) {
+        return res.status(400).json({ message: "New password must be different from your current password" });
+      }
+    }
+    const passwordError = await validatePassword(newPassword.trim());
+    if (passwordError) {
+      return res.status(400).json({ message: passwordError });
+    }
+    if (isAdmin) {
+      await db.run("UPDATE admin_users SET password = ? WHERE id = ?", newPassword.trim(), userId);
+    } else {
+      await db.run("UPDATE users SET password = ? WHERE id = ?", newPassword.trim(), userId);
+    }
+    res.status(200).json({ message: "Password updated successfully" });
+  } catch (e2) {
+    console.error("Error changing password:", e2);
+    res.status(500).json({ message: e2.message || "Failed to update password" });
   }
 });
 var getClassworkFromDb = async (classroomId) => {
@@ -96458,12 +97802,14 @@ var getClassworkFromDb = async (classroomId) => {
       title: row.title,
       dueDate: row.dueDate || "",
       type: row.type || "",
+      activityType: meta.activityType || row.type || "Assignment",
       details: meta.details !== void 0 ? meta.details : row.description || "",
       attachments: Array.isArray(meta.attachments) ? meta.attachments : [],
       points: meta.points !== void 0 ? meta.points : "100",
       grading: meta.grading !== void 0 ? meta.grading : "On",
       archived: typeof meta.archived === "boolean" ? meta.archived : false,
-      posted: meta.posted || row.created_at
+      posted: meta.posted || row.created_at,
+      testCases: Array.isArray(meta.testCases) ? meta.testCases : []
     };
   });
 };
@@ -96500,7 +97846,9 @@ var saveClassworkToDb = async (classroomId, classwork) => {
       points: cw.points !== void 0 ? cw.points : "100",
       grading: cw.grading !== void 0 ? cw.grading : "On",
       archived: !!cw.archived,
-      posted: cw.posted || null
+      posted: cw.posted || null,
+      testCases: Array.isArray(cw.testCases) ? cw.testCases : [],
+      activityType: cw.activityType || cw.type || "Assignment"
     };
     await db.run(`
             INSERT INTO classwork (id, classroom_id, title, description, dueDate, type)
@@ -96511,7 +97859,7 @@ var saveClassworkToDb = async (classroomId, classwork) => {
                 description = excluded.description,
                 dueDate = excluded.dueDate,
                 type = excluded.type
-        `, id, Number(classroomId) || classroomId, cw.title || "", JSON.stringify(descObj), cw.dueDate || "", cw.type || "");
+        `, id, Number(classroomId) || classroomId, cw.title || "", JSON.stringify(descObj), cw.dueDate || "", cw.type || cw.activityType || "");
   }
 };
 async function checkClassroomAccess(req, classroomId) {
@@ -96585,6 +97933,79 @@ app.put("/classwork/:classroomId", authenticateToken, requireRole("Teacher", "Ad
   } catch (e2) {
     console.error("Error saving classwork via PUT:", e2);
     res.status(500).json({ message: "Failed to save classwork" });
+  }
+});
+app.get("/classrooms/:classroomId/announcements", authenticateToken, async (req, res) => {
+  try {
+    const { classroomId } = req.params;
+    if (!await checkClassroomAccess(req, classroomId)) {
+      return res.status(403).json({ message: "Access denied" });
+    }
+    const rows = await db.all("SELECT * FROM announcements WHERE classroom_id = ? ORDER BY posted DESC, id DESC", classroomId).catch(() => []);
+    const announcements = (rows || []).map((r2) => ({
+      id: Number(r2.id),
+      classroomId: Number(r2.classroom_id || classroomId),
+      title: r2.title || "Instructor Announcement",
+      details: r2.details || "",
+      author: r2.author || "Instructor",
+      posted: Number(r2.posted || (r2.created_at ? new Date(r2.created_at).getTime() : Date.now()))
+    }));
+    res.status(200).json({ announcements });
+  } catch (e2) {
+    console.error("Error fetching announcements:", e2);
+    res.status(500).json({ announcements: [], error: e2.message });
+  }
+});
+app.post("/classrooms/:classroomId/announcements", authenticateToken, requireRole("Teacher", "Admin"), async (req, res) => {
+  try {
+    const { classroomId } = req.params;
+    if (!await checkClassroomAccess(req, classroomId)) {
+      return res.status(403).json({ message: "Access denied" });
+    }
+    const { title, details, author, posted, id } = req.body;
+    if (!details || !details.trim()) {
+      return res.status(400).json({ message: "Announcement details are required" });
+    }
+    const announcementId = id ? Number(id) : Date.now();
+    const announcementAuthor = author || req.user.name || "Instructor";
+    const postedTime = posted ? Number(posted) : Date.now();
+    const announcementTitle = title || "Instructor Announcement";
+    await db.run(`
+            INSERT INTO announcements (id, classroom_id, title, details, author, posted)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                title = excluded.title,
+                details = excluded.details,
+                author = excluded.author,
+                posted = excluded.posted
+        `, announcementId, Number(classroomId), announcementTitle, details.trim(), announcementAuthor, postedTime);
+    const newAnnouncement = {
+      id: announcementId,
+      classroomId: Number(classroomId),
+      title: announcementTitle,
+      details: details.trim(),
+      author: announcementAuthor,
+      posted: postedTime
+    };
+    io.emit("announcement_posted", { classroomId: Number(classroomId), announcement: newAnnouncement });
+    res.status(201).json({ announcement: newAnnouncement });
+  } catch (e2) {
+    console.error("Error posting announcement:", e2);
+    res.status(500).json({ message: "Failed to post announcement", error: e2.message });
+  }
+});
+app.delete("/classrooms/:classroomId/announcements/:id", authenticateToken, requireRole("Teacher", "Admin"), async (req, res) => {
+  try {
+    const { classroomId, id } = req.params;
+    if (!await checkClassroomAccess(req, classroomId)) {
+      return res.status(403).json({ message: "Access denied" });
+    }
+    await db.run("DELETE FROM announcements WHERE id = ? AND classroom_id = ?", Number(id), Number(classroomId));
+    io.emit("announcement_deleted", { classroomId: Number(classroomId), announcementId: Number(id) });
+    res.status(200).json({ success: true, message: "Announcement deleted" });
+  } catch (e2) {
+    console.error("Error deleting announcement:", e2);
+    res.status(500).json({ message: "Failed to delete announcement", error: e2.message });
   }
 });
 app.get("/classrooms", authenticateToken, async (req, res) => {
@@ -96792,6 +98213,20 @@ app.delete("/classrooms/:id", authenticateToken, requireRole("Teacher", "Admin")
     res.status(500).json({ message: e2.message });
   }
 });
+app.get("/student/submissions", authenticateToken, requireRole("Student"), async (req, res) => {
+  try {
+    const rows = await db.all(
+      "SELECT assignment_id FROM submissions WHERE student_name = ? OR student_name = ? OR LOWER(student_name) = LOWER(?) OR LOWER(student_name) = LOWER(?)",
+      req.user.name || "",
+      req.user.email || "",
+      req.user.name || "",
+      req.user.email || ""
+    );
+    res.status(200).json({ submissions: rows });
+  } catch (e2) {
+    res.status(500).json({ message: e2.message });
+  }
+});
 app.get("/submissions/:assignmentId", authenticateToken, requireRole("Teacher", "Admin", "Student"), async (req, res) => {
   try {
     if (!await checkAssignmentAccess(req, req.params.assignmentId)) {
@@ -96820,6 +98255,28 @@ app.get("/submissions/:assignmentId", authenticateToken, requireRole("Teacher", 
       return { ...s2, history, studentName: s2.student_name, finalCode: lastCode };
     });
     res.status(200).json({ submissions });
+  } catch (e2) {
+    res.status(500).json({ message: e2.message });
+  }
+});
+app.get("/proctor-logs/:assignmentId", authenticateToken, requireRole("Teacher", "Admin"), async (req, res) => {
+  try {
+    const assignmentId = String(req.params.assignmentId);
+    const classroomId = req.query.classroomId ? String(req.query.classroomId) : null;
+    let logs = [];
+    if (classroomId) {
+      logs = await db.all(
+        "SELECT * FROM proctor_session_logs WHERE assignment_id = ? AND classroom_id = ? ORDER BY id ASC",
+        assignmentId,
+        classroomId
+      ).catch(() => []);
+    } else {
+      logs = await db.all(
+        "SELECT * FROM proctor_session_logs WHERE assignment_id = ? ORDER BY id ASC",
+        assignmentId
+      ).catch(() => []);
+    }
+    res.status(200).json({ logs: logs || [] });
   } catch (e2) {
     res.status(500).json({ message: e2.message });
   }
@@ -97249,11 +98706,22 @@ app.get("/notifications", authenticateToken, async (req, res) => {
 var COMPILER_BASE_DIR = path.join(os2.tmpdir(), "verity_compiler_base_template");
 var baseTemplatePromise = null;
 var sessionWorkspaces = /* @__PURE__ */ new Map();
+var OFFLINE_DOTNET_ENV = {
+  ...process.env,
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1",
+  DOTNET_NOLOGO: "1",
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: "1",
+  DOTNET_CLI_UI_LANGUAGE: "en-US",
+  MSBUILDDISABLENODEREUSE: "1",
+  NUGET_CERTREVOCATIONMODE: "offline",
+  DOTNET_MULTILEVEL_LOOKUP: "0",
+  POWERSHELL_TELEMETRY_OPTOUT: "1"
+};
 var cachedDotnetTargetFramework = null;
 function getDotnetTargetFramework() {
   if (cachedDotnetTargetFramework) return cachedDotnetTargetFramework;
   try {
-    const output = execSync("dotnet --version", { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+    const output = execSync("dotnet --version", { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], env: OFFLINE_DOTNET_ENV }).trim();
     const major = parseInt(output.split(".")[0], 10);
     if (!isNaN(major) && major >= 6) {
       cachedDotnetTargetFramework = `net${major}.0`;
@@ -97272,8 +98740,9 @@ function ensureBaseTemplate() {
     try {
       const targetFramework = getDotnetTargetFramework();
       const projectFile = path.join(COMPILER_BASE_DIR, "verity_base.csproj");
+      const nugetFile = path.join(COMPILER_BASE_DIR, "nuget.config");
       const assetsFile = path.join(COMPILER_BASE_DIR, "obj", "project.assets.json");
-      if (fs2.existsSync(projectFile) && fs2.existsSync(assetsFile)) {
+      if (fs2.existsSync(projectFile) && fs2.existsSync(assetsFile) && fs2.existsSync(nugetFile)) {
         try {
           const existingContent = fs2.readFileSync(projectFile, "utf8");
           if (existingContent.includes(`<TargetFramework>${targetFramework}</TargetFramework>`)) {
@@ -97295,21 +98764,35 @@ function ensureBaseTemplate() {
     <TargetFramework>${targetFramework}</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <NoWarn>$(NoWarn);NU1503;CS7022</NoWarn>
   </PropertyGroup>
 </Project>
 `;
+      const nugetContent = `<?xml version="1.0" encoding="utf-8"?>
+<configuration>
+  <packageSources>
+    <add key="nuget.org" value="https://api.nuget.org/v3/index.json" protocolVersion="3" />
+  </packageSources>
+</configuration>
+`;
       fs2.writeFileSync(projectFile, csprojContent, "utf8");
+      fs2.writeFileSync(nugetFile, nugetContent, "utf8");
       fs2.writeFileSync(path.join(COMPILER_BASE_DIR, "Program.cs"), "using System; class Program { static void Main() {} }\n", "utf8");
-      console.log(`\u26A1 Verity Compiler: Pre-warming base .NET template (${targetFramework})...`);
+      console.log(`\u26A1 Verity Compiler: Pre-warming base .NET template (${targetFramework}) in offline mode...`);
       await new Promise((resolve) => {
-        exec(`dotnet build -v q -p:WarningLevel=0 "${projectFile}"`, { cwd: COMPILER_BASE_DIR }, (err) => {
-          if (err) {
-            console.warn("\u26A0\uFE0F Base template build warning (falling back to restore):", err.message);
-            exec(`dotnet restore "${projectFile}"`, { cwd: COMPILER_BASE_DIR }, () => resolve(COMPILER_BASE_DIR));
-          } else {
-            console.log(`\u26A1 Verity Compiler: Base .NET template pre-warmed for ${targetFramework} with warm obj/bin cache.`);
-            resolve(COMPILER_BASE_DIR);
+        exec(`dotnet restore "${projectFile}" --ignore-failed-sources -v q`, { cwd: COMPILER_BASE_DIR, env: OFFLINE_DOTNET_ENV }, (restoreErr) => {
+          if (restoreErr) {
+            console.warn("\u26A0\uFE0F Base template restore warning:", restoreErr.message);
           }
+          exec(`dotnet build --no-restore -v q -p:WarningLevel=0 "${projectFile}"`, { cwd: COMPILER_BASE_DIR, env: OFFLINE_DOTNET_ENV }, (buildErr) => {
+            if (buildErr) {
+              console.warn("\u26A0\uFE0F Base template build warning (falling back to standard build):", buildErr.message);
+              exec(`dotnet build -v q -p:WarningLevel=0 "${projectFile}"`, { cwd: COMPILER_BASE_DIR, env: OFFLINE_DOTNET_ENV }, () => resolve(COMPILER_BASE_DIR));
+            } else {
+              console.log(`\u26A1 Verity Compiler: Base .NET template pre-warmed for ${targetFramework} with warm obj/bin cache (offline ready).`);
+              resolve(COMPILER_BASE_DIR);
+            }
+          });
         });
       });
       return COMPILER_BASE_DIR;
@@ -97478,7 +98961,7 @@ io.on("connection", (socket) => {
   if (currentInstruction) {
     socket.emit("instruction_update", currentInstruction);
   }
-  socket.on("teacher_join", ({ classroomId, assignmentId }) => {
+  socket.on("teacher_join", async ({ classroomId, assignmentId }) => {
     if (!socket.user || !["Teacher", "Admin"].includes(socket.user.role)) {
       return socket.emit("error", { message: "Access denied: Teacher role required." });
     }
@@ -97488,10 +98971,58 @@ io.on("connection", (socket) => {
     }
     socket.join(roomName);
     socket.data.teacherRoom = roomName;
-    const filterKey = `${classroomId || "none"}:${assignmentId || "none"}`;
+    const cIdStr = String(classroomId || "none");
+    const aIdStr = String(assignmentId || "none");
+    const filterKey = `${cIdStr}:${aIdStr}`;
+    let dbLogs = [];
+    try {
+      dbLogs = await db.all(
+        "SELECT * FROM proctor_session_logs WHERE classroom_id = ? AND assignment_id = ? ORDER BY id ASC",
+        cIdStr,
+        aIdStr
+      ).catch(() => []);
+    } catch (_) {
+    }
+    if (Array.isArray(dbLogs) && dbLogs.length > 0) {
+      for (const log of dbLogs) {
+        const sKey = `${cIdStr}:${aIdStr}:${log.student_id}`;
+        const targetKey = Object.keys(activeStudents).find(
+          (k) => k.startsWith(filterKey + ":") && (activeStudents[k].studentId === log.student_id || activeStudents[k].name === log.student_name)
+        ) || sKey;
+        if (!activeStudents[targetKey]) {
+          activeStudents[targetKey] = {
+            studentId: log.student_id,
+            name: log.student_name || log.student_id,
+            code: "",
+            classroomId: cIdStr,
+            assignmentId: aIdStr,
+            logs: [],
+            status: "Live"
+          };
+        }
+        const curStudent = activeStudents[targetKey];
+        const logs = Array.isArray(curStudent.logs) ? curStudent.logs : [];
+        const exists = logs.some((l) => l.id === log.id || l.action === log.action && l.time === log.time);
+        if (!exists) {
+          logs.unshift({
+            id: log.id,
+            action: log.action,
+            message: log.message || log.action,
+            time: log.time,
+            color: log.color,
+            studentId: log.student_id,
+            studentName: log.student_name
+          });
+          curStudent.logs = logs;
+        }
+      }
+    }
     for (const [key, student] of Object.entries(activeStudents)) {
       if (key.startsWith(filterKey + ":")) {
-        socket.emit("teacher_update_code", student);
+        socket.emit("teacher_update_code", {
+          ...student,
+          logs: student.logs || []
+        });
       }
     }
   });
@@ -97529,78 +99060,171 @@ io.on("connection", (socket) => {
     }
     io.emit("classroom_theme_changed", data);
   });
+  socket.on("teacher_announcement_posted", async (data) => {
+    if (!data || !data.classroomId || !data.announcement) return;
+    const { classroomId, announcement } = data;
+    const announcementId = announcement.id ? Number(announcement.id) : Date.now();
+    const announcementTitle = announcement.title || "Instructor Announcement";
+    const announcementDetails = (announcement.details || "").trim();
+    const announcementAuthor = announcement.author || socket.user?.name || "Instructor";
+    const postedTime = announcement.posted ? Number(announcement.posted) : Date.now();
+    try {
+      await db.run(`
+                INSERT INTO announcements (id, classroom_id, title, details, author, posted)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    title = excluded.title,
+                    details = excluded.details,
+                    author = excluded.author,
+                    posted = excluded.posted
+            `, announcementId, Number(classroomId), announcementTitle, announcementDetails, announcementAuthor, postedTime);
+    } catch (e2) {
+      console.error("Error persisting announcement via socket:", e2);
+    }
+    const payload = {
+      id: announcementId,
+      classroomId: Number(classroomId),
+      title: announcementTitle,
+      details: announcementDetails,
+      author: announcementAuthor,
+      posted: postedTime
+    };
+    io.emit("announcement_posted", { classroomId: Number(classroomId), announcement: payload });
+  });
+  socket.on("teacher_announcement_deleted", async (data) => {
+    if (!data || !data.classroomId || !data.announcementId) return;
+    const { classroomId, announcementId } = data;
+    try {
+      await db.run("DELETE FROM announcements WHERE id = ? AND classroom_id = ?", Number(announcementId), Number(classroomId));
+    } catch (e2) {
+      console.error("Error deleting announcement via socket:", e2);
+    }
+    io.emit("announcement_deleted", { classroomId: Number(classroomId), announcementId: Number(announcementId) });
+  });
   socket.on("compile_code", async (data) => {
-    if (!socket.user) {
-      authenticateSocket(socket, data?.token || socket.handshake.auth?.token, data?.user);
-    }
-    if (!socket.user) {
-      return socket.emit("terminal_output", "Error: Authentication required to execute code. Please log in.\n");
-    }
-    const { code } = data || {};
-    const studentKey = socket.user?.id ? `u_${socket.user.id}` : socket.user?.email ? `e_${socket.user.email.replace(/[^a-zA-Z0-9]/g, "_")}` : `s_${socket.id.replace(/[^a-zA-Z0-9]/g, "")}`;
-    let projectDir = sessionWorkspaces.get(studentKey)?.projectDir;
-    if (!projectDir) {
-      projectDir = path.join(os2.tmpdir(), `verity_ws_${studentKey}`);
-      sessionWorkspaces.set(studentKey, { projectDir, lastUsed: Date.now() });
-    } else {
-      sessionWorkspaces.get(studentKey).lastUsed = Date.now();
-    }
-    const projectFile = path.join(projectDir, "verity_base.csproj");
-    let isFirstCompile = !fs2.existsSync(projectFile);
-    const targetFramework = getDotnetTargetFramework();
-    if (!isFirstCompile) {
-      try {
-        const existingCsproj = fs2.readFileSync(projectFile, "utf8");
-        if (!existingCsproj.includes(`<TargetFramework>${targetFramework}</TargetFramework>`)) {
-          try {
-            fs2.rmSync(projectDir, { recursive: true, force: true });
-          } catch (_) {
+    try {
+      if (!socket.user) {
+        authenticateSocket(socket, data?.token || socket.handshake.auth?.token, data?.user);
+      }
+      if (!socket.user && (data?.username === "CompilerView" || data?.room === "sandbox")) {
+        socket.user = { id: 9999, name: "CompilerView", role: "Student" };
+      }
+      if (!socket.user) {
+        socket.emit("terminal_output", "Error: Authentication required to execute code. Please log in.\n");
+        return socket.emit("process_exit", { code: 1 });
+      }
+      const { code, extraFiles = [] } = data || {};
+      const studentKey = socket.user?.id ? `u_${socket.user.id}` : socket.user?.email ? `e_${socket.user.email.replace(/[^a-zA-Z0-9]/g, "_")}` : `s_${socket.id.replace(/[^a-zA-Z0-9]/g, "")}`;
+      let projectDir = sessionWorkspaces.get(studentKey)?.projectDir;
+      if (!projectDir) {
+        projectDir = path.join(os2.tmpdir(), `verity_ws_${studentKey}`);
+        sessionWorkspaces.set(studentKey, { projectDir, lastUsed: Date.now() });
+      } else {
+        sessionWorkspaces.get(studentKey).lastUsed = Date.now();
+      }
+      const projectFile = path.join(projectDir, "verity_base.csproj");
+      let isFirstCompile = !fs2.existsSync(projectFile);
+      const targetFramework = getDotnetTargetFramework();
+      if (!isFirstCompile) {
+        try {
+          const existingCsproj = fs2.readFileSync(projectFile, "utf8");
+          if (!existingCsproj.includes(`<TargetFramework>${targetFramework}</TargetFramework>`)) {
+            try {
+              fs2.rmSync(projectDir, { recursive: true, force: true });
+            } catch (_) {
+            }
+            isFirstCompile = true;
           }
-          isFirstCompile = true;
+        } catch (_) {
         }
-      } catch (_) {
       }
-    }
-    if (activeProcess) {
-      try {
-        activeProcess.kill();
-      } catch (_) {
-      }
-      activeProcess = null;
-    }
-    if (isFirstCompile) {
-      socket.emit("terminal_output", "Initializing compiler environment...\n");
-      try {
-        await ensureBaseTemplate();
-        if (!fs2.existsSync(projectDir)) {
-          fs2.mkdirSync(projectDir, { recursive: true });
+      if (activeProcess) {
+        try {
+          activeProcess.kill();
+        } catch (_) {
         }
-        fs2.cpSync(COMPILER_BASE_DIR, projectDir, { recursive: true });
-        await compileStudentCode(projectDir, code, socket);
-      } catch (err) {
-        console.warn("Fast template clone failed, falling back to dotnet new:", err.message);
-        exec(`dotnet new console --framework ${targetFramework} -o "${projectDir}"`, async (newErr) => {
-          if (newErr) {
-            sessionWorkspaces.delete(studentKey);
-            return socket.emit("terminal_output", "Error: Could not initialize .NET compiler.\n");
+        activeProcess = null;
+      }
+      if (isFirstCompile) {
+        socket.emit("terminal_output", "Initializing compiler environment...\n");
+        try {
+          await ensureBaseTemplate();
+          if (!fs2.existsSync(projectDir)) {
+            fs2.mkdirSync(projectDir, { recursive: true });
           }
-          await compileStudentCode(projectDir, code, socket);
-        });
+          fs2.cpSync(COMPILER_BASE_DIR, projectDir, { recursive: true });
+          await compileStudentCode(projectDir, code, socket, extraFiles);
+        } catch (err) {
+          console.warn("Fast template clone failed, falling back to dotnet new:", err.message);
+          exec(`dotnet new console -n verity_base --no-restore --framework ${targetFramework} -o "${projectDir}"`, { env: OFFLINE_DOTNET_ENV }, async (newErr) => {
+            if (newErr) {
+              sessionWorkspaces.delete(studentKey);
+              socket.emit("terminal_output", "Error: Could not initialize .NET compiler.\n");
+              return socket.emit("process_exit", { code: 1 });
+            }
+            try {
+              fs2.writeFileSync(path.join(projectDir, "nuget.config"), `<?xml version="1.0" encoding="utf-8"?><configuration><packageSources><add key="nuget.org" value="https://api.nuget.org/v3/index.json" protocolVersion="3" /></packageSources></configuration>`, "utf8");
+              execSync(`dotnet restore "${path.join(projectDir, "verity_base.csproj")}" --ignore-failed-sources -v q`, { cwd: projectDir, env: OFFLINE_DOTNET_ENV });
+            } catch (_) {
+            }
+            await compileStudentCode(projectDir, code, socket, extraFiles);
+          });
+        }
+      } else {
+        await compileStudentCode(projectDir, code, socket, extraFiles);
       }
-    } else {
-      await compileStudentCode(projectDir, code, socket);
+    } catch (error) {
+      console.error("Compiler error:", error);
+      socket.emit("terminal_output", `
+[Internal Server Error: ${error.message}]
+`);
+      socket.emit("process_exit", { code: 1 });
     }
   });
-  async function compileStudentCode(projectDir, code, socket2) {
+  async function compileStudentCode(projectDir, code, socket2, extraFiles = []) {
     fs2.writeFileSync(path.join(projectDir, "Program.cs"), code, "utf8");
+    const extraNames = /* @__PURE__ */ new Set();
+    for (const ef of extraFiles) {
+      if (!ef || !ef.name || !ef.code) continue;
+      const safeName = ef.name.replace(/[^a-zA-Z0-9_\-\.]/g, "_").replace(/\.cs$/i, "") + ".cs";
+      if (safeName.toLowerCase() === "program.cs") continue;
+      fs2.writeFileSync(path.join(projectDir, safeName), ef.code || "", "utf8");
+      extraNames.add(safeName);
+    }
+    try {
+      for (const f3 of fs2.readdirSync(projectDir)) {
+        if (f3.endsWith(".cs") && f3 !== "Program.cs" && !extraNames.has(f3)) {
+          try {
+            fs2.unlinkSync(path.join(projectDir, f3));
+          } catch (_) {
+          }
+        }
+      }
+    } catch (_) {
+    }
     socket2.emit("terminal_output", "Compiling...\n");
     socket2.emit("compiler_diagnostics", []);
     const projectFile = path.join(projectDir, "verity_base.csproj");
+    const nugetFile = path.join(projectDir, "nuget.config");
     const targetFramework = getDotnetTargetFramework();
     const dllPath = path.join(projectDir, "bin", "Debug", targetFramework, "verity_base.dll");
     const treatWarningsAsErrors = await getTreatWarningsAsErrors();
+    if (!fs2.existsSync(nugetFile)) {
+      try {
+        fs2.writeFileSync(nugetFile, `<?xml version="1.0" encoding="utf-8"?><configuration><packageSources><add key="nuget.org" value="https://api.nuget.org/v3/index.json" protocolVersion="3" /></packageSources></configuration>`, "utf8");
+      } catch (_) {
+      }
+    }
+    const assetsFile = path.join(projectDir, "obj", "project.assets.json");
+    if (!fs2.existsSync(assetsFile)) {
+      try {
+        execSync(`dotnet restore "${projectFile}" --ignore-failed-sources -v q`, { cwd: projectDir, env: OFFLINE_DOTNET_ENV });
+      } catch (_) {
+      }
+    }
     const buildArgs = [
       "build",
+      "--no-restore",
       "-v",
       "q",
       "-clp:NoSummary",
@@ -97609,14 +99233,7 @@ io.on("connection", (socket) => {
       ...treatWarningsAsErrors ? ["-p:TreatWarningsAsErrors=true"] : [],
       projectFile
     ];
-    const env2 = {
-      ...process.env,
-      DOTNET_CLI_TELEMETRY_OPTOUT: "1",
-      DOTNET_NOLOGO: "1",
-      DOTNET_SKIP_FIRST_TIME_EXPERIENCE: "1",
-      DOTNET_CLI_UI_LANGUAGE: "en-US",
-      MSBUILDDISABLENODEREUSE: "1"
-    };
+    const env2 = OFFLINE_DOTNET_ENV;
     const buildProcess = spawn("dotnet", buildArgs, { cwd: projectDir, env: env2 });
     activeProcess = buildProcess;
     let rawCompilerOutput = "";
@@ -97633,7 +99250,7 @@ io.on("connection", (socket) => {
         } catch (_) {
         }
         socket2.emit("terminal_output", "\n[Compilation timed out]\n");
-        socket2.emit("process_exit");
+        socket2.emit("process_exit", { code: 1 });
         activeProcess = null;
       }
     }, 15e3);
@@ -97642,7 +99259,7 @@ io.on("connection", (socket) => {
       socket2.emit("terminal_output", `
 [Compiler launch error: ${err.message}]
 `);
-      socket2.emit("process_exit");
+      socket2.emit("process_exit", { code: 1 });
       activeProcess = null;
     });
     buildProcess.on("close", (buildCode) => {
@@ -97652,7 +99269,7 @@ io.on("connection", (socket) => {
       socket2.emit("compiler_diagnostics", diagnostics);
       if (buildCode !== 0 || !fs2.existsSync(dllPath)) {
         socket2.emit("terminal_output", rawCompilerOutput + "\n[Build failed. Fix the build errors and run again.]\n");
-        socket2.emit("process_exit");
+        socket2.emit("process_exit", { code: 1 });
         activeProcess = null;
         return;
       }
@@ -97667,7 +99284,7 @@ io.on("connection", (socket) => {
           } catch (_) {
           }
           socket2.emit("terminal_output", "\n[Process terminated: Execution limit of 20s exceeded]\n");
-          socket2.emit("process_exit");
+          socket2.emit("process_exit", { code: 1 });
           activeProcess = null;
         }
       }, 2e4);
@@ -97676,7 +99293,7 @@ io.on("connection", (socket) => {
         socket2.emit("terminal_output", `
 [Execution error: ${err.message}]
 `);
-        socket2.emit("process_exit");
+        socket2.emit("process_exit", { code: 1 });
         activeProcess = null;
       });
       runProcess.stdout.on("data", (data) => {
@@ -97690,7 +99307,7 @@ io.on("connection", (socket) => {
         socket2.emit("terminal_output", `
 [Process exited with code ${runCode ?? 0}]
 `);
-        socket2.emit("process_exit");
+        socket2.emit("process_exit", { code: runCode ?? 0 });
         activeProcess = null;
       });
     });
@@ -97704,32 +99321,331 @@ io.on("connection", (socket) => {
     if (activeProcess) {
       activeProcess.kill();
       socket.emit("terminal_output", "\n[Process stopped by user]\n");
-      socket.emit("process_exit");
+      socket.emit("process_exit", { code: 0 });
       activeProcess = null;
+    }
+  });
+  socket.on("run_test_cases", async (data) => {
+    try {
+      if (!socket.user) {
+        authenticateSocket(socket, data?.token || socket.handshake.auth?.token, data?.user);
+      }
+      if (!socket.user && (data?.username === "CompilerView" || data?.room === "sandbox")) {
+        socket.user = { id: 9999, name: "CompilerView", role: "Student" };
+      }
+      const { code, testCases = [] } = data || {};
+      if (!Array.isArray(testCases) || testCases.length === 0) {
+        return socket.emit("test_cases_results", { results: [] });
+      }
+      const studentKey = socket.user?.id ? `u_${socket.user.id}` : socket.user?.email ? `e_${socket.user.email.replace(/[^a-zA-Z0-9]/g, "_")}` : `s_${socket.id.replace(/[^a-zA-Z0-9]/g, "")}`;
+      let ws = sessionWorkspaces.get(studentKey);
+      let projectDir = ws?.projectDir;
+      if (!projectDir) {
+        projectDir = path.join(os2.tmpdir(), `verity_ws_${studentKey}`);
+        ws = { projectDir, lastUsed: Date.now() };
+        sessionWorkspaces.set(studentKey, ws);
+      } else {
+        ws.lastUsed = Date.now();
+      }
+      const projectFile = path.join(projectDir, "verity_base.csproj");
+      const targetFramework = getDotnetTargetFramework();
+      const dllPath = path.join(projectDir, "bin", "Debug", targetFramework, "verity_base.dll");
+      let compileSuccess = true;
+      let buildOutput = "";
+      const env2 = OFFLINE_DOTNET_ENV;
+      if (ws.lastCompiledCode === code && fs2.existsSync(dllPath)) {
+        console.log(`[TestCases] Skipping compilation for ${studentKey} (cached)`);
+        socket.emit("compiler_diagnostics", []);
+      } else {
+        console.log(`[TestCases] Compiling for ${studentKey}...`);
+        try {
+          await ensureBaseTemplate();
+          if (!fs2.existsSync(projectDir)) {
+            fs2.mkdirSync(projectDir, { recursive: true });
+            fs2.cpSync(COMPILER_BASE_DIR, projectDir, { recursive: true });
+          }
+        } catch (e2) {
+          console.warn("Workspace prep failed for test cases:", e2.message);
+        }
+        fs2.writeFileSync(path.join(projectDir, "Program.cs"), code || "", "utf8");
+        const nugetFile = path.join(projectDir, "nuget.config");
+        if (!fs2.existsSync(nugetFile)) {
+          try {
+            fs2.writeFileSync(nugetFile, `<?xml version="1.0" encoding="utf-8"?><configuration><packageSources><add key="nuget.org" value="https://api.nuget.org/v3/index.json" protocolVersion="3" /></packageSources></configuration>`, "utf8");
+          } catch (_) {
+          }
+        }
+        const assetsFile = path.join(projectDir, "obj", "project.assets.json");
+        if (!fs2.existsSync(assetsFile)) {
+          try {
+            execSync(`dotnet restore "${projectFile}" --ignore-failed-sources -v q`, { cwd: projectDir, env: OFFLINE_DOTNET_ENV });
+          } catch (_) {
+          }
+        }
+        const treatWarningsAsErrors = await getTreatWarningsAsErrors();
+        const buildArgs = [
+          "build",
+          "--no-restore",
+          "-v",
+          "q",
+          "-clp:NoSummary",
+          "--disable-build-servers",
+          treatWarningsAsErrors ? "-p:WarningLevel=4" : "-p:WarningLevel=0",
+          ...treatWarningsAsErrors ? ["-p:TreatWarningsAsErrors=true"] : [],
+          projectFile
+        ];
+        compileSuccess = await new Promise((resolve) => {
+          const bp = spawn("dotnet", buildArgs, { cwd: projectDir, env: env2 });
+          bp.stdout.on("data", (d) => {
+            buildOutput += d.toString();
+          });
+          bp.stderr.on("data", (d) => {
+            buildOutput += d.toString();
+          });
+          const timeout = setTimeout(() => {
+            try {
+              bp.kill();
+            } catch (_) {
+            }
+            resolve(false);
+          }, 15e3);
+          bp.on("close", (code2) => {
+            clearTimeout(timeout);
+            const diags = parseCompilerDiagnostics(buildOutput);
+            socket.emit("compiler_diagnostics", diags);
+            resolve(code2 === 0 && fs2.existsSync(dllPath));
+          });
+          bp.on("error", () => {
+            clearTimeout(timeout);
+            resolve(false);
+          });
+        });
+        if (compileSuccess) {
+          ws.lastCompiledCode = code;
+        } else {
+          ws.lastCompiledCode = null;
+          const results2 = testCases.map((tc) => ({
+            id: tc.id,
+            status: "error",
+            passed: false,
+            actualOutput: "",
+            expectedOutput: tc.expectedOutput || "",
+            error: buildOutput || "Compilation failed. Please fix syntax or type errors in code."
+          }));
+          return socket.emit("test_cases_results", { results: results2 });
+        }
+      }
+      const results = await Promise.all(testCases.map((tc) => new Promise((resolve) => {
+        let actual = "";
+        let runError = "";
+        let killed = false;
+        const rp = spawn("dotnet", [dllPath], { cwd: projectDir, env: env2 });
+        const execTimeout = setTimeout(() => {
+          killed = true;
+          try {
+            rp.kill();
+          } catch (_) {
+          }
+          const result = {
+            id: tc.id,
+            status: "error",
+            passed: false,
+            actualOutput: actual.replace(/\r\n/g, "\n"),
+            expectedOutput: tc.expectedOutput || "",
+            error: "Execution timed out (5s limit exceeded)"
+          };
+          socket.emit("test_case_result", result);
+          resolve(result);
+        }, 5e3);
+        if (tc.input !== void 0 && tc.input !== null && tc.input !== "") {
+          try {
+            const inStr = String(tc.input);
+            rp.stdin.write(inStr.endsWith("\n") ? inStr : inStr + "\n");
+          } catch (_) {
+          }
+        }
+        try {
+          rp.stdin.end();
+        } catch (_) {
+        }
+        rp.stdout.on("data", (d) => {
+          actual += d.toString();
+        });
+        rp.stderr.on("data", (d) => {
+          runError += d.toString();
+        });
+        rp.on("close", () => {
+          clearTimeout(execTimeout);
+          if (killed) return;
+          const normActual = actual.replace(/\r\n/g, "\n").trim();
+          const normExpected = (tc.expectedOutput || "").replace(/\r\n/g, "\n").trim();
+          const passed = normActual === normExpected;
+          const result = {
+            id: tc.id,
+            status: passed ? "passed" : "failed",
+            passed,
+            actualOutput: actual.replace(/\r\n/g, "\n"),
+            expectedOutput: tc.expectedOutput || "",
+            error: runError || null
+          };
+          socket.emit("test_case_result", result);
+          resolve(result);
+        });
+        rp.on("error", (err) => {
+          clearTimeout(execTimeout);
+          if (killed) return;
+          const result = {
+            id: tc.id,
+            status: "error",
+            passed: false,
+            actualOutput: actual.replace(/\r\n/g, "\n"),
+            expectedOutput: tc.expectedOutput || "",
+            error: err.message
+          };
+          socket.emit("test_case_result", result);
+          resolve(result);
+        });
+      })));
+      socket.emit("test_cases_results", { results });
+    } catch (error) {
+      console.error("Test case error:", error);
+      socket.emit("test_cases_results", { results: [] });
     }
   });
   socket.on("student_typing", (data) => {
     if (data && data.studentId) {
-      const classroomId = data.classroomId || "none";
-      const assignmentId = data.assignmentId || "none";
+      const classroomId = data.classroomId != null ? String(data.classroomId) : "none";
+      const assignmentId = data.assignmentId != null ? String(data.assignmentId) : "none";
       const studentKey = `${classroomId}:${assignmentId}:${data.studentId}`;
-      activeStudents[studentKey] = data;
+      const existing = activeStudents[studentKey] || {};
+      const existingLogs = Array.isArray(existing.logs) ? existing.logs : [];
+      let mergedLogs = existingLogs;
+      if (Array.isArray(data.logs) && data.logs.length > 0) {
+        const map = /* @__PURE__ */ new Map();
+        [...existingLogs, ...data.logs].forEach((l) => {
+          if (!l) return;
+          const k = `${l.id || ""}-${l.action || l.message || ""}-${l.time || ""}`;
+          if (!map.has(k)) {
+            map.set(k, {
+              id: l.id || Date.now(),
+              action: l.action || l.message || "Violation",
+              message: l.message || l.action || "Violation",
+              time: l.time || "",
+              color: l.color || "#ef4444",
+              studentId: data.studentId,
+              studentName: data.name || data.studentId
+            });
+          }
+        });
+        mergedLogs = Array.from(map.values()).sort((a, b) => (b.id || 0) - (a.id || 0));
+      }
+      const updated = {
+        ...existing,
+        ...data,
+        classroomId,
+        assignmentId,
+        logs: mergedLogs,
+        status: existing.status === "Submitted" || existing.status === "Graded" ? existing.status : "Live"
+      };
+      activeStudents[studentKey] = updated;
       socket.data.studentKey = studentKey;
       socket.data.studentId = data.studentId;
       const roomName = `classroom:${classroomId}:assignment:${assignmentId}`;
-      socket.to(roomName).emit("teacher_update_code", data);
+      socket.to(roomName).emit("teacher_update_code", updated);
     }
   });
   socket.on("proctor_alert", async (data) => {
     if (data && data.studentId) {
-      const classroomId = data.classroomId || "none";
-      const assignmentId = data.assignmentId || "none";
-      const studentKey = `${classroomId}:${assignmentId}:${data.studentId}`;
-      if (activeStudents[studentKey]) {
-        activeStudents[studentKey] = { ...activeStudents[studentKey], ...data };
+      const studentId = data.studentId;
+      const studentName = data.name || studentId;
+      let classroomId = data.classroomId != null ? String(data.classroomId) : null;
+      let assignmentId = data.assignmentId != null ? String(data.assignmentId) : null;
+      if (!classroomId || !assignmentId) {
+        if (socket.data.studentKey) {
+          const parts = socket.data.studentKey.split(":");
+          if (parts.length >= 3) {
+            classroomId = classroomId || parts[0];
+            assignmentId = assignmentId || parts[1];
+          }
+        } else {
+          const found = Object.values(activeStudents).find(
+            (s2) => s2 && (s2.studentId === studentId || s2.name === studentName)
+          );
+          if (found) {
+            classroomId = classroomId || found.classroomId;
+            assignmentId = assignmentId || found.assignmentId;
+          }
+        }
+      }
+      classroomId = classroomId || "none";
+      assignmentId = assignmentId || "none";
+      const actionText = data.action || data.desc || "Violation";
+      const messageText = data.message || actionText;
+      const timeText = data.time || (/* @__PURE__ */ new Date()).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true }).toLowerCase();
+      const colorVal = data.color || "#ef4444";
+      const newLog = {
+        id: data.id || Date.now(),
+        action: actionText,
+        message: messageText,
+        time: timeText,
+        color: colorVal,
+        studentId,
+        studentName
+      };
+      const studentKey = `${classroomId}:${assignmentId}:${studentId}`;
+      const existing = activeStudents[studentKey] || {
+        studentId,
+        name: studentName,
+        code: "",
+        classroomId,
+        assignmentId,
+        logs: [],
+        status: "Live"
+      };
+      const existingLogs = Array.isArray(existing.logs) ? existing.logs : [];
+      const isDup = existingLogs.some((l) => l.action === newLog.action && (l.time === newLog.time || Math.abs((l.id || 0) - newLog.id) < 1e3));
+      const updatedLogs = isDup ? existingLogs : [newLog, ...existingLogs];
+      activeStudents[studentKey] = {
+        ...existing,
+        studentId,
+        name: studentName,
+        classroomId,
+        assignmentId,
+        logs: updatedLogs,
+        status: existing.status || "Live"
+      };
+      if (studentName !== studentId) {
+        const altKey = `${classroomId}:${assignmentId}:${studentName}`;
+        if (activeStudents[altKey]) {
+          activeStudents[altKey].logs = updatedLogs;
+        }
+      }
+      try {
+        await db.run(
+          "INSERT INTO proctor_session_logs (classroom_id, assignment_id, student_id, student_name, action, message, time, color) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+          String(classroomId),
+          String(assignmentId),
+          String(studentId),
+          String(studentName),
+          actionText,
+          messageText,
+          timeText,
+          colorVal
+        ).catch(() => {
+        });
+      } catch (_) {
       }
       const roomName = `classroom:${classroomId}:assignment:${assignmentId}`;
-      socket.to(roomName).emit("teacher_receive_alert", data);
+      socket.to(roomName).emit("teacher_receive_alert", {
+        ...data,
+        id: newLog.id,
+        studentId,
+        name: studentName,
+        action: actionText,
+        message: messageText,
+        time: timeText,
+        color: colorVal
+      });
     }
     try {
       const key = todayKey();

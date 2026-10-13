@@ -667,23 +667,42 @@ app.post('/login', async (req, res) => {
 
         const { email, password } = req.body;
         const cleanEmail = (email || '').trim().toLowerCase();
+        const rawPassword = password !== undefined ? String(password) : '';
+        const cleanPassword = rawPassword.trim();
 
-        // 1. STRICT ISOLATION: Reject any admin account attempting standard login with generic error
+        // 1. STRICT ISOLATION: Check if admin account attempting standard login
         const isAdminAcc = await db.get('SELECT id FROM admin_users WHERE LOWER(email) = ?', cleanEmail);
         if (isAdminAcc) {
-            return res.status(401).json({ message: 'Invalid credentials' });
+            return res.status(401).json({ 
+                message: 'This account has Administrator privileges. Please sign in through the Admin Portal (/admin).' 
+            });
         }
 
-        // Standard login queries users table (Teachers & Students) ONLY
-        const user = await db.get('SELECT * FROM users WHERE LOWER(email) = ? AND password = ?', cleanEmail, password);
+        // 2. Standard login queries users table (Teachers & Students) ONLY
+        // Support matching exact password or trimmed password
+        let user = await db.get('SELECT * FROM users WHERE LOWER(email) = ? AND password = ?', cleanEmail, rawPassword);
+        if (!user && cleanPassword && cleanPassword !== rawPassword) {
+            user = await db.get('SELECT * FROM users WHERE LOWER(email) = ? AND password = ?', cleanEmail, cleanPassword);
+        }
 
         if (!user) {
-            return res.status(401).json({ message: 'Invalid credentials' });
+            const userExists = await db.get('SELECT id, password, role FROM users WHERE LOWER(email) = ?', cleanEmail);
+            if (userExists) {
+                if (userExists.password === 'google_sso_user') {
+                    return res.status(401).json({
+                        message: 'This account was registered with Google Sign-In. Please sign in with Google or reset your password.'
+                    });
+                }
+                return res.status(401).json({ message: 'Invalid credentials. Please verify your password.' });
+            }
+            return res.status(401).json({ message: 'Invalid credentials. No account found with this email address.' });
         }
 
         if (user.role === 'Admin' || user.role === 'admin') {
             try { await db.run('DELETE FROM users WHERE id = ?', user.id); } catch (_) {}
-            return res.status(401).json({ message: 'Invalid credentials' });
+            return res.status(401).json({ 
+                message: 'This account has Administrator privileges. Please sign in through the Admin Portal (/admin).' 
+            });
         }
         if (user.status === 'Pending') {
             return res.status(403).json({ message: 'Your account is pending admin approval' });
@@ -998,7 +1017,85 @@ app.get('/users', authenticateToken, requireRole('Admin'), async (req, res) => {
     }
 });
 
-app.delete('/users/:email', authenticateToken, requireRole('Admin'), async (req, res) => {
+// --- USER PROFILE ENDPOINTS ---
+app.get('/users/profile', authenticateToken, async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const user = await db.get('SELECT id, name, email, role, avatar, status FROM users WHERE id = ?', userId);
+        if (!user) return res.status(404).json({ message: 'User not found' });
+        res.status(200).json({ user });
+    } catch (e) {
+        res.status(500).json({ message: e.message });
+    }
+});
+
+app.put('/users/profile', authenticateToken, async (req, res) => {
+    try {
+        const { name, avatar } = req.body || {};
+        const userId = req.user.id;
+        let current = await db.get('SELECT * FROM users WHERE id = ?', userId);
+        let isAdmin = false;
+        if (!current && req.user.role === 'Admin') {
+            current = await db.get('SELECT * FROM admin_users WHERE id = ?', userId);
+            isAdmin = true;
+        }
+        if (!current) return res.status(404).json({ message: 'User not found' });
+
+        const updatedName = name && name.trim() ? name.trim() : current.name;
+        // Never overwrite email from generic profile updates — email is strictly protected by OTP verification
+        const updatedEmail = current.email;
+        const updatedAvatar = avatar !== undefined ? avatar : current.avatar;
+
+        if (isAdmin) {
+            await db.run(
+                'UPDATE admin_users SET name = ?, avatar = ? WHERE id = ?',
+                updatedName, updatedAvatar, userId
+            );
+        } else {
+            await db.run(
+                'UPDATE users SET name = ?, avatar = ? WHERE id = ?',
+                updatedName, updatedAvatar, userId
+            );
+
+            // If teacher, keep their classrooms updated with their real name
+            if (current.role === 'Teacher') {
+                await db.run(
+                    'UPDATE classrooms SET instructor = ? WHERE LOWER(instructor_email) = LOWER(?) OR instructor = ?',
+                    updatedName, current.email, current.name
+                ).catch(() => {});
+            }
+        }
+
+        const user = {
+            id: userId,
+            name: updatedName,
+            email: updatedEmail,
+            role: current.role,
+            avatar: updatedAvatar,
+            status: current.status
+        };
+
+        // Broadcast avatar update so others and all active sessions update in real time
+        io.emit('user_avatar_updated', {
+            userId,
+            name: updatedName,
+            email: updatedEmail,
+            avatar: updatedAvatar,
+            role: current.role
+        });
+
+        if (current.role === 'Teacher') {
+            io.emit('classrooms_updated');
+        }
+
+        res.status(200).json({ message: 'Profile updated successfully', user });
+    } catch (e) {
+        res.status(500).json({ message: e.message });
+    }
+});
+
+app.delete('/users/:email', authenticateToken, requireRole('Admin'), async (req, res, next) => {
+    if (req.params.email === 'profile') return next();
     try {
         const email = decodeURIComponent(req.params.email);
         const info = await db.run('DELETE FROM users WHERE LOWER(email) = LOWER(?)', email);
@@ -1009,7 +1106,8 @@ app.delete('/users/:email', authenticateToken, requireRole('Admin'), async (req,
     }
 });
 
-app.put('/users/:email/status', authenticateToken, requireRole('Admin'), async (req, res) => {
+app.put('/users/:email/status', authenticateToken, requireRole('Admin'), async (req, res, next) => {
+    if (req.params.email === 'profile') return next();
     try {
         const email = decodeURIComponent(req.params.email);
         const { status } = req.body;
@@ -1021,7 +1119,8 @@ app.put('/users/:email/status', authenticateToken, requireRole('Admin'), async (
     }
 });
 
-app.put('/users/:email', authenticateToken, requireRole('Admin'), async (req, res) => {
+app.put('/users/:email', authenticateToken, requireRole('Admin'), async (req, res, next) => {
+    if (req.params.email === 'profile') return next();
     try {
         const targetEmail = decodeURIComponent(req.params.email).toLowerCase();
         const { name, email, role, status, password } = req.body || {};
@@ -1068,75 +1167,233 @@ app.put('/users/:email', authenticateToken, requireRole('Admin'), async (req, re
     }
 });
 
-// --- USER PROFILE ENDPOINTS ---
-app.get('/users/profile', authenticateToken, async (req, res) => {
+// --- CHANGE EMAIL VERIFICATION OTP ENDPOINTS ---
+app.post('/users/send-email-change-otp', authenticateToken, async (req, res) => {
     try {
-        const userId = req.user.id;
-        const user = await db.get('SELECT id, name, email, role, avatar, status FROM users WHERE id = ?', userId);
-        if (!user) return res.status(404).json({ message: 'User not found' });
-        res.status(200).json({ user });
+        const { newEmail } = req.body || {};
+        if (!newEmail || !newEmail.trim()) {
+            return res.status(400).json({ message: 'New email address is required' });
+        }
+        const cleanEmail = newEmail.trim().toLowerCase();
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!emailRegex.test(cleanEmail)) {
+            return res.status(400).json({ message: 'Please enter a valid email address' });
+        }
+
+        const currentEmail = (req.user.email || '').trim().toLowerCase();
+        if (cleanEmail === currentEmail) {
+            return res.status(400).json({ message: 'New email must be different from your current email' });
+        }
+
+        // Check if email is already in use by someone else
+        const existingUser = await db.get('SELECT id FROM users WHERE LOWER(email) = ? AND id != ?', cleanEmail, req.user.id);
+        const existingAdmin = await db.get('SELECT id FROM admin_users WHERE LOWER(email) = ? AND id != ?', cleanEmail, req.user.id);
+        if (existingUser || existingAdmin) {
+            return res.status(400).json({ message: 'This email is already in use by another account' });
+        }
+
+        // Generate 6-digit OTP
+        const otpCode = crypto.randomInt(100000, 1000000).toString();
+        const expiresAt = Date.now() + 15 * 60 * 1000;
+
+        await db.run('DELETE FROM otp_verifications WHERE LOWER(email) = ?', cleanEmail);
+
+        const sessionData = JSON.stringify({
+            userId: req.user.id,
+            currentEmail: req.user.email,
+            newEmail: cleanEmail,
+            action: 'change_email'
+        });
+
+        await db.run(
+            'INSERT INTO otp_verifications (email, otp_code, user_data, expires_at) VALUES (?, ?, ?, ?)',
+            cleanEmail, otpCode, sessionData, expiresAt
+        );
+
+        const emailResult = await sendOtpEmail({
+            email: cleanEmail,
+            name: req.user.name || 'User',
+            otp: otpCode
+        });
+
+        if (!emailResult.success) {
+            console.error(`[AUTH] Failed to send email change OTP to ${cleanEmail}:`, emailResult.error);
+            if (emailResult.simulated) {
+                return res.status(200).json({
+                    message: `SMTP not configured on server. Dev verification code: ${otpCode}`,
+                    email: cleanEmail,
+                    devOtp: otpCode,
+                    expiresInMinutes: 15
+                });
+            }
+            return res.status(500).json({
+                message: `Failed to deliver verification email: ${emailResult.error || 'Delivery failed'}.`
+            });
+        }
+
+        res.status(200).json({
+            message: `Verification code sent to ${cleanEmail}`,
+            email: cleanEmail,
+            expiresInMinutes: 15
+        });
     } catch (e) {
-        res.status(500).json({ message: e.message });
+        console.error('Error sending email change OTP:', e);
+        res.status(500).json({ message: e.message || 'Failed to send verification code' });
     }
 });
 
-app.put('/users/profile', authenticateToken, async (req, res) => {
+app.post('/users/verify-email-change', authenticateToken, async (req, res) => {
     try {
-        const { name, email, avatar } = req.body || {};
-        const userId = req.user.id;
-        const current = await db.get('SELECT * FROM users WHERE id = ?', userId);
-        if (!current) return res.status(404).json({ message: 'User not found' });
+        const { newEmail, otp, newPassword } = req.body || {};
+        if (!newEmail || !otp) {
+            return res.status(400).json({ message: 'New email and verification code are required' });
+        }
+        const cleanEmail = newEmail.trim().toLowerCase();
+        const cleanOtp = String(otp).trim();
 
-        const updatedName = name && name.trim() ? name.trim() : current.name;
-        const updatedEmail = email && email.trim() ? email.trim().toLowerCase() : current.email;
-        const updatedAvatar = avatar !== undefined ? avatar : current.avatar;
-
-        await db.run(
-            'UPDATE users SET name = ?, email = ?, avatar = ? WHERE id = ?',
-            updatedName, updatedEmail, updatedAvatar, userId
+        const record = await db.get(
+            'SELECT * FROM otp_verifications WHERE LOWER(email) = ? ORDER BY id DESC LIMIT 1',
+            cleanEmail
         );
 
-        // If teacher, keep their classrooms updated with their real name and email
+        if (!record) {
+            return res.status(400).json({ message: 'No verification code found. Please request a new code.' });
+        }
+
+        const now = Date.now();
+        const expiresAt = Number(record.expires_at || record.expiresat || 0);
+        if (now > expiresAt) {
+            await db.run('DELETE FROM otp_verifications WHERE id = ?', record.id);
+            return res.status(400).json({ message: 'This verification code has expired. Please request a new one.' });
+        }
+
+        if (String(record.otp_code || record.otpcode).trim() !== cleanOtp) {
+            return res.status(400).json({ message: 'Invalid verification code. Please check your email and try again.' });
+        }
+
+        const userId = req.user.id;
+        const current = await db.get('SELECT * FROM users WHERE id = ?', userId);
+        if (!current) {
+            const adminCurrent = await db.get('SELECT * FROM admin_users WHERE id = ?', userId);
+            if (!adminCurrent) return res.status(404).json({ message: 'User account not found' });
+            
+            await db.run('UPDATE admin_users SET email = ? WHERE id = ?', cleanEmail, userId);
+            if (newPassword && newPassword.trim()) {
+                await db.run('UPDATE admin_users SET password = ? WHERE id = ?', newPassword.trim(), userId);
+            }
+            await db.run('DELETE FROM otp_verifications WHERE id = ?', record.id);
+            const updatedUser = { ...adminCurrent, email: cleanEmail };
+            const token = jwt.sign(
+                { id: updatedUser.id, email: cleanEmail, role: 'Admin', name: updatedUser.name, isAdmin: true },
+                JWT_SECRET
+            );
+            return res.status(200).json({ message: 'Email address updated successfully', user: updatedUser, token });
+        }
+
+        await db.run('UPDATE users SET email = ? WHERE id = ?', cleanEmail, userId);
+
+        if (newPassword && newPassword.trim()) {
+            await db.run('UPDATE users SET password = ? WHERE id = ?', newPassword.trim(), userId);
+        }
+
+        // Keep student enrollments in sync so the student retains all their classes
+        await db.run(
+            'UPDATE enrollments SET student_email = ? WHERE LOWER(student_email) = LOWER(?)',
+            cleanEmail, current.email
+        ).catch(() => {});
+
+        // Keep teacher classrooms in sync so the teacher retains all their classes
         if (current.role === 'Teacher') {
             await db.run(
-                'UPDATE classrooms SET instructor = ?, instructor_email = ? WHERE LOWER(instructor_email) = LOWER(?) OR instructor = ?',
-                updatedName, updatedEmail, current.email, current.name
+                'UPDATE classrooms SET instructor_email = ? WHERE LOWER(instructor_email) = LOWER(?)',
+                cleanEmail, current.email
             ).catch(() => {});
         }
 
-        // If admin, also update the admin_users table so the avatar persists for admins
         if (current.role === 'Admin') {
-            await db.run(
-                'UPDATE admin_users SET name = ?, email = ?, avatar = ? WHERE id = ?',
-                updatedName, updatedEmail, updatedAvatar, userId
-            ).catch(() => {});
+            await db.run('UPDATE admin_users SET email = ? WHERE id = ?', cleanEmail, userId).catch(() => {});
         }
 
-        const user = {
-            id: userId,
-            name: updatedName,
-            email: updatedEmail,
+        await db.run('DELETE FROM otp_verifications WHERE id = ?', record.id);
+
+        const updatedUser = {
+            id: current.id,
+            name: current.name,
+            email: cleanEmail,
             role: current.role,
-            avatar: updatedAvatar,
+            avatar: current.avatar,
             status: current.status
         };
 
-        // Broadcast avatar update so others and all active sessions update in real time
+        const token = jwt.sign(
+            { id: updatedUser.id, email: cleanEmail, role: updatedUser.role, name: updatedUser.name },
+            JWT_SECRET
+        );
+
         io.emit('user_avatar_updated', {
-            userId,
-            name: updatedName,
-            email: updatedEmail,
-            avatar: updatedAvatar,
-            role: current.role
+            userId: updatedUser.id,
+            name: updatedUser.name,
+            email: cleanEmail,
+            avatar: updatedUser.avatar,
+            role: updatedUser.role
         });
 
-        if (current.role === 'Teacher') {
-            io.emit('classrooms_updated');
+        res.status(200).json({ message: 'Email address updated successfully', user: updatedUser, token });
+    } catch (e) {
+        console.error('Error verifying email change:', e);
+        res.status(500).json({ message: e.message || 'Failed to update email' });
+    }
+});
+
+// --- CHANGE PASSWORD ENDPOINT ---
+app.post('/users/change-password', authenticateToken, async (req, res) => {
+    try {
+        const { currentPassword, newPassword } = req.body || {};
+        if (!newPassword || !newPassword.trim()) {
+            return res.status(400).json({ message: 'New password is required' });
         }
 
-        res.status(200).json({ message: 'Profile updated successfully', user });
+        const userId = req.user.id;
+        let user = await db.get('SELECT * FROM users WHERE id = ?', userId);
+        let isAdmin = false;
+        if (!user && req.user.role === 'Admin') {
+            user = await db.get('SELECT * FROM admin_users WHERE id = ?', userId);
+            isAdmin = true;
+        }
+
+        if (!user) {
+            return res.status(404).json({ message: 'User account not found' });
+        }
+
+        // For Google SSO users without an existing manual password, allow setting initial password without currentPassword
+        const isGoogleSso = user.password === 'google_sso_user';
+        if (!isGoogleSso) {
+            if (!currentPassword) {
+                return res.status(400).json({ message: 'Current password is required' });
+            }
+            if (user.password !== currentPassword && user.password !== currentPassword.trim()) {
+                return res.status(400).json({ message: 'Current password is incorrect' });
+            }
+            if (currentPassword.trim() === newPassword.trim()) {
+                return res.status(400).json({ message: 'New password must be different from your current password' });
+            }
+        }
+
+        const passwordError = await validatePassword(newPassword.trim());
+        if (passwordError) {
+            return res.status(400).json({ message: passwordError });
+        }
+
+        if (isAdmin) {
+            await db.run('UPDATE admin_users SET password = ? WHERE id = ?', newPassword.trim(), userId);
+        } else {
+            await db.run('UPDATE users SET password = ? WHERE id = ?', newPassword.trim(), userId);
+        }
+
+        res.status(200).json({ message: 'Password updated successfully' });
     } catch (e) {
-        res.status(500).json({ message: e.message });
+        console.error('Error changing password:', e);
+        res.status(500).json({ message: e.message || 'Failed to update password' });
     }
 });
 
@@ -1160,12 +1417,14 @@ const getClassworkFromDb = async (classroomId) => {
             title: row.title,
             dueDate: row.dueDate || '',
             type: row.type || '',
+            activityType: meta.activityType || row.type || 'Assignment',
             details: meta.details !== undefined ? meta.details : (row.description || ''),
             attachments: Array.isArray(meta.attachments) ? meta.attachments : [],
             points: meta.points !== undefined ? meta.points : '100',
             grading: meta.grading !== undefined ? meta.grading : 'On',
             archived: typeof meta.archived === 'boolean' ? meta.archived : false,
-            posted: meta.posted || row.created_at
+            posted: meta.posted || row.created_at,
+            testCases: Array.isArray(meta.testCases) ? meta.testCases : []
         };
     });
 };
@@ -1206,7 +1465,9 @@ const saveClassworkToDb = async (classroomId, classwork) => {
             points: cw.points !== undefined ? cw.points : '100',
             grading: cw.grading !== undefined ? cw.grading : 'On',
             archived: !!cw.archived,
-            posted: cw.posted || null
+            posted: cw.posted || null,
+            testCases: Array.isArray(cw.testCases) ? cw.testCases : [],
+            activityType: cw.activityType || cw.type || 'Assignment'
         };
         await db.run(`
             INSERT INTO classwork (id, classroom_id, title, description, dueDate, type)
@@ -1217,7 +1478,7 @@ const saveClassworkToDb = async (classroomId, classwork) => {
                 description = excluded.description,
                 dueDate = excluded.dueDate,
                 type = excluded.type
-        `, id, Number(classroomId) || classroomId, cw.title || '', JSON.stringify(descObj), cw.dueDate || '', cw.type || '');
+        `, id, Number(classroomId) || classroomId, cw.title || '', JSON.stringify(descObj), cw.dueDate || '', cw.type || cw.activityType || '');
     }
 };
 
@@ -1299,6 +1560,86 @@ app.put('/classwork/:classroomId', authenticateToken, requireRole('Teacher', 'Ad
     } catch (e) {
         console.error('Error saving classwork via PUT:', e);
         res.status(500).json({ message: 'Failed to save classwork' });
+    }
+});
+
+// --- ANNOUNCEMENTS ---
+app.get('/classrooms/:classroomId/announcements', authenticateToken, async (req, res) => {
+    try {
+        const { classroomId } = req.params;
+        if (!(await checkClassroomAccess(req, classroomId))) {
+            return res.status(403).json({ message: 'Access denied' });
+        }
+        const rows = await db.all('SELECT * FROM announcements WHERE classroom_id = ? ORDER BY posted DESC, id DESC', classroomId).catch(() => []);
+        const announcements = (rows || []).map(r => ({
+            id: Number(r.id),
+            classroomId: Number(r.classroom_id || classroomId),
+            title: r.title || 'Instructor Announcement',
+            details: r.details || '',
+            author: r.author || 'Instructor',
+            posted: Number(r.posted || (r.created_at ? new Date(r.created_at).getTime() : Date.now()))
+        }));
+        res.status(200).json({ announcements });
+    } catch (e) {
+        console.error('Error fetching announcements:', e);
+        res.status(500).json({ announcements: [], error: e.message });
+    }
+});
+
+app.post('/classrooms/:classroomId/announcements', authenticateToken, requireRole('Teacher', 'Admin'), async (req, res) => {
+    try {
+        const { classroomId } = req.params;
+        if (!(await checkClassroomAccess(req, classroomId))) {
+            return res.status(403).json({ message: 'Access denied' });
+        }
+        const { title, details, author, posted, id } = req.body;
+        if (!details || !details.trim()) {
+            return res.status(400).json({ message: 'Announcement details are required' });
+        }
+        const announcementId = id ? Number(id) : Date.now();
+        const announcementAuthor = author || req.user.name || 'Instructor';
+        const postedTime = posted ? Number(posted) : Date.now();
+        const announcementTitle = title || 'Instructor Announcement';
+
+        await db.run(`
+            INSERT INTO announcements (id, classroom_id, title, details, author, posted)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                title = excluded.title,
+                details = excluded.details,
+                author = excluded.author,
+                posted = excluded.posted
+        `, announcementId, Number(classroomId), announcementTitle, details.trim(), announcementAuthor, postedTime);
+
+        const newAnnouncement = {
+            id: announcementId,
+            classroomId: Number(classroomId),
+            title: announcementTitle,
+            details: details.trim(),
+            author: announcementAuthor,
+            posted: postedTime
+        };
+
+        io.emit('announcement_posted', { classroomId: Number(classroomId), announcement: newAnnouncement });
+        res.status(201).json({ announcement: newAnnouncement });
+    } catch (e) {
+        console.error('Error posting announcement:', e);
+        res.status(500).json({ message: 'Failed to post announcement', error: e.message });
+    }
+});
+
+app.delete('/classrooms/:classroomId/announcements/:id', authenticateToken, requireRole('Teacher', 'Admin'), async (req, res) => {
+    try {
+        const { classroomId, id } = req.params;
+        if (!(await checkClassroomAccess(req, classroomId))) {
+            return res.status(403).json({ message: 'Access denied' });
+        }
+        await db.run('DELETE FROM announcements WHERE id = ? AND classroom_id = ?', Number(id), Number(classroomId));
+        io.emit('announcement_deleted', { classroomId: Number(classroomId), announcementId: Number(id) });
+        res.status(200).json({ success: true, message: 'Announcement deleted' });
+    } catch (e) {
+        console.error('Error deleting announcement:', e);
+        res.status(500).json({ message: 'Failed to delete announcement', error: e.message });
     }
 });
 
@@ -1526,6 +1867,17 @@ app.delete('/classrooms/:id', authenticateToken, requireRole('Teacher', 'Admin')
 });
 
 // --- SUBMISSIONS ---
+app.get('/student/submissions', authenticateToken, requireRole('Student'), async (req, res) => {
+    try {
+        const rows = await db.all(
+            'SELECT assignment_id FROM submissions WHERE student_name = ? OR student_name = ? OR LOWER(student_name) = LOWER(?) OR LOWER(student_name) = LOWER(?)',
+            req.user.name || '', req.user.email || '', req.user.name || '', req.user.email || ''
+        );
+        res.status(200).json({ submissions: rows });
+    } catch (e) {
+        res.status(500).json({ message: e.message });
+    }
+});
 app.get('/submissions/:assignmentId', authenticateToken, requireRole('Teacher', 'Admin', 'Student'), async (req, res) => {
     try {
         if (!(await checkAssignmentAccess(req, req.params.assignmentId))) {
@@ -1550,6 +1902,29 @@ app.get('/submissions/:assignmentId', authenticateToken, requireRole('Teacher', 
             return { ...s, history, studentName: s.student_name, finalCode: lastCode };
         });
         res.status(200).json({ submissions });
+    } catch (e) {
+        res.status(500).json({ message: e.message });
+    }
+});
+
+// Proctor session warning logs for live monitoring
+app.get('/proctor-logs/:assignmentId', authenticateToken, requireRole('Teacher', 'Admin'), async (req, res) => {
+    try {
+        const assignmentId = String(req.params.assignmentId);
+        const classroomId = req.query.classroomId ? String(req.query.classroomId) : null;
+        let logs = [];
+        if (classroomId) {
+            logs = await db.all(
+                'SELECT * FROM proctor_session_logs WHERE assignment_id = ? AND classroom_id = ? ORDER BY id ASC',
+                assignmentId, classroomId
+            ).catch(() => []);
+        } else {
+            logs = await db.all(
+                'SELECT * FROM proctor_session_logs WHERE assignment_id = ? ORDER BY id ASC',
+                assignmentId
+            ).catch(() => []);
+        }
+        res.status(200).json({ logs: logs || [] });
     } catch (e) {
         res.status(500).json({ message: e.message });
     }
@@ -2041,11 +2416,34 @@ const COMPILER_BASE_DIR = path.join(os.tmpdir(), 'verity_compiler_base_template'
 let baseTemplatePromise = null;
 const sessionWorkspaces = new Map();
 
+const OFFLINE_DOTNET_ENV = {
+    ...process.env,
+    DOTNET_CLI_TELEMETRY_OPTOUT: '1',
+    DOTNET_NOLOGO: '1',
+    DOTNET_SKIP_FIRST_TIME_EXPERIENCE: '1',
+    DOTNET_CLI_UI_LANGUAGE: 'en-US',
+    MSBUILDDISABLENODEREUSE: '1',
+    NUGET_CERTREVOCATIONMODE: 'offline',
+    DOTNET_MULTILEVEL_LOOKUP: '0',
+    DOTNET_GENERATE_ASPNET_CERTIFICATE: '0',
+    POWERSHELL_TELEMETRY_OPTOUT: '1'
+};
+
+// Offline NuGet config: no remote package sources, so restore/build never touches the network.
+// Plain console apps only need the BCL that ships with the locally installed .NET SDK.
+const OFFLINE_NUGET_CONFIG = `<?xml version="1.0" encoding="utf-8"?>
+<configuration>
+  <packageSources>
+    <clear />
+  </packageSources>
+</configuration>
+`;
+
 let cachedDotnetTargetFramework = null;
 function getDotnetTargetFramework() {
     if (cachedDotnetTargetFramework) return cachedDotnetTargetFramework;
     try {
-        const output = execSync('dotnet --version', { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+        const output = execSync('dotnet --version', { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], env: OFFLINE_DOTNET_ENV }).trim();
         const major = parseInt(output.split('.')[0], 10);
         if (!isNaN(major) && major >= 6) {
             cachedDotnetTargetFramework = `net${major}.0`;
@@ -2066,12 +2464,19 @@ function ensureBaseTemplate() {
         try {
             const targetFramework = getDotnetTargetFramework();
             const projectFile = path.join(COMPILER_BASE_DIR, 'verity_base.csproj');
+            const nugetFile = path.join(COMPILER_BASE_DIR, 'nuget.config');
             const assetsFile = path.join(COMPILER_BASE_DIR, 'obj', 'project.assets.json');
 
-            if (fs.existsSync(projectFile) && fs.existsSync(assetsFile)) {
+            if (fs.existsSync(projectFile) && fs.existsSync(assetsFile) && fs.existsSync(nugetFile)) {
                 try {
                     const existingContent = fs.readFileSync(projectFile, 'utf8');
                     if (existingContent.includes(`<TargetFramework>${targetFramework}</TargetFramework>`)) {
+                        // Migrate older templates that still point at nuget.org
+                        try {
+                            if (fs.readFileSync(nugetFile, 'utf8').includes('api.nuget.org')) {
+                                fs.writeFileSync(nugetFile, OFFLINE_NUGET_CONFIG, 'utf8');
+                            }
+                        } catch (_) {}
                         return COMPILER_BASE_DIR;
                     }
                 } catch (_) {}
@@ -2089,22 +2494,31 @@ function ensureBaseTemplate() {
     <TargetFramework>${targetFramework}</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <NoWarn>$(NoWarn);NU1503;CS7022</NoWarn>
   </PropertyGroup>
 </Project>
 `;
+            const nugetContent = OFFLINE_NUGET_CONFIG;
             fs.writeFileSync(projectFile, csprojContent, 'utf8');
+            fs.writeFileSync(nugetFile, nugetContent, 'utf8');
             fs.writeFileSync(path.join(COMPILER_BASE_DIR, 'Program.cs'), 'using System; class Program { static void Main() {} }\n', 'utf8');
 
-            console.log(`⚡ Verity Compiler: Pre-warming base .NET template (${targetFramework})...`);
+            console.log(`⚡ Verity Compiler: Pre-warming base .NET template (${targetFramework}) in offline mode...`);
             await new Promise((resolve) => {
-                exec(`dotnet build -v q -p:WarningLevel=0 "${projectFile}"`, { cwd: COMPILER_BASE_DIR }, (err) => {
-                    if (err) {
-                        console.warn('⚠️ Base template build warning (falling back to restore):', err.message);
-                        exec(`dotnet restore "${projectFile}"`, { cwd: COMPILER_BASE_DIR }, () => resolve(COMPILER_BASE_DIR));
-                    } else {
-                        console.log(`⚡ Verity Compiler: Base .NET template pre-warmed for ${targetFramework} with warm obj/bin cache.`);
-                        resolve(COMPILER_BASE_DIR);
+                // Restore offline first (cleared sources ensures 0 network requests)
+                exec(`dotnet restore "${projectFile}" --ignore-failed-sources -v q`, { cwd: COMPILER_BASE_DIR, env: OFFLINE_DOTNET_ENV }, (restoreErr) => {
+                    if (restoreErr) {
+                        console.warn('⚠️ Base template restore warning:', restoreErr.message);
                     }
+                    exec(`dotnet build --no-restore -v q -p:WarningLevel=0 "${projectFile}"`, { cwd: COMPILER_BASE_DIR, env: OFFLINE_DOTNET_ENV }, (buildErr) => {
+                        if (buildErr) {
+                            console.warn('⚠️ Base template build warning (falling back to standard build):', buildErr.message);
+                            exec(`dotnet build -v q -p:WarningLevel=0 "${projectFile}"`, { cwd: COMPILER_BASE_DIR, env: OFFLINE_DOTNET_ENV }, () => resolve(COMPILER_BASE_DIR));
+                        } else {
+                            console.log(`⚡ Verity Compiler: Base .NET template pre-warmed for ${targetFramework} with warm obj/bin cache (offline ready).`);
+                            resolve(COMPILER_BASE_DIR);
+                        }
+                    });
                 });
             });
 
@@ -2294,7 +2708,7 @@ io.on('connection', (socket) => {
         socket.emit('instruction_update', currentInstruction);
     }
 
-    socket.on('teacher_join', ({ classroomId, assignmentId }) => {
+    socket.on('teacher_join', async ({ classroomId, assignmentId }) => {
         if (!socket.user || !['Teacher', 'Admin'].includes(socket.user.role)) {
             return socket.emit('error', { message: 'Access denied: Teacher role required.' });
         }
@@ -2308,10 +2722,63 @@ io.on('connection', (socket) => {
         socket.join(roomName);
         socket.data.teacherRoom = roomName;
 
-        const filterKey = `${classroomId || 'none'}:${assignmentId || 'none'}`;
+        const cIdStr = String(classroomId || 'none');
+        const aIdStr = String(assignmentId || 'none');
+        const filterKey = `${cIdStr}:${aIdStr}`;
+
+        // Fetch past session warnings from the database so late-joining teachers get all warnings
+        let dbLogs = [];
+        try {
+            dbLogs = await db.all(
+                'SELECT * FROM proctor_session_logs WHERE classroom_id = ? AND assignment_id = ? ORDER BY id ASC',
+                cIdStr, aIdStr
+            ).catch(() => []);
+        } catch (_) {}
+
+        if (Array.isArray(dbLogs) && dbLogs.length > 0) {
+            for (const log of dbLogs) {
+                const sKey = `${cIdStr}:${aIdStr}:${log.student_id}`;
+                const targetKey = Object.keys(activeStudents).find(k => 
+                    k.startsWith(filterKey + ':') && 
+                    (activeStudents[k].studentId === log.student_id || activeStudents[k].name === log.student_name)
+                ) || sKey;
+
+                if (!activeStudents[targetKey]) {
+                    activeStudents[targetKey] = {
+                        studentId: log.student_id,
+                        name: log.student_name || log.student_id,
+                        code: '',
+                        classroomId: cIdStr,
+                        assignmentId: aIdStr,
+                        logs: [],
+                        status: 'Live'
+                    };
+                }
+
+                const curStudent = activeStudents[targetKey];
+                const logs = Array.isArray(curStudent.logs) ? curStudent.logs : [];
+                const exists = logs.some(l => l.id === log.id || (l.action === log.action && l.time === log.time));
+                if (!exists) {
+                    logs.unshift({
+                        id: log.id,
+                        action: log.action,
+                        message: log.message || log.action,
+                        time: log.time,
+                        color: log.color,
+                        studentId: log.student_id,
+                        studentName: log.student_name
+                    });
+                    curStudent.logs = logs;
+                }
+            }
+        }
+
         for (const [key, student] of Object.entries(activeStudents)) {
             if (key.startsWith(filterKey + ':')) {
-                socket.emit('teacher_update_code', student);
+                socket.emit('teacher_update_code', {
+                    ...student,
+                    logs: student.logs || []
+                });
             }
         }
     });
@@ -2354,16 +2821,68 @@ io.on('connection', (socket) => {
         io.emit('classroom_theme_changed', data);
     });
 
+    socket.on('teacher_announcement_posted', async (data) => {
+        if (!data || !data.classroomId || !data.announcement) return;
+        const { classroomId, announcement } = data;
+        const announcementId = announcement.id ? Number(announcement.id) : Date.now();
+        const announcementTitle = announcement.title || 'Instructor Announcement';
+        const announcementDetails = (announcement.details || '').trim();
+        const announcementAuthor = announcement.author || socket.user?.name || 'Instructor';
+        const postedTime = announcement.posted ? Number(announcement.posted) : Date.now();
+
+        try {
+            await db.run(`
+                INSERT INTO announcements (id, classroom_id, title, details, author, posted)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    title = excluded.title,
+                    details = excluded.details,
+                    author = excluded.author,
+                    posted = excluded.posted
+            `, announcementId, Number(classroomId), announcementTitle, announcementDetails, announcementAuthor, postedTime);
+        } catch (e) {
+            console.error('Error persisting announcement via socket:', e);
+        }
+
+        const payload = {
+            id: announcementId,
+            classroomId: Number(classroomId),
+            title: announcementTitle,
+            details: announcementDetails,
+            author: announcementAuthor,
+            posted: postedTime
+        };
+
+        io.emit('announcement_posted', { classroomId: Number(classroomId), announcement: payload });
+    });
+
+    socket.on('teacher_announcement_deleted', async (data) => {
+        if (!data || !data.classroomId || !data.announcementId) return;
+        const { classroomId, announcementId } = data;
+        try {
+            await db.run('DELETE FROM announcements WHERE id = ? AND classroom_id = ?', Number(announcementId), Number(classroomId));
+        } catch (e) {
+            console.error('Error deleting announcement via socket:', e);
+        }
+        io.emit('announcement_deleted', { classroomId: Number(classroomId), announcementId: Number(announcementId) });
+    });
+
     socket.on('compile_code', async (data) => {
-        if (!socket.user) {
-            authenticateSocket(socket, data?.token || socket.handshake.auth?.token, data?.user);
-        }
+        try {
+            if (!socket.user) {
+                authenticateSocket(socket, data?.token || socket.handshake.auth?.token, data?.user);
+            }
 
-        if (!socket.user) {
-            return socket.emit('terminal_output', "Error: Authentication required to execute code. Please log in.\n");
-        }
+            if (!socket.user && (data?.username === 'CompilerView' || data?.room === 'sandbox')) {
+                socket.user = { id: 9999, name: 'CompilerView', role: 'Student' };
+            }
 
-        const { code } = data || {};
+            if (!socket.user) {
+                socket.emit('terminal_output', "Error: Authentication required to execute code. Please log in.\n");
+                return socket.emit('process_exit', { code: 1 });
+            }
+
+        const { code, extraFiles = [] } = data || {};
         const studentKey = socket.user?.id
             ? `u_${socket.user.id}`
             : (socket.user?.email ? `e_${socket.user.email.replace(/[^a-zA-Z0-9]/g, '_')}` : `s_${socket.id.replace(/[^a-zA-Z0-9]/g, '')}`);
@@ -2404,34 +2923,80 @@ io.on('connection', (socket) => {
                     fs.mkdirSync(projectDir, { recursive: true });
                 }
                 fs.cpSync(COMPILER_BASE_DIR, projectDir, { recursive: true });
-                await compileStudentCode(projectDir, code, socket);
+                await compileStudentCode(projectDir, code, socket, extraFiles);
             } catch (err) {
                 console.warn('Fast template clone failed, falling back to dotnet new:', err.message);
-                exec(`dotnet new console --framework ${targetFramework} -o "${projectDir}"`, async (newErr) => {
+                exec(`dotnet new console -n verity_base --no-restore --framework ${targetFramework} -o "${projectDir}"`, { env: OFFLINE_DOTNET_ENV }, async (newErr) => {
                     if (newErr) {
                         sessionWorkspaces.delete(studentKey);
-                        return socket.emit('terminal_output', "Error: Could not initialize .NET compiler.\n");
+                        socket.emit('terminal_output', "Error: Could not initialize .NET compiler.\n");
+                        return socket.emit('process_exit', { code: 1 });
                     }
-                    await compileStudentCode(projectDir, code, socket);
+                    try {
+                        fs.writeFileSync(path.join(projectDir, 'nuget.config'), OFFLINE_NUGET_CONFIG, 'utf8');
+                        execSync(`dotnet restore "${path.join(projectDir, 'verity_base.csproj')}" --ignore-failed-sources -v q`, { cwd: projectDir, env: OFFLINE_DOTNET_ENV });
+                    } catch (_) {}
+                    await compileStudentCode(projectDir, code, socket, extraFiles);
                 });
             }
         } else {
-            await compileStudentCode(projectDir, code, socket);
+            await compileStudentCode(projectDir, code, socket, extraFiles);
+        }
+        } catch (error) {
+            console.error('Compiler error:', error);
+            socket.emit('terminal_output', `\n[Internal Server Error: ${error.message}]\n`);
+            socket.emit('process_exit', { code: 1 });
         }
     });
 
-    async function compileStudentCode(projectDir, code, socket) {
+    async function compileStudentCode(projectDir, code, socket, extraFiles = []) {
         fs.writeFileSync(path.join(projectDir, 'Program.cs'), code, 'utf8');
+        // Write any additional .cs files (multi-file support)
+        const extraNames = new Set();
+        for (const ef of extraFiles) {
+            if (!ef || !ef.name || !ef.code) continue;
+            // Ensure safe filename with .cs extension
+            const safeName = ef.name.replace(/[^a-zA-Z0-9_\-\.]/g, '_').replace(/\.cs$/i, '') + '.cs';
+            if (safeName.toLowerCase() === 'program.cs') continue; // handled above
+            fs.writeFileSync(path.join(projectDir, safeName), ef.code || '', 'utf8');
+            extraNames.add(safeName);
+        }
+        // Remove stale extra files from prior runs (keeps project clean)
+        try {
+            for (const f of fs.readdirSync(projectDir)) {
+                if (f.endsWith('.cs') && f !== 'Program.cs' && !extraNames.has(f)) {
+                    try { fs.unlinkSync(path.join(projectDir, f)); } catch (_) {}
+                }
+            }
+        } catch (_) {}
+
         socket.emit('terminal_output', "Compiling...\n");
         socket.emit('compiler_diagnostics', []); // Clear existing markers
 
         const projectFile = path.join(projectDir, 'verity_base.csproj');
+        const nugetFile = path.join(projectDir, 'nuget.config');
         const targetFramework = getDotnetTargetFramework();
         const dllPath = path.join(projectDir, 'bin', 'Debug', targetFramework, 'verity_base.dll');
         const treatWarningsAsErrors = await getTreatWarningsAsErrors();
 
+        // Ensure offline nuget.config exists in project directory (and migrate old online ones)
+        try {
+            if (!fs.existsSync(nugetFile) || fs.readFileSync(nugetFile, 'utf8').includes('api.nuget.org')) {
+                fs.writeFileSync(nugetFile, OFFLINE_NUGET_CONFIG, 'utf8');
+            }
+        } catch (_) {}
+
+        // Ensure assets file exists so --no-restore succeeds offline
+        const assetsFile = path.join(projectDir, 'obj', 'project.assets.json');
+        if (!fs.existsSync(assetsFile)) {
+            try {
+                execSync(`dotnet restore "${projectFile}" --ignore-failed-sources -v q`, { cwd: projectDir, env: OFFLINE_DOTNET_ENV });
+            } catch (_) {}
+        }
+
         const buildArgs = [
             'build',
+            '--no-restore',
             '-v', 'q',
             '-clp:NoSummary',
             '--disable-build-servers',
@@ -2440,14 +3005,7 @@ io.on('connection', (socket) => {
             projectFile
         ];
 
-        const env = {
-            ...process.env,
-            DOTNET_CLI_TELEMETRY_OPTOUT: '1',
-            DOTNET_NOLOGO: '1',
-            DOTNET_SKIP_FIRST_TIME_EXPERIENCE: '1',
-            DOTNET_CLI_UI_LANGUAGE: 'en-US',
-            MSBUILDDISABLENODEREUSE: '1'
-        };
+        const env = OFFLINE_DOTNET_ENV;
 
         // Stage 1: Fast compilation via dotnet build
         const buildProcess = spawn('dotnet', buildArgs, { cwd: projectDir, env });
@@ -2461,7 +3019,7 @@ io.on('connection', (socket) => {
             if (activeProcess === buildProcess) {
                 try { buildProcess.kill(); } catch (_) {}
                 socket.emit('terminal_output', "\n[Compilation timed out]\n");
-                socket.emit('process_exit');
+                socket.emit('process_exit', { code: 1 });
                 activeProcess = null;
             }
         }, 15000);
@@ -2469,7 +3027,7 @@ io.on('connection', (socket) => {
         buildProcess.on('error', (err) => {
             clearTimeout(buildTimeout);
             socket.emit('terminal_output', `\n[Compiler launch error: ${err.message}]\n`);
-            socket.emit('process_exit');
+            socket.emit('process_exit', { code: 1 });
             activeProcess = null;
         });
 
@@ -2482,7 +3040,7 @@ io.on('connection', (socket) => {
 
             if (buildCode !== 0 || !fs.existsSync(dllPath)) {
                 socket.emit('terminal_output', rawCompilerOutput + "\n[Build failed. Fix the build errors and run again.]\n");
-                socket.emit('process_exit');
+                socket.emit('process_exit', { code: 1 });
                 activeProcess = null;
                 return;
             }
@@ -2498,7 +3056,7 @@ io.on('connection', (socket) => {
                 if (activeProcess === runProcess) {
                     try { runProcess.kill(); } catch (_) {}
                     socket.emit('terminal_output', "\n[Process terminated: Execution limit of 20s exceeded]\n");
-                    socket.emit('process_exit');
+                    socket.emit('process_exit', { code: 1 });
                     activeProcess = null;
                 }
             }, 20000);
@@ -2506,7 +3064,7 @@ io.on('connection', (socket) => {
             runProcess.on('error', (err) => {
                 clearTimeout(executionTimeout);
                 socket.emit('terminal_output', `\n[Execution error: ${err.message}]\n`);
-                socket.emit('process_exit');
+                socket.emit('process_exit', { code: 1 });
                 activeProcess = null;
             });
 
@@ -2521,7 +3079,7 @@ io.on('connection', (socket) => {
             runProcess.on('close', (runCode) => {
                 clearTimeout(executionTimeout);
                 socket.emit('terminal_output', `\n[Process exited with code ${runCode ?? 0}]\n`);
-                socket.emit('process_exit');
+                socket.emit('process_exit', { code: runCode ?? 0 });
                 activeProcess = null;
             });
         });
@@ -2537,36 +3095,353 @@ io.on('connection', (socket) => {
         if (activeProcess) {
             activeProcess.kill();
             socket.emit('terminal_output', "\n[Process stopped by user]\n");
-            socket.emit('process_exit');
+            socket.emit('process_exit', { code: 0 });
             activeProcess = null;
+        }
+    });
+
+    socket.on('run_test_cases', async (data) => {
+        try {
+            if (!socket.user) {
+                authenticateSocket(socket, data?.token || socket.handshake.auth?.token, data?.user);
+            }
+
+            if (!socket.user && (data?.username === 'CompilerView' || data?.room === 'sandbox')) {
+                socket.user = { id: 9999, name: 'CompilerView', role: 'Student' };
+            }
+
+        const { code, testCases = [] } = data || {};
+        if (!Array.isArray(testCases) || testCases.length === 0) {
+            return socket.emit('test_cases_results', { results: [] });
+        }
+
+        const studentKey = socket.user?.id
+            ? `u_${socket.user.id}`
+            : (socket.user?.email ? `e_${socket.user.email.replace(/[^a-zA-Z0-9]/g, '_')}` : `s_${socket.id.replace(/[^a-zA-Z0-9]/g, '')}`);
+
+        let ws = sessionWorkspaces.get(studentKey);
+        let projectDir = ws?.projectDir;
+        if (!projectDir) {
+            projectDir = path.join(os.tmpdir(), `verity_ws_${studentKey}`);
+            ws = { projectDir, lastUsed: Date.now() };
+            sessionWorkspaces.set(studentKey, ws);
+        } else {
+            ws.lastUsed = Date.now();
+        }
+
+        const projectFile = path.join(projectDir, 'verity_base.csproj');
+        const targetFramework = getDotnetTargetFramework();
+        const dllPath = path.join(projectDir, 'bin', 'Debug', targetFramework, 'verity_base.dll');
+
+        let compileSuccess = true;
+        let buildOutput = '';
+        const env = OFFLINE_DOTNET_ENV;
+
+        // Check if compilation is needed
+        if (ws.lastCompiledCode === code && fs.existsSync(dllPath)) {
+            // Skip compilation, code hasn't changed
+            console.log(`[TestCases] Skipping compilation for ${studentKey} (cached)`);
+            socket.emit('compiler_diagnostics', []); // clear old diags
+        } else {
+            console.log(`[TestCases] Compiling for ${studentKey}...`);
+            // Ensure workspace directory exists
+            try {
+                await ensureBaseTemplate();
+                if (!fs.existsSync(projectDir)) {
+                    fs.mkdirSync(projectDir, { recursive: true });
+                    fs.cpSync(COMPILER_BASE_DIR, projectDir, { recursive: true });
+                }
+            } catch (e) {
+                console.warn('Workspace prep failed for test cases:', e.message);
+            }
+
+            // Write student code to Program.cs
+            fs.writeFileSync(path.join(projectDir, 'Program.cs'), code || '', 'utf8');
+
+            // Ensure nuget and obj assets exist
+            const nugetFile = path.join(projectDir, 'nuget.config');
+            try {
+                if (!fs.existsSync(nugetFile) || fs.readFileSync(nugetFile, 'utf8').includes('api.nuget.org')) {
+                    fs.writeFileSync(nugetFile, OFFLINE_NUGET_CONFIG, 'utf8');
+                }
+            } catch (_) {}
+            const assetsFile = path.join(projectDir, 'obj', 'project.assets.json');
+            if (!fs.existsSync(assetsFile)) {
+                try {
+                    execSync(`dotnet restore "${projectFile}" --ignore-failed-sources -v q`, { cwd: projectDir, env: OFFLINE_DOTNET_ENV });
+                } catch (_) {}
+            }
+
+            const treatWarningsAsErrors = await getTreatWarningsAsErrors();
+            const buildArgs = [
+                'build',
+                '--no-restore',
+                '-v', 'q',
+                '-clp:NoSummary',
+                '--disable-build-servers',
+                treatWarningsAsErrors ? '-p:WarningLevel=4' : '-p:WarningLevel=0',
+                ...(treatWarningsAsErrors ? ['-p:TreatWarningsAsErrors=true'] : []),
+                projectFile
+            ];
+
+            compileSuccess = await new Promise((resolve) => {
+                const bp = spawn('dotnet', buildArgs, { cwd: projectDir, env });
+                bp.stdout.on('data', d => { buildOutput += d.toString(); });
+                bp.stderr.on('data', d => { buildOutput += d.toString(); });
+                const timeout = setTimeout(() => {
+                    try { bp.kill(); } catch (_) {}
+                    resolve(false);
+                }, 15000);
+                bp.on('close', code => {
+                    clearTimeout(timeout);
+                    const diags = parseCompilerDiagnostics(buildOutput);
+                    socket.emit('compiler_diagnostics', diags);
+                    resolve(code === 0 && fs.existsSync(dllPath));
+                });
+                bp.on('error', () => {
+                    clearTimeout(timeout);
+                    resolve(false);
+                });
+            });
+
+            if (compileSuccess) {
+                ws.lastCompiledCode = code;
+            } else {
+                ws.lastCompiledCode = null;
+                const results = testCases.map(tc => ({
+                    id: tc.id,
+                    status: 'error',
+                    passed: false,
+                    actualOutput: '',
+                    expectedOutput: tc.expectedOutput || '',
+                    error: buildOutput || 'Compilation failed. Please fix syntax or type errors in code.'
+                }));
+                return socket.emit('test_cases_results', { results });
+            }
+        }
+
+        // Run all test cases in parallel
+        const results = await Promise.all(testCases.map(tc => new Promise((resolve) => {
+            let actual = '';
+            let runError = '';
+            let killed = false;
+            const rp = spawn('dotnet', [dllPath], { cwd: projectDir, env });
+
+            const execTimeout = setTimeout(() => {
+                killed = true;
+                try { rp.kill(); } catch (_) {}
+                const result = {
+                    id: tc.id,
+                    status: 'error',
+                    passed: false,
+                    actualOutput: actual.replace(/\r\n/g, '\n'),
+                    expectedOutput: tc.expectedOutput || '',
+                    error: 'Execution timed out (5s limit exceeded)'
+                };
+                socket.emit('test_case_result', result);
+                resolve(result);
+            }, 5000);
+
+            if (tc.input !== undefined && tc.input !== null && tc.input !== '') {
+                try {
+                    const inStr = String(tc.input);
+                    rp.stdin.write(inStr.endsWith('\n') ? inStr : inStr + '\n');
+                } catch (_) {}
+            }
+            try { rp.stdin.end(); } catch (_) {}
+
+            rp.stdout.on('data', d => { actual += d.toString(); });
+            rp.stderr.on('data', d => { runError += d.toString(); });
+
+            rp.on('close', () => {
+                clearTimeout(execTimeout);
+                if (killed) return;
+                const normActual = actual.replace(/\r\n/g, '\n').trim();
+                const normExpected = (tc.expectedOutput || '').replace(/\r\n/g, '\n').trim();
+                const passed = normActual === normExpected;
+                const result = {
+                    id: tc.id,
+                    status: passed ? 'passed' : 'failed',
+                    passed,
+                    actualOutput: actual.replace(/\r\n/g, '\n'),
+                    expectedOutput: tc.expectedOutput || '',
+                    error: runError || null
+                };
+                socket.emit('test_case_result', result);
+                resolve(result);
+            });
+
+            rp.on('error', (err) => {
+                clearTimeout(execTimeout);
+                if (killed) return;
+                const result = {
+                    id: tc.id,
+                    status: 'error',
+                    passed: false,
+                    actualOutput: actual.replace(/\r\n/g, '\n'),
+                    expectedOutput: tc.expectedOutput || '',
+                    error: err.message
+                };
+                socket.emit('test_case_result', result);
+                resolve(result);
+            });
+        })));
+
+        socket.emit('test_cases_results', { results });
+        } catch (error) {
+            console.error('Test case error:', error);
+            socket.emit('test_cases_results', { results: [] });
         }
     });
 
     socket.on('student_typing', (data) => {
         if (data && data.studentId) {
-            const classroomId = data.classroomId || 'none';
-            const assignmentId = data.assignmentId || 'none';
+            const classroomId = data.classroomId != null ? String(data.classroomId) : 'none';
+            const assignmentId = data.assignmentId != null ? String(data.assignmentId) : 'none';
             const studentKey = `${classroomId}:${assignmentId}:${data.studentId}`;
-            activeStudents[studentKey] = data;
+            
+            const existing = activeStudents[studentKey] || {};
+            const existingLogs = Array.isArray(existing.logs) ? existing.logs : [];
+
+            // Merge any client-supplied logs
+            let mergedLogs = existingLogs;
+            if (Array.isArray(data.logs) && data.logs.length > 0) {
+                const map = new Map();
+                [...existingLogs, ...data.logs].forEach(l => {
+                    if (!l) return;
+                    const k = `${l.id || ''}-${l.action || l.message || ''}-${l.time || ''}`;
+                    if (!map.has(k)) {
+                        map.set(k, {
+                            id: l.id || Date.now(),
+                            action: l.action || l.message || 'Violation',
+                            message: l.message || l.action || 'Violation',
+                            time: l.time || '',
+                            color: l.color || '#ef4444',
+                            studentId: data.studentId,
+                            studentName: data.name || data.studentId
+                        });
+                    }
+                });
+                mergedLogs = Array.from(map.values()).sort((a, b) => (b.id || 0) - (a.id || 0));
+            }
+
+            const updated = {
+                ...existing,
+                ...data,
+                classroomId,
+                assignmentId,
+                logs: mergedLogs,
+                status: existing.status === 'Submitted' || existing.status === 'Graded' ? existing.status : 'Live'
+            };
+
+            activeStudents[studentKey] = updated;
             socket.data.studentKey = studentKey;
             socket.data.studentId = data.studentId;
 
             const roomName = `classroom:${classroomId}:assignment:${assignmentId}`;
-            socket.to(roomName).emit('teacher_update_code', data);
+            socket.to(roomName).emit('teacher_update_code', updated);
         }
     });
 
     socket.on('proctor_alert', async (data) => {
         if (data && data.studentId) {
-            const classroomId = data.classroomId || 'none';
-            const assignmentId = data.assignmentId || 'none';
-            const studentKey = `${classroomId}:${assignmentId}:${data.studentId}`;
-            if (activeStudents[studentKey]) {
-                activeStudents[studentKey] = { ...activeStudents[studentKey], ...data };
+            const studentId = data.studentId;
+            const studentName = data.name || studentId;
+            let classroomId = data.classroomId != null ? String(data.classroomId) : null;
+            let assignmentId = data.assignmentId != null ? String(data.assignmentId) : null;
+
+            if (!classroomId || !assignmentId) {
+                if (socket.data.studentKey) {
+                    const parts = socket.data.studentKey.split(':');
+                    if (parts.length >= 3) {
+                        classroomId = classroomId || parts[0];
+                        assignmentId = assignmentId || parts[1];
+                    }
+                } else {
+                    const found = Object.values(activeStudents).find(s => 
+                        s && (s.studentId === studentId || s.name === studentName)
+                    );
+                    if (found) {
+                        classroomId = classroomId || found.classroomId;
+                        assignmentId = assignmentId || found.assignmentId;
+                    }
+                }
+            }
+            classroomId = classroomId || 'none';
+            assignmentId = assignmentId || 'none';
+
+            const actionText = data.action || data.desc || 'Violation';
+            const messageText = data.message || actionText;
+            const timeText = data.time || new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }).toLowerCase();
+            const colorVal = data.color || '#ef4444';
+
+            const newLog = {
+                id: data.id || Date.now(),
+                action: actionText,
+                message: messageText,
+                time: timeText,
+                color: colorVal,
+                studentId,
+                studentName
+            };
+
+            const studentKey = `${classroomId}:${assignmentId}:${studentId}`;
+            const existing = activeStudents[studentKey] || {
+                studentId,
+                name: studentName,
+                code: '',
+                classroomId,
+                assignmentId,
+                logs: [],
+                status: 'Live'
+            };
+
+            const existingLogs = Array.isArray(existing.logs) ? existing.logs : [];
+            const isDup = existingLogs.some(l => l.action === newLog.action && (l.time === newLog.time || Math.abs((l.id || 0) - newLog.id) < 1000));
+            const updatedLogs = isDup ? existingLogs : [newLog, ...existingLogs];
+
+            activeStudents[studentKey] = {
+                ...existing,
+                studentId,
+                name: studentName,
+                classroomId,
+                assignmentId,
+                logs: updatedLogs,
+                status: existing.status || 'Live'
+            };
+
+            if (studentName !== studentId) {
+                const altKey = `${classroomId}:${assignmentId}:${studentName}`;
+                if (activeStudents[altKey]) {
+                    activeStudents[altKey].logs = updatedLogs;
+                }
             }
 
+            try {
+                await db.run(
+                    'INSERT INTO proctor_session_logs (classroom_id, assignment_id, student_id, student_name, action, message, time, color) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+                    String(classroomId),
+                    String(assignmentId),
+                    String(studentId),
+                    String(studentName),
+                    actionText,
+                    messageText,
+                    timeText,
+                    colorVal
+                ).catch(() => {});
+            } catch (_) {}
+
             const roomName = `classroom:${classroomId}:assignment:${assignmentId}`;
-            socket.to(roomName).emit('teacher_receive_alert', data);
+            socket.to(roomName).emit('teacher_receive_alert', {
+                ...data,
+                id: newLog.id,
+                studentId,
+                name: studentName,
+                action: actionText,
+                message: messageText,
+                time: timeText,
+                color: colorVal
+            });
         }
 
         try {

@@ -1,10 +1,9 @@
 import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
-import { Home, Calendar, ClipboardList, Settings, Menu, Archive, ArrowLeft, CheckCircle2, Code2, ExternalLink, X, Link2 } from 'lucide-react';
+import { Home, Calendar, ClipboardList, Settings, Menu, Archive, ArrowLeft, CheckCircle2, Code2, ExternalLink, X, Link2, TerminalSquare, Award, ArrowRight } from 'lucide-react';
 import ProfileMenu from './ProfileMenu';
 import { motion, AnimatePresence } from 'framer-motion';
 import { apiFetch } from '../utils/api';
 import { useDarkMode } from '../hooks/useDarkMode';
-import { useSidebarNav } from '../hooks/useSidebarNav';
 import { useMediaQuery } from '../hooks/useMediaQuery';
 import Skeleton from '../components/Skeleton';
 import ImagePreviewModal from '../components/ImagePreviewModal';
@@ -30,7 +29,6 @@ export default function StudentActivityDetail({
   onLogout
 }) {
   const { isDark } = useDarkMode();
-  const { collapsed, toggleSidebar, sidebarProps, isPinned } = useSidebarNav();
   const isMobile = useMediaQuery('(max-width: 768px)');
   const styles = getStyles(isDark, isMobile);
   const safeUsername = currentUser?.name || currentUser?.email || 'Student';
@@ -121,59 +119,22 @@ export default function StudentActivityDetail({
   }, [currentUser]);
 
 
-  const navRefs = useRef({});
-  const enrolledRefs = useRef({});
-  const [indicatorStyle, setIndicatorStyle] = useState(() => {
-    try {
-      const savedTop = sessionStorage.getItem('verity_nav_indicator_top');
-      const savedHeight = sessionStorage.getItem('verity_nav_indicator_height');
-      if (savedTop !== null && !isNaN(Number(savedTop))) {
-        return {
-          top: Number(savedTop),
-          height: savedHeight ? Number(savedHeight) : 42,
-          opacity: 1,
-          transition: true
-        };
-      }
-    } catch { /* ignore */ }
-    return { top: 0, height: 42, opacity: 0, transition: false };
-  });
+  const [isHeaderHovered, setIsHeaderHovered] = useState(false);
+  const [headerIndicatorStyle, setHeaderIndicatorStyle] = useState({ left: 0, width: 0, opacity: 0 });
+  const headerNavRefs = useRef({});
 
   useLayoutEffect(() => {
-    const update = () => {
-      let activeRef = null;
-      if (classroom) {
-        activeRef = enrolledRefs.current['cls_' + classroom.id];
-      }
-      if (!activeRef) {
-        activeRef = navRefs.current['classrooms'];
-      }
-
-      if (activeRef) {
-        try {
-          sessionStorage.setItem('verity_nav_indicator_top', String(activeRef.offsetTop));
-          sessionStorage.setItem('verity_nav_indicator_height', String(activeRef.offsetHeight));
-        } catch { /* ignore */ }
-
-        setIndicatorStyle(prev => {
-          const distance = Math.abs(activeRef.offsetTop - prev.top);
-          const bounceOvershoot = distance > 0 ? Math.min(0.42, Math.max(0.03, 16 / distance)) : 0;
-          const bounceRatio = (1 + bounceOvershoot).toFixed(3);
-          const duration = distance > 150 ? '0.46s' : '0.38s';
-          const transitionStr = `top ${duration} cubic-bezier(0.34, ${bounceRatio}, 0.64, 1), height 0.25s ease, opacity 0.2s ease`;
-
-          if (prev.top === activeRef.offsetTop && prev.height === activeRef.offsetHeight && prev.opacity === 1 && prev.transition === transitionStr) return prev;
-          return { top: activeRef.offsetTop, height: activeRef.offsetHeight, opacity: 1, transition: transitionStr };
-        });
-      } else {
-        setIndicatorStyle(prev => prev.opacity === 0 ? prev : { ...prev, opacity: 0 });
-      }
-    };
-
-    update();
-    const timer = setTimeout(update, 20);
-    return () => clearTimeout(timer);
-  }, [classroom, collapsed]);
+    // When hovering over the header, highlight 'classrooms' (Home) as default for Activity Details
+    const activeRef = headerNavRefs.current['classrooms'];
+    if (activeRef) {
+      setHeaderIndicatorStyle(prev => ({
+        left: activeRef.offsetLeft,
+        width: activeRef.offsetWidth,
+        opacity: 1,
+        transition: prev.opacity === 0 ? 'none' : 'all 0.3s cubic-bezier(0.25, 1, 0.5, 1)'
+      }));
+    }
+  }, [isHeaderHovered]);
 
   // Sync submission & grade from backend
   useEffect(() => {
@@ -484,328 +445,366 @@ export default function StudentActivityDetail({
   const feedbackText = gradeData?.feedback || (gradeData?.grade != null ? "No written feedback provided." : "No feedback yet. Your submission is pending instructor review.");
 
   return (
-    <div style={styles.container}>
+    <motion.div 
+      initial={{ opacity: 0, y: 20 }} 
+      animate={{ opacity: 1, y: 0 }} 
+      exit={{ opacity: 0, y: -20 }}
+      transition={{ duration: 0.25, ease: 'easeOut' }}
+      style={styles.container}
+    >
       {/* ═══ GLOBAL TOP HEADER ═══ */}
-      <header style={styles.header}>
-        <div style={{ display: 'flex', alignItems: 'center' }}>
-          {!isMobile && (
-            <button
-              onClick={toggleSidebar}
-              style={styles.menuButton}
-              title={isPinned ? "Unpin sidebar" : "Pin sidebar"}
-            >
-              <Menu size={24} color={isDark ? "#a3a3a3" : "#64748b"} />
-            </button>
-          )}
+      <header 
+        onMouseEnter={() => setIsHeaderHovered(true)}
+        onMouseLeave={() => setIsHeaderHovered(false)}
+        style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        padding: '16px 32px',
+        backgroundColor: isDark ? '#1a1a1a' : '#f8f9fa',
+        borderBottom: 'none',
+        position: 'sticky',
+        top: 0,
+        zIndex: 50,
+      }}>
+        <div style={{
+          position: 'absolute',
+          bottom: '-30px',
+          left: 0,
+          right: 0,
+          height: '30px',
+          background: `linear-gradient(to bottom, ${isDark ? '#1a1a1a' : '#f8f9fa'}, transparent)`,
+          pointerEvents: 'none'
+        }} />
 
-          <div
-            style={styles.logoContainer}
-            onClick={() => {
-              if (onNavigateView) onNavigateView('classrooms');
-              else onBack();
-            }}
-          >
-            <span style={{ color: '#10b981' }}>V</span>
-            <span style={{ color: isDark ? '#f5f5f5' : '#1e293b' }}>erity</span>
-            <span style={styles.badge}>Student</span>
-          </div>
+        <div style={{ display: 'flex', alignItems: 'baseline', cursor: 'pointer', flex: 1, justifyContent: 'flex-start' }} onClick={() => {
+          if (onNavigateView) onNavigateView('classrooms');
+          else onBack();
+        }}>
+          <span style={{ color: '#10b981', fontSize: '1.75rem', fontWeight: '900', fontStyle: 'italic' }}>V</span>
+          <span style={{ color: isDark ? '#f5f5f5' : '#111827', fontSize: '1.75rem', fontWeight: '900', fontStyle: 'italic' }}>erity</span>
+          <span style={{ fontSize: '0.7rem', color: isDark ? '#a3a3a3' : '#6b7280', marginLeft: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Student</span>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+        <div style={{ 
+          display: 'flex', 
+          alignItems: 'center', 
+          justifyContent: 'center',
+          gap: '8px',
+          opacity: isHeaderHovered ? 1 : 0,
+          pointerEvents: isHeaderHovered ? 'auto' : 'none',
+          transition: 'opacity 0.3s ease, transform 0.3s ease',
+          transform: isHeaderHovered ? 'translateY(0)' : 'translateY(-10px)',
+          position: 'relative'
+        }}>
+          <div style={{
+            position: 'absolute',
+            left: headerIndicatorStyle.left,
+            width: headerIndicatorStyle.width,
+            top: 0,
+            bottom: 0,
+            backgroundColor: isDark ? 'rgba(255, 255, 255, 0.07)' : 'rgba(255, 255, 255, 0.25)',
+            backdropFilter: 'blur(8px)',
+            WebkitBackdropFilter: 'blur(8px)',
+            borderRadius: '50px',
+            boxShadow: isDark ? '0 4px 16px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.08)' : '0 4px 16px rgba(16,185,129,0.15), inset 0 1px 0 rgba(255,255,255,0.5)',
+            border: isDark ? '1px solid rgba(255,255,255,0.1)' : '1px solid rgba(255,255,255,0.35)',
+            transition: headerIndicatorStyle.transition || 'none',
+            opacity: headerIndicatorStyle.opacity,
+            pointerEvents: 'none',
+            zIndex: 0,
+          }} />
+
+          {[
+            { id: 'classrooms', label: 'Home', Icon: Home },
+            { id: 'calendar', label: 'Calendar', Icon: Calendar },
+            { id: 'archived', label: 'Archived', Icon: Archive },
+            { id: 'compiler', label: 'Compiler', Icon: Code2 },
+            { id: 'settings', label: 'Settings', Icon: Settings }
+          ].map(item => (
+            <button
+              key={item.id}
+              ref={el => headerNavRefs.current[item.id] = el}
+              onClick={() => {
+                if (onNavigateView) onNavigateView(item.id);
+                else onBack();
+              }}
+              style={{
+                position: 'relative',
+                zIndex: 1,
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                padding: '10px 16px',
+                borderRadius: '50px',
+                background: 'transparent',
+                border: '1px solid transparent',
+                color: item.id === 'classrooms' ? '#10b981' : (isDark ? '#a3a3a3' : '#6b7280'),
+                fontWeight: item.id === 'classrooms' ? '700' : '600',
+                fontSize: '0.9rem',
+                cursor: 'pointer',
+                transition: 'all 0.2s'
+              }}
+            >
+              <item.Icon size={18} />
+              {item.label}
+            </button>
+          ))}
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', flex: 1, gap: '16px' }}>
           <ProfileMenu currentUser={currentUser} onLogout={onLogout} />
         </div>
       </header>
 
       {/* ═══ MAIN LAYOUT ═══ */}
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
-        {/* ═══ SIDEBAR NAVIGATION ═══ */}
-        {!isMobile && (
-          <aside {...sidebarProps} style={styles.sidebar(collapsed)}>
-            <nav style={{ display: 'flex', flexDirection: 'column', gap: '10px', flex: 1, position: 'relative' }}>
-            {/* Liquid sliding indicator */}
-            <div style={{
-              position: 'absolute',
-              left: 0,
-              right: 0,
-              top: indicatorStyle.top,
-              height: indicatorStyle.height,
-              background: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.25)',
-              backdropFilter: 'blur(8px)',
-              WebkitBackdropFilter: 'blur(8px)',
-              borderRadius: '14px',
-              boxShadow: isDark ? '0 4px 16px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.1)' : '0 4px 16px rgba(16,185,129,0.15), inset 0 1px 0 rgba(255,255,255,0.5)',
-              border: isDark ? '1px solid rgba(255,255,255,0.12)' : '1px solid rgba(255,255,255,0.35)',
-              transition: indicatorStyle.transition || 'none',
-              opacity: indicatorStyle.opacity,
-              pointerEvents: 'none',
-              zIndex: 0,
-            }} />
 
-            <button
-              ref={el => navRefs.current['classrooms'] = el}
-              onClick={() => {
-                if (onNavigateView) onNavigateView('classrooms');
-                else onBack();
-              }}
-              style={styles.navButton(collapsed)}
-              title={collapsed ? 'Home' : ''}
-            >
-              <Home size={20} color={isDark ? "#a3a3a3" : "#475569"} style={{ flexShrink: 0 }} />
-              {!collapsed && (
-                <span style={styles.navLabel}>Home</span>
-              )}
-            </button>
-
-            <button
-              ref={el => navRefs.current['calendar'] = el}
-              onClick={() => {
-                if (onNavigateView) onNavigateView('calendar');
-                else onBack();
-              }}
-              style={styles.navButton(collapsed)}
-              title={collapsed ? 'Calendar' : ''}
-            >
-              <Calendar size={20} color={isDark ? "#a3a3a3" : "#475569"} style={{ flexShrink: 0 }} />
-              {!collapsed && (
-                <span style={styles.navLabel}>Calendar</span>
-              )}
-            </button>
-
-            <button
-              ref={el => navRefs.current['archived'] = el}
-              onClick={() => {
-                if (onNavigateView) onNavigateView('archived');
-                else onBack();
-              }}
-              style={styles.navButton(collapsed)}
-              title={collapsed ? 'Archived' : ''}
-            >
-              <Archive size={20} color={isDark ? "#a3a3a3" : "#475569"} style={{ flexShrink: 0 }} />
-              {!collapsed && (
-                <span style={styles.navLabel}>Archived</span>
-              )}
-            </button>
-
-            {/* Enrolled Section */}
-            {classrooms.filter(c => !c.archived).length > 0 && (
-              <div style={{ marginTop: '12px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                {!collapsed && (
-                  <div style={styles.enrolledHeading}>
-                    Enrolled
+        {/* ═══ MAIN CONTENT AREA ═══ */}
+        <div style={{ flex: 1, padding: '40px', display: 'flex', flexDirection: 'column', backgroundColor: isDark ? '#141414' : '#f8fafc', overflowY: 'auto' }}>
+          {loading || !assignment ? (
+            <Skeleton.ActivityDetail />
+          ) : (
+            <div style={{ maxWidth: '1100px', width: '100%', margin: '0 auto', display: 'flex', flexDirection: 'column' }}>
+              
+              {/* Top Navigation Row (Outside the card) */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+                <button
+                  onClick={onBack}
+                  style={styles.backBtn}
+                >
+                  <ArrowLeft size={16} style={{ marginRight: '6px' }} /> Back to Activities
+                </button>
+                
+                {classroom && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <span style={{ color: isDark ? '#a3a3a3' : '#64748b', fontSize: '0.85rem', fontWeight: '500' }}>
+                      {classroom.name}
+                    </span>
+                    {classroom.code && (
+                      <span style={{ backgroundColor: isDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.05)', color: isDark ? '#e2e8f0' : '#1e293b', border: isDark ? '1px solid rgba(255, 255, 255, 0.12)' : '1px solid rgba(0, 0, 0, 0.08)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', padding: '4px 10px', borderRadius: '6px', fontSize: '0.75rem', fontWeight: '700' }}>
+                        {classroom.code}
+                      </span>
+                    )}
                   </div>
                 )}
-                {classrooms.filter(c => !c.archived).map((cls) => {
-                  const colors = ['#3b82f6', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981'];
-                  const color = colors[cls.id % colors.length];
-                  const active = classroom?.id === cls.id;
+              </div>
 
-                  return (
-                    <button
-                      key={cls.id}
-                      ref={el => enrolledRefs.current['cls_' + cls.id] = el}
-                      onClick={() => {
-                        if (onEnterClassroom) onEnterClassroom(cls);
-                      }}
-                      style={styles.navButton(collapsed)}
-                      title={cls.name}
-                    >
-                      <div style={{
-                        width: '20px',
-                        height: '20px',
-                        borderRadius: '6px',
-                        backgroundColor: color,
-                        color: 'white',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        fontSize: '0.75rem',
-                        fontWeight: 'bold',
-                        flexShrink: 0
-                      }}>
-                        {cls.name.charAt(0).toUpperCase()}
+              {/* Main Dark Card */}
+              <div style={{ 
+                backgroundColor: isDark ? '#2E2E2E' : '#ffffff', 
+                borderRadius: '16px', 
+                border: isDark ? '1px solid #484848' : '1px solid #e2e8f0',
+                display: 'flex',
+                flexDirection: 'column',
+                overflow: 'hidden',
+                boxShadow: isDark ? '0 10px 30px rgba(0,0,0,0.4)' : '0 10px 30px rgba(0,0,0,0.04)'
+              }}>
+                
+                {/* Banner Header */}
+                <div style={{ 
+                  background: isDark ? '#262626' : '#f8fafc',
+                  padding: '40px 32px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '24px',
+                  borderBottom: isDark ? '1px solid #484848' : '1px solid #e2e8f0'
+                }}>
+                  {/* Icon Block */}
+                  <div style={{ width: '64px', height: '64px', borderRadius: '16px', backgroundColor: isDark ? 'rgba(16, 185, 129, 0.1)' : '#ecfdf5', border: isDark ? '1px solid rgba(16, 185, 129, 0.2)' : 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#10b981', flexShrink: 0 }}>
+                    <ClipboardList size={28} />
+                  </div>
+                  
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                    <span style={{ fontSize: '0.7rem', fontWeight: '700', color: isDark ? '#94a3b8' : '#64748b', letterSpacing: '0.05em', textTransform: 'uppercase' }}>
+                      ACTIVITY DETAILS
+                    </span>
+                    <h1 style={{ fontSize: '2.2rem', fontWeight: 'bold', color: isDark ? 'white' : '#0f172a', margin: 0, lineHeight: 1.1, wordBreak: 'break-word' }}>
+                      {title}
+                    </h1>
+                  </div>
+                </div>
+
+                {/* Meta Strip */}
+                <div style={{ 
+                  backgroundColor: isDark ? '#262626' : '#ffffff', 
+                  borderBottom: isDark ? '1px solid #484848' : '1px solid #e2e8f0',
+                  padding: '16px 32px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '32px',
+                  flexWrap: 'wrap'
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <Award size={18} color={isDark ? '#94a3b8' : '#64748b'} />
+                    <div style={{ display: 'flex', flexDirection: 'column' }}>
+                      <span style={{ fontSize: '0.7rem', color: isDark ? '#94a3b8' : '#64748b', fontWeight: '600' }}>Points</span>
+                      <span style={{ fontSize: '0.9rem', color: isDark ? '#e2e8f0' : '#1e293b', fontWeight: 'bold' }}>{pointsText}</span>
+                    </div>
+                  </div>
+                  
+                  <div style={{ width: '1px', height: '28px', backgroundColor: isDark ? '#334155' : '#e2e8f0' }} />
+                  
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <div style={{ backgroundColor: isDark ? 'rgba(16, 185, 129, 0.12)' : '#ecfdf5', padding: '6px', borderRadius: '8px', color: '#10b981', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <Calendar size={16} />
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column' }}>
+                      <span style={{ fontSize: '0.7rem', color: isDark ? '#94a3b8' : '#64748b', fontWeight: '600' }}>Due</span>
+                      <span style={{ fontSize: '0.9rem', color: isDark ? '#e2e8f0' : '#1e293b', fontWeight: 'bold' }}>{dueDateText === 'No Due Date' ? 'No Due Date' : dueDateText}</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Instructions Area */}
+                <div style={{ padding: '32px' }}>
+                  <h3 style={{ fontSize: '1.05rem', fontWeight: '700', color: isDark ? 'white' : '#1e293b', margin: '0 0 16px 0' }}>
+                    Instructions
+                  </h3>
+                  
+                  <div style={{ 
+                    backgroundColor: isDark ? '#262626' : '#f8fafc', 
+                    borderRadius: '12px', 
+                    padding: '24px', 
+                    minHeight: '180px',
+                    border: isDark ? '1px solid #444444' : '1px solid #e2e8f0'
+                  }}>
+                    <div 
+                      style={{ ...styles.instructionText, whiteSpace: 'normal', margin: 0, color: isDark ? '#d1d5db' : '#334155' }}
+                      dangerouslySetInnerHTML={{ __html: details }}
+                    />
+                    
+                    {/* Attachments if any */}
+                    {assignment?.attachments?.length > 0 && (
+                      <div style={styles.cardAttachments}>
+                        {assignment.attachments.map((att, i) => (
+                          <AttachmentCard
+                            key={i}
+                            att={att}
+                            isDark={isDark}
+                            onClick={(clickedAtt) => {
+                              if (clickedAtt.type === 'image') setPreviewImage(clickedAtt);
+                              else if (clickedAtt.type === 'video') setPreviewVideo(clickedAtt);
+                              else if (clickedAtt.type === 'link' && clickedAtt.url) {
+                                const targetUrl = clickedAtt.url.startsWith('http://') || clickedAtt.url.startsWith('https://')
+                                  ? clickedAtt.url
+                                  : `https://${clickedAtt.url}`;
+                                window.open(targetUrl, '_blank', 'noopener,noreferrer');
+                              }
+                            }}
+                          />
+                        ))}
                       </div>
-                      {!collapsed && (
-                        <span style={{ fontSize: '0.85rem', fontWeight: active ? '700' : '600', color: active ? '#10b981' : (isDark ? '#E8EAED' : '#334155'), overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                          {cls.name}
-                        </span>
+                    )}
+                  </div>
+                  
+                  {/* Action Buttons (Submit, Start) */}
+                  {!isSubmitted ? (
+                    <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '16px', marginTop: '32px' }}>
+                      <button
+                        onClick={handleSubmit}
+                        style={{
+                          backgroundColor: 'transparent',
+                          color: isDark ? 'white' : '#1e293b',
+                          border: isDark ? '1px solid #475569' : '1px solid #cbd5e1',
+                          borderRadius: '50px',
+                          padding: '9px 28px',
+                          fontSize: '0.9rem',
+                          fontWeight: 'bold',
+                          cursor: 'pointer',
+                          transition: 'all 0.2s'
+                        }}
+                      >
+                        Submit
+                      </button>
+
+                      <button
+                        onClick={onStartCoding}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                          backgroundColor: '#10b981',
+                          color: 'white',
+                          border: 'none',
+                          borderRadius: '50px',
+                          padding: '9px 28px',
+                          fontSize: '0.9rem',
+                          fontWeight: 'bold',
+                          cursor: 'pointer',
+                          boxShadow: '0 4px 6px rgba(16,185,129,0.2)',
+                          transition: 'all 0.2s ease'
+                        }}
+                      >
+                        Start <ArrowRight size={16} />
+                      </button>
+                    </div>
+                  ) : (
+                    <div style={{ marginTop: '32px' }}>
+                      {/* Submitted state */}
+                      <div style={{ ...styles.submissionBox, backgroundColor: isDark ? '#1a201e' : '#ecfdf5', border: isDark ? '1px solid #232a29' : '1px solid #d1fae5' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                          <CheckCircle2 size={22} color="#10b981" />
+                          <div>
+                            <span style={{ fontWeight: '700', color: isDark ? '#E8EAED' : '#1e293b', fontSize: '0.95rem' }}>
+                              Code Submitted
+                            </span>
+                            <span style={{ fontSize: '0.8rem', color: isDark ? '#9AA0A6' : '#64748b', marginLeft: '10px' }}>
+                              {submission?.submittedAt ? `Turned in on ${submission.submittedAt}` : 'Turned in'}
+                            </span>
+                            {displayScore !== null && (
+                              <span style={{ fontSize: '0.8rem', color: '#10b981', marginLeft: '10px', fontWeight: 'bold' }}>
+                                Score: {displayScore}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        <button
+                          onClick={() => setShowCodePreview(true)}
+                          style={styles.viewCodeBtn}
+                        >
+                          <Code2 size={15} style={{ marginRight: '5px' }} /> View Code
+                        </button>
+                      </div>
+
+                      {/* Instructor Feedback if available */}
+                      {submission?.feedback && (
+                        <div>
+                          <div style={styles.feedbackHeading}>Instructor Feedback</div>
+                          <div style={{ ...styles.feedbackBox, backgroundColor: isDark ? '#1a201e' : '#f8fafc', border: isDark ? '1px solid #232a29' : '1px solid #e2e8f0' }}>
+                            <p style={{ margin: 0, color: isDark ? '#E8EAED' : '#334155', fontSize: '0.95rem', lineHeight: '1.5' }}>
+                              {feedbackText}
+                            </p>
+                          </div>
+                        </div>
                       )}
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-
-            {/* Settings at Bottom */}
-            <div style={{ marginTop: 'auto' }}>
-              <button
-                ref={el => navRefs.current['settings'] = el}
-                onClick={() => {
-                  if (onNavigateView) onNavigateView('settings');
-                  else onBack();
-                }}
-                style={styles.navButton(collapsed)}
-                title={collapsed ? 'Settings' : ''}
-              >
-                <Settings size={20} color={isDark ? "#a3a3a3" : "#475569"} style={{ flexShrink: 0 }} />
-                {!collapsed && (
-                  <span style={styles.navLabel}>Settings</span>
-                )}
-              </button>
-            </div>
-          </nav>
-        </aside>
-        )}
-
-        {/* ═══ MAIN CONTENT AREA (PHOTO 1 / PHOTO 2) ═══ */}
-        <div style={styles.mainContent}>
-          <div style={styles.whiteCard}>
-            {loading || !assignment ? (
-              <Skeleton.ActivityDetail />
-            ) : (
-              <>
-                {/* Top Back Navigation Row */}
-                <div style={{ marginBottom: '16px', display: 'flex', alignItems: 'center' }}>
-                  <button
-                    onClick={onBack}
-                    style={styles.backBtn}
-                  >
-                    <ArrowLeft size={16} style={{ marginRight: '6px' }} /> Back to Activities
-                  </button>
-                </div>
-
-            {/* Activity Title Pill (matching wireframe grey pill) */}
-            <div style={styles.titlePill}>
-              {title}
-            </div>
-
-            {/* First Divider */}
-            <div style={styles.divider} />
-
-            {/* Points & Due Date (with Score in Photo 2) */}
-            <div style={styles.metaRow}>
-              <div>
-                <div style={styles.pointsText}>{pointsText}</div>
-                <div style={styles.dueText}>{dueDateText}</div>
-              </div>
-
-              {/* In Submitted State (Photo 2), show Score right-aligned */}
-              {isSubmitted && (
-                <div style={styles.scoreText}>
-                  Score: {displayScore !== null ? displayScore : 'Pending'}
-                </div>
-              )}
-            </div>
-
-            {/* Second Divider */}
-            <div style={styles.divider} />
-
-            {/* ═══ STATE A: UNSUBMITTED (PHOTO 1) ═══ */}
-            {!isSubmitted ? (
-              <div style={{ display: 'flex', flexDirection: 'column', flex: 1 }}>
-                {/* Large Rounded Grey Container for Activity Details */}
-                <div style={styles.detailsBox}>
-                  <p style={styles.instructionText}>
-                    {details}
-                  </p>
-
-                  {/* Attachments if any */}
-                  {assignment?.attachments?.length > 0 && (
-                    <div style={styles.cardAttachments}>
-                      {assignment.attachments.map((att, i) => (
-                        <AttachmentCard
-                          key={i}
-                          att={att}
-                          isDark={isDark}
-                          onClick={(clickedAtt) => {
-                            if (clickedAtt.type === 'image') setPreviewImage(clickedAtt);
-                            else if (clickedAtt.type === 'video') setPreviewVideo(clickedAtt);
-                            else if (clickedAtt.type === 'link' && clickedAtt.url) {
-                              const targetUrl = clickedAtt.url.startsWith('http://') || clickedAtt.url.startsWith('https://')
-                                ? clickedAtt.url
-                                : `https://${clickedAtt.url}`;
-                              window.open(targetUrl, '_blank', 'noopener,noreferrer');
-                            }
+                      
+                      {/* Unsubmit Option */}
+                      <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '32px' }}>
+                        <button
+                          onClick={handleUnsubmit}
+                          style={{
+                            backgroundColor: 'transparent',
+                            color: isDark ? 'white' : '#1e293b',
+                            border: isDark ? '1px solid #475569' : '1px solid #cbd5e1',
+                            borderRadius: '8px',
+                            padding: '10px 24px',
+                            fontSize: '0.9rem',
+                            fontWeight: '600',
+                            cursor: 'pointer'
                           }}
-                        />
-                      ))}
+                        >
+                          Unsubmit
+                        </button>
+                      </div>
                     </div>
                   )}
-                </div>
-
-                {/* Bottom Action Buttons: Submit & Start (Photo 1) */}
-                <div style={styles.buttonRow}>
-                  <motion.button
-                    whileHover={{ scale: 1.03 }}
-                    whileTap={{ scale: 0.97 }}
-                    onClick={handleSubmit}
-                    style={styles.submitBtn}
-                  >
-                    Submit
-                  </motion.button>
-
-                  <motion.button
-                    whileHover={{ scale: 1.03 }}
-                    whileTap={{ scale: 0.97 }}
-                    onClick={onStartCoding}
-                    style={styles.startBtn}
-                  >
-                    Start
-                  </motion.button>
+                  
                 </div>
               </div>
-            ) : (
-              /* ═══ STATE B: SUBMITTED (PHOTO 2) ═══ */
-              <div style={{ display: 'flex', flexDirection: 'column', flex: 1 }}>
-                {/* Submission Container Pill / Rounded Box */}
-                <div style={styles.submissionBox}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                    <CheckCircle2 size={22} color="#15803d" />
-                    <div>
-                      <span style={{ fontWeight: '700', color: isDark ? '#E8EAED' : '#1e293b', fontSize: '0.95rem' }}>
-                        Main.cs • Code Submitted
-                      </span>
-                      <span style={{ fontSize: '0.8rem', color: isDark ? '#9AA0A6' : '#64748b', marginLeft: '10px' }}>
-                        {submission?.submittedAt ? `Turned in on ${submission.submittedAt}` : 'Turned in'}
-                      </span>
-                    </div>
-                  </div>
-
-                  <button
-                    onClick={() => setShowCodePreview(true)}
-                    style={styles.viewCodeBtn}
-                  >
-                    <Code2 size={15} style={{ marginRight: '5px' }} /> View Code
-                  </button>
-                </div>
-
-                {/* Instructor Feedback Header */}
-                <div style={styles.feedbackHeading}>
-                  Instructor Feedback
-                </div>
-
-                {/* Instructor Feedback Container Box */}
-                <div style={styles.feedbackBox}>
-                  <p style={{ margin: 0, color: isDark ? '#E8EAED' : '#334155', fontSize: '0.95rem', lineHeight: '1.5' }}>
-                    {feedbackText}
-                  </p>
-                </div>
-
-                {/* Bottom Action Button: Unsubmit (Photo 2) */}
-                <div style={styles.buttonRow}>
-                  <motion.button
-                    whileHover={{ scale: 1.03 }}
-                    whileTap={{ scale: 0.97 }}
-                    onClick={handleUnsubmit}
-                    style={styles.unsubmitBtn}
-                  >
-                    Unsubmit
-                  </motion.button>
-                </div>
-              </div>
-            )}
-              </>
-            )}
-          </div>
+            </div>
+          )}
         </div>
       </div>
 
@@ -863,6 +862,7 @@ export default function StudentActivityDetail({
           {[
             { id: 'classrooms', Icon: Home, label: 'Home' },
             { id: 'calendar', Icon: Calendar, label: 'Calendar' },
+            { id: 'workspace', Icon: TerminalSquare, label: 'Compiler' },
             { id: 'archived', Icon: Archive, label: 'Archived' },
             { id: 'settings', Icon: Settings, label: 'Settings' }
           ].map(({ id, Icon, label }) => {
@@ -892,7 +892,7 @@ export default function StudentActivityDetail({
           })}
         </nav>
       )}
-    </div>
+    </motion.div>
   );
 }
 
@@ -919,7 +919,9 @@ const getStyles = (isDark, isMobile) => ({
     padding: isMobile ? '0 16px' : '0 24px',
     backgroundColor: isDark ? '#3C3C3C' : '#EEF0F3',
     borderBottom: 'none',
-    zIndex: 50
+    zIndex: 50,
+    position: 'sticky',
+    top: 0
   },
   menuButton: {
     background: 'none',

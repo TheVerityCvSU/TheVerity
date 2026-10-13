@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
-import { Home, Calendar, ClipboardList, Settings, MoreVertical, Plus, LogOut, User, X, Menu, Archive, RefreshCw } from 'lucide-react';
+import { Home, Calendar, ClipboardList, Settings, MoreVertical, Plus, LogOut, User, X, Menu, Archive, RefreshCw, Trash2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import SettingsPanel from './SettingsPanel';
 import ProfileMenu from './ProfileMenu';
@@ -20,8 +20,195 @@ const getStorageKey = (user) => {
 import { isPhantomClassroom, mergeClassroomsPreservingOrder, generateClassCode } from '../utils/classroomUtils';
 export { isPhantomClassroom, mergeClassroomsPreservingOrder, generateClassCode };
 
+const cardThemes = [
+  { // 0: C# Programming
+    image: 'https://images.unsplash.com/photo-1498050108023-c5249f4df085?auto=format&fit=crop&w=600&q=80',
+    gradient: 'linear-gradient(to right, rgba(15, 23, 42, 1) 0%, rgba(15, 23, 42, 0.85) 30%, rgba(15, 23, 42, 0.3) 60%, transparent 100%)',
+    textColor: 'white',
+    pillBg: '#dcfce7',
+    pillText: '#065f46',
+    status: 'ACTIVE',
+    statusColor: '#cbd5e1',
+    colSpan: 7
+  },
+  { // 1: Data Structures
+    image: 'https://images.unsplash.com/photo-1451187580459-43490279c0fa?auto=format&fit=crop&w=600&q=80',
+    gradient: 'linear-gradient(to right, rgba(30, 27, 75, 1) 0%, rgba(30, 27, 75, 0.85) 30%, rgba(30, 27, 75, 0.3) 60%, transparent 100%)',
+    textColor: 'white',
+    pillBg: '#f3e8ff',
+    pillText: '#6b21a8',
+    status: 'ACTIVE',
+    statusColor: '#e9d5ff',
+    colSpan: 5
+  },
+  { // 2: NICE
+    image: 'https://images.unsplash.com/photo-1517842645767-c639042777db?auto=format&fit=crop&w=600&q=80',
+    gradient: 'linear-gradient(to right, rgba(255, 255, 255, 1) 0%, rgba(255, 255, 255, 0.9) 30%, rgba(255, 255, 255, 0.4) 60%, transparent 100%)',
+    textColor: '#0f172a',
+    pillBg: '#e0e7ff',
+    pillText: '#4338ca',
+    status: 'ACTIVE',
+    statusColor: '#64748b',
+    colSpan: 5
+  },
+  { // 3: Verity
+    image: 'https://images.unsplash.com/photo-1522202176988-66273c2fd55f?auto=format&fit=crop&w=600&q=80',
+    gradient: 'linear-gradient(to right, rgba(15, 23, 42, 1) 0%, rgba(15, 23, 42, 0.85) 30%, rgba(15, 23, 42, 0.3) 60%, transparent 100%)',
+    textColor: 'white',
+    pillBg: '#dcfce7',
+    pillText: '#065f46',
+    status: 'ACTIVE',
+    statusColor: '#a7f3d0',
+    colSpan: 7
+  }
+];
+
+const TeacherCourseCard = ({ classroom, onClick, onSettings, onArchive, onUnarchive, onDelete, isArchived, index, initial, animate, transition }) => {
+  const { isDark } = useDarkMode();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const theme = cardThemes[index % cardThemes.length];
+  const imageUrl = classroom.theme?.customImageUrl || theme.image;
+  const isMobile = typeof window !== 'undefined' && window.innerWidth <= 768;
+  const finalSpan = isMobile ? 12 : theme.colSpan;
+  
+  // Close menu when clicking outside
+  useEffect(() => {
+    const handleDocClick = () => setMenuOpen(false);
+    if (menuOpen) document.addEventListener('click', handleDocClick);
+    return () => document.removeEventListener('click', handleDocClick);
+  }, [menuOpen]);
+
+  let bgStyle = {
+    background: `${theme.gradient}, url(${imageUrl})`,
+    backgroundSize: 'cover',
+    backgroundPosition: 'center',
+  };
+  
+  return (
+    <motion.div
+      initial={initial}
+      animate={animate}
+      transition={transition || { type: 'spring', stiffness: 300, damping: 22 }}
+      whileHover={{ y: -4, scale: 1.01, boxShadow: '0 15px 30px rgba(0,0,0,0.15)' }}
+      whileTap={{ scale: 0.98 }}
+      onClick={() => onClick(classroom)}
+      style={{
+        ...bgStyle,
+        borderRadius: '20px',
+        padding: '24px',
+        height: '240px',
+        display: 'flex',
+        flexDirection: 'column',
+        justifyContent: 'space-between',
+        cursor: 'pointer',
+        position: 'relative',
+        overflow: 'visible',
+        boxShadow: '0 8px 20px rgba(0,0,0,0.08)',
+        color: theme.textColor,
+        gridColumn: `span ${finalSpan}`,
+        width: '100%',
+        boxSizing: 'border-box',
+        opacity: isArchived ? 0.75 : 1
+      }}
+    >
+      <div style={{ position: 'relative', zIndex: 10 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span style={{ 
+              backgroundColor: theme.pillBg, 
+              color: theme.pillText,
+              padding: '4px 10px', 
+              borderRadius: '20px', 
+              fontSize: '0.75rem',
+              fontWeight: 'bold',
+            }}>
+              {classroom.code || `C${classroom.id}`}
+            </span>
+            <span style={{ fontSize: '0.85rem', color: theme.textColor, fontWeight: '500', opacity: 0.9 }}>
+              {classroom.studentsCount || 0} Students
+            </span>
+          </div>
+          
+          <div style={{ position: 'relative' }}>
+            <button
+              onClick={(e) => { e.stopPropagation(); setMenuOpen(p => !p); }}
+              style={{
+                background: 'rgba(0,0,0,0.2)',
+                border: 'none',
+                color: 'white',
+                cursor: 'pointer',
+                padding: '6px',
+                borderRadius: '50%',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                backdropFilter: 'blur(4px)'
+              }}
+            >
+              <MoreVertical size={16} />
+            </button>
+            {menuOpen && (
+              <div 
+                style={{
+                  position: 'absolute',
+                  top: '100%',
+                  right: 0,
+                  marginTop: '8px',
+                  backgroundColor: isDark ? '#333' : '#fff',
+                  border: isDark ? '1px solid #444' : '1px solid #e5e7eb',
+                  borderRadius: '12px',
+                  boxShadow: '0 10px 25px rgba(0,0,0,0.2)',
+                  zIndex: 100,
+                  width: '180px',
+                  overflow: 'hidden'
+                }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                {!isArchived && onSettings && (
+                  <button onClick={(e) => { e.stopPropagation(); setMenuOpen(false); onSettings(classroom); }} style={{ width: '100%', padding: '12px 16px', textAlign: 'left', background: 'transparent', border: 'none', borderBottom: isDark ? '1px solid #444' : '1px solid #e5e7eb', color: isDark ? '#eee' : '#333', cursor: 'pointer', fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <Settings size={16} /> Settings
+                  </button>
+                )}
+                {!isArchived && onArchive && (
+                  <button onClick={(e) => { e.stopPropagation(); setMenuOpen(false); onArchive(classroom); }} style={{ width: '100%', padding: '12px 16px', textAlign: 'left', background: 'transparent', border: 'none', borderBottom: isDark ? '1px solid #444' : '1px solid #e5e7eb', color: isDark ? '#eee' : '#333', cursor: 'pointer', fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <Archive size={16} /> Archive
+                  </button>
+                )}
+                {isArchived && onUnarchive && (
+                  <button onClick={(e) => { e.stopPropagation(); setMenuOpen(false); onUnarchive(classroom); }} style={{ width: '100%', padding: '12px 16px', textAlign: 'left', background: 'transparent', border: 'none', borderBottom: isDark ? '1px solid #444' : '1px solid #e5e7eb', color: isDark ? '#eee' : '#333', cursor: 'pointer', fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <RefreshCw size={16} /> Unarchive
+                  </button>
+                )}
+                {onDelete && (
+                  <button onClick={(e) => { e.stopPropagation(); setMenuOpen(false); onDelete(classroom); }} style={{ width: '100%', padding: '12px 16px', textAlign: 'left', background: 'transparent', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <Trash2 size={16} /> Delete
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+        <h3 style={{ margin: 0, fontSize: '1.85rem', fontWeight: 'bold', lineHeight: 1.2, textShadow: theme.textColor === 'white' ? '0 2px 4px rgba(0,0,0,0.5)' : 'none' }}>
+          {classroom.name}
+        </h3>
+      </div>
+      
+      <div style={{ position: 'relative', zIndex: 10 }}>
+        <p style={{ margin: 0, fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: theme.statusColor, marginBottom: '4px' }}>
+          {isArchived ? 'ARCHIVED' : 'ACTIVE'}
+        </p>
+        <p style={{ margin: 0, fontSize: '0.95rem', fontWeight: '600', color: theme.textColor }}>
+          {classroom.section || 'General Section'}
+        </p>
+      </div>
+    </motion.div>
+  );
+};
+
 export default function TeacherDashboard({ currentUser, onLogout, onEnterClassroom }) {
   const { isDark } = useDarkMode();
+  const [activeView, setActiveView] = useState(() => localStorage.getItem('verity_teacher_view') || 'classrooms');
+  const [slideDirection, setSlideDirection] = useState(1);
   const { collapsed, toggleSidebar, sidebarProps, isPinned } = useSidebarNav();
   const isMobile = useMediaQuery('(max-width: 768px)');
   const styles = {
@@ -106,12 +293,14 @@ export default function TeacherDashboard({ currentUser, onLogout, onEnterClassro
       backgroundColor: isDark ? '#323232' : 'white',
       flex: 1,
       borderRadius: '24px',
-      padding: 'clamp(20px, 4vw, 40px)',
+      padding: 0,
       boxShadow: isDark ? '0 10px 30px rgba(0,0,0,0.25)' : '0 10px 25px rgba(0,0,0,0.05)',
-      overflowY: 'auto',
+      overflow: 'hidden',
       border: isDark ? '1px solid #4A4A4A' : 'none',
       color: isDark ? '#E8EAED' : 'inherit',
-      transition: 'background-color 0.25s ease, border-color 0.25s ease'
+      transition: 'background-color 0.25s ease, border-color 0.25s ease',
+      display: 'flex',
+      flexDirection: 'column',
     },
 
     // The Green Create Button
@@ -316,40 +505,47 @@ export default function TeacherDashboard({ currentUser, onLogout, onEnterClassro
   }, [classrooms, currentUser]);
 
   const [activeMenu, setActiveMenu] = useState(null);
+  const [isHeaderHovered, setIsHeaderHovered] = useState(false);
+  const [isFadingOut, setIsFadingOut] = useState(false);
   const [settingsClassroom, setSettingsClassroom] = useState(null);
-  const [activeView, setActiveView] = useState(() => localStorage.getItem('verity_teacher_view') || 'classrooms');
+
+  const VIEW_ORDER = { 'classrooms': 0, 'calendar': 1, 'archived': 2, 'settings': 3, 'classroomSettings': 3 };
+
   const handleSetView = (view) => {
+    const currentIdx = VIEW_ORDER[activeView] ?? 0;
+    const nextIdx = VIEW_ORDER[view] ?? 0;
+    setSlideDirection(nextIdx >= currentIdx ? 1 : -1);
     setActiveView(view);
     localStorage.setItem('verity_teacher_view', view);
   };
+
+  const drillVariants = {
+    initial: (direction) => ({
+      x: direction > 0 ? 40 : -40,
+      opacity: 0
+    }),
+    animate: {
+      x: 0,
+      opacity: 1,
+      transition: { duration: 0.25, ease: 'easeOut' }
+    },
+    exit: (direction) => ({
+      x: direction < 0 ? 40 : -40,
+      opacity: 0,
+      transition: { duration: 0.15, ease: 'easeIn' }
+    })
+  };
   useLayoutEffect(() => {
-    const update = () => {
-      const activeRef = navRefs.current[activeView];
-      if (activeRef) {
-        try {
-          sessionStorage.setItem('verity_teacher_nav_indicator_top', String(activeRef.offsetTop));
-          sessionStorage.setItem('verity_teacher_nav_indicator_height', String(activeRef.offsetHeight));
-        } catch { /* ignore */ }
-
-        setIndicatorStyle(prev => {
-          const distance = Math.abs(activeRef.offsetTop - prev.top);
-          const bounceOvershoot = distance > 0 ? Math.min(0.42, Math.max(0.03, 16 / distance)) : 0;
-          const bounceRatio = (1 + bounceOvershoot).toFixed(3);
-          const duration = distance > 150 ? '0.46s' : '0.38s';
-          const transitionStr = `top ${duration} cubic-bezier(0.34, ${bounceRatio}, 0.64, 1), height 0.25s ease, opacity 0.2s ease`;
-
-          if (prev.top === activeRef.offsetTop && prev.height === activeRef.offsetHeight && prev.opacity === 1 && prev.transition === transitionStr) return prev;
-          return { top: activeRef.offsetTop, height: activeRef.offsetHeight, opacity: 1, transition: transitionStr };
-        });
-      } else {
-        setIndicatorStyle(prev => prev.opacity === 0 ? prev : { ...prev, opacity: 0 });
-      }
-    };
-
-    update();
-    const timer = setTimeout(update, 20);
-    return () => clearTimeout(timer);
-  }, [activeView, collapsed]);
+    const activeRef = navRefs.current[activeView];
+    if (activeRef) {
+      setIndicatorStyle(prev => ({
+        left: activeRef.offsetLeft,
+        width: activeRef.offsetWidth,
+        opacity: 1,
+        transition: prev.opacity === 0 ? 'none' : 'all 0.3s cubic-bezier(0.25, 1, 0.5, 1)'
+      }));
+    }
+  }, [activeView]);
 
   const getViewTitle = (view) => {
     switch (view) {
@@ -434,300 +630,288 @@ export default function TeacherDashboard({ currentUser, onLogout, onEnterClassro
 
 
   return (
-    <div style={styles.container}>
+    <motion.div 
+      initial={{ opacity: 0 }} 
+      animate={{ opacity: isFadingOut ? 0 : 1 }} 
+      transition={{ duration: 0.25, ease: 'easeInOut' }}
+      style={{
+        minHeight: '100vh',
+        backgroundColor: isDark ? '#1a1a1a' : '#f8f9fa',
+        fontFamily: '"Inter", "Segoe UI", sans-serif',
+        display: 'flex',
+        flexDirection: 'column',
+      }}
+    >
+      {/* ═══ GLOBAL TOP HEADER (Copied from Student) ═══ */}
+      <header 
+        onMouseEnter={() => setIsHeaderHovered(true)}
+        onMouseLeave={() => setIsHeaderHovered(false)}
+        style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        padding: '16px clamp(20px, 3vw, 48px)',
+        backgroundColor: isDark ? '#1a1a1a' : '#f8f9fa',
+        borderBottom: 'none',
+        position: 'sticky',
+        top: 0,
+        zIndex: 50,
+      }}>
+        <div style={{
+          position: 'absolute',
+          bottom: '-30px',
+          left: 0,
+          right: 0,
+          height: '30px',
+          background: `linear-gradient(to bottom, ${isDark ? '#1a1a1a' : '#f8f9fa'}, transparent)`,
+          pointerEvents: 'none'
+        }} />
 
-      {/* ═══ GLOBAL TOP HEADER (Instructor Pattern) ═══ */}
-      <header style={styles.header}>
-        <div style={{ display: 'flex', alignItems: 'center' }}>
-          {!isMobile && (
-            <button
-              onClick={toggleSidebar}
-              style={{
-                background: 'none',
-                border: 'none',
-                padding: '6px',
-                borderRadius: '8px',
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                color: isDark ? '#d4d4d4' : '#64748b',
-                flexShrink: 0,
-                marginRight: '16px'
-              }}
-              title={isPinned ? "Unpin sidebar" : "Pin sidebar"}
-              className="icon-btn-anim"
-            >
-              <Menu size={24} color={isDark ? '#d4d4d4' : '#64748b'} />
-            </button>
-          )}
-
-          <div
-            style={{ display: 'flex', alignItems: 'baseline', fontSize: isMobile ? '2rem' : '2.5rem', fontWeight: '900', fontStyle: 'italic', cursor: 'pointer' }}
-            onClick={() => handleSetView('classrooms')}
-          >
-            <span style={{ color: '#10b981' }}>V</span>
-            <span style={{ color: isDark ? '#f5f5f5' : '#1e293b' }}>erity</span>
-            <span style={styles.badge}>Instructor</span>
-          </div>
+        {/* Left: Logo */}
+        <div style={{ display: 'flex', alignItems: 'baseline', cursor: 'pointer', flex: 1, justifyContent: 'flex-start' }} onClick={() => handleSetView('classrooms')}>
+          <span style={{ color: '#10b981', fontSize: '1.75rem', fontWeight: '900', fontStyle: 'italic' }}>V</span>
+          <span style={{ color: isDark ? '#f5f5f5' : '#111827', fontSize: '1.75rem', fontWeight: '900', fontStyle: 'italic' }}>erity</span>
+          <span style={{ fontSize: '0.7rem', color: isDark ? '#a3a3a3' : '#6b7280', marginLeft: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Instructor</span>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+        {/* Center: Navigation */}
+        <div style={{ 
+          display: 'flex', 
+          alignItems: 'center', 
+          justifyContent: 'center',
+          gap: '8px',
+          opacity: isHeaderHovered ? 1 : 0,
+          pointerEvents: isHeaderHovered ? 'auto' : 'none',
+          transition: 'opacity 0.3s ease, transform 0.3s ease',
+          transform: isHeaderHovered ? 'translateY(0)' : 'translateY(-10px)',
+          position: 'relative'
+        }}>
+          <div style={{
+            position: 'absolute',
+            left: indicatorStyle.left,
+            width: indicatorStyle.width,
+            top: 0,
+            bottom: 0,
+            backgroundColor: isDark ? 'rgba(255, 255, 255, 0.07)' : 'rgba(255, 255, 255, 0.25)',
+            backdropFilter: 'blur(8px)',
+            WebkitBackdropFilter: 'blur(8px)',
+            borderRadius: '50px',
+            boxShadow: isDark ? '0 4px 16px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.08)' : '0 4px 16px rgba(16,185,129,0.15), inset 0 1px 0 rgba(255,255,255,0.5)',
+            border: isDark ? '1px solid rgba(255,255,255,0.1)' : '1px solid rgba(255,255,255,0.35)',
+            transition: indicatorStyle.transition || 'none',
+            opacity: indicatorStyle.opacity,
+            pointerEvents: 'none',
+            zIndex: 0,
+          }} />
+
+          {navItems.map(item => {
+            const active = activeView === item.id;
+            return (
+              <button
+                key={item.id}
+                ref={el => navRefs.current[item.id] = el}
+                onClick={() => handleSetView(item.id)}
+                style={{
+                  position: 'relative',
+                  zIndex: 1,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  padding: '10px 16px',
+                  borderRadius: '50px',
+                  background: 'transparent',
+                  border: '1px solid transparent',
+                  color: active ? '#10b981' : (isDark ? '#a3a3a3' : '#6b7280'),
+                  fontWeight: active ? '700' : '600',
+                  fontSize: '0.9rem',
+                  cursor: 'pointer',
+                  transition: 'all 0.2s'
+                }}
+              >
+                <item.Icon size={18} />
+                {item.label}
+              </button>
+            );
+          })}
+
+
+          <button
+            ref={el => navRefs.current['settings'] = el}
+            onClick={() => handleSetView('settings')}
+            style={{
+              position: 'relative',
+              zIndex: 1,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: '10px',
+              borderRadius: '50px',
+              backgroundColor: 'transparent',
+              color: isDark ? '#a3a3a3' : '#6b7280',
+              border: 'none',
+              cursor: 'pointer',
+              marginLeft: '8px'
+            }}
+          >
+            <Settings size={20} />
+            <span style={{ marginLeft: '8px', fontWeight: '600', fontSize: '0.9rem' }}>Settings</span>
+          </button>
+        </div>
+
+        {/* Right: Profile */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', flex: 1, gap: '16px' }}>
           <ProfileMenu currentUser={currentUser} onLogout={onLogout} />
         </div>
       </header>
 
-      {/* ═══ MAIN LAYOUT WITH SIDEBAR ═══ */}
-      <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
-        {/* ═══ SIDEBAR NAVIGATION ═══ */}
-        {!isMobile && (
-          <aside {...sidebarProps} style={styles.sidebar(collapsed)}>
-          <nav style={{ display: 'flex', flexDirection: 'column', gap: '10px', flex: 1, position: 'relative' }}>
-            {/* Liquid sliding indicator */}
-            <div style={{
-              position: 'absolute',
-              left: 0,
-              right: 0,
-              top: indicatorStyle.top,
-              height: indicatorStyle.height,
-              background: isDark ? 'rgba(255,255,255,0.07)' : 'rgba(255,255,255,0.25)',
-              backdropFilter: 'blur(8px)',
-              WebkitBackdropFilter: 'blur(8px)',
-              borderRadius: '14px',
-              boxShadow: isDark ? '0 4px 16px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.08)' : '0 4px 16px rgba(16,185,129,0.15), inset 0 1px 0 rgba(255,255,255,0.5)',
-              border: isDark ? '1px solid rgba(255,255,255,0.1)' : '1px solid rgba(255,255,255,0.35)',
-              transition: indicatorStyle.transition || 'none',
-              opacity: indicatorStyle.opacity,
-              pointerEvents: 'none',
-              zIndex: 0,
-            }} />
+      {/* Main Content Body */}
+      <main style={{
+        flex: 1,
+        display: 'flex',
+        flexDirection: 'column',
+        overflow: 'visible',
+        padding: '32px clamp(20px, 3vw, 48px)',
+        maxWidth: '100%',
+        margin: 0,
+        width: '100%',
+        boxSizing: 'border-box'
+      }}>
+        <AnimatePresence mode="wait" custom={slideDirection}>
+          {activeView === 'calendar' && (
+            <motion.div key="calendar" custom={slideDirection} variants={drillVariants} initial="initial" animate="animate" exit="exit">
+              <TeacherCalendar classrooms={classrooms} />
+            </motion.div>
+          )}
 
-            {navItems.map(({ id, Icon, label }) => {
-              const active = activeView === id;
-              return (
-                <button
-                  key={id}
-                  ref={el => navRefs.current[id] = el}
-                  onClick={() => handleSetView(id)}
-                  style={styles.sidebarBtn(collapsed)}
-                  title={collapsed ? label : ''}
-                >
-                  <Icon size={20} color={active ? '#10b981' : (isDark ? '#a3a3a3' : '#475569')} style={{ flexShrink: 0 }} />
-                  {!collapsed && (
-                    <span style={{ fontSize: '0.85rem', fontWeight: active ? '700' : '600', color: active ? '#10b981' : (isDark ? '#e5e5e5' : '#334155'), overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {label}
-                    </span>
-                  )}
-                </button>
-              );
-            })}
+          {activeView === 'archived' && (
+            <motion.div key="archived" custom={slideDirection} variants={drillVariants} initial="initial" animate="animate" exit="exit" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '30px', padding: '0 10px' }}>
+                <h2 style={{ color: isDark ? '#E8EAED' : '#4b5563', margin: 0 }}>Archived Classrooms</h2>
+              </div>
 
-            {/* Teaching Section */}
-            {classrooms.filter(c => !c.archived).length > 0 && (
-              <div style={{ marginTop: '12px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                {!collapsed && (
-                  <div style={{
-                    padding: '0 18px',
-                    fontSize: '0.75rem',
-                    fontWeight: 'bold',
-                    color: isDark ? '#737373' : '#9ca3af',
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.05em',
-                    marginBottom: '4px'
-                  }}>
-                    Teaching
-                  </div>
-                )}
-                {classrooms.filter(c => !c.archived).map((cls) => {
-                  const colors = ['#3b82f6', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981'];
-                  const color = colors[cls.id % colors.length];
-
-                  return (
-                    <button
+              {classrooms.filter(c => c.archived).length === 0 ? (
+                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: isDark ? '#6b7280' : '#9ca3af' }}>
+                  <h3 style={{ margin: 0, color: isDark ? '#a3a3a3' : '#6b7280' }}>No Archived Classrooms</h3>
+                  <p style={{ marginTop: '10px', color: isDark ? '#6b7280' : '#9ca3af' }}>Classrooms you archive will appear here.</p>
+                </div>
+              ) : (
+                <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(12, 1fr)', gap: '24px' }}>
+                  {classrooms.filter(c => c.archived).map((cls, idx) => (
+                    <TeacherCourseCard
                       key={cls.id}
-                      onClick={() => onEnterClassroom(cls)}
-                      style={styles.sidebarBtn(collapsed)}
-                      title={cls.name}
-                    >
+                      classroom={cls}
+                      index={idx}
+                      onClick={onEnterClassroom}
+                      onUnarchive={handleUnarchiveClass}
+                      onDelete={(allowDelete || currentUser?.role === 'Admin') ? handleDeleteClass : undefined}
+                      isArchived={true}
+                    />
+                  ))}
+                </div>
+              )}
+            </motion.div>
+          )}
+
+          {activeView === 'settings' && (
+            <motion.div key="settings" custom={slideDirection} variants={drillVariants} initial="initial" animate="animate" exit="exit">
+              <SettingsPanel role="Instructor" />
+            </motion.div>
+          )}
+
+          {activeView === 'classroomSettings' && settingsClassroom && (
+            <motion.div key="classroomSettings" custom={slideDirection} variants={drillVariants} initial="initial" animate="animate" exit="exit">
+              <ClassroomSettings
+                classroom={settingsClassroom}
+                onClose={() => { setSettingsClassroom(null); handleSetView('classrooms'); }}
+                onUpdate={(updated) => {
+                  setClassrooms(prev => prev.map(c => c.id === updated.id ? { ...c, ...updated } : c));
+                  setSettingsClassroom(updated);
+                }}
+              />
+            </motion.div>
+          )}
+
+          {activeView === 'classrooms' && (
+            <motion.div key="classrooms" custom={slideDirection} variants={drillVariants} initial="initial" animate="animate" exit="exit">
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '30px', padding: '0 10px' }}>
+                <motion.button
+                  whileHover={{ scale: 1.05 }}
+                  whileTap={{ scale: 0.95 }}
+                  onClick={handleOpenCreateModal}
+                  style={{
+                    padding: '12px 24px', backgroundColor: '#10b981', color: '#ffffff',
+                    border: 'none', borderRadius: '12px', fontSize: '1rem', fontWeight: 'bold',
+                    cursor: 'pointer', boxShadow: '0 8px 20px rgba(16,185,129,0.3)'
+                  }}
+                >
+                  Create
+                </motion.button>
+              </div>
+
+              {/* Classroom Grid */}
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: isMobile ? '1fr' : 'repeat(12, 1fr)',
+                gap: '24px'
+              }}>
+                {loadingClassrooms
+                  ? Array.from({ length: 4 }).map((_, i) => <Skeleton.Card key={i} />)
+                  : classrooms.filter(c => !c.archived).length === 0 ? (
+                    <div style={{
+                      gridColumn: '1 / -1',
+                      padding: '50px 20px',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      textAlign: 'center',
+                      background: isDark ? 'rgba(255,255,255,0.02)' : 'rgba(0,0,0,0.01)',
+                      borderRadius: '20px',
+                      border: isDark ? '1.5px dashed #404040' : '1.5px dashed #cbd5e1'
+                    }}>
                       <div style={{
-                        width: '20px',
-                        height: '20px',
-                        borderRadius: '6px',
-                        backgroundColor: color,
-                        color: 'white',
+                        width: '56px',
+                        height: '56px',
+                        borderRadius: '16px',
+                        backgroundColor: isDark ? '#262626' : '#f1f5f9',
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'center',
-                        fontSize: '0.75rem',
-                        fontWeight: 'bold',
-                        flexShrink: 0
+                        marginBottom: '14px'
                       }}>
-                        {cls.name.charAt(0).toUpperCase()}
+                        <Home size={28} color="#10b981" />
                       </div>
-                      {!collapsed && (
-                        <span style={{ fontSize: '0.85rem', fontWeight: '600', color: isDark ? '#E8EAED' : '#334155', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {cls.name}
-                        </span>
-                      )}
-                    </button>
-                  );
-                })}
+                      <h3 style={{ margin: '0 0 6px', fontSize: '1.15rem', fontWeight: '700', color: isDark ? '#f5f5f5' : '#1e293b' }}>
+                        No Classrooms Yet
+                      </h3>
+                      <p style={{ margin: '0 0 16px', maxWidth: '380px', fontSize: '0.88rem', color: isDark ? '#a3a3a3' : '#64748b' }}>
+                        Click <strong>Create</strong> above to create your first classroom.
+                      </p>
+                    </div>
+                  ) : classrooms.filter(c => !c.archived).map((cls, idx) => (
+                    <TeacherCourseCard
+                      key={cls.id}
+                      classroom={cls}
+                      index={idx}
+                      onClick={onEnterClassroom}
+                      onArchive={handleArchiveClass}
+                      onSettings={(c) => {
+                        setSettingsClassroom(c);
+                        handleSetView('classroomSettings');
+                      }}
+                      onDelete={(allowDelete || currentUser?.role === 'Admin') ? handleDeleteClass : undefined}
+                      isArchived={false}
+                      initial={{ opacity: 0, y: 20, scale: 0.97 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      transition={{ duration: 0.35, delay: idx * 0.07, ease: [0.16, 1, 0.3, 1] }}
+                    />
+                ))}
               </div>
-            )}
-
-            {/* Settings at Bottom */}
-            <div style={{ marginTop: 'auto' }}>
-              <button
-                ref={el => navRefs.current['settings'] = el}
-                onClick={() => handleSetView('settings')}
-                style={styles.sidebarBtn(collapsed)}
-                title={collapsed ? 'Settings' : ''}
-              >
-                <Settings size={20} color={activeView === 'settings' ? '#10b981' : (isDark ? '#a3a3a3' : '#475569')} style={{ flexShrink: 0 }} />
-                {!collapsed && (
-                  <span style={{ fontSize: '0.85rem', fontWeight: activeView === 'settings' ? '700' : '600', color: activeView === 'settings' ? '#10b981' : (isDark ? '#E8EAED' : '#334155'), overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    Settings
-                  </span>
-                )}
-              </button>
-            </div>
-          </nav>
-        </aside>
-        )}
-
-        {/* MAIN CONTENT AREA */}
-        <div style={styles.mainContent}>
-          {/* The Main White Card */}
-          <div style={styles.whiteCard}>
-
-          <AnimatePresence mode="wait">
-            <motion.div
-              key={activeView}
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.2, ease: "easeOut" }}
-              style={{ position: 'relative', flex: 1, display: 'flex', flexDirection: 'column' }}
-            >
-
-              {activeView === 'calendar' && (
-                <TeacherCalendar classrooms={classrooms} />
-              )}
-
-              {activeView === 'archived' && (
-                <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '30px', padding: '0 10px' }}>
-                    <h2 style={{ color: isDark ? '#E8EAED' : '#4b5563', margin: 0 }}>Archived Classrooms</h2>
-                  </div>
-
-                  {classrooms.filter(c => c.archived).length === 0 ? (
-                    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: isDark ? '#6b7280' : '#9ca3af' }}>
-                      <h3 style={{ margin: 0, color: isDark ? '#a3a3a3' : '#6b7280' }}>No Archived Classrooms</h3>
-                      <p style={{ marginTop: '10px', color: isDark ? '#6b7280' : '#9ca3af' }}>Classrooms you archive will appear here.</p>
-                    </div>
-                  ) : (
-                    <div style={styles.grid}>
-                      {classrooms.filter(c => c.archived).map(cls => (
-                        <ClassroomCard
-                          key={cls.id}
-                          classroom={cls}
-                          onEnter={onEnterClassroom}
-                          onUnarchive={handleUnarchiveClass}
-                          onDelete={(allowDelete || currentUser?.role === 'Admin') ? handleDeleteClass : undefined}
-                          isArchived={true}
-                          role="Teacher"
-                        />
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {activeView === 'settings' && <SettingsPanel role="Instructor" />}
-              {activeView === 'classroomSettings' && settingsClassroom && (
-                <ClassroomSettings
-                  classroom={settingsClassroom}
-                  onClose={() => { setSettingsClassroom(null); handleSetView('classrooms'); }}
-                  onUpdate={(updated) => {
-                    setClassrooms(prev => prev.map(c => c.id === updated.id ? { ...c, ...updated } : c));
-                    setSettingsClassroom(updated);
-                  }}
-                />
-              )}
-
-              {activeView === 'classrooms' && (
-                <>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '30px', padding: '0 10px' }}>
-                    <motion.button
-                      whileHover={{ scale: 1.05 }}
-                      whileTap={{ scale: 0.95 }}
-                      onClick={handleOpenCreateModal}
-                      style={styles.createButton}
-                    >
-                      Create
-                    </motion.button>
-                  </div>
-
-                  {/* Classroom Grid */}
-                  <div style={styles.grid}>
-                    {loadingClassrooms
-                      ? Array.from({ length: 4 }).map((_, i) => <Skeleton.Card key={i} />)
-                      : classrooms.filter(c => !c.archived).length === 0 ? (
-                        <div style={{
-                          gridColumn: '1 / -1',
-                          padding: '50px 20px',
-                          display: 'flex',
-                          flexDirection: 'column',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          textAlign: 'center',
-                          background: isDark ? 'rgba(255,255,255,0.02)' : 'rgba(0,0,0,0.01)',
-                          borderRadius: '20px',
-                          border: isDark ? '1.5px dashed #404040' : '1.5px dashed #cbd5e1'
-                        }}>
-                          <div style={{
-                            width: '56px',
-                            height: '56px',
-                            borderRadius: '16px',
-                            backgroundColor: isDark ? '#262626' : '#f1f5f9',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            marginBottom: '14px'
-                          }}>
-                            <Home size={28} color="#10b981" />
-                          </div>
-                          <h3 style={{ margin: '0 0 6px', fontSize: '1.15rem', fontWeight: '700', color: isDark ? '#f5f5f5' : '#1e293b' }}>
-                            No Classrooms Yet
-                          </h3>
-                          <p style={{ margin: '0 0 16px', maxWidth: '380px', fontSize: '0.88rem', color: isDark ? '#a3a3a3' : '#64748b' }}>
-                            Click <strong>Create</strong> above to create your first classroom and share the class code with your students.
-                          </p>
-                        </div>
-                      ) : classrooms.filter(c => !c.archived).map(cls => (
-                      <ClassroomCard
-                        key={cls.id}
-                        classroom={cls}
-                        onEnter={onEnterClassroom}
-                        onArchive={handleArchiveClass}
-                        onSettings={(c) => {
-                          setSettingsClassroom(c);
-                          handleSetView('classroomSettings');
-                        }}
-                        onDelete={(allowDelete || currentUser?.role === 'Admin') ? handleDeleteClass : undefined}
-                        role="Teacher"
-                      />
-                    ))
-                    }
-                  </div>
-                </>
-              )}
-
             </motion.div>
-          </AnimatePresence>
-        </div>
-      </div>
-    </div>
+          )}
+
+        </AnimatePresence>
+      </main>
 
       {/* MOBILE BOTTOM NAVIGATION */}
       {isMobile && (
@@ -760,101 +944,99 @@ export default function TeacherDashboard({ currentUser, onLogout, onEnterClassro
                   minWidth: '64px'
                 }}
               >
-                <Icon size={22} style={{ marginBottom: '4px' }} />
-                <span style={{ fontSize: '0.65rem', fontWeight: active ? '700' : '500' }}>{label}</span>
+                <Icon size={20} style={{ marginBottom: '4px' }} />
+                <span style={{ fontSize: '0.65rem', fontWeight: active ? '700' : '600' }}>{label}</span>
               </button>
             );
           })}
         </nav>
       )}
 
-      {/* CREATE CLASSROOM MODAL (Overlay) */}
-      {isModalOpen && (
-        <div style={styles.modalOverlay}>
-          <div style={styles.modalCard}>
-
-            <div style={styles.modalHeader}>
-              <h2 style={{ margin: 0, color: isDark ? '#f8fafc' : '#1f2937' }}>Create Class</h2>
-              <button onClick={() => setIsModalOpen(false)} style={styles.closeModalBtn}>
-                <X size={24} color={isDark ? '#cbd5e1' : '#475569'} />
-              </button>
-            </div>
-
-            <form onSubmit={handleCreateClass} style={styles.form}>
-              <motion.input
-                type="text"
-                placeholder="Class name (Required)"
-                required
-                value={newClass.name}
-                onChange={(e) => setNewClass({ ...newClass, name: e.target.value })}
-                style={{
-                  width: '100%',
-                  padding: '15px',
-                  borderRadius: '12px',
-                  border: nameFocused ? '2px solid #007bff' : (isDark ? '1px solid #334155' : '1px solid #e5e7eb'),
-                  backgroundColor: isDark ? '#0f172a' : 'white',
-                  color: isDark ? '#f8fafc' : '#4b5563',
-                  fontSize: '1rem',
-                  boxSizing: 'border-box',
-                  boxShadow: isDark ? 'none' : 'inset 0 2px 4px rgba(0,0,0,0.02)',
-                  transition: 'border-color 0.3s'
-                }}
-                onFocus={() => setNameFocused(true)}
-                onBlur={() => setNameFocused(false)}
-              />
-              <motion.input
-                type="text"
-                placeholder="Section"
-                value={newClass.section}
-                onChange={(e) => setNewClass({ ...newClass, section: e.target.value })}
-                style={{
-                  width: '100%',
-                  padding: '15px',
-                  borderRadius: '12px',
-                  border: sectionFocused ? '2px solid #007bff' : (isDark ? '1px solid #334155' : '1px solid #e5e7eb'),
-                  backgroundColor: isDark ? '#0f172a' : 'white',
-                  color: isDark ? '#f8fafc' : '#4b5563',
-                  fontSize: '1rem',
-                  boxSizing: 'border-box',
-                  boxShadow: isDark ? 'none' : 'inset 0 2px 4px rgba(0,0,0,0.02)',
-                  transition: 'border-color 0.3s'
-                }}
-                onFocus={() => setSectionFocused(true)}
-                onBlur={() => setSectionFocused(false)}
-              />
-              <motion.input
-                type="text"
-                placeholder="Subject"
-                value={newClass.subject}
-                onChange={(e) => setNewClass({ ...newClass, subject: e.target.value })}
-                style={{
-                  width: '100%',
-                  padding: '15px',
-                  borderRadius: '12px',
-                  border: subjectFocused ? '2px solid #007bff' : (isDark ? '1px solid #334155' : '1px solid #e5e7eb'),
-                  backgroundColor: isDark ? '#0f172a' : 'white',
-                  color: isDark ? '#f8fafc' : '#4b5563',
-                  fontSize: '1rem',
-                  boxSizing: 'border-box',
-                  boxShadow: isDark ? 'none' : 'inset 0 2px 4px rgba(0,0,0,0.02)',
-                  transition: 'border-color 0.3s'
-                }}
-                onFocus={() => setSubjectFocused(true)}
-                onBlur={() => setSubjectFocused(false)}
-              />
-
-
-
-              <div style={{ display: 'flex', justifyContent: 'center', marginTop: '10px' }}>
-                <button type="submit" style={styles.submitModalBtn}>Create</button>
-              </div>
-            </form>
-
+      {/* Modals */}
+      <AnimatePresence>
+        {isModalOpen && (
+          <div style={{
+            position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+            backgroundColor: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999
+          }}>
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              style={{
+                backgroundColor: isDark ? '#1e1e1e' : '#fff',
+                padding: '32px', borderRadius: '24px', width: '90%', maxWidth: '400px',
+                boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5)'
+              }}
+            >
+              <h2 style={{ margin: '0 0 24px', color: isDark ? '#fff' : '#111827', fontSize: '1.5rem', fontWeight: 'bold' }}>Create Class</h2>
+              <form onSubmit={handleCreateClass} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                <div>
+                  <label style={{ display: 'block', marginBottom: '8px', fontSize: '0.85rem', fontWeight: '600', color: isDark ? '#a3a3a3' : '#4b5563' }}>Class Name (Required)</label>
+                  <input
+                    type="text"
+                    value={newClass.name}
+                    onChange={(e) => setNewClass({ ...newClass, name: e.target.value })}
+                    required
+                    style={{
+                      width: '100%', padding: '12px 16px', borderRadius: '12px',
+                      border: `2px solid ${nameFocused ? '#10b981' : (isDark ? '#404040' : '#e5e7eb')}`,
+                      backgroundColor: isDark ? '#262626' : '#f9fafb', color: isDark ? '#fff' : '#111827',
+                      outline: 'none', transition: 'border-color 0.2s', boxSizing: 'border-box'
+                    }}
+                    onFocus={() => setNameFocused(true)}
+                    onBlur={() => setNameFocused(false)}
+                    placeholder="e.g., AP Computer Science"
+                  />
+                </div>
+                <div>
+                  <label style={{ display: 'block', marginBottom: '8px', fontSize: '0.85rem', fontWeight: '600', color: isDark ? '#a3a3a3' : '#4b5563' }}>Section (Optional)</label>
+                  <input
+                    type="text"
+                    value={newClass.section}
+                    onChange={(e) => setNewClass({ ...newClass, section: e.target.value })}
+                    style={{
+                      width: '100%', padding: '12px 16px', borderRadius: '12px',
+                      border: `2px solid ${sectionFocused ? '#10b981' : (isDark ? '#404040' : '#e5e7eb')}`,
+                      backgroundColor: isDark ? '#262626' : '#f9fafb', color: isDark ? '#fff' : '#111827',
+                      outline: 'none', transition: 'border-color 0.2s', boxSizing: 'border-box'
+                    }}
+                    onFocus={() => setSectionFocused(true)}
+                    onBlur={() => setSectionFocused(false)}
+                    placeholder="e.g., Room 204"
+                  />
+                </div>
+                <div>
+                  <label style={{ display: 'block', marginBottom: '8px', fontSize: '0.85rem', fontWeight: '600', color: isDark ? '#a3a3a3' : '#4b5563' }}>Subject (Optional)</label>
+                  <input
+                    type="text"
+                    value={newClass.subject}
+                    onChange={(e) => setNewClass({ ...newClass, subject: e.target.value })}
+                    style={{
+                      width: '100%', padding: '12px 16px', borderRadius: '12px',
+                      border: `2px solid ${subjectFocused ? '#10b981' : (isDark ? '#404040' : '#e5e7eb')}`,
+                      backgroundColor: isDark ? '#262626' : '#f9fafb', color: isDark ? '#fff' : '#111827',
+                      outline: 'none', transition: 'border-color 0.2s', boxSizing: 'border-box'
+                    }}
+                    onFocus={() => setSubjectFocused(true)}
+                    onBlur={() => setSubjectFocused(false)}
+                    placeholder="e.g., Programming"
+                  />
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '8px' }}>
+                  <button type="button" onClick={() => setIsModalOpen(false)} style={{ padding: '10px 20px', borderRadius: '10px', border: 'none', backgroundColor: 'transparent', color: isDark ? '#a3a3a3' : '#6b7280', fontWeight: '600', cursor: 'pointer' }}>
+                    Cancel
+                  </button>
+                  <button type="submit" style={{ padding: '10px 20px', borderRadius: '10px', border: 'none', backgroundColor: '#10b981', color: '#fff', fontWeight: '600', cursor: 'pointer', boxShadow: '0 4px 12px rgba(16,185,129,0.2)' }}>
+                    Create
+                  </button>
+                </div>
+              </form>
+            </motion.div>
           </div>
-        </div>
-      )}
-
-    </div>
+        )}
+      </AnimatePresence>
+    </motion.div>
   );
 }
-

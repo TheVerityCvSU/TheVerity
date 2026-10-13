@@ -1,8 +1,8 @@
-import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef, useMemo } from 'react';
 import ProfileMenu from './ProfileMenu';
 import { 
-  Calendar, ClipboardList, Settings, MoreVertical, ArrowLeft, X, Link2, 
-  Menu, Home, Archive, Info, Users, BookOpen, ChevronRight, CheckCircle2
+  Calendar, ClipboardList, Settings, Bell, MessageSquare, FileText, PlayCircle, MoreVertical, ArrowLeft, X, Link2, 
+  Menu, Home, Archive, Info, Users, BookOpen, ChevronRight, CheckCircle2, TerminalSquare, Plus, Code2, Award, Clock, ArrowUpRight, ArrowRight
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { apiFetch } from '../utils/api';
@@ -13,6 +13,7 @@ import { useMediaQuery } from '../hooks/useMediaQuery';
 import { THEME_PRESETS, getClassroomTheme, saveClassroomTheme } from '../utils/classroomUtils';
 import ImagePreviewModal from '../components/ImagePreviewModal';
 import VideoPreviewModal from '../components/VideoPreviewModal';
+import IframePreviewModal from '../components/IframePreviewModal';
 import AddStudentModal from '../components/AddStudentModal';
 import VideoAttachment from '../components/VideoAttachment';
 import AttachmentCard from '../components/AttachmentCard';
@@ -63,6 +64,29 @@ const tabSlideVariants = {
   }),
 };
 
+const classroomSlideVariants = {
+  enter: (direction) => ({
+    y: direction > 0 ? 35 : -35,
+    opacity: 0,
+  }),
+  center: {
+    y: 0,
+    opacity: 1,
+    transition: {
+      y: { type: 'spring', stiffness: 350, damping: 30 },
+      opacity: { duration: 0.18 },
+    },
+  },
+  exit: (direction) => ({
+    y: direction > 0 ? -35 : 35,
+    opacity: 0,
+    transition: {
+      duration: 0.12,
+      ease: 'easeIn',
+    },
+  }),
+};
+
 
 
 export default function ClassroomView({
@@ -79,8 +103,20 @@ export default function ClassroomView({
   const { isDark } = useDarkMode();
   const isMobile = useMediaQuery('(max-width: 768px)');
   const styles = getStyles(isDark, isMobile);
+  const textColor = isDark ? '#f8f9fa' : '#1e293b';
+  const textMuted = isDark ? '#a3a3a3' : '#64748b';
+  const cardBg = isDark ? '#262626' : '#ffffff';
+  const bgColor = isDark ? '#1a1a1a' : '#f8f9fa';
+
   const [previewImage, setPreviewImage] = useState(null);
   const [previewVideo, setPreviewVideo] = useState(null);
+  const [previewIframe, setPreviewIframe] = useState(null);
+  const [isFadingOut, setIsFadingOut] = useState(false);
+
+  const handleExit = (action) => {
+    setIsFadingOut(true);
+    setTimeout(() => action(), 250);
+  };
   const isPhantom = (c) => !c || !c.name || (/^Classroom \d+$/i.test(String(c.name).trim()) && (!c.section || !String(c.section).trim()) && (!c.subject || !String(c.subject).trim()));
 
   const [classrooms, setClassrooms] = useState(() => {
@@ -178,13 +214,40 @@ export default function ClassroomView({
 
   // Active Tab: strictly 'stream' | 'classwork' | 'people' (no 'grades' for students)
   const [activeTab, setActiveTab] = useState('stream');
+  const [isHeaderHovered, setIsHeaderHovered] = useState(false);
   const [tabDirection, setTabDirection] = useState(1);
+  const [transitionMode, setTransitionMode] = useState('tab');
+  const prevClassroomIdRef = useRef(classroom?.id);
+
+  useEffect(() => {
+    if (classroom?.id && prevClassroomIdRef.current !== classroom?.id) {
+      prevClassroomIdRef.current = classroom?.id;
+      setTransitionMode('classroom');
+    }
+  }, [classroom?.id]);
+
+  const [headerIndicatorStyle, setHeaderIndicatorStyle] = useState({ left: 0, width: 0, opacity: 0 });
+  const headerNavRefs = useRef({});
+
+  useLayoutEffect(() => {
+    // Top header always highlights "classrooms" since we're in ClassroomView
+    const activeRef = headerNavRefs.current['classrooms'];
+    if (activeRef) {
+      setHeaderIndicatorStyle(prev => ({
+        left: activeRef.offsetLeft,
+        width: activeRef.offsetWidth,
+        opacity: 1,
+        transition: prev.opacity === 0 ? 'none' : 'all 0.3s cubic-bezier(0.25, 1, 0.5, 1)'
+      }));
+    }
+  }, [isHeaderHovered]);
 
   const handleTabChange = (newTab) => {
     if (newTab === activeTab) return;
     const currentIdx = TAB_ORDER[activeTab] ?? 0;
     const newIdx = TAB_ORDER[newTab] ?? 0;
     setTabDirection(newIdx >= currentIdx ? 1 : -1);
+    setTransitionMode('tab');
     setActiveTab(newTab);
   };
 
@@ -238,10 +301,58 @@ export default function ClassroomView({
   // Modal for class details
   const [isClassInfoModalOpen, setIsClassInfoModalOpen] = useState(false);
 
+
   // Classwork & Assignments state
   const [expandedId, setExpandedId] = useState(null);
+  const [expandedInstructionId, setExpandedInstructionId] = useState(null);
   const [assignments, setAssignments] = useState([]);
   const [loadingAssignments, setLoadingAssignments] = useState(true);
+
+  const visibleClasswork = assignments.filter(item => item.activityType !== 'Material');
+  const visibleMaterials = assignments.filter(item => item.activityType === 'Material');
+
+  // Track seen materials to notify student of new uploads
+  const seenMaterialsKey = `verity_seen_materials_${classroom?.id ?? 'default'}_${currentUser?.email || currentUser?.id || 'anon'}`;
+  const [seenMaterialIds, setSeenMaterialIds] = useState(() => {
+    try {
+      const saved = localStorage.getItem(seenMaterialsKey);
+      return saved ? JSON.parse(saved) : [];
+    } catch { return []; }
+  });
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(seenMaterialsKey);
+      setSeenMaterialIds(saved ? JSON.parse(saved) : []);
+    } catch {
+      setSeenMaterialIds([]);
+    }
+  }, [seenMaterialsKey]);
+
+  const unseenMaterials = useMemo(() => {
+    return visibleMaterials.filter(m => !seenMaterialIds.includes(m.id));
+  }, [visibleMaterials, seenMaterialIds]);
+
+  const hasUnseenMaterials = unseenMaterials.length > 0;
+
+  const markMaterialsAsSeen = () => {
+    try {
+      const allIds = visibleMaterials.map(m => m.id);
+      setSeenMaterialIds(allIds);
+      localStorage.setItem(seenMaterialsKey, JSON.stringify(allIds));
+    } catch {}
+  };
+
+  const handleOpenMaterials = () => {
+    markMaterialsAsSeen();
+    handleTabChange('materials');
+  };
+
+  useEffect(() => {
+    if (activeTab === 'materials' && visibleMaterials.length > 0 && hasUnseenMaterials) {
+      markMaterialsAsSeen();
+    }
+  }, [activeTab, visibleMaterials.length, hasUnseenMaterials]);
 
   useEffect(() => {
     const classroomId = classroom?.id ?? 'default';
@@ -362,27 +473,6 @@ export default function ClassroomView({
       }
     };
   }, [assignments, classroom?.id, currentUser, socket]);
-
-  // Read-only Instructor announcements in Stream
-  const announcementKey = `verity_announcements_${classroom?.id ?? 'default'}`;
-  const [announcements, setAnnouncements] = useState(() => {
-    try {
-      const saved = localStorage.getItem(announcementKey);
-      return saved ? JSON.parse(saved) : [];
-    } catch { return []; }
-  });
-
-  useEffect(() => {
-    const handleStorage = (e) => {
-      if (e.key === announcementKey) {
-        try {
-          setAnnouncements(e.newValue ? JSON.parse(e.newValue) : []);
-        } catch {}
-      }
-    };
-    window.addEventListener('storage', handleStorage);
-    return () => window.removeEventListener('storage', handleStorage);
-  }, [announcementKey]);
 
   // People Tab: Enrolled students & Instructor info
   const [enrolledStudents, setEnrolledStudents] = useState([]);
@@ -520,11 +610,15 @@ export default function ClassroomView({
     };
   }, [classroom?.id, classroom?.section, classroom?.instructor, classroom?.instructorEmail, currentUser, socket, refreshStudentsKey]);
 
-  // Upcoming items for left column in Stream
+  // To Do items for left column in Stream (unsubmitted classwork)
   const upcomingItems = assignments
-    .filter(item => item.dueDate)
-    .sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate))
-    .slice(0, 4);
+    .filter(item => !submittedTasks[item.id])
+    .sort((a, b) => {
+      if (a.dueDate && b.dueDate) return new Date(a.dueDate) - new Date(b.dueDate);
+      if (a.dueDate) return -1;
+      if (b.dueDate) return 1;
+      return new Date(b.posted || 0) - new Date(a.posted || 0);
+    });
 
   // SVG Illustration for Google Classroom Banner
   const renderBannerIllustration = () => {
@@ -619,454 +713,386 @@ export default function ClassroomView({
   };
 
   return (
-    <div style={styles.container}>
-
-      {/* ═══ GLOBAL TOP HEADER (Consistent with Application Design) ═══ */}
-      <header style={styles.header}>
-        <div style={{ display: 'flex', alignItems: 'center' }}>
-          <button
-            onClick={toggleSidebar}
-            style={{
-              background: 'none',
-              border: 'none',
-              padding: '6px',
-              borderRadius: '8px',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              color: '#64748b',
-              flexShrink: 0,
-              marginRight: '16px'
-            }}
-            title={isPinned ? "Unpin sidebar" : "Pin sidebar"}
-            className="icon-btn-anim"
-          >
-            <Menu size={24} color={isDark ? '#d4d4d4' : '#64748b'} />
-          </button>
-
-          <div
-            style={{ display: 'flex', alignItems: 'baseline', fontSize: '2.5rem', fontWeight: '900', fontStyle: 'italic', cursor: 'pointer' }}
-            onClick={() => {
-              if (onNavigateView) onNavigateView('classrooms');
-              else onBack();
-            }}
-          >
-            <span style={{ color: '#10b981' }}>V</span>
-            <span style={{ color: isDark ? '#f5f5f5' : '#1e293b' }}>erity</span>
-            <span style={styles.badge}>Student</span>
-          </div>
+    <motion.div 
+      initial={{ opacity: 0 }} 
+      animate={{ opacity: isFadingOut ? 0 : 1 }} 
+      transition={{ duration: 0.22, ease: 'easeOut' }}
+      style={{ minHeight: '100vh', backgroundColor: bgColor, fontFamily: '"Inter", "Segoe UI", sans-serif', display: 'flex', flexDirection: 'column', color: textColor }}
+    >
+      <header 
+        onMouseEnter={() => setIsHeaderHovered(true)}
+        onMouseLeave={() => setIsHeaderHovered(false)}
+        style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        padding: '16px clamp(20px, 3vw, 48px)',
+        backgroundColor: bgColor,
+        borderBottom: 'none',
+        position: 'sticky',
+        top: 0,
+        zIndex: 50,
+      }}>
+        {/* Smooth gradient transition at the bottom of the header */}
+        <div style={{
+          position: 'absolute',
+          bottom: '-30px',
+          left: 0,
+          right: 0,
+          height: '30px',
+          background: `linear-gradient(to bottom, ${bgColor}, transparent)`,
+          pointerEvents: 'none'
+        }} />
+        <div style={{ display: 'flex', alignItems: 'baseline', cursor: 'pointer', flex: 1, justifyContent: 'flex-start' }} onClick={() => handleExit(() => onNavigateView ? onNavigateView('classrooms') : onBack())}>
+          <span style={{ color: '#10b981', fontSize: '1.75rem', fontWeight: '900', fontStyle: 'italic' }}>V</span>
+          <span style={{ color: textColor, fontSize: '1.75rem', fontWeight: '900', fontStyle: 'italic' }}>erity</span>
+          <span style={{ fontSize: '0.7rem', color: textMuted, marginLeft: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Student</span>
         </div>
+        <div style={{ 
+          display: 'flex', 
+          alignItems: 'center', 
+          justifyContent: 'center',
+          gap: '8px',
+          opacity: isHeaderHovered ? 1 : 0,
+          pointerEvents: isHeaderHovered ? 'auto' : 'none',
+          transition: 'opacity 0.3s ease, transform 0.3s ease',
+          transform: isHeaderHovered ? 'translateY(0)' : 'translateY(-10px)',
+          position: 'relative'
+        }}>
+          <div style={{
+            position: 'absolute',
+            left: headerIndicatorStyle.left,
+            width: headerIndicatorStyle.width,
+            top: 0,
+            bottom: 0,
+            backgroundColor: isDark ? 'rgba(255, 255, 255, 0.07)' : 'rgba(255, 255, 255, 0.25)',
+            backdropFilter: 'blur(8px)',
+            WebkitBackdropFilter: 'blur(8px)',
+            borderRadius: '50px',
+            boxShadow: isDark ? '0 4px 16px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.08)' : '0 4px 16px rgba(16,185,129,0.15), inset 0 1px 0 rgba(255,255,255,0.5)',
+            border: isDark ? '1px solid rgba(255,255,255,0.1)' : '1px solid rgba(255,255,255,0.35)',
+            transition: headerIndicatorStyle.transition || 'none',
+            opacity: headerIndicatorStyle.opacity,
+            pointerEvents: 'none',
+            zIndex: 0,
+          }} />
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+          {[
+            { id: 'classrooms', label: 'Home', Icon: Home },
+            { id: 'calendar', label: 'Calendar', Icon: Calendar },
+            { id: 'archived', label: 'Archived', Icon: Archive },
+            { id: 'compiler', label: 'Compiler', Icon: Code2 }
+          ].map(item => {
+            const active = item.id === 'classrooms';
+            return (
+              <button
+                key={item.id}
+                ref={el => headerNavRefs.current[item.id] = el}
+                onClick={() => handleExit(() => onNavigateView && onNavigateView(item.id === 'stream' ? 'classrooms' : item.id))}
+                style={{
+                  position: 'relative',
+                  zIndex: 1,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  padding: '10px 16px',
+                  borderRadius: '50px',
+                  background: 'transparent',
+                  border: '1px solid transparent',
+                  color: active ? '#10b981' : textMuted,
+                  fontWeight: active ? '700' : '600',
+                  fontSize: '0.9rem',
+                  cursor: 'pointer',
+                  transition: 'all 0.2s'
+                }}
+              >
+                <item.Icon size={18} />
+                {item.label}
+              </button>
+            );
+          })}
+
+          <button onClick={() => onNavigateView && onNavigateView('settings')} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '10px', borderRadius: '50px', backgroundColor: 'transparent', color: textMuted, border: 'none', cursor: 'pointer', marginLeft: '8px' }}>
+            <Settings size={20} />
+            <span style={{ marginLeft: '8px', fontWeight: '600', fontSize: '0.9rem' }}>Settings</span>
+          </button>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', flex: 1, gap: '16px' }}>
+          <button style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '6px',
+            padding: '10px 20px',
+            borderRadius: '50px',
+            backgroundColor: '#10b981',
+            color: 'white',
+            border: 'none',
+            fontWeight: '600',
+            fontSize: '0.9rem',
+            cursor: 'pointer',
+            boxShadow: '0 4px 12px rgba(16, 185, 129, 0.2)',
+            opacity: isHeaderHovered ? 1 : 0,
+            pointerEvents: isHeaderHovered ? 'auto' : 'none',
+            transition: 'opacity 0.3s ease, transform 0.3s ease',
+            transform: isHeaderHovered ? 'translateY(0)' : 'translateY(-10px)'
+          }}>
+            <Plus size={18} /> Add course
+          </button>
           <ProfileMenu currentUser={currentUser} onLogout={onLogout} />
         </div>
       </header>
 
-      {/* ═══ MAIN LAYOUT WITH SIDEBAR ═══ */}
-      <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
+      <main style={{ flex: 1, padding: '24px clamp(20px, 3vw, 48px)', maxWidth: '100%', margin: 0, width: '100%', boxSizing: 'border-box', overflowX: 'hidden' }}>
         
-        {/* SIDEBAR NAVIGATION */}
-        {!isMobile && (
-          <aside {...sidebarProps} style={styles.sidebar(collapsed)}>
-          <nav style={{ display: 'flex', flexDirection: 'column', gap: '10px', flex: 1, position: 'relative' }}>
-            <div style={{
-              position: 'absolute',
-              left: 0,
-              right: 0,
-              top: indicatorStyle.top,
-              height: indicatorStyle.height,
-              background: isDark ? 'rgba(255,255,255,0.07)' : 'rgba(255,255,255,0.25)',
-              backdropFilter: 'blur(8px)',
-              WebkitBackdropFilter: 'blur(8px)',
-              borderRadius: '14px',
-              boxShadow: isDark ? '0 4px 16px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.08)' : '0 4px 16px rgba(16,185,129,0.15), inset 0 1px 0 rgba(255,255,255,0.5)',
-              border: isDark ? '1px solid rgba(255,255,255,0.1)' : '1px solid rgba(255,255,255,0.35)',
-              transition: indicatorStyle.transition || 'none',
-              opacity: indicatorStyle.opacity,
-              pointerEvents: 'none',
-              zIndex: 0,
-            }} />
-
-            <button
-              ref={el => navRefs.current['classrooms'] = el}
-              onClick={() => {
-                if (onNavigateView) onNavigateView('classrooms');
-                else onBack();
-              }}
-              style={styles.sidebarBtn(collapsed)}
-              title={collapsed ? 'Home' : ''}
-            >
-              <Home size={20} color={isDark ? '#a3a3a3' : '#475569'} style={{ flexShrink: 0 }} />
-              {!collapsed && <span style={styles.sidebarBtnText}>Home</span>}
+        {/* HERO BANNER */}
+        <div style={{
+          position: 'relative',
+          width: '100%',
+          height: '280px',
+          borderRadius: '24px',
+          overflow: 'hidden',
+          marginBottom: '32px',
+          display: 'flex',
+          flexDirection: 'column',
+          justifyContent: 'space-between',
+          boxShadow: isDark ? '0 10px 30px rgba(0,0,0,0.5)' : '0 10px 30px rgba(0,0,0,0.1)'
+        }}>
+          <div style={{
+            position: 'absolute', inset: 0,
+            background: `linear-gradient(to right, rgba(15, 23, 42, 1) 0%, rgba(15, 23, 42, 0.85) 30%, rgba(15, 23, 42, 0.3) 60%, transparent 100%), url(${bannerTheme.customImageUrl || bannerTheme.image || 'https://images.unsplash.com/photo-1498050108023-c5249f4df085?auto=format&fit=crop&w=1200&q=80'}) center/cover no-repeat`,
+            zIndex: 0
+          }} />
+          
+          {/* Top row */}
+          <div style={{ position: 'relative', zIndex: 1, display: 'flex', justifyContent: 'space-between', padding: '24px 32px' }}>
+            <button onClick={() => onNavigateView ? onNavigateView('classrooms') : onBack()} style={{ background: 'transparent', border: 'none', color: 'white', display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '0.9rem', fontWeight: '500' }}>
+              <ArrowLeft size={18} /> All courses
             </button>
-
-            <button
-              ref={el => navRefs.current['calendar'] = el}
-              onClick={() => {
-                if (onNavigateView) onNavigateView('calendar');
-                else onBack();
-              }}
-              style={styles.sidebarBtn(collapsed)}
-              title={collapsed ? 'Calendar' : ''}
-            >
-              <Calendar size={20} color={isDark ? '#a3a3a3' : '#475569'} style={{ flexShrink: 0 }} />
-              {!collapsed && <span style={styles.sidebarBtnText}>Calendar</span>}
-            </button>
-
-            <button
-              ref={el => navRefs.current['archived'] = el}
-              onClick={() => {
-                if (onNavigateView) onNavigateView('archived');
-                else onBack();
-              }}
-              style={styles.sidebarBtn(collapsed)}
-              title={collapsed ? 'Archived' : ''}
-            >
-              <Archive size={20} color={isDark ? '#a3a3a3' : '#475569'} style={{ flexShrink: 0 }} />
-              {!collapsed && <span style={styles.sidebarBtnText}>Archived</span>}
-            </button>
-
-            {classrooms.filter(c => !c.archived).length > 0 && (
-              <div style={{ marginTop: '12px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                {!collapsed && (
-                  <div style={{
-                    padding: '0 18px',
-                    fontSize: '0.75rem',
-                    fontWeight: 'bold',
-                    color: isDark ? '#10b981' : '#9ca3af',
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.05em',
-                    marginBottom: '4px'
-                  }}>
-                    Enrolled
-                  </div>
-                )}
-                {classrooms.filter(c => !c.archived).map((cls) => {
-                  const colors = ['#3b82f6', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981'];
-                  const color = colors[cls.id % colors.length];
-                  const active = classroom?.id === cls.id;
-
-                  return (
-                    <button
-                      key={cls.id}
-                      ref={el => enrolledRefs.current['cls_' + cls.id] = el}
-                      onClick={() => { if (onEnterClassroom) onEnterClassroom(cls); }}
-                      style={styles.sidebarBtn(collapsed)}
-                      title={cls.name}
-                    >
-                      <div style={{
-                        width: '20px',
-                        height: '20px',
-                        borderRadius: '6px',
-                        backgroundColor: color,
-                        color: 'white',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        fontSize: '0.75rem',
-                        fontWeight: 'bold',
-                        flexShrink: 0
-                      }}>
-                        {cls.name.charAt(0).toUpperCase()}
-                      </div>
-                      {!collapsed && (
-                        <span style={{ fontSize: '0.85rem', fontWeight: active ? '700' : '600', color: active ? '#10b981' : (isDark ? '#E8EAED' : '#334155'), overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                          {cls.name}
-                        </span>
-                      )}
-                    </button>
-                  );
-                })}
+            <div style={{ display: 'flex', gap: '12px' }}>
+              <div style={{ width: '36px', height: '36px', borderRadius: '50%', backgroundColor: 'rgba(255,255,255,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', backdropFilter: 'blur(8px)', cursor: 'pointer' }}>
+                <Bell size={18} />
               </div>
-            )}
-
-            <div style={{ marginTop: 'auto' }}>
-              <button
-                ref={el => navRefs.current['settings'] = el}
-                onClick={() => {
-                  if (onNavigateView) onNavigateView('settings');
-                  else onBack();
-                }}
-                style={styles.sidebarBtn(collapsed)}
-                title={collapsed ? 'Settings' : ''}
-              >
-                <Settings size={20} color={isDark ? '#a3a3a3' : '#475569'} style={{ flexShrink: 0 }} />
-                {!collapsed && <span style={styles.sidebarBtnText}>Settings</span>}
-              </button>
+              <div style={{ padding: '8px 16px', borderRadius: '50px', backgroundColor: 'rgba(255,255,255,0.15)', color: 'white', fontSize: '0.85rem', fontWeight: '500', backdropFilter: 'blur(8px)' }}>
+                Class code <span style={{ fontWeight: 'bold', marginLeft: '6px' }}>{classroom?.code || 'CS101'}</span>
+              </div>
             </div>
-          </nav>
-        </aside>
+          </div>
+
+          {/* Middle row */}
+          <div style={{ position: 'relative', zIndex: 1, padding: '0 32px' }}>
+             <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px' }}>
+               <div style={{ backgroundColor: '#dcfce7', color: '#065f46', padding: '4px 12px', borderRadius: '50px', fontSize: '0.75rem', fontWeight: 'bold' }}>{classroom?.code || 'CS101'}</div>
+               <span style={{ color: 'white', fontSize: '0.9rem' }}>{classroom?.section || 'Section A'}</span>
+             </div>
+             <h1 style={{ color: 'white', fontSize: '2.5rem', fontWeight: 'bold', margin: 0 }}>{classroom?.name || 'C# Programming'}</h1>
+          </div>
+
+          {/* Bottom row */}
+          <div style={{ position: 'relative', zIndex: 1, display: 'flex', gap: '32px', padding: '0 32px', backgroundColor: 'rgba(0,0,0,0.2)', backdropFilter: 'blur(4px)', paddingTop: '16px' }}>
+            {['Overview', 'Classwork', 'Materials'].map(tab => {
+               const isActive = (activeTab === tab.toLowerCase() || (activeTab === 'stream' && tab === 'Overview'));
+               return (
+               <button key={tab} onClick={() => handleTabChange(tab === 'Overview' ? 'stream' : tab.toLowerCase())} style={{ background: 'none', border: 'none', color: isActive ? 'white' : 'rgba(255,255,255,0.7)', fontSize: '0.95rem', fontWeight: '600', paddingBottom: '16px', borderBottom: isActive ? '3px solid #10b981' : '3px solid transparent', cursor: 'pointer', transition: 'all 0.2s' }}>
+                 {tab}
+               </button>
+               );
+            })}
+          </div>
+        </div>
+
+        {/* MAIN GRID */}
+        <AnimatePresence mode="wait" custom={transitionMode === 'classroom' ? 1 : tabDirection}>
+          <motion.div
+            key={`${classroom?.id || 'cls'}_${activeTab}`}
+            custom={transitionMode === 'classroom' ? 1 : tabDirection}
+            variants={transitionMode === 'classroom' ? classroomSlideVariants : tabSlideVariants}
+            initial="enter"
+            animate="center"
+            exit="exit"
+            style={{ width: '100%' }}
+          >
+        {activeTab === 'stream' && (
+        <div style={{ display: 'flex', gap: '32px', flexWrap: 'wrap' }}>
+           {/* LEFT COLUMN */}
+           <div style={{ flex: '1 1 65%', display: 'flex', flexDirection: 'column', gap: '32px' }}>
+             
+             {/* Announcements removed */}
+
+             {/* To Do (Unsubmitted Work) */}
+             <div>
+               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '16px' }}>
+                 <div style={{ display: 'flex', alignItems: 'baseline', gap: '12px' }}>
+                   <h2 style={{ fontSize: '1.25rem', fontWeight: 'bold', margin: 0 }}>To Do</h2>
+                   <span style={{ fontSize: '0.85rem', color: textMuted }}>{upcomingItems.length} item{upcomingItems.length !== 1 && 's'}</span>
+                 </div>
+                 <button onClick={() => handleTabChange('classwork')} style={{ background: 'none', border: 'none', color: '#10b981', fontWeight: 'bold', fontSize: '0.9rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                   View all <ChevronRight size={16} />
+                 </button>
+               </div>
+               
+               <div 
+                 className="hide-scroll"
+                 style={{ 
+                   display: 'flex', 
+                   gap: '16px', 
+                   overflowX: 'auto', 
+                   paddingBottom: '12px',
+                   scrollSnapType: 'x mandatory',
+                   scrollbarWidth: 'none',
+                   msOverflowStyle: 'none'
+                 }}>
+                 <style dangerouslySetInnerHTML={{__html: `
+                   .hide-scroll::-webkit-scrollbar { display: none; }
+                 `}} />
+                 {upcomingItems.length === 0 ? (
+                   <div style={{ padding: '20px', color: textMuted, fontSize: '0.9rem', fontStyle: 'italic', width: '100%' }}>
+                     No pending work at this time.
+                   </div>
+                 ) : (
+                   upcomingItems.map(item => (
+                     <div key={item.id} onClick={() => { setExpandedId(item.id); handleTabChange('classwork'); }} style={{ 
+                       flex: '0 0 calc(33.333% - 11px)', 
+                       minWidth: '220px',
+                       scrollSnapAlign: 'start',
+                       backgroundColor: cardBg, 
+                       borderRadius: '16px', 
+                       padding: '20px', 
+                       border: isDark ? '1px solid #333' : '1px solid #e5e7eb', 
+                       cursor: 'pointer', 
+                       transition: 'all 0.2s', 
+                       ...isDark ? {} : { boxShadow: '0 2px 8px rgba(0,0,0,0.04)' } 
+                     }}>
+                       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '16px' }}>
+                         <div style={{ width: '32px', height: '32px', borderRadius: '50%', backgroundColor: '#10b981', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white' }}>
+                           <ClipboardList size={16} />
+                         </div>
+                         <span style={{ fontSize: '0.75rem', fontWeight: 'bold', color: textMuted }}>
+                           {item.dueDate ? formatShortDate(item.dueDate) : 'No due date'}
+                         </span>
+                       </div>
+                       <div style={{ fontSize: '0.7rem', fontWeight: 'bold', color: '#10b981', letterSpacing: '0.05em', marginBottom: '4px' }}>ASSIGNMENT</div>
+                       <div style={{ fontSize: '1rem', fontWeight: 'bold', marginBottom: '6px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.title}</div>
+                       <div style={{ fontSize: '0.8rem', color: textMuted, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+                         {item.details ? item.details.replace(/<[^>]*>?/gm, '').replace(/&nbsp;/g, ' ') : 'No instructions provided.'}
+                       </div>
+                     </div>
+                   ))
+                 )}
+               </div>
+             </div>
+
+             {/* Learning Materials */}
+             <div>
+               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '16px' }}>
+                 <div style={{ display: 'flex', alignItems: 'baseline', gap: '12px' }}>
+                   <h2 style={{ fontSize: '1.25rem', fontWeight: 'bold', margin: 0 }}>Learning materials</h2>
+                   <span style={{ fontSize: '0.85rem', color: textMuted }}>Module 4</span>
+                 </div>
+                 <button style={{ background: 'none', border: 'none', color: '#10b981', fontWeight: 'bold', fontSize: '0.9rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                   Open library <ChevronRight size={16} />
+                 </button>
+               </div>
+               
+               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '16px' }}>
+                 {/* Mat 1 */}
+                 <div style={{ backgroundColor: cardBg, borderRadius: '16px', padding: '16px 20px', border: isDark ? '1px solid #333' : '1px solid #e5e7eb', display: 'flex', alignItems: 'center', gap: '16px' }}>
+                   <div style={{ width: '40px', height: '40px', borderRadius: '10px', backgroundColor: '#dcfce7', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#059669', flexShrink: 0 }}>
+                     <FileText size={20} />
+                   </div>
+                   <div style={{ flex: 1 }}>
+                     <div style={{ fontSize: '0.9rem', fontWeight: 'bold', marginBottom: '2px' }}>Methods quick guide</div>
+                     <div style={{ fontSize: '0.75rem', color: textMuted }}>PDF · 6 pages</div>
+                   </div>
+                   <ChevronRight size={18} color={textMuted} />
+                 </div>
+                 
+                 {/* Mat 2 */}
+                 <div style={{ backgroundColor: cardBg, borderRadius: '16px', padding: '16px 20px', border: isDark ? '1px solid #333' : '1px solid #e5e7eb', display: 'flex', alignItems: 'center', gap: '16px' }}>
+                   <div style={{ width: '40px', height: '40px', borderRadius: '10px', backgroundColor: '#e0f2fe', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#0284c7', flexShrink: 0 }}>
+                     <TerminalSquare size={20} />
+                   </div>
+                   <div style={{ flex: 1 }}>
+                     <div style={{ fontSize: '0.9rem', fontWeight: 'bold', marginBottom: '2px' }}>Practice sandbox</div>
+                     <div style={{ fontSize: '0.75rem', color: textMuted }}>Interactive editor</div>
+                   </div>
+                   <ChevronRight size={18} color={textMuted} />
+                 </div>
+
+                 {/* Mat 3 */}
+                 <div style={{ backgroundColor: cardBg, borderRadius: '16px', padding: '16px 20px', border: isDark ? '1px solid #333' : '1px solid #e5e7eb', display: 'flex', alignItems: 'center', gap: '16px' }}>
+                   <div style={{ width: '40px', height: '40px', borderRadius: '10px', backgroundColor: '#fef3c7', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#d97706', flexShrink: 0 }}>
+                     <PlayCircle size={20} />
+                   </div>
+                   <div style={{ flex: 1 }}>
+                     <div style={{ fontSize: '0.9rem', fontWeight: 'bold', marginBottom: '2px' }}>Parameter patterns</div>
+                     <div style={{ fontSize: '0.75rem', color: textMuted }}>Video · 12 min</div>
+                   </div>
+                   <ChevronRight size={18} color={textMuted} />
+                 </div>
+               </div>
+             </div>
+             
+           </div>
+
+           {/* RIGHT COLUMN */}
+           <div style={{ flex: '0 0 320px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+             
+             {/* Main Right Card */}
+             <div style={{ backgroundColor: cardBg, borderRadius: '24px', padding: '24px', border: isDark ? '1px solid #333' : '1px solid #e5e7eb', display: 'flex', flexDirection: 'column', gap: '24px' }}>
+               
+               {/* Teacher Info */}
+               <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+                 <div style={{ width: '42px', height: '42px', borderRadius: '50%', backgroundColor: '#059669', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '1.1rem' }}>
+                   KF
+                 </div>
+                 <div>
+                   <div style={{ fontSize: '0.65rem', fontWeight: 'bold', color: '#10b981', letterSpacing: '0.05em', textTransform: 'uppercase' }}>YOUR TEACHER</div>
+                   <div style={{ fontSize: '1rem', fontWeight: 'bold' }}>{classroom?.instructor || 'Kim Fabie'}</div>
+                   <div style={{ fontSize: '0.75rem', color: textMuted }}>Offline 24 hours ago</div>
+                 </div>
+               </div>
+
+               {/* Course Materials Notification Card (Replaced Class Discussion) */}
+               <div style={{ backgroundColor: isDark ? '#1e293b' : '#0f172a', borderRadius: '16px', padding: '16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', color: 'white' }}>
+                 <div style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0 }}>
+                   <div style={{ width: '38px', height: '38px', borderRadius: '10px', backgroundColor: hasUnseenMaterials ? 'rgba(245, 158, 11, 0.2)' : 'rgba(56, 189, 248, 0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: hasUnseenMaterials ? '#fbbf24' : '#38bdf8', flexShrink: 0 }}>
+                     <FileText size={20} />
+                   </div>
+                   <div style={{ minWidth: 0 }}>
+                     <div style={{ fontSize: '0.9rem', fontWeight: 'bold', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                       {hasUnseenMaterials ? 'You have unseen materials.' : 'Course materials'}
+                     </div>
+                     <div style={{ fontSize: '0.75rem', color: hasUnseenMaterials ? '#fcd34d' : 'rgba(255,255,255,0.7)', marginTop: '2px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                       {hasUnseenMaterials 
+                         ? `${unseenMaterials.length} new material${unseenMaterials.length > 1 ? 's' : ''} uploaded` 
+                         : visibleMaterials.length > 0
+                           ? `${visibleMaterials.length} resource${visibleMaterials.length > 1 ? 's' : ''} available`
+                           : 'No new materials uploaded'}
+                     </div>
+                   </div>
+                 </div>
+                 <button 
+                   onClick={handleOpenMaterials}
+                   style={{ backgroundColor: hasUnseenMaterials ? '#f59e0b' : 'rgba(255,255,255,0.15)', border: 'none', color: hasUnseenMaterials ? '#0f172a' : 'white', padding: '6px 14px', borderRadius: '50px', fontSize: '0.75rem', fontWeight: 'bold', cursor: 'pointer', flexShrink: 0, marginLeft: '8px', transition: 'all 0.2s' }}
+                 >
+                   Open
+                 </button>
+               </div>
+               
+             </div>
+
+           </div>
+        </div>
         )}
+        
+        {/* ═══ TAB 2: CLASSWORK ═══ */}
 
-        {/* ═══ MAIN CONTENT AREA ═══ */}
-        <div style={styles.mainContent}>
-
-          {/* ═══ BIG BOX CONTAINER (Static box - no fade on container) ═══ */}
-          <div style={styles.bigBoxContainer}>
-
-            {/* CLASSROOM TOP NAV TABS (Stream, Classwork, People - strictly NO Grades, NO Settings) */}
-            <div style={styles.classroomNavHeader}>
-              <div style={styles.classroomTabsGroup}>
-                <button
-                  onClick={() => handleTabChange('stream')}
-                  style={{
-                    ...styles.classroomTabBtn,
-                    position: 'relative',
-                    color: activeTab === 'stream' ? '#10b981' : (isDark ? '#a3a3a3' : '#5f6368'),
-                  }}
-                >
-                  Stream
-                  {activeTab === 'stream' && (
-                    <motion.div
-                      layoutId="studentClassroomTabUnderline"
-                      style={{
-                        position: 'absolute',
-                        bottom: 0,
-                        left: 0,
-                        right: 0,
-                        height: '3px',
-                        backgroundColor: '#10b981',
-                        borderRadius: '3px 3px 0 0'
-                      }}
-                      transition={{ type: 'spring', stiffness: 500, damping: 35 }}
-                    />
-                  )}
-                </button>
-                <button
-                  onClick={() => handleTabChange('classwork')}
-                  style={{
-                    ...styles.classroomTabBtn,
-                    position: 'relative',
-                    color: activeTab === 'classwork' ? '#10b981' : (isDark ? '#a3a3a3' : '#5f6368'),
-                  }}
-                >
-                  Classwork
-                  {activeTab === 'classwork' && (
-                    <motion.div
-                      layoutId="studentClassroomTabUnderline"
-                      style={{
-                        position: 'absolute',
-                        bottom: 0,
-                        left: 0,
-                        right: 0,
-                        height: '3px',
-                        backgroundColor: '#10b981',
-                        borderRadius: '3px 3px 0 0'
-                      }}
-                      transition={{ type: 'spring', stiffness: 500, damping: 35 }}
-                    />
-                  )}
-                </button>
-                <button
-                  onClick={() => handleTabChange('people')}
-                  style={{
-                    ...styles.classroomTabBtn,
-                    position: 'relative',
-                    color: activeTab === 'people' ? '#10b981' : (isDark ? '#a3a3a3' : '#5f6368'),
-                  }}
-                >
-                  People
-                  {activeTab === 'people' && (
-                    <motion.div
-                      layoutId="studentClassroomTabUnderline"
-                      style={{
-                        position: 'absolute',
-                        bottom: 0,
-                        left: 0,
-                        right: 0,
-                        height: '3px',
-                        backgroundColor: '#10b981',
-                        borderRadius: '3px 3px 0 0'
-                      }}
-                      transition={{ type: 'spring', stiffness: 500, damping: 35 }}
-                    />
-                  )}
-                </button>
-              </div>
-            </div>
-
-            {/* SCROLLABLE INNER BODY OF THE BIG BOX */}
-            <div style={styles.bigBoxInnerScroll}>
-              <AnimatePresence mode="wait" custom={tabDirection}>
-                <motion.div
-                  key={`${classroom?.id || 'cls'}_${activeTab}`}
-                  custom={tabDirection}
-                  variants={tabSlideVariants}
-                  initial="enter"
-                  animate="center"
-                  exit="exit"
-                  style={{ display: 'flex', flexDirection: 'column', flex: 1, width: '100%' }}
-                >
-
-              {/* ═══ TAB 1: STREAM ═══ */}
-              {activeTab === 'stream' && (
-                <div style={styles.streamContainer}>
-
-                  {/* HERO BANNER (NO Customize button for student!) */}
-                  <div style={{
-                    ...styles.bannerCard,
-                    background: bannerTheme.customImageUrl 
-                      ? `url(${bannerTheme.customImageUrl}) center/cover no-repeat`
-                      : `linear-gradient(135deg, ${bannerTheme.primary}, ${bannerTheme.secondary})`,
-                  }}>
-                    {/* Vector Illustration Overlay */}
-                    {!bannerTheme.customImageUrl && renderBannerIllustration()}
-
-                    {/* Banner Content (Class Title & Subtitle) */}
-                    <div style={styles.bannerInfo}>
-                      <h1 style={styles.bannerTitle}>
-                        {classroom?.name || "Classroom"}
-                      </h1>
-                      <div style={styles.bannerSubtitle}>
-                        {classroom?.section || classroom?.subject || "Section 1"}
-                      </div>
-                    </div>
-
-                    {/* Bottom-Right "(i)" Info Button */}
-                    <button
-                      onClick={() => setIsClassInfoModalOpen(true)}
-                      style={styles.infoBtn}
-                      title="Class details"
-                    >
-                      <Info size={20} color="#ffffff" />
-                    </button>
-                  </div>
-
-                  {/* TWO-COLUMN STREAM BODY */}
-                  <div style={styles.streamBodyGrid}>
-
-                    {/* LEFT COLUMN: Strictly NO Class Code card, ONLY Upcoming Card */}
-                    <div style={styles.streamLeftCol}>
-                      {/* Upcoming Card */}
-                      <div style={styles.streamSideCard}>
-                        <span style={styles.sideCardLabel}>Upcoming</span>
-                        <div style={{ marginTop: '12px' }}>
-                          {loadingAssignments ? (
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                              <Skeleton width="60%" height={12} />
-                              <Skeleton width="90%" height={14} />
-                              <Skeleton width="50%" height={12} style={{ marginTop: 4 }} />
-                              <Skeleton width="85%" height={14} />
-                            </div>
-                          ) : upcomingItems.length === 0 ? (
-                            <div style={styles.noWorkText}>Woohoo, no work due soon!</div>
-                          ) : (
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                              {upcomingItems.map((item) => (
-                                <div
-                                  key={item.id}
-                                  onClick={() => {
-                                    handleTabChange('classwork');
-                                    setExpandedId(item.id);
-                                  }}
-                                  style={styles.upcomingItemRow}
-                                >
-                                  <span style={styles.upcomingItemDate}>Due {formatShortDate(item.dueDate)}</span>
-                                  <span style={styles.upcomingItemTitle}>{item.title}</span>
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                        <div style={{ marginTop: '16px', textAlign: 'right' }}>
-                          <span
-                            onClick={() => handleTabChange('classwork')}
-                            style={styles.viewAllLink}
-                          >
-                            View all
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* RIGHT COLUMN: Strictly NO Announcement Composer Box, Feed of Teacher's Posts & Assignments */}
-                    <div style={styles.streamRightCol}>
-
-                      {/* Feed of Announcements & Assignments */}
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-                        {loadingAssignments ? (
-                          Array.from({ length: 3 }).map((_, i) => <Skeleton.StreamCard key={i} />)
-                        ) : (
-                          <>
-                            {/* Instructor Announcements (Read-only for student) */}
-                            {announcements.map((post) => (
-                              <div key={post.id} style={styles.streamFeedCard}>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px' }}>
-                                  <div style={styles.feedAvatarCircle}>
-                                    {(post.author || classroom?.instructor || 'T').charAt(0).toUpperCase()}
-                                  </div>
-                                  <div>
-                                    <div style={{ fontWeight: '700', fontSize: '0.88rem', color: isDark ? '#f5f5f5' : '#1e293b' }}>
-                                      {post.author || classroom?.instructor || 'Instructor'}
-                                    </div>
-                                    <div style={{ fontSize: '0.75rem', color: isDark ? '#a3a3a3' : '#64748b' }}>
-                                      {formatShortDate(post.date || post.id)}
-                                    </div>
-                                  </div>
-                                </div>
-                                <div style={{ fontSize: '0.88rem', color: isDark ? '#e5e5e5' : '#334155', lineHeight: 1.5, whiteSpace: 'pre-wrap' }}>
-                                  {post.text}
-                                </div>
-                              </div>
-                            ))}
-
-                        {/* Posted Assignment Feed Items */}
-                        {assignments.map((item) => (
-                          <div
-                            key={item.id}
-                            onClick={() => {
-                              handleTabChange('classwork');
-                              setExpandedId(item.id);
-                            }}
-                            style={styles.assignmentStreamCard}
-                          >
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-                              <div style={styles.assignmentIconBadge}>
-                                <ClipboardList size={22} color="#137333" />
-                              </div>
-                              <div>
-                                <div style={styles.assignmentStreamTitle}>
-                                  {classroom?.instructor || 'Instructor'} posted a new assignment: {item.title}
-                                </div>
-                                <div style={styles.assignmentStreamDate}>
-                                  {formatShortDate(item.posted || item.id)}
-                                </div>
-                              </div>
-                            </div>
-                            {submittedTasks[item.id] && (
-                              <span style={styles.turnedInBadge}>
-                                <CheckCircle2 size={13} style={{ marginRight: '4px' }} />
-                                Turned in
-                              </span>
-                            )}
-                          </div>
-                        ))}
-
-                        {announcements.length === 0 && assignments.length === 0 && (
-                          <div style={styles.emptyFeedBox}>
-                            <p style={{ margin: 0, color: '#64748b' }}>
-                              This is where you'll see announcements and classwork posted by your instructor.
-                            </p>
-                          </div>
-                        )}
-                          </>
-                        )}
-                      </div>
-
-                    </div>
-                  </div>
-
-                </div>
-              )}
-
-              {/* ═══ TAB 2: CLASSWORK ═══ */}
               {activeTab === 'classwork' && (
                 <div style={{ maxWidth: '1000px', margin: '0 auto', width: '100%' }}>
                   <div style={styles.headerRow}>
                     <div>
                       <h2 style={{ color: isDark ? '#f5f5f5' : '#1e293b', fontWeight: '700', fontSize: '1.4rem', margin: 0 }}>
-                        {classroom ? classroom.name : "Classwork"}
+                        List of Classworks
                       </h2>
                       <p style={{ margin: '4px 0 0 0', color: isDark ? '#a3a3a3' : '#64748b', fontSize: '0.85rem' }}>
                         Access assignments, instructions, and learning activities for this class.
@@ -1078,14 +1104,14 @@ export default function ClassroomView({
                   <div style={styles.list}>
                     {loadingAssignments ? (
                       Array.from({ length: 3 }).map((_, i) => <Skeleton.AssignmentRow key={i} />)
-                    ) : assignments.length === 0 ? (
+                    ) : visibleClasswork.length === 0 ? (
                       <div style={{ textAlign: 'center', padding: '40px 20px', color: isDark ? '#a3a3a3' : '#94a3b8' }}>
                         <BookOpen size={48} color={isDark ? '#404040' : '#cbd5e1'} style={{ margin: '0 auto 12px auto', display: 'block' }} />
                         <p style={{ margin: 0, fontSize: '1rem', fontWeight: '600', color: isDark ? '#f5f5f5' : 'inherit' }}>No classwork assigned yet</p>
                         <p style={{ margin: '6px 0 0 0', fontSize: '0.85rem', color: isDark ? '#737373' : 'inherit' }}>Check back later once your instructor assigns new activities.</p>
                       </div>
                     ) : (
-                      assignments.map((item) => {
+                      visibleClasswork.map((item) => {
                         const isOpen = expandedId === item.id;
                         const due = formatShortDate(item.dueDate);
                         const posted = formatShortDate(item.posted || (typeof item.id === 'number' && item.id > 1e12 ? item.id : null));
@@ -1097,24 +1123,61 @@ export default function ClassroomView({
                             <div style={styles.itemHeader}>
                               <div
                                 style={{
-                                  ...styles.titlePill,
-                                  backgroundColor: isDark ? (isOpen ? '#3E3E3E' : '#363636') : (isOpen ? '#f1f5f9' : '#f8fafc'),
-                                  border: isDark ? (isOpen ? '1px solid #555555' : '1px solid #4A4A4A') : (isOpen ? '1px solid #cbd5e1' : '1px solid #e2e8f0'),
-                                  color: isDark ? '#f5f5f5' : '#1e293b'
+                                  width: '100%',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'space-between',
+                                  padding: '14px 20px',
+                                  borderRadius: '12px',
+                                  backgroundColor: isDark ? (isOpen ? '#242a2b' : '#1e2324') : (isOpen ? '#f1f5f9' : '#f8fafc'),
+                                  border: isDark ? (isOpen ? '1px solid #444c4f' : '1px solid #2d3335') : (isOpen ? '1px solid #cbd5e1' : '1px solid #e2e8f0'),
+                                  cursor: 'pointer',
+                                  userSelect: 'none',
+                                  transition: 'all 0.2s ease',
+                                  position: 'relative',
+                                  overflow: 'hidden'
                                 }}
                                 onClick={() => setExpandedId(prev => (prev === item.id ? null : item.id))}
+                                onMouseOver={(e) => {
+                                  if (isDark && !isOpen) {
+                                    e.currentTarget.style.backgroundColor = '#242a2b';
+                                    e.currentTarget.style.borderColor = '#383e40';
+                                  }
+                                }}
+                                onMouseOut={(e) => {
+                                  if (isDark && !isOpen) {
+                                    e.currentTarget.style.backgroundColor = '#1e2324';
+                                    e.currentTarget.style.borderColor = '#2d3335';
+                                  }
+                                }}
                               >
                                 <div style={{ display: 'flex', alignItems: 'center' }}>
-                                  <ClipboardList size={18} color="#10b981" style={{ marginRight: '12px', flexShrink: 0 }} />
-                                  <span style={{ color: isDark ? '#f5f5f5' : '#1e293b' }}>{item.title}</span>
+                                  {/* Icon Container */}
+                                  <div style={{ width: '36px', height: '36px', borderRadius: '10px', backgroundColor: isDark ? 'rgba(16, 185, 129, 0.12)' : '#dcfce7', border: isDark ? '1px solid rgba(16, 185, 129, 0.25)' : 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#10b981', marginRight: '16px', flexShrink: 0 }}>
+                                    <ClipboardList size={18} />
+                                  </div>
+                                  
+                                  <span style={{ color: isDark ? '#f5f5f5' : '#1e293b', fontSize: '1.05rem', fontWeight: '700' }}>{item.title}</span>
                                 </div>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                  {isSubmitted && (
-                                    <span style={styles.turnedInPill}>
-                                      Turned in
+                                
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
+                                  {isSubmitted ? (
+                                    <span style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.75rem', color: isDark ? '#a7f3d0' : '#059669', backgroundColor: isDark ? 'rgba(16, 185, 129, 0.08)' : '#ecfdf5', border: isDark ? '1px solid rgba(16, 185, 129, 0.2)' : '1px solid #d1fae5', padding: '5px 12px', borderRadius: '8px', fontWeight: '600' }}>
+                                      <CheckCircle2 size={12} /> Turned in
                                     </span>
-                                  )}
-                                  {due && <span style={styles.itemDuePill}>Due {due}</span>}
+                                  ) : due ? (
+                                    <span style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.75rem', color: isDark ? '#a7f3d0' : '#059669', backgroundColor: isDark ? 'rgba(16, 185, 129, 0.08)' : '#ecfdf5', border: isDark ? '1px solid rgba(16, 185, 129, 0.2)' : '1px solid #d1fae5', padding: '5px 12px', borderRadius: '8px', fontWeight: '600' }}>
+                                      <Calendar size={12} /> Due {due}
+                                    </span>
+                                  ) : null}
+                                  
+                                  {/* Vertical Divider */}
+                                  <div style={{ width: '1px', height: '24px', backgroundColor: isDark ? '#3d4447' : '#e2e8f0' }} />
+                                  
+                                  {/* Arrow Icon */}
+                                  <div style={{ color: '#34d399', display: 'flex', alignItems: 'center', justifyContent: 'center', transform: isOpen ? 'rotate(90deg)' : 'none', transition: 'transform 0.2s ease', marginRight: '20px' }}>
+                                    <ArrowUpRight size={18} />
+                                  </div>
                                 </div>
                               </div>
                             </div>
@@ -1130,21 +1193,70 @@ export default function ClassroomView({
                                   transition={{ duration: 0.22, ease: 'easeOut' }}
                                   style={{ overflow: 'hidden' }}
                                 >
-                                  <div style={styles.detailCard}>
-                                    <div style={styles.detailHeaderBar}>
-                                      <ClipboardList size={30} color="#475569" />
-                                      <div>
-                                        <div style={styles.detailTitle}>{item.title}</div>
-                                        <div style={styles.detailDue}>
-                                          {due ? `Due ${due}` : 'No Due Date'} • {item.points || 100} points
+                                  <div style={{ ...styles.detailCard, display: 'flex', flexDirection: isMobile ? 'column' : 'row' }}>
+                                    
+                                    {/* Left Main Content */}
+                                    <div style={{ flex: 1, padding: '32px', display: 'flex', flexDirection: 'column' }}>
+                                      
+                                      {/* Header with Icon and Title */}
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: '20px', marginBottom: '28px' }}>
+                                        <div style={{ width: '56px', height: '56px', borderRadius: '16px', backgroundColor: isDark ? 'rgba(16, 185, 129, 0.15)' : '#dcfce7', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#10b981', flexShrink: 0 }}>
+                                          <ClipboardList size={28} />
+                                        </div>
+                                        <div style={{ fontSize: '2rem', fontWeight: 'bold', color: isDark ? '#f5f5f5' : '#1e293b', lineHeight: 1.2, wordBreak: 'break-word' }}>
+                                          {item.title}
                                         </div>
                                       </div>
-                                    </div>
 
-                                    <div style={styles.detailBody}>
-                                      <div style={styles.detailLeft}>
-                                        {posted && <div style={styles.postedText}>Posted {posted}</div>}
-                                        <p style={styles.detailInstruction}>{item.details || 'No instructions provided.'}</p>
+                                      {/* Metadata Grid (Due Date, Points, Posted) */}
+                                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '48px', marginBottom: '32px' }}>
+                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: isDark ? '#a3a3a3' : '#64748b', fontSize: '0.75rem', fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                                            <Calendar size={14} /> Due Date
+                                          </div>
+                                          <div style={{ fontSize: '0.95rem', color: isDark ? '#E8EAED' : '#334155', fontWeight: '500' }}>
+                                            {due ? `Due ${due}` : 'No Due Date'}
+                                          </div>
+                                        </div>
+                                        
+                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: isDark ? '#a3a3a3' : '#64748b', fontSize: '0.75rem', fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                                            <Award size={14} /> Points
+                                          </div>
+                                          <div style={{ fontSize: '0.95rem', color: isDark ? '#E8EAED' : '#334155', fontWeight: '500' }}>
+                                            {item.points || 100} points
+                                          </div>
+                                        </div>
+                                        
+                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: isDark ? '#a3a3a3' : '#64748b', fontSize: '0.75rem', fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                                            <Clock size={14} /> Posted
+                                          </div>
+                                          <div style={{ fontSize: '0.95rem', color: isDark ? '#E8EAED' : '#334155', fontWeight: '500' }}>
+                                            {posted ? `Posted ${posted}` : 'Recently'}
+                                          </div>
+                                        </div>
+                                      </div>
+
+                                      {/* Instructions */}
+                                      <div style={{ marginBottom: '32px' }}>
+                                        {item.details ? (
+                                          <div 
+                                            style={{ 
+                                              ...styles.detailInstruction, 
+                                              whiteSpace: 'normal',
+                                              display: '-webkit-box',
+                                              WebkitLineClamp: 5,
+                                              WebkitBoxOrient: 'vertical',
+                                              overflow: 'hidden',
+                                              textOverflow: 'ellipsis'
+                                            }}
+                                          >
+                                            {item.details.replace(/<[^>]*>?/gm, '').replace(/&nbsp;/g, ' ')}
+                                          </div>
+                                        ) : (
+                                          <p style={styles.detailInstruction}>No instructions provided.</p>
+                                        )}
 
                                         {item.attachments?.length > 0 && (
                                           <div style={styles.cardAttachments}>
@@ -1156,12 +1268,8 @@ export default function ClassroomView({
                                                 onClick={(clickedAtt) => {
                                                   if (clickedAtt.type === 'image') setPreviewImage(clickedAtt);
                                                   else if (clickedAtt.type === 'video') setPreviewVideo(clickedAtt);
-                                                  else if (clickedAtt.type === 'link' && clickedAtt.url) {
-                                                    const targetUrl = clickedAtt.url.startsWith('http://') || clickedAtt.url.startsWith('https://')
-                                                      ? clickedAtt.url
-                                                      : `https://${clickedAtt.url}`;
-                                                    window.open(targetUrl, '_blank', 'noopener,noreferrer');
-                                                  }
+                                                  else if (clickedAtt.type === 'document') setPreviewIframe(clickedAtt);
+                                                  else if (clickedAtt.type === 'link' && clickedAtt.url) setPreviewIframe(clickedAtt);
                                                 }}
                                               />
                                             ))}
@@ -1169,47 +1277,76 @@ export default function ClassroomView({
                                         )}
                                       </div>
 
-                                      {/* Status display for student */}
-                                      <div style={styles.detailStudentStatusBox}>
-                                        <span style={{ fontSize: '0.78rem', fontWeight: '700', color: '#64748b', textTransform: 'uppercase' }}>
-                                          Your Work
-                                        </span>
-                                        <span style={{
-                                          fontSize: '0.95rem',
-                                          fontWeight: '800',
-                                          color: isSubmitted ? '#059669' : '#2563eb',
-                                          marginTop: '4px'
-                                        }}>
-                                          {isSubmitted ? 'Turned in' : 'Assigned'}
+                                      {/* Spacer to push footer down if needed */}
+                                      <div style={{ flexGrow: 1 }} />
+                                      
+                                      {/* Divider */}
+                                      <div style={{ height: '1px', backgroundColor: isDark ? '#3E3E3E' : '#e2e8f0', marginBottom: '20px' }} />
+
+                                      {/* View Activity Link */}
+                                      <div>
+                                        <span
+                                          style={{ ...styles.viewActivityLink, display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                                          onClick={() => onOpenAssignment(item)}
+                                        >
+                                          View Activity Details <ArrowUpRight size={16} />
                                         </span>
                                       </div>
                                     </div>
 
-                                    <div style={styles.detailDivider} />
-
-                                    {/* Student-only Footer actions (NO instructor grading, monitoring, modify or delete) */}
-                                    <div style={styles.detailFooter}>
-                                      <span
-                                        style={styles.viewActivityLink}
-                                        onClick={() => onOpenAssignment(item)}
-                                      >
-                                        View Activity Details
-                                      </span>
-                                      {!isSubmitted && (
-                                        <button
-                                          style={styles.startBtn}
-                                          onClick={() => {
-                                            if (onStartAssignment) {
-                                              onStartAssignment(item);
-                                            } else {
-                                              onOpenAssignment(item);
-                                            }
-                                          }}
-                                        >
-                                          Start
-                                        </button>
-                                      )}
+                                    {/* Right Status / Action Content */}
+                                    <div style={{ width: isMobile ? '100%' : '280px', flexShrink: 0, borderLeft: isMobile ? 'none' : (isDark ? '1px solid #3E3E3E' : '1px solid #e2e8f0'), borderTop: isMobile ? (isDark ? '1px solid #3E3E3E' : '1px solid #e2e8f0') : 'none', backgroundColor: isDark ? '#222728' : '#f8fafc', padding: '32px', display: 'flex', flexDirection: 'column' }}>
+                                      
+                                      <div style={{ fontSize: '0.75rem', fontWeight: '700', color: isDark ? '#a3a3a3' : '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '12px' }}>
+                                        Your Work
+                                      </div>
+                                      
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: 'auto' }}>
+                                        <div style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: isSubmitted ? '#10b981' : '#10b981' }} />
+                                        <span style={{
+                                          fontSize: '1.4rem',
+                                          fontWeight: '800',
+                                          color: isDark ? '#f5f5f5' : '#1e293b'
+                                        }}>
+                                          {isSubmitted ? 'Turned in' : 'Assigned'}
+                                        </span>
+                                      </div>
+                                      
+                                      <div style={{ marginTop: '48px' }}>
+                                        {!isSubmitted && (
+                                          <button
+                                            onClick={() => {
+                                              if (onStartAssignment) {
+                                                onStartAssignment(item);
+                                              } else {
+                                                onOpenAssignment(item);
+                                              }
+                                            }}
+                                            style={{
+                                              width: '100%',
+                                              display: 'flex',
+                                              justifyContent: 'space-between',
+                                              alignItems: 'center',
+                                              padding: '14px 20px',
+                                              backgroundColor: '#34d399',
+                                              border: 'none',
+                                              borderRadius: '12px',
+                                              color: '#064e3b',
+                                              fontWeight: '700',
+                                              fontSize: '1rem',
+                                              cursor: 'pointer',
+                                              boxShadow: '0 4px 6px rgba(52, 211, 153, 0.2)',
+                                              transition: 'background-color 0.2s'
+                                            }}
+                                            onMouseOver={(e) => e.currentTarget.style.backgroundColor = '#10b981'}
+                                            onMouseOut={(e) => e.currentTarget.style.backgroundColor = '#34d399'}
+                                          >
+                                            Start <ArrowRight size={18} />
+                                          </button>
+                                        )}
+                                      </div>
                                     </div>
+                                    
                                   </div>
                                 </motion.div>
                               )}
@@ -1222,125 +1359,191 @@ export default function ClassroomView({
                 </div>
               )}
 
-              {/* ═══ TAB 3: PEOPLE ═══ */}
-              {activeTab === 'people' && (
-                <div style={{ maxWidth: '850px', margin: '0 auto', width: '100%' }}>
-                  {/* Teachers Section */}
-                  <div style={{ marginBottom: '40px' }}>
-                    <div style={styles.peopleSectionHeader}>
-                      <h2 style={styles.peopleSectionTitle}>Teachers</h2>
-                      <span style={{ fontSize: '0.85rem', color: '#10b981', fontWeight: '700' }}>1 instructor</span>
-                    </div>
-                    <div style={styles.peopleList}>
-                      <div style={styles.peopleRow}>
-                        {instructorInfo?.avatar ? (
-                          <img
-                            src={instructorInfo.avatar}
-                            alt={instructorInfo?.name || 'Instructor'}
-                            style={{
-                              width: '40px',
-                              height: '40px',
-                              borderRadius: '50%',
-                              objectFit: 'cover',
-                              flexShrink: 0,
-                              boxShadow: '0 2px 6px rgba(0,0,0,0.15)'
-                            }}
-                          />
-                        ) : (
-                          <div style={styles.peopleAvatarGreen}>
-                            {(instructorInfo?.name || classroom?.instructor || 'I').charAt(0).toUpperCase()}
-                          </div>
-                        )}
-                        <div>
-                          <div style={{ fontWeight: '700', color: isDark ? '#f5f5f5' : '#1e293b', fontSize: '0.95rem' }}>
-                            {instructorInfo?.name || classroom?.instructor || 'Instructor'}
-                          </div>
-                          {(instructorInfo?.email || classroom?.instructorEmail) && (
-                            <div style={{ fontSize: '0.8rem', color: isDark ? '#a3a3a3' : '#64748b' }}>
-                              {instructorInfo?.email || classroom?.instructorEmail}
-                            </div>
-                          )}
-                        </div>
-                      </div>
+              {/* ═══ TAB: MATERIALS ═══ */}
+              {activeTab === 'materials' && (
+                <div style={{ maxWidth: '1000px', margin: '0 auto', width: '100%' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', borderBottom: isDark ? '1px solid #4A4A4A' : '1px solid #e2e8f0', paddingBottom: '18px', marginBottom: '24px' }}>
+                    <div>
+                      <h2 style={{ margin: 0, color: isDark ? '#E8EAED' : '#1e293b', fontWeight: '700', fontSize: '1.4rem' }}>
+                        List of Materials
+                      </h2>
+                      <p style={{ margin: '4px 0 0 0', color: isDark ? '#a3a3a3' : '#64748b', fontSize: '0.85rem' }}>
+                        Access syllabus, study guides, and resources uploaded by your instructor.
+                      </p>
                     </div>
                   </div>
-
-                  {/* Classmates Section */}
-                  <div>
-                    <div style={styles.peopleSectionHeader}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                        <h2 style={styles.peopleSectionTitle}>Classmates</h2>
-                        {(currentUser?.role === 'Admin' || (currentUser?.role === 'Teacher' && allowManageStudents)) && (
-                          <motion.button 
-                            whileHover={{ scale: 1.05 }} 
-                            whileTap={{ scale: 0.95 }}
-                            onClick={() => setIsAddStudentOpen(true)}
-                            style={{ padding: '6px 12px', backgroundColor: '#10b981', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 'bold' }}
-                          >
-                            + Add Student
-                          </motion.button>
-                        )}
+                  <div style={{ ...styles.list, padding: '0 0 40px 0' }}>
+                    {loadingAssignments ? (
+                      Array.from({ length: 3 }).map((_, i) => <Skeleton.AssignmentRow key={i} />)
+                    ) : visibleMaterials.length === 0 ? (
+                      <div style={{ padding: '40px 0', textAlign: 'center', color: isDark ? '#a3a3a3' : '#94a3b8' }}>
+                        <div style={{ marginBottom: '16px' }}>
+                          <FileText size={48} color={isDark ? '#525252' : '#94a3b8'} style={{ margin: '0 auto' }} />
+                        </div>
+                        <p style={{ margin: '0 0 12px 0', fontSize: '1.1rem', fontWeight: '600', color: isDark ? '#e5e5e5' : '#334155' }}>No materials available</p>
+                        <p style={{ margin: 0, fontSize: '0.9rem' }}>Check back later once your instructor uploads course resources.</p>
                       </div>
-                      <span style={{ fontSize: '0.85rem', color: isDark ? '#a3a3a3' : '#64748b', fontWeight: '600' }}>
-                        {enrolledStudents.length} student{enrolledStudents.length === 1 ? '' : 's'}
-                      </span>
-                    </div>
-
-                    <div style={styles.peopleList}>
-                      {loadingStudents ? (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                          <Skeleton.Row />
-                          <Skeleton.Row />
-                          <Skeleton.Row />
-                          <Skeleton.Row />
-                        </div>
-                      ) : enrolledStudents.length === 0 ? (
-                        <div style={{ padding: '30px 10px', textAlign: 'center', color: isDark ? '#a3a3a3' : '#64748b' }}>
-                          <Users size={40} color={isDark ? '#404040' : '#cbd5e1'} style={{ margin: '0 auto 10px auto', display: 'block' }} />
-                          <p style={{ fontWeight: '600', margin: 0 }}>No classmates found</p>
-                        </div>
-                      ) : (
-                        enrolledStudents.map((student, idx) => (
-                          <div key={idx} style={styles.peopleRow}>
-                            {student.avatar ? (
-                              <img
-                                src={student.avatar}
-                                alt={student.name}
+                    ) : (
+                      visibleMaterials.map((item) => {
+                        const isOpen = expandedId === item.id;
+                        const posted = formatShortDate(item.posted || (typeof item.id === 'number' && item.id > 1e12 ? item.id : null));
+                        return (
+                          <div key={item.id} style={styles.itemWrapper}>
+                            <div style={styles.itemHeader}>
+                              <div
                                 style={{
-                                  width: '40px',
-                                  height: '40px',
-                                  borderRadius: '50%',
-                                  objectFit: 'cover',
-                                  flexShrink: 0,
-                                  boxShadow: '0 2px 6px rgba(0,0,0,0.15)'
+                                  width: '100%',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'space-between',
+                                  padding: '14px 20px',
+                                  borderRadius: '12px',
+                                  backgroundColor: isDark ? (isOpen ? '#242a2b' : '#1e2324') : (isOpen ? '#f1f5f9' : '#f8fafc'),
+                                  border: isDark ? (isOpen ? '1px solid #444c4f' : '1px solid #2d3335') : (isOpen ? '1px solid #cbd5e1' : '1px solid #e2e8f0'),
+                                  cursor: 'pointer',
+                                  userSelect: 'none',
+                                  transition: 'all 0.2s ease',
+                                  position: 'relative',
+                                  overflow: 'hidden'
                                 }}
-                              />
-                            ) : (
-                              <div style={styles.peopleAvatarBlue}>
-                                {student.name.charAt(0).toUpperCase()}
-                              </div>
-                            )}
-                            <div>
-                              <div style={{ fontWeight: '600', color: isDark ? '#f5f5f5' : '#1e293b', fontSize: '0.95rem' }}>
-                                {student.name}
-                              </div>
-                              <div style={{ fontSize: '0.8rem', color: isDark ? '#a3a3a3' : '#64748b' }}>
-                                {student.email}
+                                onClick={() => setExpandedId(prev => (prev === item.id ? null : item.id))}
+                                onMouseOver={(e) => {
+                                  if (isDark && !isOpen) {
+                                    e.currentTarget.style.backgroundColor = '#242a2b';
+                                    e.currentTarget.style.borderColor = '#383e40';
+                                  }
+                                }}
+                                onMouseOut={(e) => {
+                                  if (isDark && !isOpen) {
+                                    e.currentTarget.style.backgroundColor = '#1e2324';
+                                    e.currentTarget.style.borderColor = '#2d3335';
+                                  }
+                                }}
+                              >
+                                <div style={{ display: 'flex', alignItems: 'center' }}>
+                                  {/* Icon Container */}
+                                  <div style={{ width: '36px', height: '36px', borderRadius: '10px', backgroundColor: isDark ? 'rgba(16, 185, 129, 0.12)' : '#dcfce7', border: isDark ? '1px solid rgba(16, 185, 129, 0.25)' : 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#10b981', marginRight: '16px', flexShrink: 0 }}>
+                                    <FileText size={18} />
+                                  </div>
+                                  
+                                  <span style={{ color: isDark ? '#f5f5f5' : '#1e293b', fontSize: '1.05rem', fontWeight: '700' }}>{item.title}</span>
+                                </div>
+                                
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
+                                  {posted ? (
+                                    <span style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.75rem', color: isDark ? '#a7f3d0' : '#059669', backgroundColor: isDark ? 'rgba(16, 185, 129, 0.08)' : '#ecfdf5', border: isDark ? '1px solid rgba(16, 185, 129, 0.2)' : '1px solid #d1fae5', padding: '5px 12px', borderRadius: '8px', fontWeight: '600' }}>
+                                      Posted {posted}
+                                    </span>
+                                  ) : null}
+                                  
+                                  {/* Vertical Divider */}
+                                  <div style={{ width: '1px', height: '24px', backgroundColor: isDark ? '#3d4447' : '#e2e8f0' }} />
+                                  
+                                  {/* Arrow Icon */}
+                                  <div style={{ color: '#34d399', display: 'flex', alignItems: 'center', justifyContent: 'center', transform: isOpen ? 'rotate(90deg)' : 'none', transition: 'transform 0.2s ease', marginRight: '20px' }}>
+                                    <ArrowUpRight size={18} />
+                                  </div>
+                                </div>
                               </div>
                             </div>
+
+                            <AnimatePresence initial={false}>
+                              {isOpen && (
+                                <motion.div
+                                  key="detail"
+                                  initial={{ opacity: 0, height: 0 }}
+                                  animate={{ opacity: 1, height: 'auto' }}
+                                  exit={{ opacity: 0, height: 0 }}
+                                  transition={{ duration: 0.22, ease: 'easeOut' }}
+                                  style={{ overflow: 'hidden' }}
+                                >
+                                  <div style={styles.detailCard}>
+                                    <div style={styles.detailHeaderBar}>
+                                      <FileText size={30} color={isDark ? '#10b981' : '#4b5563'} />
+                                      <div>
+                                        <div style={styles.detailTitle}>{item.title}</div>
+                                      </div>
+                                    </div>
+
+                                    <div style={styles.detailBody}>
+                                      <div style={{ ...styles.detailLeft, flex: '1 1 100%' }}>
+                                        {posted && <div style={styles.postedText}>Posted {posted}</div>}
+                                      {item.details ? (
+                                        <>
+                                          <div 
+                                            style={{ 
+                                              ...styles.detailInstruction, 
+                                              whiteSpace: 'normal',
+                                              ...(expandedInstructionId === item.id ? {} : {
+                                                display: '-webkit-box',
+                                                WebkitLineClamp: 3,
+                                                WebkitBoxOrient: 'vertical',
+                                                overflow: 'hidden',
+                                                textOverflow: 'ellipsis'
+                                              })
+                                            }}
+                                          >
+                                            {expandedInstructionId === item.id 
+                                              ? <div dangerouslySetInnerHTML={{ __html: item.details }} />
+                                              : item.details.replace(/<[^>]*>?/gm, '').replace(/&nbsp;/g, ' ')
+                                            }
+                                          </div>
+                                          {expandedInstructionId !== item.id && item.details.replace(/<[^>]*>?/gm, '').length > 100 && (
+                                            <div 
+                                              style={{ color: '#10b981', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 'bold', marginTop: '6px' }}
+                                              onClick={(e) => { e.stopPropagation(); setExpandedInstructionId(item.id); }}
+                                            >
+                                              View details...
+                                            </div>
+                                          )}
+                                          {expandedInstructionId === item.id && (
+                                            <div 
+                                              style={{ color: '#10b981', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 'bold', marginTop: '6px' }}
+                                              onClick={(e) => { e.stopPropagation(); setExpandedInstructionId(null); }}
+                                            >
+                                              Show less
+                                            </div>
+                                          )}
+                                        </>
+                                      ) : (
+                                        <p style={styles.detailInstruction}>No instructions provided.</p>
+                                      )}
+
+                                        {item.attachments?.length > 0 && (
+                                          <div style={styles.cardAttachments}>
+                                            {item.attachments.map((att, i) => (
+                                              <AttachmentCard
+                                                key={i}
+                                                att={att}
+                                                isDark={isDark}
+                                                onClick={(clickedAtt) => {
+                                                  if (clickedAtt.type === 'image') setPreviewImage(clickedAtt);
+                                                  else if (clickedAtt.type === 'video') setPreviewVideo(clickedAtt);
+                                                  else if (clickedAtt.type === 'document') setPreviewIframe(clickedAtt);
+                                                  else if (clickedAtt.type === 'link' && clickedAtt.url) setPreviewIframe(clickedAtt);
+                                                }}
+                                              />
+                                            ))}
+                                          </div>
+                                        )}
+                                      </div>
+                                    </div>
+                                  </div>
+                                </motion.div>
+                              )}
+                            </AnimatePresence>
                           </div>
-                        ))
-                      )}
-                    </div>
+                        );
+                      })
+                    )}
                   </div>
                 </div>
               )}
-              </motion.div>
-              </AnimatePresence>
-            </div>
-          </div>
-        </div>
-      </div>
+          </motion.div>
+        </AnimatePresence>
+
+
+      </main>
 
       {/* ═══ MODAL: CLASS INFO MODAL ═══ */}
       {isClassInfoModalOpen && (
@@ -1403,6 +1606,15 @@ export default function ClassroomView({
         />
       )}
 
+      {previewIframe && (
+        <IframePreviewModal
+          url={previewIframe.url}
+          title={previewIframe.name}
+          type={previewIframe.type}
+          onClose={() => setPreviewIframe(null)}
+        />
+      )}
+
       <AddStudentModal
         isOpen={isAddStudentOpen}
         onClose={() => setIsAddStudentOpen(false)}
@@ -1426,9 +1638,10 @@ export default function ClassroomView({
           zIndex: 60
         }}>
           {[
-            { id: 'classrooms', Icon: Home, label: 'Home', action: () => { if (onNavigateView) onNavigateView('classrooms'); else onBack(); } },
-            { id: 'calendar', Icon: Calendar, label: 'Calendar', action: () => { if (onNavigateView) onNavigateView('calendar'); else onBack(); } },
-            { id: 'archived', Icon: Archive, label: 'Archived', action: () => { if (onNavigateView) onNavigateView('archived'); else onBack(); } }
+            { id: 'classrooms', Icon: Home, label: 'Home', action: () => handleExit(() => { if (onNavigateView) onNavigateView('classrooms'); else onBack(); }) },
+            { id: 'calendar', Icon: Calendar, label: 'Calendar', action: () => handleExit(() => { if (onNavigateView) onNavigateView('calendar'); else onBack(); }) },
+            { id: 'compiler', Icon: Code2, label: 'Compiler', action: () => handleExit(() => { if (onNavigateView) onNavigateView('compiler'); else onBack(); }) },
+            { id: 'archived', Icon: Archive, label: 'Archived', action: () => handleExit(() => { if (onNavigateView) onNavigateView('archived'); else onBack(); }) }
           ].map(({ id, Icon, label, action }) => {
             return (
               <button
@@ -1454,7 +1667,7 @@ export default function ClassroomView({
         </nav>
       )}
 
-    </div>
+    </motion.div>
   );
 }
 
@@ -1721,12 +1934,7 @@ const getStyles = (isDark, isMobile = false) => ({
     fontWeight: '800',
     flexShrink: 0
   },
-  announcementBodyText: {
-    margin: '12px 0 0 0',
-    color: isDark ? '#E8EAED' : '#334155',
-    fontSize: '0.92rem',
-    lineHeight: 1.5
-  },
+  
   assignmentStreamCard: {
     backgroundColor: isDark ? '#383838' : '#ffffff',
     borderRadius: '12px',
@@ -1802,7 +2010,6 @@ const getStyles = (isDark, isMobile = false) => ({
     width: '100%',
     display: 'flex', 
     alignItems: 'center', 
-    justifyContent: 'space-between',
     padding: '12px 20px', 
     borderRadius: '12px', 
     color: isDark ? '#E8EAED' : '#1e293b', 

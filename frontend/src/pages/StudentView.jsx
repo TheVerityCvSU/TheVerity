@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { motion } from 'framer-motion';
 import { io } from 'socket.io-client';
 import Editor from '@monaco-editor/react';
-import { ArrowLeft, Save, Play, Square, Settings, TerminalSquare, Check, AlertTriangle, Trash2, Moon, Sun, X, Link2 } from 'lucide-react';
+import { ArrowLeft, Save, Play, Square, Settings, TerminalSquare, Check, AlertTriangle, Trash2, Moon, Sun, X, Link2, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, PanelLeftClose, PanelLeft, BookOpen, CheckSquare, Plus, CheckCircle2, XCircle, PlayCircle, Loader2, Maximize2, Minimize2 } from 'lucide-react';
 import { apiFetch } from '../utils/api';
 import localStore from '../services/localStore';
 import { useDarkMode } from '../hooks/useDarkMode';
@@ -14,7 +15,7 @@ import AttachmentCard from '../components/AttachmentCard';
 // Strip whitespace so editor auto-indent on paste doesn't cause false mismatches.
 const normalize = (text) => (text || "").replace(/\s+/g, '');
 
-export default function StudentView({ socket, currentUser, username, assignment, classroom, onBack }) {
+export default function StudentView({ socket, currentUser, username, assignment, classroom, onBack, isSandbox = false }) {
   // SAFETY NET: If username is empty/broken, force a name so it doesn't crash the socket
   const safeUsername = currentUser?.name || username || currentUser?.email || `Student_${Math.floor(Math.random() * 1000)}`;
   const studentId = currentUser?.email || currentUser?.name || username || safeUsername;
@@ -49,6 +50,63 @@ export default function StudentView({ socket, currentUser, username, assignment,
     } catch { /* ignore */ }
     return assignment?.starterCode || initialCode;
   });
+
+  // Multi-file support (sandbox + assignment modes)
+  const extraFilesKey = `verity_extrafiles_${assignmentId}_${studentId}`;
+  const [extraFiles, setExtraFiles] = useState(() => {
+    try {
+      const saved = localStorage.getItem(extraFilesKey);
+      if (saved) return JSON.parse(saved);
+    } catch { /* ignore */ }
+    return [];
+  });
+  const [activeFileId, setActiveFileId] = useState('main'); // 'main' = Program.cs
+  const [renamingFileId, setRenamingFileId] = useState(null);
+  const [renameValue, setRenameValue] = useState('');
+
+  const persistExtraFiles = (files) => {
+    try { localStorage.setItem(extraFilesKey, JSON.stringify(files)); } catch { /* ignore */ }
+  };
+
+  const handleAddFile = () => {
+    const num = extraFiles.length + 2;
+    const newFile = { id: `ef_${Date.now()}`, name: `File${num}`, code: `// File${num}.cs\npublic class File${num}\n{\n    // Add your code here\n}\n` };
+    const updated = [...extraFiles, newFile];
+    setExtraFiles(updated);
+    persistExtraFiles(updated);
+    setActiveFileId(newFile.id);
+  };
+
+  const handleDeleteFile = (id) => {
+    const updated = extraFiles.filter(f => f.id !== id);
+    setExtraFiles(updated);
+    persistExtraFiles(updated);
+    if (activeFileId === id) setActiveFileId('main');
+  };
+
+  const handleRenameFile = (id, newName) => {
+    const safeName = newName.replace(/[^a-zA-Z0-9_\-]/g, '').slice(0, 40) || 'File';
+    const updated = extraFiles.map(f => f.id === id ? { ...f, name: safeName } : f);
+    setExtraFiles(updated);
+    persistExtraFiles(updated);
+    setRenamingFileId(null);
+  };
+
+  const handleExtraFileCodeChange = (id, newCode) => {
+    const updated = extraFiles.map(f => f.id === id ? { ...f, code: newCode } : f);
+    setExtraFiles(updated);
+    persistExtraFiles(updated);
+  };
+
+  // Derive the active code and setter based on which tab is open
+  const activeCode = activeFileId === 'main' ? code : (extraFiles.find(f => f.id === activeFileId)?.code ?? '');
+  const setActiveCode = (newCode) => {
+    if (activeFileId === 'main') {
+      setCode(newCode);
+    } else {
+      handleExtraFileCodeChange(activeFileId, newCode);
+    }
+  };
 
   const loadInitialHistory = (currentCode) => {
     // 1. Check persistent history keys
@@ -333,10 +391,22 @@ export default function StudentView({ socket, currentUser, username, assignment,
   const editorRef = useRef(null);
   const monacoRef = useRef(null);
   const diagnosticsRef = useRef([]);
-  const [proctorLogs, setProctorLogs] = useState([]);
+  const [proctorLogs, setProctorLogs] = useState(() => {
+    try {
+      const saved = localStorage.getItem(`verity_proctor_logs_${classroomId}_${assignmentId}_${studentId}`)
+        || localStorage.getItem(`verity_proctor_logs_${classroomId}_${assignmentId}_${safeUsername}`);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
+      }
+    } catch {}
+    return [];
+  });
+  const proctorLogsRef = useRef(proctorLogs);
+  proctorLogsRef.current = proctorLogs;
 
   // High-Speed Local Compiler Socket (instant execution in Electron / local machine)
-  const [useLocalCompiler, setUseLocalCompiler] = useState(false);
+  const [localSocket, setLocalSocket] = useState(null);
   const localSocketRef = useRef(null);
 
   useEffect(() => {
@@ -352,12 +422,18 @@ export default function StudentView({ socket, currentUser, username, assignment,
       });
 
       local.on('connect', () => {
-        if (isSubscribed) setUseLocalCompiler(true);
-        local.emit('authenticate', { token, user: currentUser });
+        if (isSubscribed) {
+          setLocalSocket(local); // triggers re-run of listener useEffect
+          local.emit('authenticate', { token, user: currentUser });
+        }
+      });
+
+      local.on('disconnect', () => {
+        if (isSubscribed) setLocalSocket(null);
       });
 
       local.on('connect_error', () => {
-        if (isSubscribed) setUseLocalCompiler(false);
+        if (isSubscribed) setLocalSocket(null);
       });
 
       localSocketRef.current = local;
@@ -365,17 +441,160 @@ export default function StudentView({ socket, currentUser, username, assignment,
 
     return () => {
       isSubscribed = false;
+      setLocalSocket(null);
       if (localSocketRef.current) {
         try { localSocketRef.current.disconnect(); } catch (_) {}
+        localSocketRef.current = null;
       }
     };
   }, [currentUser]);
 
   const getCompilerSocket = () => {
-    if (useLocalCompiler && localSocketRef.current && localSocketRef.current.connected) {
-      return localSocketRef.current;
+    if (localSocket && localSocket.connected) {
+      return localSocket;
     }
     return socket;
+  };
+
+  // Bottom panel tab: 'terminal' or 'testcases'
+  const [bottomTab, setBottomTab] = useState('terminal');
+
+  const defaultTestCases = [
+    {
+      id: 'tc-1',
+      name: 'Case 1',
+      input: '',
+      expectedOutput: 'Hello, World!',
+      actualOutput: '',
+      status: 'idle',
+      errorMessage: ''
+    }
+  ];
+
+  const [testCases, setTestCases] = useState(() => {
+    if (Array.isArray(assignment?.testCases) && assignment.testCases.length > 0) {
+      return assignment.testCases.map((tc, idx) => ({
+        id: tc.id || `tc-${idx + 1}`,
+        name: tc.name || `Case ${idx + 1}`,
+        input: tc.input || '',
+        expectedOutput: tc.expectedOutput || '',
+        actualOutput: '',
+        status: 'idle',
+        errorMessage: ''
+      }));
+    }
+    try {
+      const saved = localStorage.getItem(`verity_testcases_${assignmentId}_${studentId}`);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {}
+    return defaultTestCases;
+  });
+
+  const [activeTestCaseId, setActiveTestCaseId] = useState(() => testCases[0]?.id || 'tc-1');
+  const [isRunningTests, setIsRunningTests] = useState(false);
+
+  // Persist custom test cases to localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem(`verity_testcases_${assignmentId}_${studentId}`, JSON.stringify(testCases));
+    } catch {}
+  }, [testCases, assignmentId, studentId]);
+
+  // Keep activeTestCaseId valid
+  useEffect(() => {
+    if (!testCases.some(tc => tc.id === activeTestCaseId) && testCases.length > 0) {
+      setActiveTestCaseId(testCases[0].id);
+    }
+  }, [testCases, activeTestCaseId]);
+
+  const handleAddTestCase = () => {
+    const newId = `tc-${Date.now()}`;
+    const newCase = {
+      id: newId,
+      name: `Case ${testCases.length + 1}`,
+      input: '',
+      expectedOutput: '',
+      actualOutput: '',
+      status: 'idle',
+      errorMessage: ''
+    };
+    setTestCases(prev => [...prev, newCase]);
+    setActiveTestCaseId(newId);
+    setBottomTab('testcases');
+  };
+
+  const handleDeleteTestCase = (id, e) => {
+    if (e) e.stopPropagation();
+    if (testCases.length <= 1) return;
+    const remaining = testCases.filter(tc => tc.id !== id);
+    setTestCases(remaining);
+    if (activeTestCaseId === id) {
+      setActiveTestCaseId(remaining[0].id);
+    }
+  };
+
+  const handleUpdateTestCase = (id, field, value) => {
+    setTestCases(prev => prev.map(tc => tc.id === id ? { ...tc, [field]: value, status: 'idle' } : tc));
+  };
+
+  const handleRunTestCase = (targetCase = null) => {
+    const caseToRun = targetCase || testCases.find(tc => tc.id === activeTestCaseId) || testCases[0];
+    if (!caseToRun) return;
+
+    setBottomTab('testcases');
+    setIsRunningTests(true);
+    setTestCases(prev => prev.map(tc => tc.id === caseToRun.id ? { ...tc, status: 'running', errorMessage: '', actualOutput: '' } : tc));
+
+    // Failsafe timeout
+    setTimeout(() => {
+        setIsRunningTests((current) => {
+            if (current) {
+                setTestCases(prev => prev.map(tc => tc.id === caseToRun.id && tc.status === 'running' ? { ...tc, status: 'error', errorMessage: 'Server timeout' } : tc));
+                return false;
+            }
+            return current;
+        });
+    }, 15000);
+
+    const targetSocket = getCompilerSocket();
+    const token = localStorage.getItem('verity_token') || localStorage.getItem('token');
+    targetSocket.emit('run_test_cases', {
+      code,
+      testCases: [caseToRun],
+      token,
+      user: currentUser
+    });
+  };
+
+  const handleRunAllTestCases = () => {
+    if (!testCases || testCases.length === 0) return;
+
+    setBottomTab('testcases');
+    setIsRunningTests(true);
+    setTestCases(prev => prev.map(tc => ({ ...tc, status: 'running', errorMessage: '', actualOutput: '' })));
+
+    // Failsafe timeout
+    setTimeout(() => {
+        setIsRunningTests((current) => {
+            if (current) {
+                setTestCases(prev => prev.map(tc => tc.status === 'running' ? { ...tc, status: 'error', errorMessage: 'Server timeout' } : tc));
+                return false;
+            }
+            return current;
+        });
+    }, 15000);
+
+    const targetSocket = getCompilerSocket();
+    const token = localStorage.getItem('verity_token') || localStorage.getItem('token');
+    targetSocket.emit('run_test_cases', {
+      code,
+      testCases,
+      token,
+      user: currentUser
+    });
   };
 
   // Terminal resizable height & drag state
@@ -386,6 +605,29 @@ export default function StudentView({ socket, currentUser, username, assignment,
     } catch {}
     return 240;
   });
+
+  const [isTerminalCollapsed, setIsTerminalCollapsed] = useState(() => {
+    try {
+      return localStorage.getItem('verity_terminal_collapsed') === 'true';
+    } catch {
+      return false;
+    }
+  });
+  const [isTerminalMaximized, setIsTerminalMaximized] = useState(false);
+
+  const toggleTerminalCollapse = () => {
+    setIsTerminalMaximized(false);
+    setIsTerminalCollapsed(prev => {
+      const next = !prev;
+      try { localStorage.setItem('verity_terminal_collapsed', String(next)); } catch {}
+      return next;
+    });
+  };
+  const toggleTerminalMaximize = () => {
+    setIsTerminalCollapsed(false);
+    setIsTerminalMaximized(prev => !prev);
+  };
+
   const isDraggingRef = useRef(false);
   const startYRef = useRef(0);
   const startHeightRef = useRef(240);
@@ -421,6 +663,188 @@ export default function StudentView({ socket, currentUser, username, assignment,
     window.addEventListener('mouseup', handleMouseUp);
   };
 
+  // Instruction sidebar resizable width & height state
+  const [instructionWidth, setInstructionWidth] = useState(() => {
+    try {
+      const saved = localStorage.getItem('verity_instruction_width');
+      if (saved) {
+        const val = parseInt(saved, 10);
+        if (!isNaN(val) && val >= 180 && val <= window.innerWidth * 0.75) {
+          return val;
+        }
+      }
+    } catch {}
+    return 320;
+  });
+
+  const [instructionHeight, setInstructionHeight] = useState(() => {
+    try {
+      const saved = localStorage.getItem('verity_instruction_height');
+      if (saved) {
+        const val = parseInt(saved, 10);
+        if (!isNaN(val) && val >= 100 && val <= window.innerHeight * 0.7) {
+          return val;
+        }
+      }
+    } catch {}
+    return Math.round(window.innerHeight * 0.35);
+  });
+
+  const [isInstructionCollapsed, setIsInstructionCollapsed] = useState(() => {
+    try {
+      return localStorage.getItem('verity_instruction_collapsed') === 'true';
+    } catch {}
+    return false;
+  });
+
+  // Warning section height inside the sidebar
+  const [warningHeight, setWarningHeight] = useState(() => {
+    try {
+      const saved = localStorage.getItem('verity_warning_height');
+      if (saved) {
+        const val = parseInt(saved, 10);
+        if (!isNaN(val) && val >= 45 && val <= 500) return val;
+      }
+    } catch {}
+    return 220;
+  });
+  const [isWarningCollapsed, setIsWarningCollapsed] = useState(false);
+  const [isWarningMaximized, setIsWarningMaximized] = useState(false);
+  const toggleWarningMaximize = () => {
+    setIsWarningCollapsed(false);
+    setIsWarningMaximized(prev => !prev);
+  };
+
+  // Drag states
+  const isDraggingSidebarRef = useRef(false);
+  const startSidebarXRef = useRef(0);
+  const startSidebarYRef = useRef(0);
+  const startSidebarWidthRef = useRef(320);
+  const startSidebarHeightRef = useRef(250);
+  const [isResizingSidebar, setIsResizingSidebar] = useState(false);
+
+  const isDraggingWarningRef = useRef(false);
+  const startWarningYRef = useRef(0);
+  const startWarningHeightRef = useRef(220);
+  const [isResizingWarning, setIsResizingWarning] = useState(false);
+
+  // Resize handler for Instruction sidebar (Horizontal on desktop, Vertical on mobile)
+  const handleSidebarDividerMouseDown = (e) => {
+    e.preventDefault();
+    if (isInstructionCollapsed) return;
+    isDraggingSidebarRef.current = true;
+    setIsResizingSidebar(true);
+    startSidebarXRef.current = e.clientX;
+    startSidebarYRef.current = e.clientY;
+    startSidebarWidthRef.current = instructionWidth;
+    startSidebarHeightRef.current = instructionHeight;
+    document.body.style.cursor = isMobile ? 'row-resize' : 'col-resize';
+    document.body.style.userSelect = 'none';
+
+    const handleMouseMove = (moveEvent) => {
+      if (!isDraggingSidebarRef.current) return;
+      if (isMobile) {
+        const deltaY = moveEvent.clientY - startSidebarYRef.current;
+        const minH = 100;
+        const maxH = Math.round(window.innerHeight * 0.7);
+        const newH = Math.max(minH, Math.min(startSidebarHeightRef.current + deltaY, maxH));
+        setInstructionHeight(newH);
+      } else {
+        const deltaX = moveEvent.clientX - startSidebarXRef.current;
+        const minW = 200;
+        const maxW = Math.round(window.innerWidth * 0.7);
+        const newW = Math.max(minW, Math.min(startSidebarWidthRef.current + deltaX, maxW));
+        setInstructionWidth(newW);
+      }
+    };
+
+    const handleMouseUp = () => {
+      isDraggingSidebarRef.current = false;
+      setIsResizingSidebar(false);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+
+      if (isMobile) {
+        setInstructionHeight((finalH) => {
+          try { localStorage.setItem('verity_instruction_height', String(finalH)); } catch {}
+          return finalH;
+        });
+      } else {
+        setInstructionWidth((finalW) => {
+          try { localStorage.setItem('verity_instruction_width', String(finalW)); } catch {}
+          return finalW;
+        });
+      }
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+  };
+
+  // Resize handler for internal Warning section inside instruction sidebar
+  const handleWarningDividerMouseDown = (e) => {
+    e.preventDefault();
+    if (isWarningCollapsed) return;
+    isDraggingWarningRef.current = true;
+    setIsResizingWarning(true);
+    startWarningYRef.current = e.clientY;
+    startWarningHeightRef.current = warningHeight;
+    document.body.style.cursor = 'row-resize';
+    document.body.style.userSelect = 'none';
+
+    const handleMouseMove = (moveEvent) => {
+      if (!isDraggingWarningRef.current) return;
+      const deltaY = startWarningYRef.current - moveEvent.clientY;
+      const minH = 70;
+      const maxH = 450;
+      const newH = Math.max(minH, Math.min(startWarningHeightRef.current + deltaY, maxH));
+      setWarningHeight(newH);
+    };
+
+    const handleMouseUp = () => {
+      isDraggingWarningRef.current = false;
+      setIsResizingWarning(false);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+
+      setWarningHeight((finalH) => {
+        try { localStorage.setItem('verity_warning_height', String(finalH)); } catch {}
+        return finalH;
+      });
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+  };
+
+  const [isInstructionMaximized, setIsInstructionMaximized] = useState(false);
+  const toggleInstructionCollapse = () => {
+    setIsInstructionMaximized(false);
+    setIsInstructionCollapsed(prev => {
+      const next = !prev;
+      try { localStorage.setItem('verity_instruction_collapsed', String(next)); } catch {}
+      return next;
+    });
+  };
+  const toggleInstructionMaximize = () => {
+    setIsInstructionCollapsed(false);
+    setIsInstructionMaximized(prev => !prev);
+  };
+
+  // Keep Monaco editor layout in sync with sidebar and terminal resizing
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (editorRef.current) {
+        editorRef.current.layout();
+      }
+    }, 20);
+    return () => clearTimeout(timer);
+  }, [instructionWidth, instructionHeight, isInstructionCollapsed, terminalHeight, warningHeight, isWarningCollapsed]);
+
   const codeRef = useRef(code);
   codeRef.current = code;
   const [saveStatus, setSaveStatus] = useState(false);
@@ -443,7 +867,8 @@ export default function StudentView({ socket, currentUser, username, assignment,
         name: safeUsername,
         code: currentCode,
         classroomId: classroom?.id,
-        assignmentId: assignment?.id
+        assignmentId: assignment?.id,
+        logs: proctorLogsRef.current || proctorLogs
       });
     }
 
@@ -459,11 +884,14 @@ export default function StudentView({ socket, currentUser, username, assignment,
       if ((e.ctrlKey || e.metaKey) && (e.key === 's' || e.key === 'S')) {
         e.preventDefault();
         handleSaveCode();
+      } else if ((e.ctrlKey || e.metaKey) && (e.key === 'b' || e.key === 'B')) {
+        e.preventDefault();
+        toggleInstructionCollapse();
       }
     };
     window.addEventListener('keydown', handleGlobalKeyDown);
     return () => window.removeEventListener('keydown', handleGlobalKeyDown);
-  }, [draftKey, safeUsername, studentId, assignmentId, classroom?.id, socket]);
+  }, [draftKey, safeUsername, studentId, assignmentId, classroom?.id, socket, isInstructionCollapsed]);
 
   const checkLocalSubmitted = () => {
     const keys = getSubKeys();
@@ -518,7 +946,8 @@ export default function StudentView({ socket, currentUser, username, assignment,
       name: safeUsername,
       code: currentCodeVal,
       classroomId: classroom?.id,
-      assignmentId: assignment?.id
+      assignmentId: assignment?.id,
+      logs: proctorLogsRef.current || proctorLogs
     });
   }, [socket, safeUsername, classroom?.id, assignment?.id]);
 
@@ -527,17 +956,29 @@ export default function StudentView({ socket, currentUser, username, assignment,
 
   const addProctorLog = (message, color) => {
     const timeString = new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }).toLowerCase();
-    setProctorLogs(prevLogs => [{ id: Date.now(), message, time: timeString, color }, ...prevLogs]);
+    const newLogItem = { id: Date.now(), message, action: message, time: timeString, color };
+    setProctorLogs(prevLogs => {
+      const updated = [newLogItem, ...prevLogs];
+      try {
+        localStorage.setItem(`verity_proctor_logs_${classroomId}_${assignmentId}_${studentId}`, JSON.stringify(updated));
+        if (studentId !== safeUsername) {
+          localStorage.setItem(`verity_proctor_logs_${classroomId}_${assignmentId}_${safeUsername}`, JSON.stringify(updated));
+        }
+      } catch {}
+      return updated;
+    });
     setCodeHistory(prev => {
       const updated = [...prev, { time: Date.now(), warning: message, code: codeRef.current }];
       persistHistory(updated, codeRef.current);
       return updated;
     });
     const payload = {
+      id: newLogItem.id,
       studentId: studentId || safeUsername,
       name: currentUser?.name || safeUsername,
       email: currentUser?.email || '',
       action: message,
+      message: message,
       time: timeString,
       color: color,
       classroomId: classroom?.id,
@@ -724,6 +1165,7 @@ export default function StudentView({ socket, currentUser, username, assignment,
   // 3. TERMINAL HANDLING & COMPILER DIAGNOSTICS (Mirroring to Teacher immediately)
   useEffect(() => {
     const handleOutput = (dataChunk) => {
+      console.log('[SOCKET] terminal_output received:', dataChunk?.slice(0, 50));
       setOutput((prev) => {
         const newOutput = prev + dataChunk;
         // Broadcast to teacher via cloud socket
@@ -740,8 +1182,9 @@ export default function StudentView({ socket, currentUser, username, assignment,
       if (terminalEndRef.current) terminalEndRef.current.scrollIntoView({ behavior: "smooth" });
     };
 
-    const handleStarted = () => setProgramStarted(true);
+    const handleStarted = () => { console.log('[SOCKET] program_started'); setProgramStarted(true); };
     const handleExit = () => {
+      console.log('[SOCKET] process_exit');
       setIsRunning(false);
       setProgramStarted(false);
     };
@@ -749,17 +1192,50 @@ export default function StudentView({ socket, currentUser, username, assignment,
       updateEditorMarkers(diagnostics);
     };
 
+    const handleTestResults = (data) => {
+      const results = data?.results || [];
+      setTestCases(prev => prev.map(tc => {
+        const res = results.find(r => String(r.id) === String(tc.id));
+        if (!res) return tc;
+        return {
+          ...tc,
+          status: res.status,
+          actualOutput: res.actualOutput !== undefined ? res.actualOutput : '',
+          errorMessage: res.error || ''
+        };
+      }));
+      setIsRunningTests(false);
+    };
+
+    const handleSingleTestResult = (res) => {
+      if (!res) return;
+      setTestCases(prev => prev.map(tc => {
+        if (String(tc.id) === String(res.id)) {
+          return {
+            ...tc,
+            status: res.status,
+            actualOutput: res.actualOutput !== undefined ? res.actualOutput : '',
+            errorMessage: res.error || ''
+          };
+        }
+        return tc;
+      }));
+    };
+
     socket.on('terminal_output', handleOutput);
     socket.on('program_started', handleStarted);
     socket.on('process_exit', handleExit);
     socket.on('compiler_diagnostics', handleDiagnostics);
+    socket.on('test_cases_results', handleTestResults);
+    socket.on('test_case_result', handleSingleTestResult);
 
-    const local = localSocketRef.current;
-    if (local) {
-      local.on('terminal_output', handleOutput);
-      local.on('program_started', handleStarted);
-      local.on('process_exit', handleExit);
-      local.on('compiler_diagnostics', handleDiagnostics);
+    if (localSocket) {
+      localSocket.on('terminal_output', handleOutput);
+      localSocket.on('program_started', handleStarted);
+      localSocket.on('process_exit', handleExit);
+      localSocket.on('compiler_diagnostics', handleDiagnostics);
+      localSocket.on('test_cases_results', handleTestResults);
+      localSocket.on('test_case_result', handleSingleTestResult);
     }
 
     return () => {
@@ -767,14 +1243,18 @@ export default function StudentView({ socket, currentUser, username, assignment,
       socket.off('program_started', handleStarted);
       socket.off('process_exit', handleExit);
       socket.off('compiler_diagnostics', handleDiagnostics);
-      if (local) {
-        local.off('terminal_output', handleOutput);
-        local.off('program_started', handleStarted);
-        local.off('process_exit', handleExit);
-        local.off('compiler_diagnostics', handleDiagnostics);
+      socket.off('test_cases_results', handleTestResults);
+      socket.off('test_case_result', handleSingleTestResult);
+      if (localSocket) {
+        localSocket.off('terminal_output', handleOutput);
+        localSocket.off('program_started', handleStarted);
+        localSocket.off('process_exit', handleExit);
+        localSocket.off('compiler_diagnostics', handleDiagnostics);
+        localSocket.off('test_cases_results', handleTestResults);
+        localSocket.off('test_case_result', handleSingleTestResult);
       }
     };
-  }, [socket, useLocalCompiler, safeUsername, classroom, assignment]);
+  }, [socket, localSocket, safeUsername, classroom, assignment]);
 
   // Verify submission status with backend and keep in sync
   useEffect(() => {
@@ -864,12 +1344,31 @@ export default function StudentView({ socket, currentUser, username, assignment,
   }, [socket, safeUsername, studentId, classroomId, assignmentId]);
 
   const handleRunCode = () => {
+    setBottomTab('terminal');
     updateEditorMarkers([]);
     setIsRunning(true);
     setProgramStarted(false); // hide input until compilation finishes
     setOutput("");
 
+    // Failsafe timeout
+    setTimeout(() => {
+        setIsRunning((current) => {
+            if (current) {
+                setOutput((prev) => prev + "\n[Error: Compiler server did not respond after 15 seconds.]\n");
+                setProgramStarted(false);
+                return false; // Force re-enable button
+            }
+            return current;
+        });
+    }, 15000);
+
     const targetSocket = getCompilerSocket();
+    console.log('[RUN] targetSocket:', targetSocket?.id, 'connected:', targetSocket?.connected, 'localSocket:', localSocket?.id, 'appSocket:', socket?.id);
+    if (!targetSocket || !targetSocket.connected) {
+      setOutput("Error: No connection to compiler server. Please check your internet connection or restart the server.\n");
+      setIsRunning(false);
+      return;
+    }
 
     // Tell teacher we started running
     if (socket && socket.connected) {
@@ -882,8 +1381,10 @@ export default function StudentView({ socket, currentUser, username, assignment,
     }
 
     const token = localStorage.getItem('verity_token') || localStorage.getItem('token');
+    console.log('[RUN] emitting compile_code on socket:', targetSocket.id);
     targetSocket.emit('compile_code', {
       code: code,
+      extraFiles: extraFiles.map(f => ({ name: f.name + '.cs', code: f.code })),
       token: token,
       user: currentUser
     });
@@ -891,7 +1392,9 @@ export default function StudentView({ socket, currentUser, username, assignment,
 
   const handleStopCode = () => {
     const targetSocket = getCompilerSocket();
-    targetSocket.emit('stop_code');
+    if (targetSocket) {
+      targetSocket.emit('stop_code');
+    }
     if (socket && socket.connected) {
       socket.emit('student_terminal_update', {
         studentId: safeUsername,
@@ -1052,76 +1555,332 @@ export default function StudentView({ socket, currentUser, username, assignment,
     });
   };
 
-  return (
-    <div style={{
-      ...styles.container,
-      ...(isDark ? { backgroundColor: '#1e1e1e' } : {}),
-      flexDirection: isMobile ? 'column' : 'row'
-    }}>
-      <div style={{
-        ...styles.leftSidebar,
-        ...(isDark ? { backgroundColor: '#282828', borderRight: isMobile ? 'none' : '1px solid #3c3c3c' } : {}),
-        width: isMobile ? '100%' : '300px',
-        height: isMobile ? '40vh' : '100%',
-        borderRight: isMobile ? 'none' : '1px solid #d1d5db',
-        borderBottom: isMobile ? '1px solid #d1d5db' : 'none'
-      }}>
-        <div style={{
-          ...styles.instructionSection,
-          ...(isDark ? { backgroundColor: '#282828' } : {})
-        }}>
-          <h2 style={{ color: isDark ? '#E8EAED' : 'black', margin: '0 0 20px 0', fontSize: '1.2rem' }}>Instruction</h2>
-          {instruction ? (
-            <p style={{
-              ...styles.instructionText,
-              ...(isDark ? { color: '#d1d5db' } : {})
-            }}>{instruction}</p>
-          ) : (
-            <p style={{ color: isDark ? '#888888' : '#9ca3af', fontStyle: 'italic', fontSize: '0.9rem' }}>Waiting for instructions...</p>
-          )}
+  const activeCase = testCases.find(tc => tc.id === activeTestCaseId) || testCases[0];
+  const passedTestsCount = testCases.filter(tc => tc.status === 'passed').length;
+  const hasTested = testCases.some(tc => tc.status === 'passed' || tc.status === 'failed' || tc.status === 'error');
 
-          {/* In the workspace, link attachments are hidden to maintain proctoring/focus, keeping only images and videos */}
-          {assignment?.attachments?.filter((att) => att.type !== 'link').length > 0 && (
-            <div style={styles.attachmentList}>
-              {assignment.attachments
-                .filter((att) => att.type !== 'link')
-                .map((att, i) => (
-                  <AttachmentCard
-                    key={i}
-                    att={att}
-                    isDark={isDark}
-                    onClick={(clickedAtt) => {
-                      if (clickedAtt.type === 'image') setPreviewImage(clickedAtt);
-                      else if (clickedAtt.type === 'video') setPreviewVideo(clickedAtt);
-                    }}
-                  />
-                ))}
+  return (
+    <motion.div 
+      initial={{ opacity: 0 }} 
+      animate={{ opacity: 1 }} 
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.25, ease: 'easeInOut' }}
+      style={{
+        ...styles.container,
+        ...(isDark ? { backgroundColor: '#1e1e1e' } : {}),
+        flexDirection: isMobile ? 'column' : 'row'
+      }}
+    >
+      {/* INSTRUCTION SIDEBAR (ADJUSTABLE, RESPONSIVE, COLLAPSIBLE) */}
+      {!isSandbox && (
+        isInstructionCollapsed ? (
+          <div style={{
+          width: isMobile ? '100%' : '44px',
+          height: isMobile ? '44px' : '100%',
+          backgroundColor: isDark ? '#252525' : '#f1f5f9',
+          borderRight: isMobile ? 'none' : (isDark ? '1px solid #3c3c3c' : '1px solid #cbd5e1'),
+          borderBottom: isMobile ? (isDark ? '1px solid #3c3c3c' : '1px solid #cbd5e1') : 'none',
+          display: 'flex',
+          flexDirection: isMobile ? 'row' : 'column',
+          alignItems: 'center',
+          justifyContent: 'flex-start',
+          padding: isMobile ? '0 12px' : '14px 0',
+          gap: '12px',
+          flexShrink: 0,
+          transition: 'width 0.2s ease, height 0.2s ease',
+          zIndex: 5
+        }}>
+          <button
+            onClick={toggleInstructionCollapse}
+            style={{
+              background: 'transparent',
+              border: isDark ? '1px solid #484848' : '1px solid #cbd5e1',
+              borderRadius: '8px',
+              padding: '6px',
+              cursor: 'pointer',
+              color: isDark ? '#10b981' : '#059669',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              backgroundColor: isDark ? '#333333' : '#ffffff',
+              transition: 'all 0.15s ease'
+            }}
+            title="Expand Instructions (Ctrl+B)"
+          >
+            {isMobile ? <ChevronDown size={16} /> : <PanelLeft size={16} />}
+          </button>
+          {!isMobile && (
+            <div
+              onClick={toggleInstructionCollapse}
+              style={{
+                writingMode: 'vertical-rl',
+                textOrientation: 'mixed',
+                transform: 'rotate(180deg)',
+                color: isDark ? '#9ca3af' : '#64748b',
+                fontWeight: '600',
+                fontSize: '0.82rem',
+                letterSpacing: '0.08em',
+                cursor: 'pointer',
+                userSelect: 'none',
+                marginTop: '10px'
+              }}
+              title="Click to expand instruction panel"
+            >
+              INSTRUCTIONS
             </div>
           )}
+          {isMobile && (
+            <span
+              onClick={toggleInstructionCollapse}
+              style={{
+                fontSize: '0.85rem',
+                fontWeight: '600',
+                color: isDark ? '#9ca3af' : '#64748b',
+                cursor: 'pointer'
+              }}
+            >
+              Show Instructions
+            </span>
+          )}
+          {proctorLogs.length > 0 && (
+            <div
+              style={{
+                marginTop: isMobile ? '0' : 'auto',
+                marginLeft: isMobile ? 'auto' : '0',
+                marginBottom: isMobile ? '0' : '12px',
+                width: '8px',
+                height: '8px',
+                borderRadius: '50%',
+                backgroundColor: '#eab308'
+              }}
+              title={`${proctorLogs.length} warning(s)`}
+            />
+          )}
         </div>
-
+      ) : (
         <div style={{
-          ...styles.warningSection,
-          ...(isDark ? { backgroundColor: '#222222', borderTop: '1px solid #3c3c3c' } : {})
+          ...styles.leftSidebar,
+          ...(isDark ? { backgroundColor: '#282828' } : {}),
+          width: isInstructionMaximized ? '100%' : (isMobile ? '100%' : `${instructionWidth}px`),
+          height: isInstructionMaximized ? '100%' : (isMobile ? `${instructionHeight}px` : '100%'),
+          borderRight: isMobile ? 'none' : (isDark ? '1px solid #3c3c3c' : '1px solid #d1d5db'),
+          borderBottom: isMobile ? (isDark ? '1px solid #3c3c3c' : '1px solid #d1d5db') : 'none',
+          position: 'relative',
+          display: 'flex',
+          flexDirection: 'column',
+          overflow: 'hidden',
+          ...(isInstructionMaximized ? { zIndex: 20 } : {})
         }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '15px' }}>
-            <span style={{ fontSize: '1.1rem', color: isDark ? '#E8EAED' : 'white', fontWeight: 'bold' }}>Warning</span>
-            <span style={{ fontSize: '1.1rem', color: isDark ? '#E8EAED' : 'white', fontWeight: 'bold' }}>Time</span>
+          {/* Header with Title and Collapse Button */}
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            padding: '14px 18px 10px 18px',
+            borderBottom: isDark ? '1px solid #333333' : '1px solid #e5e7eb',
+            flexShrink: 0
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <h2 style={{ color: isDark ? '#E8EAED' : '#111827', margin: 0, fontSize: '1.05rem', fontWeight: '700' }}>
+                Instruction
+              </h2>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <button
+                onClick={toggleInstructionCollapse}
+                style={{
+                  background: 'transparent',
+                  border: 'none',
+                  cursor: 'pointer',
+                  padding: '5px',
+                  borderRadius: '6px',
+                  color: isDark ? '#9ca3af' : '#6b7280',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  transition: 'color 0.15s ease'
+                }}
+                title="Collapse Instructions (Ctrl+B)"
+              >
+                {isMobile ? <ChevronUp size={18} /> : <PanelLeftClose size={18} />}
+              </button>
+              <button
+                onClick={toggleInstructionMaximize}
+                title={isInstructionMaximized ? 'Restore instructions' : 'Maximize instructions'}
+                style={{
+                  background: 'transparent',
+                  border: 'none',
+                  cursor: 'pointer',
+                  padding: '5px',
+                  borderRadius: '6px',
+                  color: isDark ? '#9ca3af' : '#6b7280',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  transition: 'color 0.15s ease'
+                }}
+              >
+                {isInstructionMaximized ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+              </button>
+            </div>
           </div>
-          <div style={styles.logContainer}>
-            {proctorLogs.length === 0 ? (
-              <span style={{ color: isDark ? '#888888' : '#9ca3af', fontStyle: 'italic', fontSize: '0.9rem' }}>Monitoring active...</span>
+
+          {/* Scrollable Instruction Body */}
+          <div style={{
+            ...styles.instructionSection,
+            padding: '18px',
+            ...(isDark ? { backgroundColor: '#282828' } : {})
+          }}>
+            {instruction ? (
+              <div style={{
+                ...styles.instructionText,
+                whiteSpace: 'normal',
+                ...(isDark ? { color: '#d1d5db' } : {})
+              }} dangerouslySetInnerHTML={{ __html: instruction }} />
             ) : (
-              proctorLogs.map(log => (
-                <div key={log.id} style={styles.logRow}>
-                  <span style={{ color: log.color, fontWeight: 'bold', paddingRight: '15px', flex: 1, minWidth: 0, wordBreak: 'break-word' }}>{log.message}</span>
-                  <span style={{ color: isDark ? '#a3a3a3' : '#e5e7eb', background: 'none', backgroundColor: 'transparent', flexShrink: 0, whiteSpace: 'nowrap' }}>{log.time}</span>
-                </div>
-              ))
+              <p style={{ color: isDark ? '#888888' : '#9ca3af', fontStyle: 'italic', fontSize: '0.9rem' }}>Waiting for instructions...</p>
+            )}
+
+            {/* In the workspace, link attachments are hidden to maintain proctoring/focus, keeping only images and videos */}
+            {assignment?.attachments?.filter((att) => att.type !== 'link').length > 0 && (
+              <div style={styles.attachmentList}>
+                {assignment.attachments
+                  .filter((att) => att.type !== 'link')
+                  .map((att, i) => (
+                    <AttachmentCard
+                      key={i}
+                      att={att}
+                      isDark={isDark}
+                      onClick={(clickedAtt) => {
+                        if (clickedAtt.type === 'image') setPreviewImage(clickedAtt);
+                        else if (clickedAtt.type === 'video') setPreviewVideo(clickedAtt);
+                      }}
+                    />
+                  ))}
+              </div>
+            )}
+          </div>
+
+          {/* Resizable Divider between Instruction and Warning */}
+          <div
+            onMouseDown={handleWarningDividerMouseDown}
+            style={{
+              height: '7px',
+              backgroundColor: isResizingWarning ? '#10b981' : (isDark ? '#2e2e2e' : '#e5e7eb'),
+              borderTop: isDark ? '1px solid #3c3c3c' : '1px solid #d1d5db',
+              borderBottom: isDark ? '1px solid #222222' : '1px solid #e5e7eb',
+              cursor: 'row-resize',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              flexShrink: 0,
+              userSelect: 'none',
+              transition: 'background-color 0.15s ease'
+            }}
+            title="Drag up/down to adjust Warning panel height"
+          >
+            <div style={{
+              width: '32px',
+              height: '2px',
+              backgroundColor: isDark ? '#666666' : '#9ca3af',
+              borderRadius: '2px'
+            }} />
+          </div>
+
+          {/* Warning Section */}
+          <div style={{
+            ...styles.warningSection,
+            height: isWarningCollapsed ? '42px' : isWarningMaximized ? '100%' : `${warningHeight}px`,
+            minHeight: isWarningCollapsed ? '42px' : '70px',
+            maxHeight: isWarningCollapsed ? '42px' : isWarningMaximized ? '100%' : '450px',
+            padding: isWarningCollapsed ? '10px 18px' : '14px 18px',
+            ...(isDark ? { backgroundColor: '#222222' } : {}),
+            transition: isResizingWarning ? 'none' : 'height 0.2s ease'
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: isWarningCollapsed ? 0 : '10px' }}>
+              <div
+                onClick={() => setIsWarningCollapsed(prev => !prev)}
+                style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', userSelect: 'none' }}
+                title={isWarningCollapsed ? "Expand warnings" : "Collapse warnings"}
+              >
+                <span style={{ fontSize: '0.95rem', color: isDark ? '#E8EAED' : '#1f2937', fontWeight: 'bold' }}>Warnings</span>
+                {proctorLogs.length > 0 && (
+                  <span style={{
+                    fontSize: '0.72rem',
+                    padding: '1px 6px',
+                    borderRadius: '10px',
+                    backgroundColor: '#eab308',
+                    color: '#000',
+                    fontWeight: 'bold'
+                  }}>
+                    {proctorLogs.length}
+                  </span>
+                )}
+                {isWarningCollapsed ? <ChevronDown size={14} color={isDark ? '#9ca3af' : '#6b7280'} /> : <ChevronUp size={14} color={isDark ? '#9ca3af' : '#6b7280'} />}
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                {!isWarningCollapsed && (
+                  <span style={{ fontSize: '0.85rem', color: isDark ? '#9ca3af' : '#6b7280', fontWeight: '600' }}>Time</span>
+                )}
+                <button
+                  onClick={toggleWarningMaximize}
+                  title={isWarningMaximized ? 'Restore' : 'Maximize warnings'}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '3px', borderRadius: '4px', display: 'flex', alignItems: 'center', color: isDark ? '#6b7280' : '#9ca3af' }}
+                  onMouseEnter={e => e.currentTarget.style.color = isDark ? '#e8eaed' : '#374151'}
+                  onMouseLeave={e => e.currentTarget.style.color = isDark ? '#6b7280' : '#9ca3af'}
+                >
+                  {isWarningMaximized ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
+                </button>
+              </div>
+            </div>
+            {!isWarningCollapsed && (
+              <div style={styles.logContainer}>
+                {proctorLogs.length === 0 ? (
+                  <span style={{ color: isDark ? '#888888' : '#9ca3af', fontStyle: 'italic', fontSize: '0.85rem' }}>Monitoring active...</span>
+                ) : (
+                  proctorLogs.map(log => (
+                    <div key={log.id} style={{ ...styles.logRow, fontSize: '0.88rem', marginBottom: '8px' }}>
+                      <span style={{ color: log.color, fontWeight: 'bold', paddingRight: '12px', flex: 1, minWidth: 0, wordBreak: 'break-word' }}>{log.message}</span>
+                      <span style={{ color: isDark ? '#a3a3a3' : '#6b7280', background: 'none', backgroundColor: 'transparent', flexShrink: 0, whiteSpace: 'nowrap' }}>{log.time}</span>
+                    </div>
+                  ))
+                )}
+              </div>
             )}
           </div>
         </div>
-      </div>
+      ))}
+
+      {/* DRAG HANDLE BETWEEN INSTRUCTION SIDEBAR AND MAIN AREA */}
+      {!isSandbox && !isInstructionCollapsed && (
+        <div
+          onMouseDown={handleSidebarDividerMouseDown}
+          onDoubleClick={() => setInstructionWidth(320)}
+          style={{
+            width: isMobile ? '100%' : '7px',
+            height: isMobile ? '7px' : '100%',
+            backgroundColor: isResizingSidebar ? '#10b981' : (isDark ? '#2e2e2e' : '#e2e8f0'),
+            cursor: isMobile ? 'row-resize' : 'col-resize',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            flexShrink: 0,
+            userSelect: 'none',
+            zIndex: 10,
+            transition: 'background-color 0.15s ease',
+            borderRight: !isMobile ? (isDark ? '1px solid #3c3c3c' : '1px solid #cbd5e1') : 'none',
+            borderBottom: isMobile ? (isDark ? '1px solid #3c3c3c' : '1px solid #cbd5e1') : 'none'
+          }}
+          title={isMobile ? "Drag up or down to adjust instruction height" : "Drag left or right to adjust instruction width (Double-click to reset)"}
+        >
+          <div style={{
+            width: isMobile ? '36px' : '2px',
+            height: isMobile ? '2px' : '36px',
+            backgroundColor: isResizingSidebar ? '#ffffff' : (isDark ? '#555555' : '#9ca3af'),
+            borderRadius: '2px'
+          }} />
+        </div>
+      )}
 
       <div style={styles.mainArea}>
         <div style={{
@@ -1156,8 +1915,20 @@ export default function StudentView({ socket, currentUser, username, assignment,
                 <Save size={18} />
               )}
             </button>
-            <button onClick={handleRunCode} style={styles.runButton}><Play size={16} fill="currentColor" /> Run</button>
-            <button onClick={handleStopCode} disabled={!isRunning} style={{ ...styles.stopButton, opacity: isRunning ? 1 : 0.5, cursor: isRunning ? 'pointer' : 'not-allowed' }}><Square size={14} fill="currentColor" /> Stop</button>
+            <button 
+              onClick={handleRunCode} 
+              disabled={isRunning || isRunningTests}
+              style={{ 
+                ...styles.runButton, 
+                ...(isDark ? { backgroundColor: 'rgba(52, 211, 153, 0.15)', color: '#34d399', border: '1px solid rgba(52, 211, 153, 0.3)' } : {}),
+                opacity: (isRunning || isRunningTests) ? 0.6 : 1,
+                cursor: (isRunning || isRunningTests) ? 'not-allowed' : 'pointer'
+              }}
+            >
+              <Play size={16} fill="currentColor" /> Run
+            </button>
+            <button onClick={handleStopCode} disabled={!isRunning} style={{ ...styles.stopButton, ...(isDark ? { backgroundColor: 'rgba(248, 113, 113, 0.15)', color: '#f87171', border: '1px solid rgba(248, 113, 113, 0.3)' } : {}), opacity: isRunning ? 1 : 0.5, cursor: isRunning ? 'pointer' : 'not-allowed' }}><Square size={14} fill="currentColor" /> Stop</button>
+
             {strictCompiler && (
               <div
                 style={{
@@ -1173,30 +1944,37 @@ export default function StudentView({ socket, currentUser, username, assignment,
           </div>
 
           <div style={styles.toolGroupRight}>
-            {submitted ? (
-              <button
-                onClick={handleUnsubmit}
-                style={{
-                  ...styles.unsubmitBtn,
-                  ...(isDark ? { backgroundColor: '#333333', borderColor: '#484848', color: '#E8EAED' } : {})
-                }}
-                title="Unsubmit to edit and re-submit your code"
-              >
-                Unsubmit
-              </button>
-            ) : (
-              <button
-                onClick={handleSubmit}
-                style={styles.submitButton}
-              >
-                Submit
-              </button>
+            {!isSandbox && (
+              submitted ? (
+                <button
+                  onClick={handleUnsubmit}
+                  style={{
+                    ...styles.unsubmitBtn,
+                    ...(isDark ? { backgroundColor: '#333333', borderColor: '#484848', color: '#E8EAED' } : {})
+                  }}
+                  title="Unsubmit to edit and re-submit your code"
+                >
+                  Unsubmit
+                </button>
+              ) : (
+                <button
+                  onClick={handleSubmit}
+                  style={{
+                    ...styles.submitButton,
+                    ...(isDark ? { backgroundColor: 'rgba(34, 211, 238, 0.15)', color: '#22d3ee', border: '1px solid rgba(34, 211, 238, 0.3)' } : {})
+                  }}
+                >
+                  Submit
+                </button>
+              )
             )}
-            <div
-              className="recording-dot-blink"
-              style={styles.recordingDot}
-              title="Recording active: Your workspace activity is being recorded and proctored"
-            />
+            {!isSandbox && (
+              <div
+                className="recording-dot-blink"
+                style={styles.recordingDot}
+                title="Recording active: Your workspace activity is being recorded and proctored"
+              />
+            )}
             <button
               onClick={() => setShowSettingsModal(true)}
               style={styles.gearIcon}
@@ -1208,39 +1986,162 @@ export default function StudentView({ socket, currentUser, username, assignment,
         </div>
 
         <div style={styles.editorWrapper}>
+          {/* ── File Tabs ────────────────────────────────────── */}
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            height: '28px',
+            backgroundColor: isDark ? '#252526' : '#f3f4f6',
+            borderBottom: isDark ? '1px solid #3c3c3c' : '1px solid #d1d5db',
+            overflowX: 'auto',
+            flexShrink: 0,
+            userSelect: 'none',
+          }}>
+            {/* Program.cs (main) tab */}
+            <div
+              onClick={() => setActiveFileId('main')}
+              style={{
+                display: 'flex', alignItems: 'center', gap: '5px',
+                padding: '0 10px', height: '100%', cursor: 'pointer',
+                borderRight: isDark ? '1px solid #3c3c3c' : '1px solid #d1d5db',
+                backgroundColor: activeFileId === 'main'
+                  ? (isDark ? '#1e1e1e' : '#ffffff')
+                  : 'transparent',
+                color: activeFileId === 'main'
+                  ? (isDark ? '#e8eaed' : '#111827')
+                  : (isDark ? '#9ca3af' : '#6b7280'),
+                fontSize: '0.75rem', fontWeight: activeFileId === 'main' ? '600' : '400',
+                borderBottom: activeFileId === 'main' ? '2px solid #10b981' : '2px solid transparent',
+                whiteSpace: 'nowrap', flexShrink: 0,
+              }}
+            >
+              <span style={{ fontSize: '0.65rem', opacity: 0.6 }}>{'{ }'}</span>
+              Program.cs
+            </div>
+
+            {/* Extra file tabs */}
+            {extraFiles.map(f => (
+              <div
+                key={f.id}
+                onDoubleClick={() => { if (!submitted) { setRenamingFileId(f.id); setRenameValue(f.name); } }}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: '3px',
+                  padding: '0 6px 0 10px', height: '100%',
+                  borderRight: isDark ? '1px solid #3c3c3c' : '1px solid #d1d5db',
+                  backgroundColor: activeFileId === f.id
+                    ? (isDark ? '#1e1e1e' : '#ffffff')
+                    : 'transparent',
+                  color: activeFileId === f.id
+                    ? (isDark ? '#e8eaed' : '#111827')
+                    : (isDark ? '#9ca3af' : '#6b7280'),
+                  fontSize: '0.75rem', fontWeight: activeFileId === f.id ? '600' : '400',
+                  borderBottom: activeFileId === f.id ? '2px solid #10b981' : '2px solid transparent',
+                  whiteSpace: 'nowrap', flexShrink: 0, cursor: 'pointer',
+                }}
+              >
+                {renamingFileId === f.id ? (
+                  <input
+                    autoFocus
+                    value={renameValue}
+                    onChange={e => setRenameValue(e.target.value)}
+                    onBlur={() => handleRenameFile(f.id, renameValue)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') handleRenameFile(f.id, renameValue);
+                      if (e.key === 'Escape') setRenamingFileId(null);
+                    }}
+                    onClick={e => e.stopPropagation()}
+                    style={{
+                      width: '80px', fontSize: '0.75rem', padding: '1px 4px',
+                      border: '1px solid #10b981', borderRadius: '3px', outline: 'none',
+                      backgroundColor: isDark ? '#333' : '#fff',
+                      color: isDark ? '#e8eaed' : '#111827',
+                    }}
+                  />
+                ) : (
+                  <span
+                    onClick={() => setActiveFileId(f.id)}
+                    title="Double-click to rename"
+                  >
+                    <span style={{ fontSize: '0.65rem', opacity: 0.6, marginRight: '3px' }}>{'{ }'}</span>
+                    {f.name}.cs
+                  </span>
+                )}
+                {!submitted && renamingFileId !== f.id && (
+                  <button
+                    onClick={e => { e.stopPropagation(); handleDeleteFile(f.id); }}
+                    title="Delete file"
+                    style={{
+                      background: 'none', border: 'none', cursor: 'pointer',
+                      padding: '1px', display: 'flex', alignItems: 'center',
+                      color: isDark ? '#555' : '#bbb',
+                      marginLeft: '1px', borderRadius: '2px',
+                    }}
+                    onMouseEnter={e => e.currentTarget.style.color = '#ef4444'}
+                    onMouseLeave={e => e.currentTarget.style.color = isDark ? '#555' : '#bbb'}
+                  >
+                    <X size={11} />
+                  </button>
+                )}
+              </div>
+            ))}
+
+            {/* Add file button */}
+            {!submitted && (
+              <button
+                onClick={handleAddFile}
+                title="Add new file"
+                style={{
+                  background: 'none', border: 'none', cursor: 'pointer',
+                  padding: '0 10px', height: '100%',
+                  display: 'flex', alignItems: 'center',
+                  color: isDark ? '#6b7280' : '#9ca3af',
+                  flexShrink: 0,
+                }}
+                onMouseEnter={e => { e.currentTarget.style.color = '#10b981'; e.currentTarget.style.backgroundColor = isDark ? 'rgba(16,185,129,0.08)' : 'rgba(16,185,129,0.06)'; }}
+                onMouseLeave={e => { e.currentTarget.style.color = isDark ? '#6b7280' : '#9ca3af'; e.currentTarget.style.backgroundColor = 'transparent'; }}
+              >
+                <Plus size={13} />
+              </button>
+            )}
+          </div>
+
+          {/* ── Monaco Editor ──────────────────────────────────── */}
+          <div style={{ flex: 1, minHeight: 0 }}>
           <Editor
             height="100%"
             language="csharp"
             theme={isDark ? "vs-dark" : "light"}
-            value={code}
+            value={activeCode}
             onChange={(newCode) => {
               if (submitted) return;
               resetCognitivePauseTimer();
-              if (diagnosticsRef.current?.length > 0) {
-                updateEditorMarkers([]);
+              if (activeFileId === 'main') {
+                if (diagnosticsRef.current?.length > 0) updateEditorMarkers([]);
+                setCode(newCode);
+                codeRef.current = newCode;
+                try {
+                  localStorage.setItem(draftKey, newCode);
+                  if (studentId !== safeUsername) {
+                    localStorage.setItem(`verity_code_${assignmentId}_${safeUsername}`, newCode);
+                  }
+                } catch { /* ignore */ }
+                const newEntry = { time: Date.now(), code: newCode };
+                setCodeHistory(prev => {
+                  const nextHist = [...prev, newEntry];
+                  persistHistory(nextHist, newCode);
+                  return nextHist;
+                });
+                socket.emit('student_typing', {
+                  studentId: safeUsername,
+                  name: safeUsername,
+                  code: newCode,
+                  classroomId: classroom?.id,
+                  assignmentId: assignment?.id,
+                  logs: proctorLogsRef.current || proctorLogs
+                });
+              } else {
+                handleExtraFileCodeChange(activeFileId, newCode);
               }
-              setCode(newCode);
-              codeRef.current = newCode;
-              try { 
-                localStorage.setItem(draftKey, newCode);
-                if (studentId !== safeUsername) {
-                  localStorage.setItem(`verity_code_${assignmentId}_${safeUsername}`, newCode);
-                }
-              } catch { /* ignore */ }
-
-              const newEntry = { time: Date.now(), code: newCode };
-              setCodeHistory(prev => {
-                const nextHist = [...prev, newEntry];
-                persistHistory(nextHist, newCode);
-                return nextHist;
-              });
-              socket.emit('student_typing', {
-                studentId: safeUsername,
-                name: safeUsername,
-                code: newCode,
-                classroomId: classroom?.id,
-                assignmentId: assignment?.id
-              });
             }}
             onMount={handleEditorDidMount}
             options={{
@@ -1250,6 +2151,7 @@ export default function StudentView({ socket, currentUser, username, assignment,
               readOnlyMessage: { value: 'Unsubmit your work before editing' }
             }}
           />
+          </div>
         </div>
 
         <div
@@ -1268,59 +2170,394 @@ export default function StudentView({ socket, currentUser, username, assignment,
 
         <div style={{
           ...styles.terminalWrapper,
-          height: `${terminalHeight}px`,
+          height: isTerminalCollapsed ? '38px' : isTerminalMaximized ? '100%' : `${terminalHeight}px`,
+          ...(isTerminalMaximized ? { flex: 1 } : {}),
           ...(isDark ? { backgroundColor: '#1e1e1e', borderTop: '1px solid #3c3c3c' } : {})
         }}>
+          {/* TABS HEADER: TERMINAL vs TEST CASES */}
           <div style={{
             ...styles.terminalHeader,
             ...(isDark ? { backgroundColor: '#262626', borderBottom: '1px solid #3c3c3c' } : {})
           }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <TerminalSquare size={15} color={isDark ? '#10b981' : '#4b5563'} />
-              <span style={{ fontWeight: '600', fontSize: '0.82rem', color: isDark ? '#E8EAED' : '#1f2937', letterSpacing: '0.04em' }}>TERMINAL</span>
-            </div>
-
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', height: '100%' }}>
               <button
-                onClick={handleClearTerminal}
+                type="button"
+                onClick={() => setBottomTab('terminal')}
                 style={{
-                  ...styles.terminalActionBtn,
-                  ...(isDark ? { backgroundColor: '#333333', borderColor: '#484848', color: '#E8EAED' } : {})
+                  ...styles.tabHeaderBtn,
+                  backgroundColor: bottomTab === 'terminal' ? (isDark ? '#1e1e1e' : '#ffffff') : 'transparent',
+                  color: bottomTab === 'terminal' ? (isDark ? '#10b981' : '#059669') : (isDark ? '#9ca3af' : '#6b7280'),
+                  borderBottom: bottomTab === 'terminal' ? '2px solid #10b981' : '2px solid transparent',
+                  fontWeight: bottomTab === 'terminal' ? '700' : '500'
                 }}
-                title="Clear Terminal Output"
               >
-                <Trash2 size={13} style={{ marginRight: '4px' }} />
-                <span>Clear</span>
+                <TerminalSquare size={15} />
+                <span>TERMINAL</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setBottomTab('testcases')}
+                style={{
+                  ...styles.tabHeaderBtn,
+                  backgroundColor: bottomTab === 'testcases' ? (isDark ? '#1e1e1e' : '#ffffff') : 'transparent',
+                  color: bottomTab === 'testcases' ? (isDark ? '#10b981' : '#059669') : (isDark ? '#9ca3af' : '#6b7280'),
+                  borderBottom: bottomTab === 'testcases' ? '2px solid #10b981' : '2px solid transparent',
+                  fontWeight: bottomTab === 'testcases' ? '700' : '500'
+                }}
+              >
+                <CheckSquare size={15} />
+                <span>TEST CASES</span>
+                <span style={{
+                  fontSize: '0.72rem',
+                  padding: '1px 6px',
+                  borderRadius: '10px',
+                  backgroundColor: (hasTested && passedTestsCount === testCases.length && testCases.length > 0)
+                    ? '#10b981'
+                    : (testCases.some(t => t.status === 'failed') ? '#ef4444' : (isDark ? '#374151' : '#e5e7eb')),
+                  color: (hasTested || testCases.some(t => t.status === 'failed')) ? '#ffffff' : (isDark ? '#d1d5db' : '#4b5563'),
+                  fontWeight: 'bold',
+                  marginLeft: '4px'
+                }}>
+                  {hasTested ? `${passedTestsCount}/${testCases.length}` : testCases.length}
+                </span>
               </button>
             </div>
-          </div>
-          <div ref={terminalBodyRef} style={{
-            ...styles.terminalBody,
-            ...(isDark ? { backgroundColor: '#1e1e1e', color: '#E8EAED' } : {})
-          }}>
-            {renderFormattedOutput(output)}
-            {isRunning && programStarted && (
-              <div style={{
-                ...styles.terminalInputRow,
-                ...(isDark ? { backgroundColor: '#252525', borderColor: '#3c3c3c' } : {})
-              }}>
-                <span style={{ marginRight: '8px', color: '#10b981', fontWeight: 'bold' }}>{'>'}</span>
-                <input
-                  type="text"
-                  value={inputValue}
-                  onChange={(e) => setInputValue(e.target.value)}
-                  onKeyDown={handleTerminalInput}
-                  autoFocus
+
+              {/* ACTION CONTROLS */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+              {bottomTab === 'terminal' ? (
+                <button
+                  type="button"
+                  onClick={handleClearTerminal}
                   style={{
-                    ...styles.terminalInput,
-                    ...(isDark ? { color: '#E8EAED' } : {})
+                    ...styles.terminalActionBtn,
+                    ...(isDark ? { backgroundColor: '#333333', borderColor: '#484848', color: '#E8EAED' } : {})
                   }}
-                  placeholder="Type input here and press Enter..."
-                />
+                  title="Clear Terminal Output"
+                >
+                  <Trash2 size={13} style={{ marginRight: '4px' }} />
+                  <span>Clear</span>
+                </button>
+              ) : (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <button
+                    type="button"
+                    onClick={handleAddTestCase}
+                    style={{
+                      ...styles.terminalActionBtn,
+                      backgroundColor: isDark ? '#1e1e1e' : '#f0fdf4',
+                      borderColor: isDark ? '#10b981' : '#bbf7d0',
+                      color: isDark ? '#10b981' : '#16a34a',
+                      fontWeight: '600'
+                    }}
+                    title="Add a new test case"
+                  >
+                    <Plus size={13} style={{ marginRight: '3px' }} />
+                    <span>Add Test Case</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleRunTestCase()}
+                    disabled={isRunningTests || isRunning}
+                    style={{
+                      ...styles.terminalActionBtn,
+                      backgroundColor: isDark ? 'rgba(52, 211, 153, 0.15)' : '#ecfdf5',
+                      borderColor: isDark ? 'rgba(52, 211, 153, 0.3)' : '#10b981',
+                      color: isDark ? '#34d399' : '#065f46',
+                      fontWeight: '600',
+                      opacity: (isRunningTests || isRunning) ? 0.6 : 1,
+                      cursor: (isRunningTests || isRunning) ? 'not-allowed' : 'pointer'
+                    }}
+                    title="Run selected test case"
+                  >
+                    <Play size={11} fill="currentColor" style={{ marginRight: '4px' }} />
+                    <span>Run Case</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleRunAllTestCases}
+                    disabled={isRunningTests || isRunning}
+                    style={{
+                      ...styles.terminalActionBtn,
+                      backgroundColor: isDark ? 'rgba(52, 211, 153, 0.15)' : '#10b981',
+                      borderColor: isDark ? 'rgba(52, 211, 153, 0.3)' : '#10b981',
+                      color: isDark ? '#34d399' : '#ffffff',
+                      fontWeight: '700',
+                      opacity: (isRunningTests || isRunning) ? 0.6 : 1,
+                      cursor: (isRunningTests || isRunning) ? 'not-allowed' : 'pointer'
+                    }}
+                    title="Run all test cases"
+                  >
+                    <PlayCircle size={13} style={{ marginRight: '4px' }} />
+                    <span>Run All</span>
+                  </button>
+                </div>
+              )}
+
+              {/* Hide / Maximize panel buttons */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '2px', marginLeft: '6px', borderLeft: isDark ? '1px solid #3c3c3c' : '1px solid #e5e7eb', paddingLeft: '8px' }}>
+                <button
+                  type="button"
+                  onClick={toggleTerminalMaximize}
+                  title={isTerminalMaximized ? 'Restore panel' : 'Maximize panel'}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '4px', borderRadius: '4px', display: 'flex', alignItems: 'center', color: isDark ? '#6b7280' : '#9ca3af' }}
+                  onMouseEnter={e => e.currentTarget.style.color = isDark ? '#e8eaed' : '#374151'}
+                  onMouseLeave={e => e.currentTarget.style.color = isDark ? '#6b7280' : '#9ca3af'}
+                >
+                  {isTerminalMaximized ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
+                </button>
+                <button
+                  type="button"
+                  onClick={toggleTerminalCollapse}
+                  title={isTerminalCollapsed ? 'Show panel' : 'Hide panel'}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '4px', borderRadius: '4px', display: 'flex', alignItems: 'center', color: isDark ? '#6b7280' : '#9ca3af' }}
+                  onMouseEnter={e => e.currentTarget.style.color = isDark ? '#e8eaed' : '#374151'}
+                  onMouseLeave={e => e.currentTarget.style.color = isDark ? '#6b7280' : '#9ca3af'}
+                >
+                  {isTerminalCollapsed ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+                </button>
               </div>
-            )}
-            <div ref={terminalEndRef} />
+            </div>
           </div>
+
+          {/* TAB CONTENT */}
+          {bottomTab === 'terminal' ? (
+            <div ref={terminalBodyRef} style={{
+              ...styles.terminalBody,
+              ...(isDark ? { backgroundColor: '#1e1e1e', color: '#E8EAED' } : {})
+            }}>
+              {renderFormattedOutput(output)}
+              {isRunning && programStarted && (
+                <div style={{
+                  ...styles.terminalInputRow,
+                  ...(isDark ? { backgroundColor: '#252525', borderColor: '#3c3c3c' } : {})
+                }}>
+                  <span style={{ marginRight: '8px', color: '#10b981', fontWeight: 'bold' }}>{'>'}</span>
+                  <input
+                    type="text"
+                    value={inputValue}
+                    onChange={(e) => setInputValue(e.target.value)}
+                    onKeyDown={handleTerminalInput}
+                    autoFocus
+                    style={{
+                      ...styles.terminalInput,
+                      ...(isDark ? { color: '#E8EAED' } : {})
+                    }}
+                    placeholder="Type input here and press Enter..."
+                  />
+                </div>
+              )}
+              <div ref={terminalEndRef} />
+            </div>
+          ) : (
+            <div style={{
+              flex: 1,
+              display: 'flex',
+              flexDirection: 'column',
+              backgroundColor: isDark ? '#1a1a1a' : '#ffffff',
+              overflow: 'hidden',
+              minHeight: 0
+            }}>
+              {/* Test Case Tabs Ribbon */}
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                padding: '6px 12px',
+                borderBottom: isDark ? '1px solid #2e2e2e' : '1px solid #e5e7eb',
+                backgroundColor: isDark ? '#222222' : '#f9fafb',
+                gap: '6px',
+                overflowX: 'auto',
+                flexShrink: 0
+              }}>
+                {testCases.map((tc, idx) => {
+                  const isActive = tc.id === activeTestCaseId;
+                  return (
+                    <button
+                      key={tc.id}
+                      type="button"
+                      onClick={() => setActiveTestCaseId(tc.id)}
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        padding: '4px 10px',
+                        borderRadius: '6px',
+                        border: isActive
+                          ? (isDark ? '1px solid #10b981' : '1px solid #059669')
+                          : (isDark ? '1px solid #383838' : '1px solid #d1d5db'),
+                        backgroundColor: isActive
+                          ? (isDark ? '#064e3b' : '#ecfdf5')
+                          : (isDark ? '#2a2a2a' : '#ffffff'),
+                        color: isActive
+                          ? (isDark ? '#6ee7b7' : '#065f46')
+                          : (isDark ? '#d1d5db' : '#4b5563'),
+                        fontSize: '0.8rem',
+                        fontWeight: isActive ? '700' : '500',
+                        cursor: 'pointer',
+                        transition: 'all 0.15s ease',
+                        whiteSpace: 'nowrap'
+                      }}
+                    >
+                      {tc.status === 'running' && <Loader2 size={12} style={{ animation: 'spin 1s linear infinite' }} />}
+                      {tc.status === 'passed' && <CheckCircle2 size={13} color="#10b981" />}
+                      {tc.status === 'failed' && <XCircle size={13} color="#ef4444" />}
+                      {tc.status === 'error' && <AlertTriangle size={13} color="#f59e0b" />}
+                      {tc.status === 'idle' && (
+                        <span style={{ width: '7px', height: '7px', borderRadius: '50%', backgroundColor: isDark ? '#6b7280' : '#9ca3af' }} />
+                      )}
+                      <span>{tc.name || `Case ${idx + 1}`}</span>
+
+                      {testCases.length > 1 && (
+                        <span
+                          onClick={(e) => handleDeleteTestCase(tc.id, e)}
+                          title="Delete this test case"
+                          style={{
+                            marginLeft: '4px',
+                            color: isDark ? '#9ca3af' : '#9ca3af',
+                            cursor: 'pointer',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            borderRadius: '3px',
+                            padding: '1px'
+                          }}
+                        >
+                          <X size={12} />
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+
+                <button
+                  type="button"
+                  onClick={handleAddTestCase}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                    padding: '4px 10px',
+                    borderRadius: '6px',
+                    border: isDark ? '1px dashed #4b5563' : '1px dashed #9ca3af',
+                    backgroundColor: 'transparent',
+                    color: isDark ? '#9ca3af' : '#6b7280',
+                    fontSize: '0.8rem',
+                    fontWeight: '500',
+                    cursor: 'pointer'
+                  }}
+                  title="Add a new test case"
+                >
+                  <Plus size={13} />
+                  <span>Add Case</span>
+                </button>
+              </div>
+
+              {/* Active Case Form & Details */}
+              {activeCase && (
+                <div style={{
+                  flex: 1,
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+                  gap: '12px',
+                  padding: '12px 14px',
+                  overflowY: 'auto'
+                }}>
+
+
+                  {/* Column 2: Expected Output */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <label style={{ fontSize: '0.78rem', fontWeight: '700', color: isDark ? '#9ca3af' : '#4b5563', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                        Expected Output
+                      </label>
+                    </div>
+                    <textarea
+                      value={activeCase.expectedOutput || ''}
+                      onChange={(e) => handleUpdateTestCase(activeCase.id, 'expectedOutput', e.target.value)}
+                      placeholder="Expected output from your code..."
+                      style={{
+                        flex: 1,
+                        minHeight: '75px',
+                        padding: '8px 10px',
+                        backgroundColor: isDark ? '#242424' : '#f9fafb',
+                        color: isDark ? '#E8EAED' : '#111827',
+                        border: isDark ? '1px solid #3c3c3c' : '1px solid #d1d5db',
+                        borderRadius: '6px',
+                        fontFamily: "Consolas, 'Cascadia Code', monospace",
+                        fontSize: '0.85rem',
+                        resize: 'none',
+                        outline: 'none'
+                      }}
+                    />
+                  </div>
+
+                  {/* Column 3: Actual Output & Result Status */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <label style={{ fontSize: '0.78rem', fontWeight: '700', color: isDark ? '#9ca3af' : '#4b5563', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                        Actual Output
+                      </label>
+                      {activeCase.status === 'passed' && (
+                        <span style={{ fontSize: '0.75rem', fontWeight: '700', color: '#10b981', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                          <CheckCircle2 size={13} /> Passed
+                        </span>
+                      )}
+                      {activeCase.status === 'failed' && (
+                        <span style={{ fontSize: '0.75rem', fontWeight: '700', color: '#ef4444', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                          <XCircle size={13} /> Failed
+                        </span>
+                      )}
+                      {activeCase.status === 'error' && (
+                        <span style={{ fontSize: '0.75rem', fontWeight: '700', color: '#f59e0b', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                          <AlertTriangle size={13} /> Error
+                        </span>
+                      )}
+                      {activeCase.status === 'running' && (
+                        <span style={{ fontSize: '0.75rem', fontWeight: '700', color: '#3b82f6', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                          <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} /> Running...
+                        </span>
+                      )}
+                      {activeCase.status === 'idle' && (
+                        <span style={{ fontSize: '0.72rem', color: isDark ? '#6b7280' : '#9ca3af' }}>Not run yet</span>
+                      )}
+                    </div>
+                    <div style={{
+                      flex: 1,
+                      minHeight: '75px',
+                      padding: '8px 10px',
+                      backgroundColor: activeCase.status === 'passed'
+                        ? (isDark ? 'rgba(16, 185, 129, 0.1)' : '#f0fdf4')
+                        : (activeCase.status === 'failed' ? (isDark ? 'rgba(239, 68, 68, 0.1)' : '#fef2f2') : (isDark ? '#242424' : '#f9fafb')),
+                      border: activeCase.status === 'passed'
+                        ? '1px solid #10b981'
+                        : (activeCase.status === 'failed' ? '1px solid #ef4444' : (isDark ? '1px solid #3c3c3c' : '1px solid #d1d5db')),
+                      borderRadius: '6px',
+                      fontFamily: "Consolas, 'Cascadia Code', monospace",
+                      fontSize: '0.85rem',
+                      color: activeCase.errorMessage ? '#ef4444' : (isDark ? '#E8EAED' : '#111827'),
+                      overflowY: 'auto',
+                      whiteSpace: 'pre-wrap',
+                      wordBreak: 'break-word'
+                    }}>
+                      {activeCase.status === 'running' ? (
+                        <span style={{ color: '#3b82f6', fontStyle: 'italic' }}>Executing test case...</span>
+                      ) : (activeCase.errorMessage ? (
+                        <span style={{ color: '#ef4444' }}>{activeCase.errorMessage}</span>
+                      ) : (activeCase.actualOutput ? (
+                        activeCase.actualOutput
+                      ) : (
+                        <span style={{ color: isDark ? '#6b7280' : '#9ca3af', fontStyle: 'italic' }}>
+                          {activeCase.status === 'passed' ? '[Empty output produced]' : 'Click "Run Case" or "Run All" to execute test.'}
+                        </span>
+                      )))}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
@@ -1530,14 +2767,14 @@ export default function StudentView({ socket, currentUser, username, assignment,
           </p>
         </div>
       )}
-    </div>
+    </motion.div>
   );
 }
 
 const styles = {
   container: { height: '100vh', width: '100%', display: 'flex', fontFamily: 'Arial, Helvetica, sans-serif', backgroundColor: '#e5e7eb', overflow: 'hidden' },
-  leftSidebar: { width: '300px', height: '100%', display: 'flex', flexDirection: 'column', borderRight: '1px solid #d1d5db', backgroundColor: '#f3f4f6', flexShrink: 0 },
-  instructionSection: { flex: 1, padding: '30px', backgroundColor: '#f3f4f6', overflowY: 'auto' },
+  leftSidebar: { height: '100%', display: 'flex', flexDirection: 'column', borderRight: '1px solid #d1d5db', backgroundColor: '#f3f4f6', flexShrink: 0, minWidth: 0, overflow: 'hidden' },
+  instructionSection: { flex: 1, minHeight: 0, padding: '20px', backgroundColor: '#f3f4f6', overflowY: 'auto' },
   instructionText: { color: '#1f2937', fontSize: '1rem', lineHeight: 1.6, whiteSpace: 'pre-wrap', margin: 0 },
   attachmentList: { display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '20px', width: '100%' },
   attachThumb: { maxWidth: '100%', maxHeight: '120px', borderRadius: '8px', objectFit: 'cover', display: 'block' },
@@ -1559,7 +2796,7 @@ const styles = {
     boxSizing: 'border-box'
   },
   greyPill: { height: '30px', backgroundColor: '#d1d5db', borderRadius: '50px', marginBottom: '15px', boxShadow: 'inset 2px 2px 5px rgba(0,0,0,0.1)' },
-  warningSection: { height: '250px', minHeight: '250px', backgroundColor: '#4b5563', padding: '30px', display: 'flex', flexDirection: 'column', flexShrink: 0 },
+  warningSection: { backgroundColor: '#f9fafb', padding: '16px 20px', display: 'flex', flexDirection: 'column', flexShrink: 0, overflow: 'hidden' },
   logContainer: { overflowY: 'auto', flex: 1, paddingRight: '5px' },
   logRow: { display: 'flex', justifyContent: 'space-between', marginBottom: '12px', fontSize: '0.95rem' },
   mainArea: { flex: 1, height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' },
@@ -1568,15 +2805,15 @@ const styles = {
   backButton: { padding: '8px 16px', backgroundColor: 'white', border: '1px solid #d1d5db', borderRadius: '5px', cursor: 'pointer', color: '#4b5563', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '6px' },
   iconButton: { padding: '8px 12px', backgroundColor: 'white', border: '1px solid #d1d5db', borderRadius: '5px', cursor: 'pointer', color: '#4b5563', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.2s ease' },
   iconButtonSaved: { backgroundColor: '#ecfdf5', borderColor: '#a7f3d0', color: '#059669' },
-  runButton: { padding: '8px 20px', backgroundColor: '#10b981', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '6px' },
-  stopButton: { padding: '8px 20px', backgroundColor: '#dc2626', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '6px' },
+  runButton: { padding: '8px 20px', backgroundColor: '#34d399', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '6px' },
+  stopButton: { padding: '8px 20px', backgroundColor: '#f87171', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '6px' },
   strictBadge: { display: 'inline-flex', alignItems: 'center', padding: '6px 11px', backgroundColor: '#fffbeb', border: '1px solid #fde68a', borderRadius: '5px', color: '#b45309', fontSize: '0.78rem', fontWeight: 'bold', userSelect: 'none' },
   toolGroupRight: { display: 'flex', gap: '15px', alignItems: 'center' },
-  submitButton: { padding: '8px 20px', backgroundColor: '#06b6d4', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold', display: 'flex', alignItems: 'center' },
+  submitButton: { padding: '8px 20px', backgroundColor: '#22d3ee', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold', display: 'flex', alignItems: 'center' },
   unsubmitBtn: { padding: '8px 20px', backgroundColor: 'white', color: '#475569', border: '1px solid #d1d5db', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold', fontSize: '0.9rem', display: 'flex', alignItems: 'center', transition: 'all 0.15s ease' },
   recordingDot: { width: '12px', height: '12px', backgroundColor: '#dc2626', borderRadius: '50%', boxShadow: '0 0 8px rgba(220, 38, 38, 0.8)' },
   gearIcon: { backgroundColor: 'transparent', border: 'none', cursor: 'pointer', color: '#6b7280', display: 'flex', alignItems: 'center' },
-  editorWrapper: { flex: 1, minHeight: 0, backgroundColor: '#1e1e1e', position: 'relative' },
+  editorWrapper: { flex: 1, minHeight: 0, backgroundColor: '#1e1e1e', position: 'relative', display: 'flex', flexDirection: 'column' },
   resizeHandle: {
     height: '6px',
     backgroundColor: '#e5e7eb',
@@ -1616,6 +2853,31 @@ const styles = {
     alignItems: 'center',
     justifyContent: 'space-between',
     flexShrink: 0,
+  },
+  tabHeaderBtn: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '6px',
+    padding: '0 14px',
+    height: '36px',
+    border: 'none',
+    cursor: 'pointer',
+    fontSize: '0.82rem',
+    letterSpacing: '0.04em',
+    transition: 'all 0.15s ease',
+    userSelect: 'none'
+  },
+  testButton: {
+    padding: '8px 16px',
+    border: '1px solid #10b981',
+    color: '#059669',
+    borderRadius: '5px',
+    cursor: 'pointer',
+    fontWeight: 'bold',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '6px',
+    transition: 'all 0.15s ease'
   },
   terminalActionBtn: {
     display: 'inline-flex',

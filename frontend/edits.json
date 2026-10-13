@@ -1,0 +1,87 @@
+[
+  {
+    "name": "replace_file_content",
+    "args": {
+      "AllowMultiple": false,
+      "Description": "Update StudentDashboard page transition animation to side to side",
+      "EndLine": 458,
+      "Instruction": "Update StudentDashboard animation",
+      "ReplacementContent": "            <motion.div\n              key=\"classrooms\"\n              initial={{ opacity: 0, x: 30 }}\n              animate={{ opacity: 1, x: 0 }}\n              exit={{ opacity: 0, x: -30 }}\n              transition={{ duration: 0.3 }}\n            >",
+      "StartLine": 450,
+      "TargetContent": "            <motion.div\n              key=\"classrooms\"\n              initial={{ opacity: 0 }}\n              animate={{ opacity: 1 }}\n              exit={{ opacity: 0 }}\n              transition={{ duration: 0.3 }}\n            >",
+      "TargetFile": "c:/Users/vicfa/The-Verity/frontend/src/pages/StudentDashboard.jsx",
+      "toolAction": "Editing file",
+      "toolSummary": "File edit"
+    }
+  },
+  {
+    "name": "multi_replace_file_content",
+    "args": {
+      "Description": "Update transition animations in StudentDashboard to spring for a less stiff feel",
+      "Instruction": "Use spring transition for all activeView transitions",
+      "ReplacementChunks": [
+        {
+          "AllowMultiple": false,
+          "EndLine": 456,
+          "ReplacementContent": "              transition={{ type: 'spring', stiffness: 260, damping: 20 }}",
+          "StartLine": 455,
+          "TargetContent": "              transition={{ duration: 0.3 }}"
+        },
+        {
+          "AllowMultiple": false,
+          "EndLine": 635,
+          "ReplacementContent": "            <motion.div key=\"settings\" initial={{ opacity: 0, x: 30 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -30 }} transition={{ type: 'spring', stiffness: 260, damping: 20 }}>",
+          "StartLine": 635,
+          "TargetContent": "            <motion.div key=\"settings\" initial={{ opacity: 0, x: 30 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -30 }} transition={{ duration: 0.3 }}>"
+        },
+        {
+          "AllowMultiple": false,
+          "EndLine": 640,
+          "ReplacementContent": "            <motion.div key=\"calendar\" initial={{ opacity: 0, x: 30 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -30 }} transition={{ type: 'spring', stiffness: 260, damping: 20 }}>",
+          "StartLine": 640,
+          "TargetContent": "            <motion.div key=\"calendar\" initial={{ opacity: 0, x: 30 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -30 }} transition={{ duration: 0.3 }}>"
+        },
+        {
+          "AllowMultiple": false,
+          "EndLine": 645,
+          "ReplacementContent": "            <motion.div key=\"archived\" initial={{ opacity: 0, x: 30 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -30 }} transition={{ type: 'spring', stiffness: 260, damping: 20 }}>",
+          "StartLine": 645,
+          "TargetContent": "            <motion.div key=\"archived\" initial={{ opacity: 0, x: 30 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -30 }} transition={{ duration: 0.3 }}>"
+        }
+      ],
+      "TargetFile": "c:/Users/vicfa/The-Verity/frontend/src/pages/StudentDashboard.jsx",
+      "toolAction": "Editing file",
+      "toolSummary": "File edit"
+    }
+  },
+  {
+    "name": "replace_file_content",
+    "args": {
+      "AllowMultiple": false,
+      "Description": "Update transition animation in StudentDashboard to a spring-based side-to-side slide",
+      "EndLine": 635,
+      "Instruction": "Use spring transition side to side",
+      "ReplacementContent": "                initial={{ opacity: 0, x: 20 }}\n                animate={{ opacity: 1, x: 0 }}\n                exit={{ opacity: 0, x: -20 }}\n                transition={{ type: 'spring', stiffness: 260, damping: 20 }}",
+      "StartLine": 632,
+      "TargetContent": "                initial={{ opacity: 0 }}\n                animate={{ opacity: 1 }}\n                exit={{ opacity: 0 }}\n                transition={{ duration: 0.2, ease: \"easeOut\" }}",
+      "TargetFile": "c:/Users/vicfa/The-Verity/frontend/src/pages/StudentDashboard.jsx",
+      "toolAction": "Editing file",
+      "toolSummary": "File edit"
+    }
+  },
+  {
+    "name": "replace_file_content",
+    "args": {
+      "AllowMultiple": false,
+      "Description": "Soften the spring transition in StudentDashboard to make it less stiff",
+      "EndLine": 635,
+      "Instruction": "Lower stiffness and damping",
+      "ReplacementContent": "                initial={{ opacity: 0, x: 20 }}\n                animate={{ opacity: 1, x: 0 }}\n                exit={{ opacity: 0, x: -20 }}\n                transition={{ type: 'spring', stiffness: 120, damping: 14 }}",
+      "StartLine": 632,
+      "TargetContent": "                initial={{ opacity: 0, x: 20 }}\n                animate={{ opacity: 1, x: 0 }}\n                exit={{ opacity: 0, x: -20 }}\n                transition={{ type: 'spring', stiffness: 260, damping: 20 }}",
+      "TargetFile": "c:/Users/vicfa/The-Verity/frontend/src/pages/StudentDashboard.jsx",
+      "toolAction": "Editing file",
+      "toolSummary": "File edit"
+    }
+  }
+]

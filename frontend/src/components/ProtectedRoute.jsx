@@ -12,7 +12,7 @@ export default function ProtectedRoute({ children, currentUser, setCurrentScreen
   }
 
   return (
-    <div style={{ height: '100%', minHeight: '100vh', display: 'flex', flexDirection: 'column', background: 'inherit' }}>
+    <div style={{ flex: 1, minHeight: '100vh', display: 'flex', flexDirection: 'column', background: 'inherit' }}>
       {children}
     </div>
   );

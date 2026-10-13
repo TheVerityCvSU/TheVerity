@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { io } from 'socket.io-client';
+import { motion, AnimatePresence } from 'framer-motion';
 
 // IMPORT ALL PAGES
 import Login from './pages/Login';
@@ -528,8 +529,17 @@ export default function App() {
 // ==========================
 
   return (
-    <div style={{ height: '100%', width: '100%' }}>
-      {/* --- AUTH ROUTES --- */}
+    <div style={{ minHeight: '100vh', width: '100%', display: 'flex', flexDirection: 'column' }}>
+      <AnimatePresence mode="wait">
+        <motion.div
+          key={currentUser ? 'logged-in' : 'logged-out'}
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.4 }}
+          style={{ flex: 1, display: 'flex', flexDirection: 'column', width: '100%' }}
+        >
+          {/* --- AUTH ROUTES --- */}
           {currentScreen === 'admin_login' && (
             <AdminLogin
               onLogin={(user, token) => {
@@ -573,231 +583,251 @@ export default function App() {
             />
           )}
 
-      {currentScreen === 'register' && (
-        <Register onBackToLogin={() => setCurrentScreen('login')} />
-      )}
+          {currentScreen === 'register' && (
+            <Register onBackToLogin={() => setCurrentScreen('login')} />
+          )}
 
-      {/* --- STUDENT ROUTES (Protected) --- */}
-      {currentScreen === 'student_dashboard' && (
-        <ProtectedRoute currentUser={currentUser} setCurrentScreen={setCurrentScreen}>
-          <StudentDashboard
-            socket={socket}
-            currentUser={currentUser}
-            onLogout={handleLogout}
-            onEnterClassroom={(classroom) => {
-              setActiveClassroom(classroom);
-              setCurrentScreen('classroom_view');
-            }}
-          />
-        </ProtectedRoute>
-      )}
+          {/* --- STUDENT ROUTES (Protected) --- */}
+          {currentScreen === 'student_dashboard' && (
+            <ProtectedRoute currentUser={currentUser} setCurrentScreen={setCurrentScreen}>
+              <StudentDashboard
+                socket={socket}
+                currentUser={currentUser}
+                onLogout={handleLogout}
+                onEnterClassroom={(classroom) => {
+                  setActiveClassroom(classroom);
+                  setCurrentScreen('classroom_view');
+                }}
+                onOpenAssignment={(classroom, task) => {
+                  setActiveClassroom(classroom);
+                  setActiveAssignment(task);
+                  setCurrentScreen('student_activity_detail');
+                }}
+                onOpenSandbox={() => setCurrentScreen('sandbox_workspace')}
+              />
+            </ProtectedRoute>
+          )}
 
-      {currentScreen === 'classroom_view' && (
-        <ProtectedRoute currentUser={currentUser} setCurrentScreen={setCurrentScreen}>
-          <ClassroomView
-            onEnterClassroom={(classroom) => {
-              setActiveClassroom(classroom);
-              setCurrentScreen('classroom_view');
-            }}
-            socket={socket}
-            currentUser={currentUser}
-            classroom={activeClassroom}
-            onLogout={handleLogout}
-            onBack={() => setCurrentScreen('student_dashboard')}
-            onNavigateView={(view) => {
-              localStorage.setItem('verity_student_view', view);
-              setCurrentScreen('student_dashboard');
-            }}
-            onOpenAssignment={(task) => {
-              setActiveAssignment(task);
-              setCurrentScreen('student_activity_detail');
-            }}
-            onStartAssignment={(task) => {
-              setActiveAssignment(task);
-              setWorkspaceReturnScreen('classroom_view');
-              setCurrentScreen('student_workspace');
-            }}
-          />
-        </ProtectedRoute>
-      )}
+          {currentScreen === 'classroom_view' && (
+            <ProtectedRoute currentUser={currentUser} setCurrentScreen={setCurrentScreen}>
+              <ClassroomView
+                onEnterClassroom={(classroom) => {
+                  setActiveClassroom(classroom);
+                  setCurrentScreen('classroom_view');
+                }}
+                socket={socket}
+                currentUser={currentUser}
+                classroom={activeClassroom}
+                onLogout={handleLogout}
+                onBack={() => setCurrentScreen('student_dashboard')}
+                onNavigateView={(view) => {
+                  localStorage.setItem('verity_student_view', view);
+                  setCurrentScreen('student_dashboard');
+                }}
+                onOpenAssignment={(task) => {
+                  setActiveAssignment(task);
+                  setCurrentScreen('student_activity_detail');
+                }}
+                onStartAssignment={(task) => {
+                  setActiveAssignment(task);
+                  setWorkspaceReturnScreen('classroom_view');
+                  setCurrentScreen('student_workspace');
+                }}
+              />
+            </ProtectedRoute>
+          )}
 
-      {currentScreen === 'student_activity_detail' && (
-        <ProtectedRoute currentUser={currentUser} setCurrentScreen={setCurrentScreen}>
-          <StudentActivityDetail
-            socket={socket}
-            currentUser={currentUser}
-            classroom={activeClassroom}
-            assignment={activeAssignment}
-            onBack={() => setCurrentScreen('classroom_view')}
-            onNavigateView={(view) => {
-              localStorage.setItem('verity_student_view', view);
-              setCurrentScreen('student_dashboard');
-            }}
-            onStartCoding={() => {
-              setWorkspaceReturnScreen('student_activity_detail');
-              setCurrentScreen('student_workspace');
-            }}
-            onEnterClassroom={(classroom) => {
-              setActiveClassroom(classroom);
-              setCurrentScreen('classroom_view');
-            }}
-            onLogout={handleLogout}
-          />
-        </ProtectedRoute>
-      )}
+          {currentScreen === 'student_activity_detail' && (
+            <ProtectedRoute currentUser={currentUser} setCurrentScreen={setCurrentScreen}>
+              <StudentActivityDetail
+                socket={socket}
+                currentUser={currentUser}
+                classroom={activeClassroom}
+                assignment={activeAssignment}
+                onBack={() => setCurrentScreen('classroom_view')}
+                onNavigateView={(view) => {
+                  localStorage.setItem('verity_student_view', view);
+                  setCurrentScreen('student_dashboard');
+                }}
+                onStartCoding={() => {
+                  setWorkspaceReturnScreen('student_activity_detail');
+                  setCurrentScreen('student_workspace');
+                }}
+                onEnterClassroom={(classroom) => {
+                  setActiveClassroom(classroom);
+                  setCurrentScreen('classroom_view');
+                }}
+                onLogout={handleLogout}
+              />
+            </ProtectedRoute>
+          )}
 
-      {currentScreen === 'student_workspace' && (
-        <ProtectedRoute currentUser={currentUser} setCurrentScreen={setCurrentScreen}>
-          <StudentView
-            socket={socket}
-            currentUser={currentUser}
-            username={currentUser?.name}
-            assignment={activeAssignment}
-            classroom={activeClassroom}
-            onBack={() => setCurrentScreen(workspaceReturnScreen || 'classroom_view')}
-          />
-        </ProtectedRoute>
-      )}
+          {currentScreen === 'student_workspace' && (
+            <ProtectedRoute currentUser={currentUser} setCurrentScreen={setCurrentScreen}>
+              <StudentView
+                socket={socket}
+                currentUser={currentUser}
+                username={currentUser?.name}
+                assignment={activeAssignment}
+                classroom={activeClassroom}
+                onBack={() => setCurrentScreen(workspaceReturnScreen || 'classroom_view')}
+              />
+            </ProtectedRoute>
+          )}
 
-      {/* --- ADMIN ROUTES (Protected) --- */}
-      {currentScreen === 'admin_dashboard' && (
-        <ProtectedRoute currentUser={currentUser} setCurrentScreen={setCurrentScreen}>
-          <AdminDashboard currentUser={currentUser} onLogout={handleLogout} socket={socket} />
-        </ProtectedRoute>
-      )}
+          {currentScreen === 'sandbox_workspace' && (
+            <ProtectedRoute currentUser={currentUser} setCurrentScreen={setCurrentScreen}>
+              <StudentView
+                socket={socket}
+                currentUser={currentUser}
+                username={currentUser?.name}
+                isSandbox={true}
+                onBack={() => setCurrentScreen('student_dashboard')}
+              />
+            </ProtectedRoute>
+          )}
 
-      {/* --- TEACHER ROUTES (Protected) --- */}
-      {currentScreen === 'teacher_dashboard' && (
-        <ProtectedRoute currentUser={currentUser} setCurrentScreen={setCurrentScreen}>
-          <TeacherDashboard
-            currentUser={currentUser}
-            onLogout={handleLogout}
-            onEnterClassroom={(classroom) => {
-              setActiveClassroom(classroom);
-              setCurrentScreen('teacher_classwork');
-            }}
-          />
-        </ProtectedRoute>
-      )}
+          {/* --- ADMIN ROUTES (Protected) --- */}
+          {currentScreen === 'admin_dashboard' && (
+            <ProtectedRoute currentUser={currentUser} setCurrentScreen={setCurrentScreen}>
+              <AdminDashboard currentUser={currentUser} onLogout={handleLogout} socket={socket} />
+            </ProtectedRoute>
+          )}
 
-      {currentScreen === 'teacher_classwork' && (
-        <ProtectedRoute currentUser={currentUser} setCurrentScreen={setCurrentScreen}>
-          <TeacherClasswork
-            onEnterClassroom={(classroom) => {
-              setActiveClassroom(classroom);
-              setCurrentScreen('teacher_classwork');
-            }}
-            socket={socket}
-            classroom={activeClassroom}
-            onLogout={handleLogout}
-            onBack={() => setCurrentScreen('teacher_dashboard')}
-            onNavigateView={(view) => {
-              localStorage.setItem('verity_teacher_view', view);
-              setCurrentScreen('teacher_dashboard');
-            }}
-            onStartMonitoring={(assignment) => {
-              setActiveAssignment(assignment);
-              setSelectedStudentForPlayback(null);
-              setProctoringReturnScreen('teacher_classwork');
-              setCurrentScreen('teacher_proctoring');
-            }}
-            onOpenGrading={(assignment) => {
-              setActiveAssignment(assignment);
-              setCurrentScreen('teacher_grading');
-            }}
-            currentUser={currentUser}
-            onOpenPlayback={(assignment, student) => {
-              setActiveAssignment(assignment);
-              setSelectedStudentForPlayback(student);
-              setProctoringReturnScreen('teacher_classwork');
-              setCurrentScreen('teacher_proctoring');
-            }}
-          />
-        </ProtectedRoute>
-      )}
+          {/* --- TEACHER ROUTES (Protected) --- */}
+          {currentScreen === 'teacher_dashboard' && (
+            <ProtectedRoute currentUser={currentUser} setCurrentScreen={setCurrentScreen}>
+              <TeacherDashboard
+                currentUser={currentUser}
+                onLogout={handleLogout}
+                onEnterClassroom={(classroom) => {
+                  setActiveClassroom(classroom);
+                  setCurrentScreen('teacher_classwork');
+                }}
+              />
+            </ProtectedRoute>
+          )}
 
-      {currentScreen === 'teacher_grading' && (
-        <ProtectedRoute currentUser={currentUser} setCurrentScreen={setCurrentScreen}>
-          <TeacherGrading
-            socket={socket}
-            classroom={activeClassroom}
-            assignment={activeAssignment}
-            onLogout={handleLogout}
-            onBack={() => setCurrentScreen('teacher_classwork')}
-            onEnterClassroom={(classroom) => {
-              setActiveClassroom(classroom);
-              setCurrentScreen('teacher_classwork');
-            }}
-            onNavigateView={(view) => {
-              localStorage.setItem('verity_teacher_view', view);
-              setCurrentScreen('teacher_dashboard');
-            }}
-            onOpenPlayback={(assignment, student) => {
-              setActiveAssignment(assignment);
-              setSelectedStudentForPlayback(student);
-              setProctoringReturnScreen('teacher_grading');
-              setCurrentScreen('teacher_proctoring');
-            }}
-            onStartMonitoring={(assignment, student) => {
-              setActiveAssignment(assignment);
-              setSelectedStudentForPlayback(student || null);
-              setProctoringReturnScreen('teacher_grading');
-              setCurrentScreen('teacher_proctoring');
-            }}
-            currentUser={currentUser}
-          />
-        </ProtectedRoute>
-      )}
+          {currentScreen === 'teacher_classwork' && (
+            <ProtectedRoute currentUser={currentUser} setCurrentScreen={setCurrentScreen}>
+              <TeacherClasswork
+                onEnterClassroom={(classroom) => {
+                  setActiveClassroom(classroom);
+                  setCurrentScreen('teacher_classwork');
+                }}
+                socket={socket}
+                classroom={activeClassroom}
+                onLogout={handleLogout}
+                onBack={() => setCurrentScreen('teacher_dashboard')}
+                onNavigateView={(view) => {
+                  localStorage.setItem('verity_teacher_view', view);
+                  setCurrentScreen('teacher_dashboard');
+                }}
+                onStartMonitoring={(assignment) => {
+                  setActiveAssignment(assignment);
+                  setSelectedStudentForPlayback(null);
+                  setProctoringReturnScreen('teacher_classwork');
+                  setCurrentScreen('teacher_proctoring');
+                }}
+                onOpenGrading={(assignment) => {
+                  setActiveAssignment(assignment);
+                  setCurrentScreen('teacher_grading');
+                }}
+                currentUser={currentUser}
+                onOpenPlayback={(assignment, student) => {
+                  setActiveAssignment(assignment);
+                  setSelectedStudentForPlayback(student);
+                  setProctoringReturnScreen('teacher_classwork');
+                  setCurrentScreen('teacher_proctoring');
+                }}
+              />
+            </ProtectedRoute>
+          )}
 
-      {currentScreen === 'teacher_proctoring' && (
-        <ProtectedRoute currentUser={currentUser} setCurrentScreen={setCurrentScreen}>
-          <TeacherView
-            socket={socket}
-            assignment={activeAssignment}
-            classroom={activeClassroom}
-            initialStudent={selectedStudentForPlayback}
-            mode={proctoringReturnScreen === 'teacher_grading' ? 'playback' : 'live'}
-            onBack={() => setCurrentScreen(proctoringReturnScreen || 'teacher_grading')}
-            onLogout={() => setCurrentScreen(proctoringReturnScreen || 'teacher_classwork')}
-          />
-        </ProtectedRoute>
-      )}
+          {currentScreen === 'teacher_grading' && (
+            <ProtectedRoute currentUser={currentUser} setCurrentScreen={setCurrentScreen}>
+              <TeacherGrading
+                socket={socket}
+                classroom={activeClassroom}
+                assignment={activeAssignment}
+                onLogout={handleLogout}
+                onBack={() => setCurrentScreen('teacher_classwork')}
+                onEnterClassroom={(classroom) => {
+                  setActiveClassroom(classroom);
+                  setCurrentScreen('teacher_classwork');
+                }}
+                onNavigateView={(view) => {
+                  localStorage.setItem('verity_teacher_view', view);
+                  setCurrentScreen('teacher_dashboard');
+                }}
+                onOpenPlayback={(assignment, student) => {
+                  setActiveAssignment(assignment);
+                  setSelectedStudentForPlayback(student);
+                  setProctoringReturnScreen('teacher_grading');
+                  setCurrentScreen('teacher_proctoring');
+                }}
+                onStartMonitoring={(assignment, student) => {
+                  setActiveAssignment(assignment);
+                  setSelectedStudentForPlayback(student || null);
+                  setProctoringReturnScreen('teacher_grading');
+                  setCurrentScreen('teacher_proctoring');
+                }}
+                currentUser={currentUser}
+              />
+            </ProtectedRoute>
+          )}
 
-      {/* Fallback for unknown screens */}
-      {currentUser && !['student_dashboard', 'classroom_view', 'student_activity_detail', 'student_workspace', 'admin_dashboard', 'teacher_dashboard', 'teacher_classwork', 'teacher_grading', 'teacher_proctoring'].includes(currentScreen) && (
-        <NotFound />
-      )}
+          {currentScreen === 'teacher_proctoring' && (
+            <ProtectedRoute currentUser={currentUser} setCurrentScreen={setCurrentScreen}>
+              <TeacherView
+                socket={socket}
+                assignment={activeAssignment}
+                classroom={activeClassroom}
+                initialStudent={selectedStudentForPlayback}
+                mode={proctoringReturnScreen === 'teacher_grading' ? 'playback' : 'live'}
+                onBack={() => setCurrentScreen(proctoringReturnScreen || 'teacher_grading')}
+                onLogout={() => setCurrentScreen(proctoringReturnScreen || 'teacher_classwork')}
+              />
+            </ProtectedRoute>
+          )}
 
-      {/* Final fallback - if nothing matches, show login screen to prevent white screen */}
-      {!currentUser && !['login', 'register', 'admin_login'].includes(currentScreen) && (
-        (typeof window !== 'undefined' && (window.location.pathname.startsWith('/admin') || Boolean(window.IS_ADMIN_APP))) ? (
-          <AdminLogin
-            onLogin={(user, token) => {
-              setCurrentUser(user);
-              notifyUserListeners(user);
-              if (token) localStorage.setItem('verity_token', token);
-              setCurrentScreen('admin_dashboard');
-            }}
-          />
-        ) : (
-          <Login
-            onLogin={(user, token) => {
-              setCurrentUser(user);
-              if (token) localStorage.setItem('verity_token', token);
-              if (user.role === 'Admin') {
-                setCurrentScreen('admin_login');
-                return;
-              } else if (user.role === 'Teacher') {
-                setCurrentScreen('teacher_dashboard');
-              } else {
-                lockDown(); // students only
-                setCurrentScreen('student_dashboard');
-              }
-            }}
-            onGoToRegister={() => setCurrentScreen('register')}
-          />
-        )
-      )}
+          {/* Fallback for unknown screens */}
+          {currentUser && !['student_dashboard', 'classroom_view', 'student_activity_detail', 'student_workspace', 'sandbox_workspace', 'admin_dashboard', 'teacher_dashboard', 'teacher_classwork', 'teacher_grading', 'teacher_proctoring'].includes(currentScreen) && (
+            <NotFound />
+          )}
+
+          {/* Final fallback - if nothing matches, show login screen to prevent white screen */}
+          {!currentUser && !['login', 'register', 'admin_login'].includes(currentScreen) && (
+            (typeof window !== 'undefined' && (window.location.pathname.startsWith('/admin') || Boolean(window.IS_ADMIN_APP))) ? (
+              <AdminLogin
+                onLogin={(user, token) => {
+                  setCurrentUser(user);
+                  notifyUserListeners(user);
+                  if (token) localStorage.setItem('verity_token', token);
+                  setCurrentScreen('admin_dashboard');
+                }}
+              />
+            ) : (
+              <Login
+                onLogin={(user, token) => {
+                  setCurrentUser(user);
+                  if (token) localStorage.setItem('verity_token', token);
+                  if (user.role === 'Admin') {
+                    setCurrentScreen('admin_login');
+                    return;
+                  } else if (user.role === 'Teacher') {
+                    setCurrentScreen('teacher_dashboard');
+                  } else {
+                    lockDown(); // students only
+                    setCurrentScreen('student_dashboard');
+                  }
+                }}
+                onGoToRegister={() => setCurrentScreen('register')}
+              />
+            )
+          )}
+        </motion.div>
+      </AnimatePresence>
 
       {/* --- OFFLINE LOCAL FALLBACK BANNER --- */}
       {connStatus?.activeMode === 'local' && Boolean(getCloudUrl()) && (

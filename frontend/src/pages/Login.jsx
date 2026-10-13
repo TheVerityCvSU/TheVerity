@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useGoogleLogin } from '@react-oauth/google';
 import { Moon, Sun, Loader2, Construction, AlertTriangle, Eye, EyeOff } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { apiFetch } from '../utils/api';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { io } from 'socket.io-client';
@@ -262,13 +263,23 @@ export default function Login({ onLogin, onGoToRegister }) {
       }}
     >
       {/* Top Left Logo */}
-      <div style={styles.logoContainer}>
+      <motion.div
+        initial={{ opacity: 0, x: -20 }}
+        animate={{ opacity: 1, x: 0 }}
+        transition={{ duration: 0.5, ease: 'easeOut' }}
+        style={styles.logoContainer}
+      >
         <span style={styles.logoV}>V</span>
         <span style={{ ...styles.logoText, color: isDark ? '#f4f4f5' : 'white' }}>erity</span>
-      </div>
+      </motion.div>
 
       {/* Top Right Dark Mode Switch */}
-      <button
+      <motion.button
+        initial={{ opacity: 0, x: 20 }}
+        animate={{ opacity: 1, x: 0 }}
+        transition={{ duration: 0.5, ease: 'easeOut' }}
+        whileHover={{ scale: 1.08 }}
+        whileTap={{ scale: 0.92 }}
         onClick={toggle}
         type="button"
         style={{
@@ -288,14 +299,27 @@ export default function Login({ onLogin, onGoToRegister }) {
           cursor: 'pointer',
           transition: 'all 0.2s ease',
         }}
-        className="btn-anim"
         title="Toggle dark/light mode"
       >
-        {isDark ? <Sun size={19} color="#f59e0b" /> : <Moon size={19} color="#6366f1" />}
-      </button>
+        <AnimatePresence mode="wait" initial={false}>
+          <motion.span
+            key={isDark ? 'sun' : 'moon'}
+            initial={{ rotate: -90, opacity: 0 }}
+            animate={{ rotate: 0, opacity: 1 }}
+            exit={{ rotate: 90, opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            style={{ display: 'flex' }}
+          >
+            {isDark ? <Sun size={19} color="#f59e0b" /> : <Moon size={19} color="#6366f1" />}
+          </motion.span>
+        </AnimatePresence>
+      </motion.button>
 
       {/* Login Card */}
-      <div
+      <motion.div
+        initial={{ opacity: 0, y: 28, scale: 0.97 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        transition={{ duration: 0.45, ease: [0.16, 1, 0.3, 1] }}
         style={{
           ...styles.card,
           backgroundColor: isDark ? '#262626' : 'white',
@@ -303,9 +327,24 @@ export default function Login({ onLogin, onGoToRegister }) {
           boxShadow: isDark ? '0 12px 36px rgba(0,0,0,0.5)' : '0 10px 30px rgba(0,0,0,0.15)',
         }}
       >
-        {error && <div style={styles.error}>{error}</div>}
+        <AnimatePresence>
+          {error && (
+            <motion.div
+              initial={{ opacity: 0, y: -8, height: 0 }}
+              animate={{ opacity: 1, y: 0, height: 'auto' }}
+              exit={{ opacity: 0, y: -8, height: 0 }}
+              transition={{ duration: 0.25 }}
+              style={styles.error}
+            >
+              {error}
+            </motion.div>
+          )}
+        </AnimatePresence>
         <form onSubmit={handleLogin} style={styles.form}>
-          <input
+          <motion.input
+            initial={{ opacity: 0, x: -12 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ delay: 0.05, duration: 0.3, ease: 'easeOut' }}
             type="email"
             placeholder="Email"
             required
@@ -319,7 +358,12 @@ export default function Login({ onLogin, onGoToRegister }) {
             }}
           />
 
-          <div style={{ position: 'relative' }}>
+          <motion.div
+            initial={{ opacity: 0, x: -12 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ delay: 0.1, duration: 0.3, ease: 'easeOut' }}
+            style={{ position: 'relative' }}
+          >
             <input
               type={showPassword ? 'text' : 'password'}
               placeholder="Password"
@@ -334,17 +378,27 @@ export default function Login({ onLogin, onGoToRegister }) {
                 paddingRight: '40px'
               }}
             />
-            <button
+            <motion.button
               type="button"
+              whileTap={{ scale: 0.85 }}
               onClick={() => setShowPassword(!showPassword)}
               style={{ position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', padding: 0, color: isDark ? '#9ca3af' : '#64748b', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
             >
-              {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
-            </button>
-          </div>
+              <AnimatePresence mode="wait" initial={false}>
+                <motion.span key={showPassword ? 'hide' : 'show'} initial={{ opacity: 0, scale: 0.7 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.7 }} transition={{ duration: 0.15 }} style={{ display: 'flex' }}>
+                  {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                </motion.span>
+              </AnimatePresence>
+            </motion.button>
+          </motion.div>
 
-          <button 
-            type="submit" 
+          <motion.button
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.15, duration: 0.3, ease: 'easeOut' }}
+            whileHover={{ scale: isLoading ? 1 : 1.02, boxShadow: isLoading ? undefined : '0 6px 20px rgba(16, 185, 129, 0.4)' }}
+            whileTap={{ scale: isLoading ? 1 : 0.97 }}
+            type="submit"
             style={{
               ...styles.button,
               opacity: isLoading ? 0.7 : 1,
@@ -358,7 +412,7 @@ export default function Login({ onLogin, onGoToRegister }) {
                 Authenticating...
               </span>
             ) : 'Login'}
-          </button>
+          </motion.button>
 
           <div style={{ display: 'flex', alignItems: 'center', margin: '10px 0' }}>
             <div style={{ flex: 1, height: '1px', backgroundColor: isDark ? '#3f3f46' : '#e5e7eb' }}></div>
@@ -429,7 +483,7 @@ export default function Login({ onLogin, onGoToRegister }) {
             Don't have an account? <span onClick={onGoToRegister} style={styles.registerLink}>Register</span>
           </p>
         </form>
-      </div>
+      </motion.div>
     </div>
   );
 }

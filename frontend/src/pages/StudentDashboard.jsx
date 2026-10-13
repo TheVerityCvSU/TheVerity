@@ -1,16 +1,15 @@
-import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
-// IMPORTING PROFESSIONAL SVGS
-import { Home, Calendar, ClipboardList, Settings, MoreVertical, Plus, LogOut, User, X, Menu, Archive } from 'lucide-react';
+import React, { useState, useEffect, useRef, useLayoutEffect } from 'react';
+import { Home, Calendar, ClipboardList, Settings, Plus, X, Archive, TerminalSquare, Play, MoreHorizontal, Calendar as CalendarIcon, CheckCircle2, Code2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import SettingsPanel from './SettingsPanel';
 import ProfileMenu from './ProfileMenu';
 import StudentCalendar from './StudentCalendar';
 import ClassroomSettings from './ClassroomSettings';
+import CompilerView from './CompilerView';
+import VideoPreviewModal from '../components/VideoPreviewModal';
 import { apiFetch } from '../utils/api';
 import Skeleton from '../components/Skeleton';
-import ClassroomCard from '../components/ClassroomCard';
 import { useDarkMode } from '../hooks/useDarkMode';
-import { useSidebarNav } from '../hooks/useSidebarNav';
 import { useMediaQuery } from '../hooks/useMediaQuery';
 import { getThemeStorageKeys } from '../utils/classroomUtils';
 
@@ -20,89 +19,182 @@ const getStorageKey = (user) => {
   return identifier ? `verity_student_classrooms_${identifier}` : 'verity_student_classrooms_anon';
 };
 
-export default function StudentDashboard({ currentUser, onLogout, onEnterClassroom, socket }) {
+const cardThemes = [
+  { // 0: C# Programming
+    image: 'https://images.unsplash.com/photo-1498050108023-c5249f4df085?auto=format&fit=crop&w=600&q=80',
+    gradient: 'linear-gradient(to right, rgba(15, 23, 42, 1) 0%, rgba(15, 23, 42, 0.85) 30%, rgba(15, 23, 42, 0.3) 60%, transparent 100%)',
+    textColor: 'white',
+    pillBg: '#dcfce7',
+    pillText: '#065f46',
+    status: 'DUE SOON',
+    statusColor: '#cbd5e1',
+    colSpan: 7
+  },
+  { // 1: Data Structures
+    image: 'https://images.unsplash.com/photo-1451187580459-43490279c0fa?auto=format&fit=crop&w=600&q=80',
+    gradient: 'linear-gradient(to right, rgba(30, 27, 75, 1) 0%, rgba(30, 27, 75, 0.85) 30%, rgba(30, 27, 75, 0.3) 60%, transparent 100%)',
+    textColor: 'white',
+    pillBg: '#f3e8ff',
+    pillText: '#6b21a8',
+    status: 'MISS',
+    statusColor: '#e9d5ff',
+    colSpan: 5
+  },
+  { // 2: NICE
+    image: 'https://images.unsplash.com/photo-1517842645767-c639042777db?auto=format&fit=crop&w=600&q=80',
+    gradient: 'linear-gradient(to right, rgba(255, 255, 255, 1) 0%, rgba(255, 255, 255, 0.9) 30%, rgba(255, 255, 255, 0.4) 60%, transparent 100%)',
+    textColor: '#0f172a',
+    pillBg: '#e0e7ff',
+    pillText: '#4338ca',
+    status: 'DUE SOON',
+    statusColor: '#64748b',
+    colSpan: 5
+  },
+  { // 3: Verity
+    image: 'https://images.unsplash.com/photo-1522202176988-66273c2fd55f?auto=format&fit=crop&w=600&q=80',
+    gradient: 'linear-gradient(to right, rgba(15, 23, 42, 1) 0%, rgba(15, 23, 42, 0.85) 30%, rgba(15, 23, 42, 0.3) 60%, transparent 100%)',
+    textColor: 'white',
+    pillBg: '#dcfce7',
+    pillText: '#065f46',
+    status: 'DONE',
+    statusColor: '#a7f3d0',
+    colSpan: 7
+  }
+];
+
+const StudentCourseCard = ({ classroom, onClick, index, colSpan }) => {
+  const theme = cardThemes[index % cardThemes.length];
+  const imageUrl = classroom.theme?.customImageUrl || theme.image;
+  const isMobile = typeof window !== 'undefined' && window.innerWidth <= 768;
+  const finalSpan = isMobile ? 12 : (colSpan || theme.colSpan);
+
+  let bgStyle = {
+    background: `${theme.gradient}, url(${imageUrl})`,
+    backgroundSize: 'cover',
+    backgroundPosition: 'center',
+  };
+  
+  return (
+    <motion.div
+      whileHover={{ y: -4, scale: 1.01, boxShadow: '0 15px 30px rgba(0,0,0,0.15)' }}
+      whileTap={{ scale: 0.98 }}
+      transition={{ type: 'spring', stiffness: 300, damping: 22 }}
+      onClick={() => onClick(classroom)}
+      style={{
+        ...bgStyle,
+        borderRadius: '20px',
+        padding: '24px',
+        minHeight: '220px',
+        height: '240px',
+        display: 'flex',
+        flexDirection: 'column',
+        justifyContent: 'space-between',
+        cursor: 'pointer',
+        position: 'relative',
+        overflow: 'hidden',
+        boxShadow: '0 8px 20px rgba(0,0,0,0.08)',
+        color: theme.textColor,
+        gridColumn: `span ${finalSpan}`,
+        width: '100%',
+        boxSizing: 'border-box'
+      }}
+    >
+      <div style={{ position: 'relative', zIndex: 10 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
+          <span style={{ 
+            backgroundColor: theme.pillBg, 
+            color: theme.pillText,
+            padding: '4px 10px', 
+            borderRadius: '20px', 
+            fontSize: '0.75rem',
+            fontWeight: 'bold',
+          }}>
+            {classroom.code || `C${classroom.id}`}
+          </span>
+          <span style={{ fontSize: '0.85rem', color: theme.textColor, fontWeight: '500', opacity: 0.9, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            {classroom.instructor || 'Instructor'}
+          </span>
+        </div>
+        <h3 style={{ margin: 0, fontSize: '1.75rem', fontWeight: 'bold', lineHeight: 1.2, textShadow: theme.textColor === 'white' ? '0 2px 4px rgba(0,0,0,0.5)' : 'none', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+          {classroom.name}
+        </h3>
+      </div>
+      
+      <div style={{ position: 'relative', zIndex: 10 }}>
+        <p style={{ margin: 0, fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: theme.statusColor, marginBottom: '4px' }}>
+          {theme.status}
+        </p>
+        <p style={{ margin: 0, fontSize: '0.95rem', fontWeight: '600', color: theme.textColor, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          {classroom.section || 'Methods, parameters, and clean interfaces'}
+        </p>
+      </div>
+    </motion.div>
+  );
+};
+
+export default function StudentDashboard({ currentUser, onLogout, onEnterClassroom, onOpenAssignment, socket, onOpenSandbox }) {
   const { isDark } = useDarkMode();
-  const { collapsed, toggleSidebar, sidebarProps, isPinned } = useSidebarNav();
   const isMobile = useMediaQuery('(max-width: 768px)');
+  
+  const [activeView, setActiveView] = useState(() => localStorage.getItem('verity_student_view') || 'classrooms');
+  const [slideDirection, setSlideDirection] = useState(1);
+  const [settingsClassroom, setSettingsClassroom] = useState(null);
+  const [showCompilerConfirm, setShowCompilerConfirm] = useState(false);
+  const [isFadingOut, setIsFadingOut] = useState(false);
 
-  const navRefs = useRef({});
-  const [indicatorStyle, setIndicatorStyle] = useState(() => {
-    try {
-      const savedTop = sessionStorage.getItem('verity_nav_indicator_top');
-      const savedHeight = sessionStorage.getItem('verity_nav_indicator_height');
-      if (savedTop !== null && !isNaN(Number(savedTop))) {
-        return {
-          top: Number(savedTop),
-          height: savedHeight ? Number(savedHeight) : 42,
-          opacity: 1,
-          transition: true
-        };
-      }
-    } catch { /* ignore */ }
-    return { top: 0, height: 42, opacity: 0, transition: false };
-  });
-
-  const navItems = [
-    { id: 'classrooms', Icon: Home, label: 'Home' },
-    { id: 'calendar', Icon: Calendar, label: 'Calendar' },
-    { id: 'archived', Icon: Archive, label: 'Archived' },
-  ];
-
-  const getViewTitle = (view) => {
-    switch (view) {
-      case 'classrooms':
-        return 'My Classrooms';
-      case 'calendar':
-        return 'Calendar';
-      case 'archived':
-        return 'Archived Classrooms';
-      case 'settings':
-        return 'Settings';
-      case 'classroomSettings':
-        return 'Classroom Settings';
-      default:
-        return 'Classrooms';
-    }
+  const handleEnterClassroom = (classroom) => {
+    setIsFadingOut(true);
+    setTimeout(() => onEnterClassroom(classroom), 250);
   };
 
-  const [activeMenu, setActiveMenu] = useState(null);
-  const [settingsClassroom, setSettingsClassroom] = useState(null);
-  const [activeView, setActiveView] = useState(() => localStorage.getItem('verity_student_view') || 'classrooms');
+  const VIEW_ORDER = { 'classrooms': 0, 'calendar': 1, 'archived': 2, 'compiler': 3, 'settings': 4 };
+
+  const [indicatorStyle, setIndicatorStyle] = useState({ left: 0, width: 0, opacity: 0 });
+  const navRefs = useRef({});
+
+  useLayoutEffect(() => {
+    const activeRef = navRefs.current[activeView];
+    if (activeRef) {
+      setIndicatorStyle(prev => ({
+        left: activeRef.offsetLeft,
+        width: activeRef.offsetWidth,
+        opacity: 1,
+        transition: prev.opacity === 0 ? 'none' : 'all 0.3s cubic-bezier(0.25, 1, 0.5, 1)'
+      }));
+    }
+  }, [activeView]);
+
   const handleSetView = (view) => {
+    if (view === 'workspace' && onOpenSandbox) {
+      onOpenSandbox();
+      return;
+    }
+    const currentIdx = VIEW_ORDER[activeView] ?? 0;
+    const nextIdx = VIEW_ORDER[view] ?? 0;
+    // Inverted logic: clicking a right tab slides the content right (entering from left)
+    setSlideDirection(nextIdx >= currentIdx ? -1 : 1);
     setActiveView(view);
     localStorage.setItem('verity_student_view', view);
   };
 
-  useLayoutEffect(() => {
-    const update = () => {
-      const activeRef = navRefs.current[activeView];
-      if (activeRef) {
-        try {
-          sessionStorage.setItem('verity_nav_indicator_top', String(activeRef.offsetTop));
-          sessionStorage.setItem('verity_nav_indicator_height', String(activeRef.offsetHeight));
-        } catch { /* ignore */ }
+  const drillVariants = {
+    initial: (direction) => ({
+      x: direction > 0 ? 40 : -40,
+      opacity: 0
+    }),
+    animate: {
+      x: 0,
+      opacity: 1,
+      transition: { duration: 0.25, ease: 'easeOut' }
+    },
+    exit: (direction) => ({
+      x: direction < 0 ? 40 : -40,
+      opacity: 0,
+      transition: { duration: 0.15, ease: 'easeIn' }
+    })
+  };
 
-        setIndicatorStyle(prev => {
-          const distance = Math.abs(activeRef.offsetTop - prev.top);
-          const bounceOvershoot = distance > 0 ? Math.min(0.42, Math.max(0.03, 16 / distance)) : 0;
-          const bounceRatio = (1 + bounceOvershoot).toFixed(3);
-          const duration = distance > 150 ? '0.46s' : '0.38s';
-          const transitionStr = `top ${duration} cubic-bezier(0.34, ${bounceRatio}, 0.64, 1), height 0.25s ease, opacity 0.2s ease`;
-
-          if (prev.top === activeRef.offsetTop && prev.height === activeRef.offsetHeight && prev.opacity === 1 && prev.transition === transitionStr) return prev;
-          return { top: activeRef.offsetTop, height: activeRef.offsetHeight, opacity: 1, transition: transitionStr };
-        });
-      } else {
-        setIndicatorStyle(prev => prev.opacity === 0 ? prev : { ...prev, opacity: 0 });
-      }
-    };
-
-    update();
-    const timer = setTimeout(update, 20);
-    return () => clearTimeout(timer);
-  }, [activeView, collapsed]);
-
-  // Load the student's joined classrooms (strictly scoped to currentUser).
+  // Load the student's joined classrooms
   const [classrooms, setClassrooms] = useState(() => {
     try {
       const saved = localStorage.getItem(getStorageKey(currentUser));
@@ -112,19 +204,16 @@ export default function StudentDashboard({ currentUser, onLogout, onEnterClassro
     }
   });
 
-  // Show skeleton while loading if we don't have cached data yet
   const [loadingClassrooms, setLoadingClassrooms] = useState(
     () => !localStorage.getItem(getStorageKey(currentUser))
   );
 
-  // Sync to local storage whenever classrooms change
   useEffect(() => {
     try {
       localStorage.setItem(getStorageKey(currentUser), JSON.stringify(classrooms));
     } catch {}
   }, [classrooms, currentUser]);
 
-  // Fetch real enrolled classrooms from server for this student
   useEffect(() => {
     let active = true;
     const fetchEnrolledClassrooms = async () => {
@@ -146,12 +235,11 @@ export default function StudentDashboard({ currentUser, onLogout, onEnterClassro
     return () => { active = false; };
   }, [currentUser]);
 
-  // Real-time banner updates listener (socket + window event)
+  // Real-time banner updates listener
   useEffect(() => {
     const handleBannerUpdate = (e) => {
       const detail = e.detail;
       if (!detail || !detail.theme) return;
-
       setClassrooms(prev => prev.map(c => {
         const matches =
           (c.id != null && String(detail.classroomId) === String(c.id)) ||
@@ -159,14 +247,12 @@ export default function StudentDashboard({ currentUser, onLogout, onEnterClassro
           (c.section && detail.code && String(detail.code).toLowerCase() === String(c.section).toLowerCase()) ||
           (c.name && detail.name && String(detail.name).toLowerCase() === String(c.name).toLowerCase()) ||
           (detail.keys && detail.keys.includes(`verity_classroom_theme_${c.id}`));
-
         if (matches) {
           return { ...c, theme: detail.theme };
         }
         return c;
       }));
     };
-
     window.addEventListener('verity:banner-updated', handleBannerUpdate);
     if (socket) {
       socket.on('classroom_theme_changed', (data) => handleBannerUpdate({ detail: data }));
@@ -179,19 +265,129 @@ export default function StudentDashboard({ currentUser, onLogout, onEnterClassro
     };
   }, [socket]);
 
+  // Upcoming Activities for To Do list
+  const [upcomingActivities, setUpcomingActivities] = useState([]);
+  const [dashboardStats, setDashboardStats] = useState({ done: 0, dueSoon: 0, miss: 0 });
+  const [loadingActivities, setLoadingActivities] = useState(true);
 
+  useEffect(() => {
+    let active = true;
+    
+    const fetchAllActivities = async () => {
+      try {
+        const res = await apiFetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/classwork`);
+        if (res.ok && active) {
+          const data = await res.json();
+          if (data && Array.isArray(data.classwork)) {
+            const classList = Array.isArray(classrooms) ? classrooms : [];
+            const isLegacyHardcoded = (item) => (item?.id === 1 || item?.id === 2) && (item?.title?.startsWith('Activity 1:') || item?.title?.startsWith('Activity 2:'));
+            
+            const valid = data.classwork.filter(
+              item => !item.archived && !isLegacyHardcoded(item) && !!item.dueDate && classList.some(c => String(c.id) === String(item.classroom_id || item.classId))
+            );
+            // Sort by due date (closest first)
+            valid.sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate));
+            setUpcomingActivities(valid);
+
+            // Calculate stats using submissions
+            try {
+              const subRes = await apiFetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/student/submissions`);
+              if (subRes.ok && active) {
+                const subData = await subRes.json();
+                const submittedAssignmentIds = new Set((subData.submissions || []).map(s => String(s.assignment_id)));
+                let done = 0, dueSoon = 0, miss = 0;
+                const now = new Date();
+                valid.forEach(cw => {
+                  if (submittedAssignmentIds.has(String(cw.id))) {
+                    done++;
+                  } else {
+                    const due = new Date(cw.dueDate);
+                    if (due < now) {
+                      miss++;
+                    } else {
+                      dueSoon++;
+                    }
+                  }
+                });
+                setDashboardStats({ done, dueSoon, miss });
+              }
+            } catch (e) {
+              console.warn('Failed to fetch submissions for stats', e);
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('Failed to fetch classwork:', err);
+      } finally {
+        if (active) setLoadingActivities(false);
+      }
+    };
+    
+    if (classrooms.length > 0) {
+      fetchAllActivities();
+    } else {
+      setLoadingActivities(false);
+    }
+    
+    return () => { active = false; };
+  }, [classrooms]);
+
+  // Video Focus Session Logic
+  const nextUpVideoActivity = upcomingActivities.find(act => {
+    if (act.details && act.details.includes('<video')) return true;
+    if (act.instruction && act.instruction.includes('<video')) return true;
+    if (act.attachments && act.attachments.some(a => a.type === 'video')) return true;
+    return false;
+  });
+
+  const getVideoData = (act) => {
+    if (!act) return null;
+    if (act.attachments) {
+      const v = act.attachments.find(a => a.type === 'video');
+      if (v) return { src: v.url, name: v.name };
+    }
+    const match = (act.details || act.instruction || '').match(/<video[^>]*src="([^"]+)"/);
+    if (match) return { src: match[1], name: act.title };
+    return null;
+  };
+  
+  const videoData = getVideoData(nextUpVideoActivity);
+  const seenKey = videoData ? `verity_seen_video_${currentUser?.id || 'anon'}_${nextUpVideoActivity.id}` : null;
+  
+  const [videoSeen, setVideoSeen] = useState(false);
+  useEffect(() => {
+    if (seenKey) {
+      setVideoSeen(localStorage.getItem(seenKey) === 'true');
+    }
+  }, [seenKey]);
+
+  const [playVideo, setPlayVideo] = useState(false);
+  const handleStartSession = () => {
+    if (videoData) {
+      setPlayVideo(true);
+      if (!videoSeen) {
+        localStorage.setItem(seenKey, 'true');
+        setVideoSeen(true);
+      }
+    }
+  };
+
+  const handleViewActivityDetails = () => {
+    if (nextUpVideoActivity && onOpenAssignment) {
+      const classObj = classrooms.find(c => String(c.id) === String(nextUpVideoActivity.classroom_id || nextUpVideoActivity.classId));
+      if (classObj) {
+        onOpenAssignment(classObj, nextUpVideoActivity);
+      }
+    }
+  };
 
   // "Input Class Code" modal
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isHeaderHovered, setIsHeaderHovered] = useState(false);
   const [classCode, setClassCode] = useState('');
   const [joinError, setJoinError] = useState('');
   const [isJoining, setIsJoining] = useState(false);
   const [inputFocused, setInputFocused] = useState(false);
-
-  const toggleMenu = (e, id) => {
-    e.stopPropagation();
-    setActiveMenu(activeMenu === id ? null : id);
-  };
 
   const handleJoin = async (e) => {
     if (e) e.preventDefault();
@@ -201,40 +397,29 @@ export default function StudentDashboard({ currentUser, onLogout, onEnterClassro
       setJoinError('Please enter a class code.');
       return;
     }
-
-    // Already joined?
     const alreadyJoined = classrooms.some(c =>
       (c.code && c.code.toLowerCase() === code.toLowerCase()) ||
       (c.section && c.section.toLowerCase() === code.toLowerCase()) ||
       (c.name && c.name.toLowerCase() === code.toLowerCase()) ||
       String(c.id).toLowerCase() === code.toLowerCase()
     );
-
     if (alreadyJoined) {
       setJoinError('You have already joined this class.');
       return;
     }
-
     setIsJoining(true);
-
     try {
       const res = await apiFetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/classrooms/join`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          code,
-          studentName: currentUser?.name,
-          studentEmail: currentUser?.email
-        })
+        body: JSON.stringify({ code, studentName: currentUser?.name, studentEmail: currentUser?.email })
       });
-
       const data = await res.json();
       if (!res.ok) {
         setIsJoining(false);
-        setJoinError(data.message || 'No class found with that code. Please check the code and try again.');
+        setJoinError(data.message || 'No class found with that code.');
         return;
       }
-
       const joined = data.classroom;
       if (joined.theme) {
         const keys = getThemeStorageKeys(joined);
@@ -242,652 +427,570 @@ export default function StudentDashboard({ currentUser, onLogout, onEnterClassro
           try { localStorage.setItem(k, JSON.stringify(joined.theme)); } catch {}
         });
       }
-
-      // Persist in local enrollment key for instant peer detection
-      try {
-        const localEnrollKey = `verity_classroom_enrollments_${joined.id}`;
-        const existing = JSON.parse(localStorage.getItem(localEnrollKey) || '[]');
-        if (!existing.some(s => s.email === currentUser?.email || s.name === currentUser?.name)) {
-          existing.push({ name: currentUser?.name, email: currentUser?.email });
-          localStorage.setItem(localEnrollKey, JSON.stringify(existing));
-        }
-      } catch {}
-
       const updated = [joined, ...classrooms.filter(c => c.id !== joined.id)];
       setClassrooms(updated);
-      try {
-        localStorage.setItem(getStorageKey(currentUser), JSON.stringify(updated));
-      } catch { }
-
       setIsJoining(false);
       setIsModalOpen(false);
       setClassCode('');
     } catch {
       setIsJoining(false);
-      setJoinError('Could not connect to server. Please try again.');
+      setJoinError('Could not connect to server.');
     }
   };
 
-  const handleArchiveClass = (e, id) => {
-    e.stopPropagation();
-    setClassrooms(classrooms.map(c => c.id === id ? { ...c, archived: true } : c));
-    setActiveMenu(null);
-  };
+  const navItems = [
+    { id: 'classrooms', Icon: Home, label: 'Home' },
+    { id: 'calendar', Icon: Calendar, label: 'Calendar' },
+    { id: 'archived', Icon: Archive, label: 'Archived' },
+    { id: 'compiler', Icon: Code2, label: 'Compiler' },
+  ];
 
-  const handleUnarchiveClass = (e, id) => {
-    e.stopPropagation();
-    setClassrooms(classrooms.map(c => c.id === id ? { ...c, archived: false } : c));
-    setActiveMenu(null);
-  };
-
-  const handleDelete = (e, id) => {
-    e.stopPropagation();
-    setClassrooms(classrooms.filter(c => c.id !== id));
-    setActiveMenu(null);
-  };
-  const handleDeleteClass = (e, id) => {
-    e.stopPropagation();
-    if (window.confirm("Are you sure you want to delete this classroom?")) {
-      setClassrooms(classrooms.filter(c => c.id !== id));
-    }
-    setActiveMenu(null);
-  };
-  // STYLES
-  const styles = {
-    container: {
-      height: '100vh',
-      height: '100dvh', // for mobile browsers
-      minHeight: '100vh',
-      width: '100%',
-      display: 'flex',
-      flexDirection: 'column',
-      backgroundColor: isDark ? '#3C3C3C' : '#EEF0F3',
-      fontFamily: 'Arial, Helvetica, sans-serif',
-      position: 'relative',
-      overflow: 'hidden',
-      transition: 'background-color 0.25s ease'
-    },
-    header: {
-      height: isMobile ? '60px' : '72px',
-      flexShrink: 0,
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      padding: isMobile ? '0 16px' : '0 24px',
-      backgroundColor: isDark ? '#3C3C3C' : '#EEF0F3',
-      borderBottom: 'none',
-      zIndex: 50,
-      transition: 'background-color 0.25s ease'
-    },
-    badge: { 
-      fontSize: '0.7rem', 
-      backgroundColor: isDark ? '#4A4A4A' : '#EEF0F3', 
-      color: isDark ? '#E8EAED' : '#475569', 
-      padding: '3px 8px', 
-      borderRadius: '10px', 
-      marginLeft: '6px', 
-      fontStyle: 'normal', 
-      transform: 'translateY(-5px)', 
-      border: isDark ? '1px solid #5A5A5A' : '1px solid #cbd5e1' 
-    },
-    sidebar: (collapsed) => ({
-      width: collapsed ? '84px' : '240px',
-      minWidth: collapsed ? '84px' : '240px',
-      padding: '20px 14px 20px',
-      display: 'flex',
-      flexDirection: 'column',
-      flexShrink: 0,
-      transition: 'all 0.28s cubic-bezier(0.16, 1, 0.3, 1)',
-      background: 'transparent',
-      overflowY: 'auto',
-      overflowX: 'hidden'
-    }),
-    sidebarBtn: (collapsed) => ({
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'flex-start',
-      gap: '16px',
-      padding: '10px 18px',
-      width: '100%',
-      height: '42px',
-      borderRadius: '14px',
-      border: 'none',
-      backgroundColor: 'transparent',
-      cursor: 'pointer',
-      transition: 'all 0.2s ease',
-      overflow: 'hidden',
-      whiteSpace: 'nowrap',
-      position: 'relative',
-      zIndex: 1
-    }),
-    logoContainer: { fontSize: '2.5rem', fontWeight: '900', fontStyle: 'italic', textShadow: '2px 2px 4px rgba(0,0,0,0.1)' },
-    logoV: { color: '#10b981' },
-    logoText: { color: 'white' },
-    navGroup: { display: 'flex', flexDirection: 'column', gap: '15px' },
-    navItem: { position: 'relative', zIndex: 1, display: 'flex', alignItems: 'center', padding: '12px 20px', color: '#6b7280', fontWeight: '600', cursor: 'pointer', transition: 'color 0.15s', borderRadius: '10px', background: 'transparent', boxShadow: 'none', whiteSpace: 'nowrap' },
-    activeNavItem: { color: '#10b981', fontWeight: '700', backgroundColor: 'transparent', boxShadow: 'none' },
-    settingsIcon: { color: '#9ca3af', cursor: 'pointer', display: 'flex', alignItems: 'center' },
-    mainContent: { flex: 1, padding: isMobile ? '10px 16px 16px' : '20px 24px 24px', display: 'flex', flexDirection: 'column', minWidth: 0, overflow: 'hidden' },
-    whiteCard: {
-      backgroundColor: isDark ? '#323232' : 'white',
-      flex: 1,
-      borderRadius: '24px',
-      padding: 'clamp(20px, 4vw, 40px)',
-      boxShadow: isDark ? '0 10px 30px rgba(0,0,0,0.25)' : '0 10px 25px rgba(0,0,0,0.05)',
-      overflowY: 'auto',
-      border: isDark ? '1px solid #4A4A4A' : 'none',
-      color: isDark ? '#E8EAED' : 'inherit',
-      transition: 'background-color 0.25s ease, border-color 0.25s ease'
-    },
-    addButton: {
-      display: 'flex',
-      alignItems: 'center',
-      padding: '10px 24px',
-      backgroundColor: '#10b981',
-      border: 'none',
-      borderRadius: '50px',
-      color: '#ffffff',
-      fontWeight: 'bold',
-      fontSize: '0.95rem',
-      cursor: 'pointer',
-      boxShadow: isDark 
-        ? '0 0 16px rgba(16, 185, 129, 0.35), 0 2px 6px rgba(0, 0, 0, 0.35)' 
-        : '0 2px 6px rgba(16, 185, 129, 0.24), 0 1px 2px rgba(0, 0, 0, 0.05)',
-      transition: 'transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.2s cubic-bezier(0.16, 1, 0.3, 1), filter 0.2s ease'
-    },
-    grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 280px), 1fr))', gap: '24px' },
-    cardContainer: { display: 'flex', flexDirection: 'column', gap: '10px', cursor: 'pointer' },
-    cardPill: { backgroundColor: '#d1d5db', height: '30px', borderRadius: '50px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#6b7280', fontSize: '0.85rem', fontWeight: 'bold' },
-    cardBody: { backgroundColor: '#d1d5db', height: '180px', borderRadius: '20px', padding: '20px', position: 'relative', display: 'flex', flexDirection: 'column', justifyContent: 'center', textAlign: 'center', transition: 'transform 0.2s' },
-    dots: { position: 'absolute', bottom: '15px', right: '15px', width: '30px', height: '30px', backgroundColor: '#e5e7eb', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#6b7280', cursor: 'pointer' },
-    dropdownMenu: { position: 'absolute', bottom: '50px', right: '10px', backgroundColor: '#9ca3af', borderRadius: '12px', padding: '10px', display: 'flex', flexDirection: 'column', gap: '5px', boxShadow: '0 4px 10px rgba(0,0,0,0.2)', zIndex: 10 },
-    dropdownItem: { padding: '5px 15px', color: 'black', fontSize: '0.9rem', fontWeight: 'bold', cursor: 'pointer', textAlign: 'center' },
-
-    // Modal
-    modalOverlay: {
-      position: 'fixed',
-      top: 0,
-      left: 0,
-      right: 0,
-      bottom: 0,
-      backgroundColor: 'rgba(0, 0, 0, 0.7)',
-      backdropFilter: 'blur(5px)',
-      WebkitBackdropFilter: 'blur(5px)',
-      display: 'flex',
-      justifyContent: 'center',
-      alignItems: 'center',
-      zIndex: 1000,
-      padding: '20px'
-    },
-    modalCard: {
-      backgroundColor: isDark ? '#323232' : 'white',
-      padding: '36px',
-      borderRadius: '24px',
-      width: '100%',
-      maxWidth: '460px',
-      boxShadow: isDark ? '0 0 24px rgba(0,0,0,0.5), 0 12px 32px rgba(0,0,0,0.6)' : '0 25px 50px -12px rgba(0, 0, 0, 0.15), 0 1px 3px rgba(0,0,0,0.05)',
-      position: 'relative',
-      border: isDark ? '1px solid #4A4A4A' : 'none',
-      color: isDark ? '#E8EAED' : 'inherit'
-    },
-    modalHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '22px' },
-    closeModalBtn: { background: 'transparent', border: 'none', cursor: 'pointer', color: isDark ? '#a3a3a3' : '#94a3af', display: 'flex', alignItems: 'center', padding: '4px', borderRadius: '8px' },
-    form: { display: 'flex', flexDirection: 'column', gap: '16px' },
-    input: {
-      width: '100%',
-      padding: '14px 18px',
-      borderRadius: '12px',
-      border: isDark ? '1.5px solid #4A4A4A' : '1.5px solid #cbd5e1',
-      backgroundColor: isDark ? '#282828' : 'white',
-      color: isDark ? '#E8EAED' : '#0f172a',
-      fontSize: '1rem',
-      boxSizing: 'border-box'
-    },
-    joinButton: { 
-      padding: '11px 32px', 
-      backgroundColor: '#10b981', 
-      border: 'none', 
-      borderRadius: '50px', 
-      color: 'white', 
-      fontWeight: 'bold', 
-      fontSize: '0.95rem', 
-      cursor: 'pointer', 
-      boxShadow: isDark 
-        ? '0 0 16px rgba(16, 185, 129, 0.35), 0 2px 6px rgba(0, 0, 0, 0.35)' 
-        : '0 2px 6px rgba(16, 185, 129, 0.24), 0 1px 2px rgba(0, 0, 0, 0.05)',
-      transition: 'transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.2s cubic-bezier(0.16, 1, 0.3, 1), filter 0.2s ease'
-    },
-    errorText: { color: '#ef4444', backgroundColor: '#fee2e2', border: '1px solid #fca5a5', padding: '10px 15px', borderRadius: '10px', margin: 0, fontSize: '0.875rem', textAlign: 'center' }
-  };
+  const bgColor = isDark ? '#1a1a1a' : '#f8f9fa';
+  const textColor = isDark ? '#f5f5f5' : '#111827';
+  const textMuted = isDark ? '#a3a3a3' : '#6b7280';
+  const cardBg = isDark ? '#262626' : '#ffffff';
+  
+  useEffect(() => {
+    document.documentElement.style.backgroundColor = bgColor;
+    document.body.style.backgroundColor = bgColor;
+    return () => {
+      document.documentElement.style.backgroundColor = '';
+      document.body.style.backgroundColor = '';
+    };
+  }, [bgColor]);
 
   return (
-    <div style={styles.container}>
+    <motion.div 
+      initial={{ opacity: 0 }} 
+      animate={{ opacity: isFadingOut ? 0 : 1 }} 
+      transition={{ duration: 0.25, ease: 'easeInOut' }}
+      style={{
+        minHeight: '100vh',
+        backgroundColor: bgColor,
+        fontFamily: '"Inter", "Segoe UI", sans-serif',
+        display: 'flex',
+        flexDirection: 'column',
+        color: textColor,
+      }}
+    >
+      {/* Top Header Navigation */}
+      <header 
+        onMouseEnter={() => setIsHeaderHovered(true)}
+        onMouseLeave={() => setIsHeaderHovered(false)}
+        style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        padding: '16px clamp(20px, 3vw, 48px)',
+        backgroundColor: bgColor,
+        borderBottom: 'none',
+        position: 'sticky',
+        top: 0,
+        zIndex: 50,
+      }}>
+        {/* Smooth gradient transition at the bottom of the header */}
+        {activeView !== 'compiler' && (
+          <div style={{
+            position: 'absolute',
+            bottom: '-30px',
+            left: 0,
+            right: 0,
+            height: '30px',
+            background: `linear-gradient(to bottom, ${bgColor}, transparent)`,
+            pointerEvents: 'none'
+          }} />
+        )}
 
-      {/* ═══ GLOBAL TOP HEADER (Admin Pattern) ═══ */}
-      <header style={styles.header}>
-        <div style={{ display: 'flex', alignItems: 'center' }}>
-          {!isMobile && (
-            <button
-              onClick={toggleSidebar}
-              style={{
-                background: 'none',
-                border: 'none',
-                padding: '6px',
-                borderRadius: '8px',
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                color: isDark ? '#ffffff' : '#64748b',
-                flexShrink: 0,
-                marginRight: '16px'
-              }}
-              title={isPinned ? "Unpin sidebar" : "Pin sidebar"}
-              className="icon-btn-anim"
-            >
-              <Menu size={24} color={isDark ? '#ffffff' : '#64748b'} />
-            </button>
-          )}
-
-          <div
-            style={{ display: 'flex', alignItems: 'baseline', fontSize: isMobile ? '2rem' : '2.5rem', fontWeight: '900', fontStyle: 'italic', cursor: 'pointer' }}
-            onClick={() => handleSetView('classrooms')}
-          >
-            <span style={{ color: '#10b981' }}>V</span>
-            <span style={{ color: isDark ? '#E8EAED' : '#1e293b' }}>erity</span>
-            <span style={styles.badge}>Student</span>
-          </div>
+        {/* Left: Logo */}
+        <div style={{ display: 'flex', alignItems: 'baseline', cursor: 'pointer', flex: 1, justifyContent: 'flex-start' }} onClick={() => handleSetView('classrooms')}>
+          <span style={{ color: '#10b981', fontSize: '1.75rem', fontWeight: '900', fontStyle: 'italic' }}>V</span>
+          <span style={{ color: textColor, fontSize: '1.75rem', fontWeight: '900', fontStyle: 'italic' }}>erity</span>
+          <span style={{ fontSize: '0.7rem', color: textMuted, marginLeft: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Student</span>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+        {/* Center: Navigation */}
+        <div style={{ 
+          display: 'flex', 
+          alignItems: 'center', 
+          justifyContent: 'center',
+          gap: '8px',
+          opacity: isHeaderHovered ? 1 : 0,
+          pointerEvents: isHeaderHovered ? 'auto' : 'none',
+          transition: 'opacity 0.3s ease, transform 0.3s ease',
+          transform: isHeaderHovered ? 'translateY(0)' : 'translateY(-10px)',
+          position: 'relative'
+        }}>
+          <div style={{
+            position: 'absolute',
+            left: indicatorStyle.left,
+            width: indicatorStyle.width,
+            top: 0,
+            bottom: 0,
+            backgroundColor: isDark ? 'rgba(255, 255, 255, 0.07)' : 'rgba(255, 255, 255, 0.25)',
+            backdropFilter: 'blur(8px)',
+            WebkitBackdropFilter: 'blur(8px)',
+            borderRadius: '50px',
+            boxShadow: isDark ? '0 4px 16px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.08)' : '0 4px 16px rgba(16,185,129,0.15), inset 0 1px 0 rgba(255,255,255,0.5)',
+            border: isDark ? '1px solid rgba(255,255,255,0.1)' : '1px solid rgba(255,255,255,0.35)',
+            transition: indicatorStyle.transition || 'none',
+            opacity: indicatorStyle.opacity,
+            pointerEvents: 'none',
+            zIndex: 0,
+          }} />
+
+          {navItems.map(item => {
+            const active = activeView === item.id;
+            return (
+              <button
+                key={item.id}
+                ref={el => navRefs.current[item.id] = el}
+                onClick={() => handleSetView(item.id)}
+                style={{
+                  position: 'relative',
+                  zIndex: 1,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  padding: '10px 16px',
+                  borderRadius: '50px',
+                  background: 'transparent',
+                  border: '1px solid transparent',
+                  color: active ? '#10b981' : textMuted,
+                  fontWeight: active ? '700' : '600',
+                  fontSize: '0.9rem',
+                  cursor: 'pointer',
+                  transition: 'all 0.2s'
+                }}
+              >
+                <item.Icon size={18} />
+                {item.label}
+              </button>
+            );
+          })}
+
+
+          <button
+            ref={el => navRefs.current['settings'] = el}
+            onClick={() => handleSetView('settings')}
+            style={{
+              position: 'relative',
+              zIndex: 1,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: '10px',
+              borderRadius: '50px',
+              backgroundColor: 'transparent',
+              color: textMuted,
+              border: 'none',
+              cursor: 'pointer',
+              marginLeft: '8px'
+            }}
+          >
+            <Settings size={20} />
+            <span style={{ marginLeft: '8px', fontWeight: '600', fontSize: '0.9rem' }}>Settings</span>
+          </button>
+        </div>
+
+        {/* Right: Profile */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', flex: 1, gap: '16px' }}>
+          <button
+            onClick={() => { setJoinError(''); setClassCode(''); setIsModalOpen(true); }}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              padding: '10px 20px',
+              borderRadius: '50px',
+              backgroundColor: '#10b981',
+              color: 'white',
+              border: 'none',
+              fontWeight: '600',
+              fontSize: '0.9rem',
+              cursor: 'pointer',
+              boxShadow: '0 4px 12px rgba(16, 185, 129, 0.2)',
+              opacity: isHeaderHovered ? 1 : 0,
+              pointerEvents: isHeaderHovered ? 'auto' : 'none',
+              transition: 'opacity 0.3s ease, transform 0.3s ease',
+              transform: isHeaderHovered ? 'translateY(0)' : 'translateY(-10px)'
+            }}
+          >
+            <Plus size={18} /> Add course
+          </button>
           <ProfileMenu currentUser={currentUser} onLogout={onLogout} />
         </div>
       </header>
 
-      {/* ═══ MAIN LAYOUT WITH SIDEBAR ═══ */}
-      <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
-        {/* ═══ SIDEBAR NAVIGATION ═══ */}
-        {!isMobile && (
-          <aside {...sidebarProps} style={styles.sidebar(collapsed)}>
-            <nav style={{ display: 'flex', flexDirection: 'column', gap: '10px', flex: 1, position: 'relative' }}>
-            {/* Liquid sliding indicator */}
-            <div style={{
-              position: 'absolute',
-              left: 0,
-              right: 0,
-              top: indicatorStyle.top,
-              height: indicatorStyle.height,
-              background: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.25)',
-              backdropFilter: 'blur(8px)',
-              WebkitBackdropFilter: 'blur(8px)',
-              borderRadius: '14px',
-              boxShadow: isDark ? '0 4px 16px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.15)' : '0 4px 16px rgba(16,185,129,0.15), inset 0 1px 0 rgba(255,255,255,0.5)',
-              border: isDark ? '1px solid rgba(255,255,255,0.2)' : '1px solid rgba(255,255,255,0.35)',
-              transition: indicatorStyle.transition || 'none',
-              opacity: indicatorStyle.opacity,
-              pointerEvents: 'none',
-              zIndex: 0,
-            }} />
-
-            {navItems.map(({ id, Icon, label }) => {
-              const active = activeView === id;
-              return (
-                <button
-                  key={id}
-                  ref={el => navRefs.current[id] = el}
-                  onClick={() => handleSetView(id)}
-                  style={styles.sidebarBtn(collapsed)}
-                  title={collapsed ? label : ''}
-                >
-                  <Icon size={20} color={active ? '#10b981' : (isDark ? '#E8EAED' : '#475569')} style={{ flexShrink: 0 }} />
-                  {!collapsed && (
-                    <span style={{ fontSize: '0.85rem', fontWeight: active ? '700' : '600', color: active ? '#10b981' : (isDark ? '#E8EAED' : '#334155'), overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {label}
-                    </span>
-                  )}
-                </button>
-              );
-            })}
-
-            {/* Enrolled Section */}
-            {classrooms.filter(c => !c.archived).length > 0 && (
-              <div style={{ marginTop: '12px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                {!collapsed && (
-                  <div style={{
-                    padding: '0 18px',
-                    fontSize: '0.75rem',
-                    fontWeight: 'bold',
-                    color: isDark ? '#10b981' : '#9ca3af',
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.05em',
-                    marginBottom: '4px'
-                  }}>
-                    Enrolled
-                  </div>
-                )}
-                {classrooms.filter(c => !c.archived).map((cls) => {
-                  const colors = ['#3b82f6', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981'];
-                  const color = colors[cls.id % colors.length];
-
-                  return (
-                    <button
-                      key={cls.id}
-                      onClick={() => onEnterClassroom(cls)}
-                      style={styles.sidebarBtn(collapsed)}
-                      title={cls.name}
-                    >
-                      <div style={{
-                        width: '20px',
-                        height: '20px',
-                        borderRadius: '6px',
-                        backgroundColor: color,
-                        color: 'white',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        fontSize: '0.75rem',
-                        fontWeight: 'bold',
-                        flexShrink: 0
-                      }}>
-                        {cls.name.charAt(0).toUpperCase()}
-                      </div>
-                      {!collapsed && (
-                        <span style={{ fontSize: '0.85rem', fontWeight: '600', color: isDark ? '#E8EAED' : '#334155', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {cls.name}
-                        </span>
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-
-            {/* Settings at Bottom */}
-            <div style={{ marginTop: 'auto' }}>
-              <button
-                ref={el => navRefs.current['settings'] = el}
-                onClick={() => handleSetView('settings')}
-                style={styles.sidebarBtn(collapsed)}
-                title={collapsed ? 'Settings' : ''}
-              >
-                <Settings size={20} color={activeView === 'settings' ? '#10b981' : (isDark ? '#a3a3a3' : '#475569')} style={{ flexShrink: 0 }} />
-                {!collapsed && (
-                  <span style={{ fontSize: '0.85rem', fontWeight: activeView === 'settings' ? '700' : '600', color: activeView === 'settings' ? '#10b981' : (isDark ? '#E8EAED' : '#334155'), overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    Settings
-                  </span>
-                )}
-              </button>
-            </div>
-          </nav>
-        </aside>
-        )}
-
-        {/* MAIN CONTENT AREA */}
-        <div style={styles.mainContent}>
-          {/* The Main White Card */}
-          <div style={styles.whiteCard}>
-            <AnimatePresence mode="wait">
+      {/* Main Content Body */}
+      <main style={{
+        flex: 1,
+        display: 'flex',
+        flexDirection: 'column',
+        overflow: activeView === 'compiler' ? 'hidden' : 'visible',
+        padding: activeView === 'compiler' ? 0 : '32px clamp(20px, 3vw, 48px)',
+        maxWidth: '100%',
+        margin: 0,
+        width: '100%',
+        boxSizing: 'border-box',
+      }}>
+        <AnimatePresence mode="wait" custom={slideDirection}>
+          {activeView === 'classrooms' && (
+            <motion.div
+              key="classrooms"
+              custom={slideDirection}
+              variants={drillVariants}
+              initial="initial"
+              animate="animate"
+              exit="exit"
+            >
+              {/* Hero Section */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '36px', flexWrap: 'wrap', gap: '20px' }}>
               <motion.div
-                key={activeView}
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                transition={{ duration: 0.2, ease: "easeOut" }}
-                style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: '100%' }}
+                initial={{ opacity: 0, y: 18 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.45, ease: 'easeOut' }}
               >
-                {activeView === 'settings' && <SettingsPanel role="Student" />}
-
-                {activeView === 'calendar' && (
-                  <StudentCalendar classrooms={classrooms} />
-                )}
-
-                {activeView === 'classroomSettings' && settingsClassroom && (
-                  <ClassroomSettings
-                    role="student"
-                    classroom={settingsClassroom}
-                    onClose={() => { setSettingsClassroom(null); handleSetView('classrooms'); }}
-                  />
-                )}
-
-                {activeView === 'archived' && (
-                  <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-                    {classrooms.filter(c => c.archived).length === 0 ? (
-                      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#9ca3af' }}>
-                        <h3 style={{ margin: 0 }}>No Archived Classrooms</h3>
-                        <p style={{ marginTop: '10px' }}>Classrooms you archive will appear here.</p>
-                      </div>
-                    ) : (
-                      <div className="grid-classrooms">
-                        {classrooms.filter(c => c.archived).map(cls => (
-                          <ClassroomCard
-                            key={cls.id}
-                            classroom={cls}
-                            onEnter={onEnterClassroom}
-                            onUnarchive={handleUnarchiveClass}
-                            onDelete={handleDeleteClass}
-                            isArchived={true}
-                            role="Student"
-                          />
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {activeView === 'classrooms' && (
-                  <>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
-                      <motion.button
-                        whileHover={{ scale: 1.05 }}
-                        whileTap={{ scale: 0.95 }}
-                        onClick={() => { setJoinError(''); setClassCode(''); setIsModalOpen(true); }}
-                        style={styles.addButton}
-                        className="btn-anim"
-                      >
-                        <Plus size={18} style={{ marginRight: '6px' }} /> Add
-                      </motion.button>
-                    </div>
-
-                    {/* Classroom Grid */}
-                    <div className="grid-classrooms">
-                      {loadingClassrooms
-                        ? Array.from({ length: 4 }).map((_, i) => <Skeleton.Card key={i} />)
-                        : classrooms.filter(c => !c.archived).length === 0 ? (
-                          <div style={{
-                            gridColumn: '1 / -1',
-                            padding: '50px 20px',
-                            display: 'flex',
-                            flexDirection: 'column',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            textAlign: 'center',
-                            background: isDark ? 'rgba(255,255,255,0.02)' : 'rgba(0,0,0,0.01)',
-                            borderRadius: '20px',
-                            border: isDark ? '1.5px dashed #404040' : '1.5px dashed #cbd5e1'
-                          }}>
-                            <div style={{
-                              width: '56px',
-                              height: '56px',
-                              borderRadius: '16px',
-                              backgroundColor: isDark ? '#262626' : '#f1f5f9',
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              marginBottom: '14px'
-                            }}>
-                              <ClipboardList size={28} color={isDark ? '#10b981' : '#059669'} />
-                            </div>
-                            <h3 style={{ margin: '0 0 6px', fontSize: '1.15rem', fontWeight: '700', color: isDark ? '#f5f5f5' : '#1e293b' }}>
-                              No Enrolled Classrooms
-                            </h3>
-                            <p style={{ margin: '0 0 16px', maxWidth: '380px', fontSize: '0.88rem', color: isDark ? '#a3a3a3' : '#64748b' }}>
-                              You are not enrolled in any classes yet. Click <strong>+ Add</strong> above to enter a class code from your instructor.
-                            </p>
-                          </div>
-                        ) : classrooms.filter(c => !c.archived).map(cls => (
-                          <ClassroomCard
-                            key={cls.id}
-                            classroom={cls}
-                            onEnter={onEnterClassroom}
-                            onArchive={handleArchiveClass}
-                            onSettings={(c) => {
-                              setSettingsClassroom(c);
-                              handleSetView('classroomSettings');
-                            }}
-                            onDelete={handleDeleteClass}
-                            role="Student"
-                          />
-                        ))
-                      }
-                    </div>
-                  </>
-                )}
+                <p style={{ color: '#059669', fontSize: '0.8rem', fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '8px' }}>
+                  {new Date().toLocaleDateString('en-US', { weekday: 'long' }).toUpperCase()} · YOUR LEARNING DASHBOARD
+                </p>
+                <h1 style={{ fontSize: '2.5rem', fontWeight: '800', margin: '0 0 12px', color: textColor }}>
+                  Good morning, {currentUser?.name || 'Verity Student'}.
+                </h1>
               </motion.div>
-            </AnimatePresence>
-          </div>
-        </div>
-      </div>
-
-      {/* MOBILE BOTTOM NAVIGATION */}
-      {isMobile && (
-        <nav style={{
-          display: 'flex',
-          justifyContent: 'space-around',
-          alignItems: 'center',
-          backgroundColor: isDark ? '#262626' : '#ffffff',
-          borderTop: isDark ? '1px solid #3f3f46' : '1px solid #e5e7eb',
-          height: '65px',
-          flexShrink: 0,
-          paddingBottom: 'env(safe-area-inset-bottom, 0px)',
-          zIndex: 60
-        }}>
-          {[...navItems, { id: 'settings', Icon: Settings, label: 'Settings' }].map(({ id, Icon, label }) => {
-            const active = activeView === id || (id === 'settings' && activeView === 'classroomSettings');
-            return (
-              <button
-                key={id}
-                onClick={() => handleSetView(id)}
-                style={{
-                  display: 'flex',
-                  flexDirection: 'column',
-                  alignItems: 'center',
-                  background: 'none',
-                  border: 'none',
-                  color: active ? '#10b981' : (isDark ? '#a3a3a3' : '#64748b'),
-                  cursor: 'pointer',
-                  padding: '8px',
-                  minWidth: '64px'
+              
+              {/* Stats Pill */}
+              <motion.div
+                initial={{ opacity: 0, scale: 0.9, y: 10 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                transition={{ duration: 0.45, delay: 0.1, ease: [0.16, 1, 0.3, 1] }}
+                style={{ 
+                  display: 'flex', 
+                  backgroundColor: cardBg, 
+                  borderRadius: '50px', 
+                  padding: '16px 32px',
+                  gap: '32px',
+                  boxShadow: isDark ? '0 4px 15px rgba(0,0,0,0.2)' : '0 4px 15px rgba(0,0,0,0.05)',
+                  border: isDark ? '1px solid #333' : '1px solid #e5e7eb'
                 }}
               >
-                <Icon size={22} style={{ marginBottom: '4px' }} />
-                <span style={{ fontSize: '0.65rem', fontWeight: active ? '700' : '500' }}>{label}</span>
-              </button>
-            );
-          })}
-        </nav>
+                <div style={{ textAlign: 'center' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <div style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#10b981' }}></div>
+                    <span style={{ fontSize: '1.25rem', fontWeight: 'bold' }}>{dashboardStats.done}</span>
+                  </div>
+                  <div style={{ fontSize: '0.75rem', color: textMuted, marginTop: '2px' }}>Done</div>
+                </div>
+                <div style={{ textAlign: 'center' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <div style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#f59e0b' }}></div>
+                    <span style={{ fontSize: '1.25rem', fontWeight: 'bold' }}>{dashboardStats.dueSoon}</span>
+                  </div>
+                  <div style={{ fontSize: '0.75rem', color: textMuted, marginTop: '2px' }}>Due Soon</div>
+                </div>
+                <div style={{ textAlign: 'center' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <div style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#ef4444' }}></div>
+                    <span style={{ fontSize: '1.25rem', fontWeight: 'bold' }}>{dashboardStats.miss}</span>
+                  </div>
+                  <div style={{ fontSize: '0.75rem', color: textMuted, marginTop: '2px' }}>Miss</div>
+                </div>
+              </motion.div>
+            </div>
+
+            {/* Content Grid layout: Left Column (Courses) + Right Column (This week / To Do Card) */}
+            <div style={{
+              display: 'flex',
+              gap: '32px',
+              flexDirection: isMobile ? 'column' : 'row',
+              alignItems: 'flex-start',
+              width: '100%',
+              boxSizing: 'border-box'
+            }}>
+              
+              {/* Left Column: Enrolled Courses */}
+              <div style={{ flex: '1 1 0%', minWidth: 0, width: '100%' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '24px' }}>
+                  <h2 style={{ fontSize: '1.25rem', fontWeight: 'bold', margin: 0 }}>Enrolled courses</h2>
+                  <span style={{ fontSize: '0.85rem', color: textMuted }}>
+                    {classrooms.filter(c => !c.archived).length.toString().padStart(2, '0')} active
+                  </span>
+                </div>
+                
+                <div style={{
+                  display: 'grid',
+                  gridTemplateColumns: isMobile ? '1fr' : 'repeat(12, 1fr)',
+                  gap: '24px'
+                }}>
+                  {loadingClassrooms ? (
+                    [...Array(4)].map((_, i) => (
+                      <div key={i} style={{ gridColumn: `span ${isMobile ? 12 : cardThemes[i % cardThemes.length].colSpan}`, height: '240px', backgroundColor: cardBg, borderRadius: '20px', animation: 'pulse 1.5s infinite' }} />
+                    ))
+                  ) : (
+                    classrooms.filter(c => !c.archived).map((cls, idx) => (
+                      <motion.div
+                        key={cls.id}
+                        initial={{ opacity: 0, y: 24 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ duration: 0.4, delay: idx * 0.05, ease: [0.16, 1, 0.3, 1] }}
+                        style={{ gridColumn: `span ${isMobile ? 12 : cardThemes[idx % cardThemes.length].colSpan}` }}
+                      >
+                        <StudentCourseCard key={cls.id} classroom={cls} index={idx} colSpan={cardThemes[idx % cardThemes.length].colSpan} onClick={handleEnterClassroom} />
+                      </motion.div>
+                    ))
+                  )}
+                  {classrooms.filter(c => !c.archived).length === 0 && !loadingClassrooms && (
+                    <div style={{ gridColumn: '1 / -1', padding: '40px', textAlign: 'center', backgroundColor: cardBg, borderRadius: '24px' }}>
+                      <p style={{ color: textMuted }}>You have not enrolled in any courses yet.</p>
+                      <button onClick={() => setIsModalOpen(true)} style={{ marginTop: '12px', padding: '8px 16px', backgroundColor: '#10b981', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer' }}>
+                        Join a Course
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Right Column: Dedicated Sidebar content (This week, To Do) */}
+              <aside style={{
+                flex: isMobile ? '1 1 auto' : '0 0 380px',
+                width: isMobile ? '100%' : '380px',
+                maxWidth: isMobile ? '100%' : '420px',
+                flexShrink: 0,
+                backgroundColor: cardBg,
+                borderRadius: '32px',
+                padding: '32px',
+                boxShadow: isDark ? '0 10px 30px rgba(0,0,0,0.2)' : '0 10px 30px rgba(0,0,0,0.03)',
+                alignSelf: 'flex-start',
+                boxSizing: 'border-box'
+              }}>
+                
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+                  <div>
+                    <h2 style={{ fontSize: '1.25rem', fontWeight: 'bold', margin: 0 }}>This week</h2>
+                    <p style={{ fontSize: '0.8rem', color: textMuted, margin: '4px 0 0', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                      {new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} — 
+                      {new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                    </p>
+                  </div>
+                  <div style={{ padding: '8px', backgroundColor: isDark ? '#333' : '#f3f4f6', borderRadius: '50%' }}>
+                    <CalendarIcon size={18} color={textMuted} />
+                  </div>
+                </div>
+
+                {/* "Next up" Card */}
+                {videoData ? (
+                  <div style={{ backgroundColor: '#0f172a', color: 'white', borderRadius: '24px', padding: '24px', marginBottom: '32px', position: 'relative', overflow: 'hidden' }}>
+                    <div style={{ position: 'absolute', right: '-20px', top: '10px', width: '100px', height: '100px', borderRadius: '50%', border: '16px solid rgba(79, 70, 229, 0.4)' }}></div>
+                    
+                    <span style={{ fontSize: '0.7rem', backgroundColor: 'rgba(255,255,255,0.1)', padding: '4px 10px', borderRadius: '20px', display: 'inline-block', marginBottom: '16px' }}>
+                      Next up
+                    </span>
+                    
+                    <p style={{ color: '#10b981', fontSize: '0.65rem', fontWeight: 'bold', letterSpacing: '0.05em', margin: '0 0 4px', textTransform: 'uppercase' }}>
+                      Video Lesson
+                    </p>
+                    <h3 style={{ fontSize: '1.2rem', margin: '0 0 24px', fontWeight: 'bold', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {videoData.name || 'Video Lesson'}
+                    </h3>
+                    
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                      {!videoSeen ? (
+                        <button onClick={handleStartSession} style={{ display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: 'transparent', border: 'none', color: 'white', padding: 0, cursor: 'pointer', fontWeight: '600' }}>
+                          <div style={{ width: '28px', height: '28px', borderRadius: '50%', backgroundColor: '#10b981', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                            <Play size={12} fill="white" />
+                          </div>
+                          Watch video lesson
+                        </button>
+                      ) : (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#a7f3d0', fontWeight: '600' }}>
+                          <CheckCircle2 size={20} />
+                          All done
+                        </div>
+                      )}
+                      
+                      <button onClick={handleViewActivityDetails} style={{ display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: 'transparent', border: 'none', color: 'rgba(255,255,255,0.85)', padding: 0, cursor: 'pointer', fontWeight: '600', transition: 'color 0.2s' }}>
+                        <div style={{ width: '28px', height: '28px', borderRadius: '50%', backgroundColor: 'rgba(255,255,255,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                          <ClipboardList size={14} color="white" />
+                        </div>
+                        View Activity Details
+                      </button>
+                    </div>
+                    
+                    <div style={{ position: 'absolute', right: '25px', top: '45px', fontSize: '0.8rem', fontWeight: 'bold' }}>
+                      25 min
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{ backgroundColor: '#0f172a', color: 'white', borderRadius: '24px', padding: '24px', marginBottom: '32px', position: 'relative', overflow: 'hidden' }}>
+                    <div style={{ position: 'absolute', right: '-20px', top: '10px', width: '100px', height: '100px', borderRadius: '50%', border: '16px solid rgba(16, 185, 129, 0.4)' }}></div>
+                    
+                    <span style={{ fontSize: '0.7rem', backgroundColor: 'rgba(255,255,255,0.1)', padding: '4px 10px', borderRadius: '20px', display: 'inline-block', marginBottom: '16px' }}>
+                      Status
+                    </span>
+                    
+                    <p style={{ color: '#10b981', fontSize: '0.65rem', fontWeight: 'bold', letterSpacing: '0.05em', margin: '0 0 4px', textTransform: 'uppercase' }}>
+                      All caught up!
+                    </p>
+                    <h3 style={{ fontSize: '1.2rem', margin: '0 0 24px', fontWeight: 'bold' }}>
+                      No new video lessons
+                    </h3>
+                    
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#a7f3d0', fontWeight: '600' }}>
+                      <CheckCircle2 size={20} />
+                      You're all caught up!
+                    </div>
+                  </div>
+                )}
+
+                {/* "To Do" Section */}
+                <h3 style={{ fontSize: '1rem', fontWeight: 'bold', margin: '0 0 16px' }}>To Do</h3>
+                
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                  {loadingActivities ? (
+                    <div style={{ color: textMuted, fontSize: '0.9rem', textAlign: 'center', padding: '20px' }}>Loading tasks...</div>
+                  ) : upcomingActivities.length === 0 ? (
+                    <div style={{ color: textMuted, fontSize: '0.9rem', textAlign: 'center', padding: '20px' }}>No upcoming tasks!</div>
+                  ) : (
+                    upcomingActivities.slice(0, 5).map((act) => {
+                      const d = new Date(act.dueDate);
+                      const time = d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+                      const now = new Date();
+                      const isToday = d.getDate() === now.getDate() && d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+                      const isTomorrow = new Date(now.getTime() + 86400000).getDate() === d.getDate() && new Date(now.getTime() + 86400000).getMonth() === d.getMonth();
+                      const label = isToday ? 'Today' : (isTomorrow ? 'Tomorrow' : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }));
+                      const classObj = classrooms.find(c => String(c.id) === String(act.classroom_id || act.classId));
+                      const courseName = classObj ? (classObj.name || 'Course') : 'Course';
+                      const initial = courseName.charAt(0).toUpperCase();
+                      const bgCol = classObj?.theme?.color || '#059669';
+
+                      return (
+                        <div 
+                          key={act.id} 
+                          onClick={() => classObj && handleEnterClassroom(classObj)}
+                          style={{ display: 'flex', gap: '16px', alignItems: 'center', cursor: 'pointer', padding: '8px', borderRadius: '12px', margin: '-8px', transition: 'background-color 0.2s' }}
+                          onMouseOver={(e) => e.currentTarget.style.backgroundColor = isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.03)'}
+                          onMouseOut={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+                        >
+                          <div style={{ textAlign: 'right', minWidth: '70px', flexShrink: 0 }}>
+                            <div style={{ fontSize: '0.9rem', fontWeight: 'bold' }}>{time}</div>
+                            <div style={{ fontSize: '0.65rem', color: textMuted, textTransform: 'uppercase' }}>{label}</div>
+                          </div>
+                          <div style={{ width: '40px', height: '40px', borderRadius: '12px', backgroundColor: bgCol, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 'bold', fontSize: '0.9rem', flexShrink: 0 }}>
+                            {initial}
+                          </div>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontSize: '0.95rem', fontWeight: 'bold', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{act.title}</div>
+                            <div style={{ fontSize: '0.75rem', color: textMuted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{courseName} - {act.points || 100} pts</div>
+                          </div>
+                          <MoreHorizontal size={18} color={textMuted} style={{ cursor: 'pointer', flexShrink: 0 }} />
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </aside>
+            </div>
+            </motion.div>
+          )}
+
+          {/* Other Views */}
+          {activeView === 'settings' && (
+            <motion.div key="settings" custom={slideDirection} variants={drillVariants} initial="initial" animate="animate" exit="exit">
+              <SettingsPanel role="Student" />
+            </motion.div>
+          )}
+          {activeView === 'compiler' && (
+            <motion.div key="compiler" custom={slideDirection} variants={drillVariants} initial="initial" animate="animate" exit="exit" style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+              <CompilerView />
+            </motion.div>
+          )}
+          {activeView === 'calendar' && (
+            <motion.div key="calendar" custom={slideDirection} variants={drillVariants} initial="initial" animate="animate" exit="exit">
+              <StudentCalendar classrooms={classrooms} />
+            </motion.div>
+          )}
+          {activeView === 'archived' && (
+            <motion.div key="archived" custom={slideDirection} variants={drillVariants} initial="initial" animate="animate" exit="exit">
+              <h2 style={{ fontSize: '2rem', marginBottom: '24px' }}>Archived Classrooms</h2>
+            <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(12, 1fr)', gap: '24px' }}>
+              {classrooms.filter(c => c.archived).map((cls, idx) => (
+                <div key={cls.id} style={{ gridColumn: `span ${isMobile ? 12 : cardThemes[idx % cardThemes.length].colSpan}`, opacity: 0.7 }}>
+                  <StudentCourseCard classroom={cls} index={idx} onClick={handleEnterClassroom} />
+                </div>
+              ))}
+              {classrooms.filter(c => c.archived).length === 0 && (
+                <p style={{ color: textMuted }}>No archived classrooms.</p>
+              )}
+            </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </main>
+
+      {/* COMPILER CONFIRM MODAL */}
+      <AnimatePresence>
+
+      </AnimatePresence>
+
+      {/* VIDEO PREVIEW MODAL */}
+      {playVideo && videoData && (
+        <VideoPreviewModal 
+          src={videoData.src} 
+          name={videoData.name} 
+          onClose={() => setPlayVideo(false)} 
+        />
       )}
 
       {/* INPUT CLASS CODE MODAL */}
       {isModalOpen && (
         <div
-          style={styles.modalOverlay}
+          style={{
+            position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+            backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+            zIndex: 1000, backdropFilter: 'blur(4px)'
+          }}
           onClick={() => { setIsModalOpen(false); setJoinError(''); setClassCode(''); }}
         >
           <div
-            style={styles.modalCard}
+            style={{ backgroundColor: cardBg, padding: '32px', borderRadius: '24px', width: '100%', maxWidth: '420px', boxShadow: '0 20px 40px rgba(0,0,0,0.2)' }}
             onClick={(e) => e.stopPropagation()}
           >
-            <div style={styles.modalHeader}>
-              <h2 style={{ margin: 0, color: isDark ? '#f5f5f5' : '#0f172a', fontSize: '1.35rem', fontWeight: '700' }}>
-                Join a Class
-              </h2>
-              <button
-                type="button"
-                onClick={() => { setIsModalOpen(false); setJoinError(''); setClassCode(''); }}
-                style={styles.closeModalBtn}
-                title="Close"
-              >
-                <X size={22} color={isDark ? '#a3a3a3' : '#94a3af'} />
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+              <h2 style={{ margin: 0, fontSize: '1.4rem' }}>Join a Class</h2>
+              <button onClick={() => { setIsModalOpen(false); setJoinError(''); setClassCode(''); }} style={{ background: 'none', border: 'none', cursor: 'pointer' }}>
+                <X size={20} color={textMuted} />
               </button>
             </div>
-
-            <form onSubmit={handleJoin} style={styles.form}>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                <label style={{ fontSize: '0.875rem', fontWeight: '600', color: isDark ? '#d4d4d4' : '#475569' }}>
-                  Class Code
-                </label>
+            
+            <form onSubmit={handleJoin} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <div>
+                <label style={{ display: 'block', marginBottom: '8px', fontSize: '0.9rem', color: textMuted }}>Class Code</label>
                 <input
-                  type="text"
-                  autoFocus
-                  autoComplete="off"
-                  placeholder="e.g. CS101 or NICE"
+                  type="text" autoFocus
+                  placeholder="e.g. CS101"
                   value={classCode}
-                  onChange={(e) => {
-                    setClassCode(e.target.value);
-                    if (joinError) setJoinError('');
-                  }}
+                  onChange={(e) => { setClassCode(e.target.value); if (joinError) setJoinError(''); }}
                   style={{
-                    width: '100%',
-                    padding: '14px 18px',
-                    borderRadius: '12px',
-                    border: inputFocused ? '2px solid #10b981' : (isDark ? '1.5px solid #4D4D4D' : '1.5px solid #cbd5e1'),
-                    outline: 'none',
-                    backgroundColor: isDark ? '#3A3A3A' : 'white',
-                    color: isDark ? '#f5f5f5' : '#0f172a',
-                    fontSize: '1rem',
-                    fontWeight: '500',
-                    boxSizing: 'border-box',
-                    boxShadow: inputFocused ? '0 0 0 3px rgba(16, 185, 129, 0.15)' : (isDark ? 'none' : 'inset 0 1px 2px rgba(0, 0, 0, 0.04)'),
-                    transition: 'border-color 0.2s, box-shadow 0.2s'
+                    width: '100%', padding: '12px 16px', borderRadius: '12px',
+                    border: `1.5px solid ${isDark ? '#444' : '#e5e7eb'}`,
+                    backgroundColor: isDark ? '#1a1a1a' : 'white',
+                    color: textColor, boxSizing: 'border-box', outline: 'none'
                   }}
-                  onFocus={() => setInputFocused(true)}
-                  onBlur={() => setInputFocused(false)}
                 />
-                <span style={{ fontSize: '0.78rem', color: isDark ? '#737373' : '#94a3b8' }}>
-                  Ask your teacher for the class code or section name.
-                </span>
               </div>
-
-              {joinError && <p style={styles.errorText}>{joinError}</p>}
-
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '10px' }}>
-                <button
-                  type="button"
-                  onClick={() => { setIsModalOpen(false); setJoinError(''); setClassCode(''); }}
-                  style={{
-                    padding: '10px 20px',
-                    borderRadius: '50px',
-                    border: isDark ? '1px solid #444444' : '1px solid #cbd5e1',
-                    backgroundColor: isDark ? '#262626' : '#ffffff',
-                    color: isDark ? '#d4d4d4' : '#64748b',
-                    fontWeight: '600',
-                    fontSize: '0.92rem',
-                    cursor: 'pointer'
-                  }}
-                  className="btn-anim"
-                >
-                  Cancel
-                </button>
-                <motion.button
-                  whileHover={{ scale: 1.02 }}
-                  whileTap={{ scale: 0.98 }}
-                  type="submit"
-                  disabled={isJoining}
-                  className="btn-anim"
-                  style={{
-                    ...styles.joinButton,
-                    opacity: isJoining ? 0.7 : 1,
-                    cursor: isJoining ? 'not-allowed' : 'pointer'
-                  }}
-                >
+              {joinError && <p style={{ color: '#ef4444', fontSize: '0.85rem', margin: 0 }}>{joinError}</p>}
+              
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '8px' }}>
+                <button type="button" onClick={() => { setIsModalOpen(false); setJoinError(''); setClassCode(''); }} style={{ padding: '10px 20px', borderRadius: '50px', background: 'transparent', border: `1px solid ${isDark ? '#444' : '#e5e7eb'}`, color: textColor, cursor: 'pointer' }}>Cancel</button>
+                <button type="submit" disabled={isJoining} style={{ padding: '10px 24px', borderRadius: '50px', background: '#10b981', color: 'white', border: 'none', cursor: isJoining ? 'not-allowed' : 'pointer', fontWeight: 'bold' }}>
                   {isJoining ? 'Joining...' : 'Join Class'}
-                </motion.button>
+                </button>
               </div>
             </form>
           </div>
         </div>
       )}
-    </div>
+    </motion.div>
   );
 }
+
 

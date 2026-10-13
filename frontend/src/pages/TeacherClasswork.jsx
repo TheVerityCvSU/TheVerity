@@ -1,25 +1,28 @@
-import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef, useMemo } from 'react';
+import JoditEditor from 'jodit-react';
 import ProfileMenu from './ProfileMenu';
 import { 
   Calendar, ClipboardList, Settings, User, MoreVertical, ArrowLeft, X, Link2, 
   Image, Video, Monitor, Menu, Home, Archive, Edit3, Maximize2, Copy, Check, 
   Info, Users, BookOpen, Sparkles, Plus, Send, ChevronRight, CheckCircle2, 
-  MessageSquare, PlayCircle, Eye, RefreshCw, Palette, ExternalLink
+  MessageSquare, PlayCircle, Eye, RefreshCw, Palette, ExternalLink, FileText,
+  Paperclip, MoreHorizontal, Code2, Trash2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { apiFetch } from '../utils/api';
 import Skeleton from '../components/Skeleton';
 import { useDarkMode } from '../hooks/useDarkMode';
-import { useSidebarNav } from '../hooks/useSidebarNav';
+import { useMediaQuery } from '../hooks/useMediaQuery';
 import { isPhantomClassroom, mergeClassroomsPreservingOrder, THEME_PRESETS, getClassroomTheme, saveClassroomTheme } from '../utils/classroomUtils';
 import ImagePreviewModal from '../components/ImagePreviewModal';
 import AddLinkModal from '../components/AddLinkModal';
 import VideoPreviewModal from '../components/VideoPreviewModal';
+import IframePreviewModal from '../components/IframePreviewModal';
 import AddStudentModal from '../components/AddStudentModal';
 import VideoAttachment from '../components/VideoAttachment';
 import AttachmentCard from '../components/AttachmentCard';
 
-const EMPTY_FORM = { title: '', noDueDate: true, dueDate: '', instruction: '', points: '100', grading: 'On', attachments: [], duration: 60, autoSaveInterval: '30s', treatWarningsAsErrors: false };
+const EMPTY_FORM = { title: '', activityType: 'Activity', noDueDate: true, dueDate: '', instruction: '', points: '100', grading: 'On', attachments: [], duration: 60, autoSaveInterval: '30s', treatWarningsAsErrors: false, testCases: [] };
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const formatShortDate = (value) => {
@@ -37,7 +40,7 @@ const formatShortDate = (value) => {
 
 const isLegacyHardcoded = (item) => (item?.id === 1 || item?.id === 2) && (item?.title?.startsWith('Activity 1:') || item?.title?.startsWith('Activity 2:'));
 
-const TAB_ORDER = { stream: 0, classwork: 1, people: 2, grades: 3 };
+const TAB_ORDER = { stream: 0, classwork: 1, materials: 2, people: 3, grades: 4 };
 
 const tabSlideVariants = {
   enter: (direction) => ({
@@ -62,6 +65,29 @@ const tabSlideVariants = {
   }),
 };
 
+const classroomSlideVariants = {
+  enter: (direction) => ({
+    y: direction > 0 ? 35 : -35,
+    opacity: 0,
+  }),
+  center: {
+    y: 0,
+    opacity: 1,
+    transition: {
+      y: { type: 'spring', stiffness: 350, damping: 30 },
+      opacity: { duration: 0.18 },
+    },
+  },
+  exit: (direction) => ({
+    y: direction > 0 ? -35 : 35,
+    opacity: 0,
+    transition: {
+      duration: 0.12,
+      ease: 'easeIn',
+    },
+  }),
+};
+
 
 
 export default function TeacherClasswork({ 
@@ -77,6 +103,7 @@ export default function TeacherClasswork({
   currentUser 
 }) {
   const { isDark } = useDarkMode();
+  const isMobile = useMediaQuery('(max-width: 900px)');
   const styles = getStyles(isDark);
   const isPhantom = isPhantomClassroom;
 
@@ -116,67 +143,46 @@ export default function TeacherClasswork({
       })
       .catch(() => {});
   }, [currentUser]);
-  const { collapsed, toggleSidebar, sidebarProps, isPinned } = useSidebarNav();
+  const [isHeaderHovered, setIsHeaderHovered] = useState(false);
+  const [isFadingOut, setIsFadingOut] = useState(false);
+  const handleExit = (action) => {
+    setIsFadingOut(true);
+    setTimeout(() => action(), 250);
+  };
+  const [indicatorStyle, setIndicatorStyle] = useState({ top: 0, left: 0, width: 0, opacity: 0, transition: 'none' });
   const navRefs = useRef({});
-  const enrolledRefs = useRef({});
-  const [indicatorStyle, setIndicatorStyle] = useState(() => {
-    try {
-      const savedTop = sessionStorage.getItem('verity_teacher_nav_indicator_top');
-      const savedHeight = sessionStorage.getItem('verity_teacher_nav_indicator_height');
-      if (savedTop !== null && !isNaN(Number(savedTop))) {
-        return {
-          top: Number(savedTop),
-          height: savedHeight ? Number(savedHeight) : 42,
-          opacity: 1,
-          transition: true
-        };
-      }
-    } catch { /* ignore */ }
-    return { top: 0, height: 42, opacity: 0, transition: false };
-  });
-
-  useLayoutEffect(() => {
-    const update = () => {
-      let activeRef = null;
-      if (typeof classroom !== 'undefined' && classroom) {
-        activeRef = enrolledRefs.current['cls_' + classroom.id];
-      }
-      if (activeRef) {
-        try {
-          sessionStorage.setItem('verity_teacher_nav_indicator_top', String(activeRef.offsetTop));
-          sessionStorage.setItem('verity_teacher_nav_indicator_height', String(activeRef.offsetHeight));
-        } catch { /* ignore */ }
-
-        setIndicatorStyle(prev => {
-          const distance = Math.abs(activeRef.offsetTop - prev.top);
-          const bounceOvershoot = distance > 0 ? Math.min(0.42, Math.max(0.03, 16 / distance)) : 0;
-          const bounceRatio = (1 + bounceOvershoot).toFixed(3);
-          const duration = distance > 150 ? '0.46s' : '0.38s';
-          const transitionStr = `top ${duration} cubic-bezier(0.34, ${bounceRatio}, 0.64, 1), height 0.25s ease, opacity 0.2s ease`;
-
-          if (prev.top === activeRef.offsetTop && prev.height === activeRef.offsetHeight && prev.opacity === 1 && prev.transition === transitionStr) return prev;
-          return { top: activeRef.offsetTop, height: activeRef.offsetHeight, opacity: 1, transition: transitionStr };
-        });
-      } else {
-        setIndicatorStyle(prev => prev.opacity === 0 ? prev : { ...prev, opacity: 0 });
-      }
-    };
-
-    update();
-    const timer = setTimeout(update, 20);
-    return () => clearTimeout(timer);
-  }, [classroom, collapsed, classrooms]);
 
   // Active classroom tab
   const [activeTab, setActiveTab] = useState('stream'); // 'stream' | 'classwork' | 'people' | 'grades'
   const [tabDirection, setTabDirection] = useState(1);
+  const [transitionMode, setTransitionMode] = useState('tab'); // 'classroom' | 'tab'
+  const [classroomDirection, setClassroomDirection] = useState(1);
+  const prevClassroomIdRef = useRef(classroom?.id);
+
+  useEffect(() => {
+    if (classroom?.id && prevClassroomIdRef.current !== classroom?.id) {
+      prevClassroomIdRef.current = classroom?.id;
+      setTransitionMode('classroom');
+    }
+  }, [classroom?.id]);
 
   const handleTabChange = (newTab) => {
     if (newTab === activeTab) return;
     const currentIdx = TAB_ORDER[activeTab] ?? 0;
     const newIdx = TAB_ORDER[newTab] ?? 0;
     setTabDirection(newIdx >= currentIdx ? 1 : -1);
+    setTransitionMode('tab');
     setActiveTab(newTab);
+  };
+
+  const handleSelectClassroom = (cls, idx) => {
+    if (cls.id === classroom?.id) return;
+    const currentIdx = activeClassrooms.findIndex(c => c.id === classroom?.id);
+    const targetIdx = idx;
+    const dir = (currentIdx === -1 || targetIdx >= currentIdx) ? 1 : -1;
+    setClassroomDirection(dir);
+    setTransitionMode('classroom');
+    if (onEnterClassroom) onEnterClassroom(cls);
   };
 
   // Persist classwork per classroom
@@ -227,6 +233,7 @@ export default function TeacherClasswork({
 
   const [activeMenu, setActiveMenu] = useState(null);
   const [expandedId, setExpandedId] = useState(null);
+  const [expandedInstructionId, setExpandedInstructionId] = useState(null);
   const [submissionData, setSubmissionData] = useState({ counts: {}, studentCount: 0 });
   const [loadingClasswork, setLoadingClasswork] = useState(true);
 
@@ -440,7 +447,8 @@ export default function TeacherClasswork({
   }, [classroom?.id, classCode, classroom?.section, socket, currentUser, refreshStudentsKey]);
 
   // GRADES TAB STATE (Scoped to this classroom only)
-  const visibleClasswork = classwork.filter(item => !item.archived);
+  const visibleClasswork = classwork.filter(item => !item.archived && item.activityType !== 'Material');
+  const visibleMaterials = classwork.filter(item => !item.archived && item.activityType === 'Material');
   const [selectedGradingActivityId, setSelectedGradingActivityId] = useState(null);
 
   useEffect(() => {
@@ -588,14 +596,39 @@ export default function TeacherClasswork({
 
   // Classwork modal state
   const [isModalOpen, setIsModalOpen] = useState(false);
+
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState(EMPTY_FORM);
   const [uploading, setUploading] = useState(false);
   const [previewImage, setPreviewImage] = useState(null);
   const [previewVideo, setPreviewVideo] = useState(null);
+  const [previewIframe, setPreviewIframe] = useState(null);
   const [isLinkModalOpen, setIsLinkModalOpen] = useState(false);
   const imageInputRef = useRef(null);
   const videoInputRef = useRef(null);
+  const docInputRef = useRef(null);
+  const joditRef = useRef(null);
+  const activeMarkerRef = useRef(null);
+
+  const handleAttachmentClick = (e, callback) => {
+    e.preventDefault(); // prevent focus loss
+    const editorObj = joditRef.current;
+    if (editorObj) {
+      const s = editorObj.selection || editorObj.s || editorObj.editor?.selection || editorObj.component?.selection;
+      if (s && typeof s.insertHTML === 'function') {
+        const id = `verity-marker-${Date.now()}`;
+        activeMarkerRef.current = id;
+        try {
+          // Focus the editor first, just in case
+          if (editorObj.editor?.focus) editorObj.editor.focus();
+          else if (editorObj.focus) editorObj.focus();
+          // Use a zero-width space so Jodit doesn't strip the empty span!
+          s.insertHTML(`<span id="${id}">&#8203;</span>`);
+        } catch(err) {}
+      }
+    }
+    callback();
+  };
 
   const uploadFile = async (file, type) => {
     const filename = file.name;
@@ -652,14 +685,173 @@ export default function TeacherClasswork({
     return { type, name: filename, url: URL.createObjectURL(file) };
   };
 
+  const insertAtMarker = (appendHtml) => {
+    const markerId = activeMarkerRef.current;
+    if (!markerId) return false;
+    
+    let handled = false;
+    try {
+      const editorObj = joditRef.current;
+      if (editorObj) {
+         if (editorObj.editor?.focus) editorObj.editor.focus();
+         else if (editorObj.focus) editorObj.focus();
+         
+         const doc = editorObj.editorDocument || editorObj.editor?.editorDocument || editorObj.editor?.ownerDocument || document;
+         const markerNode = doc.getElementById(markerId);
+         
+         if (markerNode) {
+            const s = editorObj.selection || editorObj.s || editorObj.editor?.selection || editorObj.component?.selection;
+            if (s && typeof s.select === 'function' && typeof s.insertHTML === 'function') {
+               s.select(markerNode);
+               s.insertHTML(appendHtml);
+               handled = true;
+            }
+         }
+      }
+    } catch(err) {
+      console.warn("Failed direct DOM insertion:", err);
+    }
+    
+    if (!handled) {
+      const markerRegex = new RegExp(`<span[^>]*id="${markerId}"[^>]*>.*?</span>`, 'gi');
+      let currentHtml = joditRef.current?.value || form.instruction || "";
+      if (markerRegex.test(currentHtml)) {
+         currentHtml = currentHtml.replace(markerRegex, appendHtml);
+         setForm(prev => ({ ...prev, instruction: currentHtml }));
+         handled = true;
+      }
+    }
+    
+    activeMarkerRef.current = null;
+    return handled;
+  };
+
   const handleFilePicked = async (e, type) => {
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file) return;
     setUploading(true);
     const attachment = await uploadFile(file, type);
-    setForm(prev => ({ ...prev, attachments: [...(prev.attachments || []), attachment] }));
+    
+    let appendHtml = "";
+    if (type === 'image') {
+      appendHtml = `<br/><img src="${attachment.url}" alt="${attachment.name}" style="max-width: 100%; height: auto; border-radius: 8px;" /><br/>`;
+    } else if (type === 'video') {
+      appendHtml = `<br/><video src="${attachment.url}" controls style="max-width: 100%; height: auto; border-radius: 8px;"></video><br/>`;
+    }
+
+    if (type === 'document') {
+      setForm(prev => ({
+        ...prev,
+        attachments: [...(prev.attachments || []), attachment]
+      }));
+    } else {
+      if (!insertAtMarker(appendHtml)) {
+        setForm(prev => ({ 
+          ...prev, 
+          instruction: (prev.instruction || "") + appendHtml 
+        }));
+      }
+    }
     setUploading(false);
+  };
+
+  const handleDropCapture = async (e) => {
+    const files = e.dataTransfer?.files;
+    if (files && files.length > 0) {
+      let hasImageOrVideo = false;
+      for (let i = 0; i < files.length; i++) {
+        if (files[i].type.startsWith('image/') || files[i].type.startsWith('video/')) {
+          hasImageOrVideo = true;
+          break;
+        }
+      }
+      if (!hasImageOrVideo) return;
+      
+      // Capture the drop location!
+      let dropRange = null;
+      if (document.caretRangeFromPoint) {
+        dropRange = document.caretRangeFromPoint(e.clientX, e.clientY);
+      } else if (e.rangeParent) {
+        dropRange = document.createRange();
+        dropRange.setStart(e.rangeParent, e.rangeOffset);
+        dropRange.collapse(true);
+      }
+
+      e.preventDefault();
+      e.stopPropagation();
+      setUploading(true);
+
+      // Force focus and selection immediately so async await doesn't lose it
+      const editorObj = joditRef.current;
+      if (editorObj) {
+        if (editorObj.editor?.focus) editorObj.editor.focus();
+        else if (editorObj.focus) editorObj.focus();
+        
+        if (dropRange) {
+          const sel = window.getSelection();
+          if (sel) {
+            sel.removeAllRanges();
+            sel.addRange(dropRange);
+          }
+        }
+      }
+      
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        if (file.type.startsWith('image/') || file.type.startsWith('video/')) {
+          const type = file.type.startsWith('image/') ? 'image' : 'video';
+          const attachment = await uploadFile(file, type);
+          const appendHtml = type === 'image' 
+            ? `<br/><img src="${attachment.url}" alt="${attachment.name}" style="max-width: 100%; height: auto; border-radius: 8px;" /><br/>`
+            : `<br/><video src="${attachment.url}" controls style="max-width: 100%; height: auto; border-radius: 8px;"></video><br/>`;
+          
+          if (editorObj?.s) {
+            editorObj.s.insertHTML(appendHtml);
+          }
+        }
+      }
+      setUploading(false);
+    }
+  };
+
+  const handlePasteCapture = async (e) => {
+    const items = e.clipboardData?.items;
+    if (items) {
+      let hasImageOrVideo = false;
+      for (let i = 0; i < items.length; i++) {
+        if (items[i].type.startsWith('image/') || items[i].type.startsWith('video/')) {
+          hasImageOrVideo = true;
+          break;
+        }
+      }
+      if (!hasImageOrVideo) return;
+      
+      e.preventDefault();
+      e.stopPropagation();
+      setUploading(true);
+      
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        if (item.type.startsWith('image/') || item.type.startsWith('video/')) {
+          const file = item.getAsFile();
+          if (!file) continue;
+          const type = item.type.startsWith('image/') ? 'image' : 'video';
+          const attachment = await uploadFile(file, type);
+          const appendHtml = type === 'image' 
+            ? `<br/><img src="${attachment.url}" alt="${attachment.name}" style="max-width: 100%; height: auto; border-radius: 8px;" /><br/>`
+            : `<br/><video src="${attachment.url}" controls style="max-width: 100%; height: auto; border-radius: 8px;"></video><br/>`;
+          
+          const editorObj = joditRef.current;
+          if (editorObj?.s) {
+            if (editorObj.editor?.focus) editorObj.editor.focus();
+            else if (editorObj.focus) editorObj.focus();
+            editorObj.s.insertHTML(appendHtml);
+          }
+        }
+      }
+      setUploading(false);
+    }
   };
 
   const handleAddLink = () => {
@@ -667,10 +859,14 @@ export default function TeacherClasswork({
   };
 
   const handleSaveLink = (linkAttachment) => {
-    setForm(prev => ({
-      ...prev,
-      attachments: [...(prev.attachments || []), linkAttachment]
-    }));
+    const appendHtml = `<br/><a href="${linkAttachment.url}" target="_blank" rel="noopener noreferrer">${linkAttachment.name || linkAttachment.url}</a><br/>`;
+    
+    if (!insertAtMarker(appendHtml)) {
+      setForm(prev => ({
+        ...prev,
+        instruction: (prev.instruction || "") + appendHtml
+      }));
+    }
   };
 
   // Keyboard shortcut (Ctrl+K / Cmd+K) to open Link modal when assignment modal is open
@@ -703,9 +899,10 @@ export default function TeacherClasswork({
     setActiveMenu(null);
   };
 
-  const openCreate = async () => {
+  const openCreate = async (type = 'Activity') => {
+
     setEditingId(null);
-    let defaults = { ...EMPTY_FORM };
+    let defaults = { ...EMPTY_FORM, activityType: type };
     try {
       const res = await apiFetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/system-settings`);
       if (res.ok) {
@@ -728,6 +925,7 @@ export default function TeacherClasswork({
     setEditingId(item.id);
     setForm({
       title: item.title || '',
+      activityType: item.activityType || 'Assignment',
       noDueDate: item.dueDate ? false : true,
       dueDate: item.dueDate || '',
       instruction: item.details || '',
@@ -736,7 +934,8 @@ export default function TeacherClasswork({
       attachments: item.attachments || [],
       duration: item.duration || 60,
       autoSaveInterval: item.autoSaveInterval || '30s',
-      treatWarningsAsErrors: !!item.treatWarningsAsErrors
+      treatWarningsAsErrors: !!item.treatWarningsAsErrors,
+      testCases: Array.isArray(item.testCases) ? item.testCases : []
     });
     setActiveMenu(null);
     setIsModalOpen(true);
@@ -744,16 +943,26 @@ export default function TeacherClasswork({
 
   const handleSubmit = (e) => {
     e.preventDefault();
+    
+    let currentInstruction = form.instruction;
+    try {
+      if (joditRef.current) {
+        currentInstruction = joditRef.current.value ?? joditRef.current.editor?.value ?? form.instruction;
+      }
+    } catch (err) {}
+
     const data = {
       title: form.title,
-      details: form.instruction,
+      activityType: form.activityType || 'Assignment',
+      details: currentInstruction,
       dueDate: form.noDueDate ? '' : form.dueDate,
       points: form.points,
       grading: form.grading,
       attachments: form.attachments || [],
       duration: form.duration,
       autoSaveInterval: form.autoSaveInterval,
-      treatWarningsAsErrors: form.treatWarningsAsErrors
+      treatWarningsAsErrors: form.treatWarningsAsErrors,
+      testCases: Array.isArray(form.testCases) ? form.testCases : []
     };
 
     if (editingId) {
@@ -784,12 +993,6 @@ export default function TeacherClasswork({
     setCodeCopied(true);
     setTimeout(() => setCodeCopied(false), 2000);
   };
-
-  // Upcoming items
-  const upcomingItems = visibleClasswork
-    .filter(item => item.dueDate)
-    .sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate))
-    .slice(0, 3);
 
   // SVG Illustration for Google Classroom Banner
   const renderBannerIllustration = () => {
@@ -882,489 +1085,589 @@ export default function TeacherClasswork({
       </svg>
     );
   };
+  const joditConfig = useMemo(() => ({
+    readonly: false,
+    theme: isDark ? 'dark' : 'default',
+    buttons: [
+      'bold', 'italic', 'underline', 'strikethrough', 'inlineCode', '|',
+      'eraser', 'font', 'fontsize', 'brush', 'paragraph', '|',
+      'ul', 'ol', '|',
+      'table', '|',
+      'undo', 'redo'
+    ],
+    controls: {
+      inlineCode: {
+        iconURL: `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16"><path d="M10.478 1.647a.5.5 0 1 0-.956-.294l-4 13a.5.5 0 0 0 .956.294l4-13zM4.854 4.146a.5.5 0 0 1 0 .708L1.707 8l3.147 3.146a.5.5 0 0 1-.708.708l-3.5-3.5a.5.5 0 0 1 0-.708l3.5-3.5a.5.5 0 0 1 .708 0zm6.292 0a.5.5 0 0 0 0 .708L14.293 8l-3.147 3.146a.5.5 0 0 0 .708.708l3.5-3.5a.5.5 0 0 0 0-.708l-3.5-3.5a.5.5 0 0 0-.708 0z"/></svg>`,
+        tooltip: 'Highlight (Code)',
+        exec: (editor) => {
+          editor.s.commitStyle({
+            element: 'code',
+            attributes: {
+              class: 'inline-code-highlight'
+            }
+          });
+        }
+      }
+    },
+    placeholder: 'Enter assignment instruction...',
+    height: 300,
+    showCharsCounter: false,
+    showWordsCounter: false,
+    showXPathInStatusbar: false,
+    hidePoweredByJodit: true,
+    disablePlugins: 'image-properties,image-processor,video-properties',
+    popup: { img: [], image: [], video: [], a: [] },
+    style: {
+      background: isDark ? '#242424' : '#f9fafb',
+      color: isDark ? '#E8EAED' : '#111827'
+    }
+  }), [isDark]);
+
+  // ═══ Design tokens for the instructor classroom shell ═══
+  const ui = {
+    bg: isDark ? '#141615' : '#f4f5f7',
+    surface: isDark ? '#1b1e1c' : '#ffffff',
+    surfaceAlt: isDark ? '#222523' : '#f3f4f6',
+    inset: isDark ? '#171a18' : '#f9fafb',
+    border: isDark ? '#2a2e2b' : '#e5e7eb',
+    text: isDark ? '#e9ecea' : '#111827',
+    muted: isDark ? '#8a918c' : '#6b7280',
+    faint: isDark ? '#5d645f' : '#9ca3af',
+    accent: '#34d399',
+    accentSoft: isDark ? 'rgba(52,211,153,0.12)' : 'rgba(16,185,129,0.12)',
+    accentText: isDark ? '#6ee7b7' : '#059669',
+    violet: '#8b5cf6'
+  };
+  const BADGE_COLORS = ['#a78bfa', '#60a5fa', '#fb7185', '#38bdf8', '#fbbf24', '#34d399'];
+  const activeClassrooms = (classrooms || []).filter(c => !c.archived);
+  const teacherName = currentUser?.name || classroom?.instructor || 'Instructor';
+  const teacherInitial = teacherName.charAt(0).toUpperCase();
+  const CLASSROOM_TABS = [
+    { id: 'stream', label: 'Stream' },
+    { id: 'classwork', label: 'Classwork' },
+    { id: 'materials', label: 'Materials' },
+    { id: 'people', label: 'People' },
+    { id: 'grades', label: 'Grades' }
+  ];
+  const HEADER_NAV = [
+    { id: 'classrooms', label: 'Home', Icon: Home },
+    { id: 'calendar', label: 'Calendar', Icon: Calendar },
+    { id: 'archived', label: 'Archived', Icon: Archive }
+  ];
+  const sectionLabelStyle = { fontSize: '0.68rem', fontWeight: 700, letterSpacing: '0.07em', textTransform: 'uppercase', color: ui.muted };
+  const smallIconBtnStyle = { width: '30px', height: '30px', borderRadius: '8px', border: 'none', background: 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: ui.muted, transition: 'background 0.2s ease', flexShrink: 0 };
+  const renderTeacherAvatar = () => (
+    <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: isDark ? '#1d3a2d' : '#d1fae5', color: ui.accentText, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.78rem', fontWeight: 700, flexShrink: 0 }}>
+      {teacherInitial}
+    </div>
+  );
+
+  const getMaterialIcon = (item) => {
+    if (item.activityType === 'Material') {
+      const att = item.attachments?.[0];
+      if (att) {
+        if (att.type === 'video') return Video;
+        if (att.type === 'image') return Image;
+        if (att.type === 'document') return FileText;
+        if (att.type === 'link') return Link2;
+      }
+      return BookOpen;
+    }
+    return ClipboardList;
+  };
 
   return (
-    <div style={styles.container}>
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: isFadingOut ? 0 : 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.22, ease: 'easeOut' }}
+      style={styles.container}
+    >
+      <style>{`
+        .vt-nav-btn:hover { color: ${ui.text} !important; background: ${ui.surfaceAlt} !important; }
+        .vt-class-row:hover { background: ${isDark ? 'rgba(255,255,255,0.04)' : 'rgba(15,23,42,0.04)'} !important; color: ${ui.text} !important; }
+        .vt-tab:hover { color: ${ui.text} !important; }
+        .vt-card { transition: border-color 0.2s ease, box-shadow 0.2s ease; }
+        .vt-card:hover { border-color: ${isDark ? '#383d39' : '#d1d5db'} !important; }
+        .vt-ghost-btn:hover { background: ${ui.surfaceAlt} !important; color: ${ui.text} !important; }
+        .vt-post-btn:not(:disabled):hover { filter: brightness(1.06); transform: translateY(-1px); box-shadow: 0 6px 18px -6px rgba(52,211,153,0.6); }
+        .vt-outline-btn:hover { border-color: ${ui.accent} !important; color: ${ui.accentText} !important; }
+        .vt-icon-btn:hover { background: ${ui.surfaceAlt} !important; color: ${ui.text} !important; }
+        .vt-link:hover { gap: 10px !important; }
+        .vt-composer:focus { border-color: ${ui.accent} !important; }
+        .vt-customize:hover { opacity: 1 !important; }
+      `}</style>
 
-      {/* ═══ GLOBAL TOP HEADER (Instructor Pattern) ═══ */}
-      <header style={styles.header}>
-        <div style={{ display: 'flex', alignItems: 'center' }}>
+      {/* ═══ GLOBAL TOP HEADER ═══ */}
+      <header 
+        onMouseEnter={() => setIsHeaderHovered(true)}
+        onMouseLeave={() => setIsHeaderHovered(false)}
+        style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        padding: '16px clamp(20px, 3vw, 48px)',
+        backgroundColor: ui.bg,
+        borderBottom: 'none',
+        position: 'sticky',
+        top: 0,
+        zIndex: 50,
+      }}>
+        {/* Shadow for header */}
+        <div style={{
+          position: 'absolute',
+          bottom: '-30px',
+          left: 0,
+          right: 0,
+          height: '30px',
+          background: `linear-gradient(to bottom, ${ui.bg}, transparent)`,
+          pointerEvents: 'none'
+        }} />
+
+        {/* Left: Logo + role pill */}
+        <div style={{ display: 'flex', alignItems: 'baseline', cursor: 'pointer', flex: 1, justifyContent: 'flex-start' }} onClick={() => handleExit(() => onNavigateView ? onNavigateView('classrooms') : onBack())}>
+          <span style={{ color: '#10b981', fontSize: '1.75rem', fontWeight: '900', fontStyle: 'italic' }}>V</span>
+          <span style={{ color: isDark ? '#f5f5f5' : '#111827', fontSize: '1.75rem', fontWeight: '900', fontStyle: 'italic' }}>erity</span>
+          <span style={{ fontSize: '0.7rem', color: isDark ? '#a3a3a3' : '#6b7280', marginLeft: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Instructor</span>
+        </div>
+
+        {/* Center: Navigation */}
+        <div style={{ 
+          display: 'flex', 
+          alignItems: 'center', 
+          justifyContent: 'center',
+          gap: '8px',
+          opacity: isHeaderHovered ? 1 : 0,
+          pointerEvents: isHeaderHovered ? 'auto' : 'none',
+          transition: 'opacity 0.3s ease, transform 0.3s ease',
+          transform: isHeaderHovered ? 'translateY(0)' : 'translateY(-10px)',
+          position: 'relative'
+        }}>
+          <div style={{
+            position: 'absolute',
+            left: indicatorStyle.left,
+            width: indicatorStyle.width,
+            top: 0,
+            bottom: 0,
+            backgroundColor: isDark ? 'rgba(255, 255, 255, 0.07)' : 'rgba(255, 255, 255, 0.25)',
+            backdropFilter: 'blur(8px)',
+            WebkitBackdropFilter: 'blur(8px)',
+            borderRadius: '50px',
+            boxShadow: isDark ? '0 4px 16px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.08)' : '0 4px 16px rgba(16,185,129,0.15), inset 0 1px 0 rgba(255,255,255,0.5)',
+            border: isDark ? '1px solid rgba(255,255,255,0.1)' : '1px solid rgba(255,255,255,0.35)',
+            transition: indicatorStyle.transition || 'none',
+            opacity: indicatorStyle.opacity,
+            pointerEvents: 'none',
+            zIndex: 0,
+          }} />
+
+          {HEADER_NAV.map(({ id, label, Icon }) => (
+            <button
+              key={id}
+              ref={el => navRefs.current[id] = el}
+              onMouseEnter={(e) => {
+                setIndicatorStyle({
+                  left: e.currentTarget.offsetLeft,
+                  width: e.currentTarget.offsetWidth,
+                  opacity: 1,
+                  transition: 'all 0.3s cubic-bezier(0.25, 1, 0.5, 1)'
+                });
+              }}
+              onMouseLeave={() => {
+                setIndicatorStyle(prev => ({ ...prev, opacity: 0 }));
+              }}
+              onClick={() => { 
+                handleExit(() => {
+                  if (onNavigateView) onNavigateView(id); 
+                  else onBack(); 
+                });
+              }}
+              style={{
+                position: 'relative',
+                zIndex: 1,
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                padding: '10px 16px',
+                borderRadius: '50px',
+                background: 'transparent',
+                border: '1px solid transparent',
+                color: isDark ? '#a3a3a3' : '#6b7280',
+                fontWeight: '600',
+                fontSize: '0.9rem',
+                cursor: 'pointer',
+                transition: 'all 0.2s'
+              }}
+            >
+              <Icon size={18} /> {label}
+            </button>
+          ))}
+
           <button
-            onClick={toggleSidebar}
+            ref={el => navRefs.current['settings'] = el}
+            onMouseEnter={(e) => {
+              setIndicatorStyle({
+                left: e.currentTarget.offsetLeft,
+                width: e.currentTarget.offsetWidth,
+                opacity: 1,
+                transition: 'all 0.3s cubic-bezier(0.25, 1, 0.5, 1)'
+              });
+            }}
+            onMouseLeave={() => {
+              setIndicatorStyle(prev => ({ ...prev, opacity: 0 }));
+            }}
+            onClick={() => setIsSettingsModalOpen(true)}
             style={{
-              background: 'none',
-              border: 'none',
-              padding: '6px',
-              borderRadius: '8px',
-              cursor: 'pointer',
+              position: 'relative',
+              zIndex: 1,
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              color: '#64748b',
-              flexShrink: 0,
-              marginRight: '16px'
+              padding: '10px',
+              borderRadius: '50px',
+              backgroundColor: 'transparent',
+              color: isDark ? '#a3a3a3' : '#6b7280',
+              border: 'none',
+              cursor: 'pointer',
+              marginLeft: '8px'
             }}
-            title={isPinned ? "Unpin sidebar" : "Pin sidebar"}
-            className="icon-btn-anim"
           >
-            <Menu size={24} color={isDark ? '#d4d4d4' : '#64748b'} />
+            <Settings size={20} />
+            <span style={{ marginLeft: '8px', fontWeight: '600', fontSize: '0.9rem' }}>Settings</span>
           </button>
-
-          <div
-            style={{ display: 'flex', alignItems: 'baseline', fontSize: '2.5rem', fontWeight: '900', fontStyle: 'italic', cursor: 'pointer' }}
-            onClick={() => {
-              if (onNavigateView) onNavigateView('classrooms');
-              else onBack();
-            }}
-          >
-            <span style={{ color: '#10b981' }}>V</span>
-            <span style={{ color: isDark ? '#f5f5f5' : '#1e293b' }}>erity</span>
-            <span style={styles.badge}>Instructor</span>
-          </div>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+        {/* Right: Profile */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', flex: 1, gap: '16px' }}>
           <ProfileMenu currentUser={currentUser} onLogout={onLogout} />
         </div>
       </header>
 
-      {/* ═══ MAIN LAYOUT WITH SIDEBAR ═══ */}
-      <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
-        
-        {/* SIDEBAR NAVIGATION (UNTOUCHED) */}
-        <aside {...sidebarProps} style={styles.sidebar(collapsed)}>
-          <nav style={{ display: 'flex', flexDirection: 'column', gap: '10px', flex: 1, position: 'relative' }}>
+      {/* ═══ PAGE (scrolls under the header) ═══ */}
+      <div style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden' }}>
+        <div style={{ maxWidth: '100%', margin: 0, padding: isMobile ? '16px 16px 48px' : '20px clamp(20px, 3vw, 48px) 56px', width: '100%', boxSizing: 'border-box' }}>
+
+          {/* CLASS CODE PILL */}
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '16px' }}>
             <div style={{
-              position: 'absolute',
-              left: 0,
-              right: 0,
-              top: indicatorStyle.top,
-              height: indicatorStyle.height,
-              background: isDark ? 'rgba(255,255,255,0.07)' : 'rgba(255,255,255,0.25)',
-              backdropFilter: 'blur(8px)',
-              WebkitBackdropFilter: 'blur(8px)',
-              borderRadius: '14px',
-              boxShadow: isDark ? '0 4px 16px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.08)' : '0 4px 16px rgba(16,185,129,0.15), inset 0 1px 0 rgba(255,255,255,0.5)',
-              border: isDark ? '1px solid rgba(255,255,255,0.1)' : '1px solid rgba(255,255,255,0.35)',
-              transition: indicatorStyle.transition || 'none',
-              opacity: indicatorStyle.opacity,
-              pointerEvents: 'none',
-              zIndex: 0,
-            }} />
-
-            <button
-              ref={el => navRefs.current['classrooms'] = el}
-              onClick={() => {
-                if (onNavigateView) onNavigateView('classrooms');
-                else onBack();
-              }}
-              style={styles.sidebarBtn(collapsed)}
-              title={collapsed ? 'Home' : ''}
-            >
-              <Home size={20} color={isDark ? '#a3a3a3' : '#475569'} style={{ flexShrink: 0 }} />
-              {!collapsed && <span style={styles.sidebarBtnText}>Home</span>}
-            </button>
-
-            <button
-              ref={el => navRefs.current['calendar'] = el}
-              onClick={() => {
-                if (onNavigateView) onNavigateView('calendar');
-                else onBack();
-              }}
-              style={styles.sidebarBtn(collapsed)}
-              title={collapsed ? 'Calendar' : ''}
-            >
-              <Calendar size={20} color={isDark ? '#a3a3a3' : '#475569'} style={{ flexShrink: 0 }} />
-              {!collapsed && <span style={styles.sidebarBtnText}>Calendar</span>}
-            </button>
-
-            <button
-              ref={el => navRefs.current['archived'] = el}
-              onClick={() => {
-                if (onNavigateView) onNavigateView('archived');
-                else onBack();
-              }}
-              style={styles.sidebarBtn(collapsed)}
-              title={collapsed ? 'Archived' : ''}
-            >
-              <Archive size={20} color={isDark ? '#a3a3a3' : '#475569'} style={{ flexShrink: 0 }} />
-              {!collapsed && <span style={styles.sidebarBtnText}>Archived</span>}
-            </button>
-
-            {classrooms.filter(c => !c.archived).length > 0 && (
-              <div style={{ marginTop: '12px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                {!collapsed && (
-                  <div style={{
-                    padding: '0 18px',
-                    fontSize: '0.75rem',
-                    fontWeight: 'bold',
-                    color: isDark ? '#10b981' : '#9ca3af',
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.05em',
-                    marginBottom: '4px'
-                  }}>
-                    Teaching
-                  </div>
-                )}
-                {classrooms.filter(c => !c.archived).map((cls) => {
-                  const colors = ['#3b82f6', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981'];
-                  const color = colors[cls.id % colors.length];
-                  const active = classroom?.id === cls.id;
-
-                  return (
-                    <button
-                      key={cls.id}
-                      ref={el => enrolledRefs.current['cls_' + cls.id] = el}
-                      onClick={() => { if (onEnterClassroom) onEnterClassroom(cls); }}
-                      style={styles.sidebarBtn(collapsed)}
-                      title={cls.name}
-                    >
-                      <div style={{
-                        width: '20px',
-                        height: '20px',
-                        borderRadius: '6px',
-                        backgroundColor: color,
-                        color: 'white',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        fontSize: '0.75rem',
-                        fontWeight: 'bold',
-                        flexShrink: 0
-                      }}>
-                        {cls.name.charAt(0).toUpperCase()}
-                      </div>
-                      {!collapsed && (
-                        <span style={{ fontSize: '0.85rem', fontWeight: active ? '700' : '600', color: active ? '#10b981' : (isDark ? '#E8EAED' : '#334155'), overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                          {cls.name}
-                        </span>
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-
-            <div style={{ marginTop: 'auto' }}>
-              <button
-                ref={el => navRefs.current['settings'] = el}
-                onClick={() => {
-                  if (onNavigateView) onNavigateView('settings');
-                  else onBack();
-                }}
-                style={styles.sidebarBtn(collapsed)}
-                title={collapsed ? 'Settings' : ''}
-              >
-                <Settings size={20} color={isDark ? '#a3a3a3' : '#475569'} style={{ flexShrink: 0 }} />
-                {!collapsed && <span style={styles.sidebarBtnText}>Settings</span>}
+              display: 'flex', alignItems: 'center', gap: '10px', padding: '6px 8px 6px 14px', borderRadius: '10px',
+              border: `1px solid ${isDark ? 'rgba(52,211,153,0.28)' : 'rgba(16,185,129,0.35)'}`,
+              background: isDark ? 'rgba(52,211,153,0.06)' : 'rgba(16,185,129,0.06)'
+            }}>
+              <span style={{ fontSize: '0.72rem', color: ui.muted }}>Class code</span>
+              <span onClick={() => setIsClassCodeModalOpen(true)} title="Click to enlarge" style={{ fontSize: '1rem', fontWeight: 800, color: ui.accentText, letterSpacing: '0.04em', cursor: 'pointer' }}>
+                {classCode}
+              </span>
+              <span style={{ width: '1px', height: '18px', background: ui.border }} />
+              <button className="vt-icon-btn" onClick={() => copyToClipboard(classCode)} title="Copy class code" style={{ ...smallIconBtnStyle, width: '26px', height: '26px', color: ui.text }}>
+                {codeCopied ? <Check size={14} color={ui.accent} /> : <Copy size={14} />}
+              </button>
+              <button className="vt-icon-btn" onClick={() => setIsClassCodeModalOpen(true)} title="Display large class code" style={{ ...smallIconBtnStyle, width: '26px', height: '26px', color: ui.text }}>
+                <Maximize2 size={14} />
               </button>
             </div>
-          </nav>
-        </aside>
+          </div>
 
-        {/* ═══ MAIN CONTENT AREA (Padded area containing the Big Box) ═══ */}
-        <div style={styles.mainContent}>
-
-          {/* ═══ THE BIG BOX CONTAINING THE TABS & CLASSROOM VIEWS (Static box - no fade on container) ═══ */}
-          <div style={styles.bigBoxContainer}>
-
-            {/* CLASSROOM TOP NAV TABS INSIDE THE BIG BOX */}
-            <div style={styles.classroomNavHeader}>
-              <div style={styles.classroomTabsGroup}>
-                <button
-                  onClick={() => handleTabChange('stream')}
-                  style={{
-                    ...styles.classroomTabBtn,
-                    position: 'relative',
-                    color: activeTab === 'stream' ? '#10b981' : (isDark ? '#a3a3a3' : '#5f6368'),
-                  }}
-                >
-                  Stream
-                  {activeTab === 'stream' && (
-                    <motion.div
-                      layoutId="teacherClassroomTabUnderline"
-                      style={{
-                        position: 'absolute',
-                        bottom: 0,
-                        left: 0,
-                        right: 0,
-                        height: '3px',
-                        backgroundColor: '#10b981',
-                        borderRadius: '3px 3px 0 0'
-                      }}
-                      transition={{ type: 'spring', stiffness: 500, damping: 35 }}
-                    />
-                  )}
-                </button>
-                <button
-                  onClick={() => handleTabChange('classwork')}
-                  style={{
-                    ...styles.classroomTabBtn,
-                    position: 'relative',
-                    color: activeTab === 'classwork' ? '#10b981' : (isDark ? '#a3a3a3' : '#5f6368'),
-                  }}
-                >
-                  Classwork
-                  {activeTab === 'classwork' && (
-                    <motion.div
-                      layoutId="teacherClassroomTabUnderline"
-                      style={{
-                        position: 'absolute',
-                        bottom: 0,
-                        left: 0,
-                        right: 0,
-                        height: '3px',
-                        backgroundColor: '#10b981',
-                        borderRadius: '3px 3px 0 0'
-                      }}
-                      transition={{ type: 'spring', stiffness: 500, damping: 35 }}
-                    />
-                  )}
-                </button>
-                <button
-                  onClick={() => handleTabChange('people')}
-                  style={{
-                    ...styles.classroomTabBtn,
-                    position: 'relative',
-                    color: activeTab === 'people' ? '#10b981' : (isDark ? '#a3a3a3' : '#5f6368'),
-                  }}
-                >
-                  People
-                  {activeTab === 'people' && (
-                    <motion.div
-                      layoutId="teacherClassroomTabUnderline"
-                      style={{
-                        position: 'absolute',
-                        bottom: 0,
-                        left: 0,
-                        right: 0,
-                        height: '3px',
-                        backgroundColor: '#10b981',
-                        borderRadius: '3px 3px 0 0'
-                      }}
-                      transition={{ type: 'spring', stiffness: 500, damping: 35 }}
-                    />
-                  )}
-                </button>
-                <button
-                  onClick={() => handleTabChange('grades')}
-                  style={{
-                    ...styles.classroomTabBtn,
-                    position: 'relative',
-                    color: activeTab === 'grades' ? '#10b981' : (isDark ? '#a3a3a3' : '#5f6368'),
-                  }}
-                >
-                  Grades
-                  {activeTab === 'grades' && (
-                    <motion.div
-                      layoutId="teacherClassroomTabUnderline"
-                      style={{
-                        position: 'absolute',
-                        bottom: 0,
-                        left: 0,
-                        right: 0,
-                        height: '3px',
-                        backgroundColor: '#10b981',
-                        borderRadius: '3px 3px 0 0'
-                      }}
-                      transition={{ type: 'spring', stiffness: 500, damping: 35 }}
-                    />
-                  )}
-                </button>
-              </div>
-
-              {/* Right-side Classroom Settings Gear Icon */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <button
-                  onClick={() => setIsSettingsModalOpen(true)}
-                  style={styles.iconActionBtn}
-                  title="Classroom settings"
-                >
-                  <Settings size={22} color={isDark ? '#a3a3a3' : '#5f6368'} />
-                </button>
-              </div>
+          {/* CLASSROOM TAB BAR */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '6px', borderRadius: '12px', background: ui.surface, border: `1px solid ${ui.border}`, marginBottom: '24px' }}>
+            <div style={{ display: 'flex', flex: 1 }}>
+              {CLASSROOM_TABS.map((tab) => {
+                const isActive = activeTab === tab.id;
+                return (
+                  <button
+                    key={tab.id}
+                    className="vt-tab"
+                    onClick={() => handleTabChange(tab.id)}
+                    style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', height: '38px', border: 'none', background: 'transparent', cursor: 'pointer', fontFamily: 'inherit', fontSize: '0.8rem', fontWeight: isActive ? 700 : 500, color: isActive ? ui.accentText : ui.muted, transition: 'color 0.2s ease' }}
+                  >
+                    <span style={{ position: 'relative', padding: '8px 16px', borderRadius: '8px' }}>
+                      {isActive && (
+                        <motion.span
+                          layoutId="teacherClassroomTabPill"
+                          style={{ position: 'absolute', inset: 0, borderRadius: '8px', background: ui.accentSoft }}
+                          transition={{ type: 'spring', stiffness: 500, damping: 38 }}
+                        />
+                      )}
+                      <span style={{ position: 'relative', zIndex: 1 }}>{tab.label}</span>
+                    </span>
+                  </button>
+                );
+              })}
             </div>
+          </div>
 
-            {/* SCROLLABLE INNER BODY OF THE BIG BOX */}
-            <div style={styles.bigBoxInnerScroll}>
-              <AnimatePresence mode="wait" custom={tabDirection}>
-                <motion.div
-                  key={`${classroom?.id || 'cls'}_${activeTab}`}
-                  custom={tabDirection}
-                  variants={tabSlideVariants}
-                  initial="enter"
-                  animate="center"
-                  exit="exit"
-                  style={{ display: 'flex', flexDirection: 'column', flex: 1, width: '100%' }}
-                >
+          {/* TAB CONTENT */}
+          <div style={{ minWidth: 0 }}>
+            <AnimatePresence mode="wait" custom={tabDirection}>
+              <motion.div
+                key={activeTab}
+                custom={tabDirection}
+                variants={tabSlideVariants}
+                initial="enter"
+                animate="center"
+                exit="exit"
+                style={{ display: 'flex', flexDirection: 'column', flex: 1, width: '100%' }}
+              >
 
               {/* ═══ TAB 1: STREAM ═══ */}
               {activeTab === 'stream' && (
-                <div style={styles.streamContainer}>
+                <div style={{
+                  display: 'flex',
+                  flexDirection: isMobile ? 'column' : 'row',
+                  gap: isMobile ? '24px' : '32px',
+                  alignItems: 'flex-start',
+                  width: '100%'
+                }}>
 
-                  {/* HERO BANNER (CUSTOMIZABLE) */}
-                  <div style={{
-                    ...styles.bannerCard,
-                    background: bannerTheme.customImageUrl 
-                      ? `url(${bannerTheme.customImageUrl}) center/cover no-repeat`
-                      : `linear-gradient(135deg, ${bannerTheme.primary}, ${bannerTheme.secondary})`,
+                  {/* LEFT COLUMN: Classroom card + Teaching list */}
+                  <aside style={{
+                    width: isMobile ? '100%' : '280px',
+                    flexShrink: 0,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '20px',
+                    position: isMobile ? 'static' : 'sticky',
+                    top: '20px'
                   }}>
-                    {/* Vector Illustration Overlay */}
-                    {!bannerTheme.customImageUrl && renderBannerIllustration()}
+                    <div style={{
+                      position: 'relative', overflow: 'hidden', borderRadius: '16px',
+                      padding: isMobile ? '20px' : '24px 20px',
+                      minHeight: isMobile ? '170px' : '230px',
+                      display: 'flex', flexDirection: 'column', boxSizing: 'border-box',
+                      background: bannerTheme.customImageUrl
+                        ? `url(${bannerTheme.customImageUrl}) center/cover no-repeat`
+                        : `linear-gradient(150deg, ${bannerTheme.primary}, ${bannerTheme.secondary})`,
+                      boxShadow: isDark ? '0 18px 40px -18px rgba(0,0,0,0.7)' : '0 14px 30px -16px rgba(15,23,42,0.35)'
+                    }}>
+                      {/* Decorative rings */}
+                      <div style={{ position: 'absolute', top: '-70px', right: '-70px', width: '210px', height: '210px', borderRadius: '50%', border: '1px solid rgba(255,255,255,0.14)', pointerEvents: 'none' }} />
+                      <div style={{ position: 'absolute', top: '-24px', right: '-24px', width: '120px', height: '120px', borderRadius: '50%', border: '1px solid rgba(255,255,255,0.12)', pointerEvents: 'none' }} />
 
-                    {/* Banner Content (Class Title & Subtitle) */}
-                    <div style={styles.bannerInfo}>
-                      <h1 style={styles.bannerTitle}>
-                        {classroom?.name || "Verity"}
-                      </h1>
-                      <div style={styles.bannerSubtitle}>
-                        {classroom?.section || classroom?.subject || "2"}
+                      <div style={{ position: 'relative', zIndex: 2, fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.07em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
+                        Your classroom
                       </div>
-                    </div>
 
-                    {/* Top-Right "Customize" Button */}
-                    <button
-                      onClick={() => {
-                        setOriginalBannerTheme(bannerTheme);
-                        setIsCustomizeOpen(true);
-                      }}
-                      style={styles.customizeBtn}
-                      title="Customize class theme and background"
-                    >
-                      <Edit3 size={16} color={isDark ? '#E8EAED' : '#1e293b'} />
-                      <span>Customize</span>
-                    </button>
-
-                    {/* Bottom-Right "(i)" Info Button */}
-                    <button
-                      onClick={() => setIsClassInfoModalOpen(true)}
-                      style={styles.infoBtn}
-                      title="Class details"
-                    >
-                      <Info size={20} color="#ffffff" />
-                    </button>
-                  </div>
-
-                  {/* TWO-COLUMN STREAM BODY */}
-                  <div style={styles.streamBodyGrid}>
-
-                    {/* LEFT COLUMN: Class Code & Upcoming Cards */}
-                    <div style={styles.streamLeftCol}>
-                      {/* Class Code Card */}
-                      <div style={styles.streamSideCard}>
-                        <div style={styles.sideCardHeaderRow}>
-                          <span style={styles.sideCardLabel}>Class code</span>
-                          <div style={{ display: 'flex', gap: '6px' }}>
-                            <button
-                              onClick={() => copyToClipboard(classCode)}
-                              style={styles.cardTinyActionBtn}
-                              title="Copy class code"
-                            >
-                              {codeCopied ? <Check size={16} color="#10b981" /> : <Copy size={16} color={isDark ? '#a3a3a3' : '#64748b'} />}
-                            </button>
-                            <button
-                              onClick={() => setIsClassCodeModalOpen(true)}
-                              style={styles.cardTinyActionBtn}
-                              title="Display large class code"
-                            >
-                              <Maximize2 size={16} color="#10b981" />
-                            </button>
-                          </div>
+                      {!bannerTheme.customImageUrl && (
+                        <div style={{ position: 'relative', width: '150px', height: '90px', marginLeft: '-62px', marginTop: '2px', pointerEvents: 'none', zIndex: 1 }}>
+                          {renderBannerIllustration()}
                         </div>
-                        <div
-                          style={styles.classCodeDisplay}
-                          onClick={() => setIsClassCodeModalOpen(true)}
-                          title="Click to enlarge"
+                      )}
+
+                      <div style={{ position: 'relative', zIndex: 2, marginTop: 'auto' }}>
+                        <h1 style={{ fontSize: isMobile ? '1.8rem' : '2rem', fontWeight: 500, color: bannerTheme.textColor || 'white', margin: '0 0 6px', wordBreak: 'break-word', lineHeight: 1.15, letterSpacing: '-0.01em' }}>
+                          {classroom?.name || 'Verity'}
+                        </h1>
+                        <div style={{ fontSize: '0.78rem', color: bannerTheme.textColor || 'white', opacity: 0.85 }}>
+                          {classroom?.section || classroom?.subject || classroom?.name || ''}
+                        </div>
+                        <div style={{ height: '1px', background: 'rgba(255,255,255,0.22)', margin: '14px 0 12px' }} />
+                        <button
+                          className="vt-customize"
+                          onClick={() => { setOriginalBannerTheme(bannerTheme); setIsCustomizeOpen(true); }}
+                          style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'transparent', border: 'none', color: bannerTheme.textColor || 'white', cursor: 'pointer', padding: 0, fontSize: '0.78rem', fontWeight: 600, opacity: 0.92, fontFamily: 'inherit' }}
                         >
-                          {classCode}
-                        </div>
-                      </div>
-
-                      {/* Upcoming Card */}
-                      <div style={styles.streamSideCard}>
-                        <span style={styles.sideCardLabel}>Upcoming</span>
-                        <div style={{ marginTop: '12px' }}>
-                          {upcomingItems.length === 0 ? (
-                            <div style={styles.noWorkText}>No work due soon</div>
-                          ) : (
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                              {upcomingItems.map((item) => (
-                                <div
-                                  key={item.id}
-                                  onClick={() => {
-                                    handleTabChange('classwork');
-                                    setExpandedId(item.id);
-                                  }}
-                                  style={styles.upcomingItemRow}
-                                >
-                                  <span style={styles.upcomingItemDate}>Due {formatShortDate(item.dueDate)}</span>
-                                  <span style={styles.upcomingItemTitle}>{item.title}</span>
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                        <div style={{ marginTop: '16px', textAlign: 'right' }}>
-                          <span
-                            onClick={() => handleTabChange('classwork')}
-                            style={styles.viewAllLink}
-                          >
-                            View all
-                          </span>
-                        </div>
+                          <Edit3 size={13} /> Customize
+                        </button>
                       </div>
                     </div>
 
-                    {/* RIGHT COLUMN: Activity Feed */}
-                    <div style={styles.streamRightCol}>
-                      {/* Feed of Assignments */}
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-                        {loadingClasswork ? (
-                          <>
-                            <Skeleton.StreamCard />
-                            <Skeleton.StreamCard />
-                            <Skeleton.StreamCard />
-                          </>
-                        ) : visibleClasswork.length === 0 ? (
-                          <div style={styles.emptyFeedBox}>
-                            <p style={{ margin: 0, color: isDark ? '#a3a3a3' : '#64748b' }}>
-                              This is where you'll see classwork posted for your students.
-                            </p>
-                          </div>
-                        ) : (
-                          visibleClasswork.map((item) => (
-                            <div
-                              key={item.id}
-                              onClick={() => {
-                                handleTabChange('classwork');
-                                setExpandedId(item.id);
+                    {/* TEACHING LIST */}
+                    <div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0 10px', marginBottom: '10px' }}>
+                        <span style={sectionLabelStyle}>Teaching</span>
+                        <span style={{ ...sectionLabelStyle, color: ui.faint }}>{String(activeClassrooms.length).padStart(2, '0')}</span>
+                      </div>
+                      <div style={{
+                        display: 'flex',
+                        flexDirection: isMobile ? 'row' : 'column',
+                        gap: isMobile ? '8px' : '4px',
+                        overflowX: isMobile ? 'auto' : 'visible',
+                        paddingBottom: isMobile ? '6px' : '0'
+                      }}>
+                        {activeClassrooms.map((cls, idx) => {
+                          const active = classroom?.id === cls.id;
+                          const badgeColor = BADGE_COLORS[idx % BADGE_COLORS.length];
+                          const clsName = cls.name || 'Untitled';
+                          return (
+                            <button
+                              key={cls.id}
+                              className={active ? undefined : 'vt-class-row'}
+                              onClick={() => { if (!active) handleSelectClassroom(cls, idx); }}
+                              style={{
+                                display: 'flex', alignItems: 'center', gap: '12px', padding: '10px 12px', borderRadius: '10px',
+                                width: isMobile ? 'auto' : '100%',
+                                minWidth: isMobile ? '160px' : 'auto',
+                                flexShrink: 0,
+                                textAlign: 'left', cursor: active ? 'default' : 'pointer', fontFamily: 'inherit',
+                                background: active
+                                  ? (isDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(255, 255, 255, 0.75)')
+                                  : 'transparent',
+                                backdropFilter: active ? 'blur(12px)' : 'none',
+                                WebkitBackdropFilter: active ? 'blur(12px)' : 'none',
+                                border: active
+                                  ? (isDark ? '1px solid rgba(255, 255, 255, 0.15)' : '1px solid rgba(0, 0, 0, 0.08)')
+                                  : '1px solid transparent',
+                                boxShadow: active
+                                  ? (isDark ? '0 4px 16px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.12)' : '0 4px 12px rgba(0, 0, 0, 0.05), inset 0 1px 0 rgba(255, 255, 255, 0.8)')
+                                  : 'none',
+                                color: active ? ui.text : (isDark ? '#c4c9c5' : '#374151'),
+                                transition: 'all 0.2s ease'
                               }}
-                              style={styles.assignmentStreamCard}
                             >
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-                                <div style={styles.assignmentIconBadge}>
-                                  <ClipboardList size={22} color="#10b981" />
-                                </div>
-                                <div>
-                                  <div style={styles.assignmentStreamTitle}>
-                                    {(currentUser?.name || classroom?.instructor || 'Instructor')} posted a new assignment: {item.title}
-                                  </div>
-                                  <div style={styles.assignmentStreamDate}>
-                                    {formatShortDate(item.posted || item.id)}
-                                  </div>
-                                </div>
-                              </div>
-                              <div style={styles.streamCardDots}>
-                                <MoreVertical size={20} color={isDark ? '#a3a3a3' : '#64748b'} />
-                              </div>
-                            </div>
-                          ))
-                        )}
+                              <span style={{
+                                width: '26px', height: '26px', borderRadius: '7px', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                fontSize: '0.74rem', fontWeight: 800, flexShrink: 0,
+                                background: active
+                                  ? (isDark ? 'rgba(255, 255, 255, 0.14)' : 'rgba(0, 0, 0, 0.06)')
+                                  : (isDark ? '#232725' : '#f1f5f9'),
+                                border: active
+                                  ? (isDark ? '1px solid rgba(255, 255, 255, 0.2)' : '1px solid rgba(0, 0, 0, 0.08)')
+                                  : 'none',
+                                color: active ? ui.text : badgeColor
+                              }}>
+                                {clsName.charAt(0).toUpperCase()}
+                              </span>
+                              <span style={{ flex: 1, fontSize: '0.82rem', fontWeight: active ? 600 : 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                {clsName}
+                              </span>
+                              {active && (
+                                <span style={{
+                                  width: '6px',
+                                  height: '6px',
+                                  borderRadius: '50%',
+                                  background: ui.accent,
+                                  boxShadow: `0 0 8px ${ui.accent}`,
+                                  flexShrink: 0
+                                }} />
+                              )}
+                            </button>
+                          );
+                        })}
                       </div>
+                      <div style={{ height: '1px', background: ui.border, marginTop: '16px' }} />
                     </div>
+                  </aside>
 
+                  {/* CENTER COLUMN: Stream feed */}
+                  <div style={{ flex: 1, minWidth: 0, width: '100%', display: 'flex', flexDirection: 'column' }}>
+                    <AnimatePresence mode="wait" custom={classroomDirection}>
+                      <motion.div
+                        key={classroom?.id || 'stream_feed'}
+                        custom={classroomDirection}
+                        variants={classroomSlideVariants}
+                        initial="enter"
+                        animate="center"
+                        exit="exit"
+                        style={{ width: '100%', display: 'flex', flexDirection: 'column' }}
+                      >
+                  <div style={{ marginBottom: '18px' }}>
+                    <h2 style={{ fontSize: '1.6rem', fontWeight: 500, letterSpacing: '-0.01em', margin: '0 0 6px', color: ui.text }}>Classroom stream</h2>
+                    <p style={{ margin: 0, fontSize: '0.82rem', color: ui.muted }}>Assignments and learning activities in one place.</p>
                   </div>
 
+                  {/* Latest activity header */}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+                    <span style={sectionLabelStyle}>Latest activity</span>
+                    <span style={{ fontSize: '0.7rem', color: ui.faint }}>
+                      {formatShortDate(visibleClasswork[0]?.posted || Date.now())}
+                    </span>
+                  </div>
+
+                  {/* Feed */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                    {loadingClasswork ? (
+                      <>
+                        <Skeleton.StreamCard />
+                        <Skeleton.StreamCard />
+                        <Skeleton.StreamCard />
+                      </>
+                    ) : visibleClasswork.length === 0 ? (
+                      <div style={{ padding: '36px 20px', borderRadius: '14px', border: `1px dashed ${ui.border}`, textAlign: 'center', color: ui.muted, fontSize: '0.84rem' }}>
+                        This is where you'll see classwork and activities posted for your students.
+                      </div>
+                    ) : (
+                      visibleClasswork.map((item, index) => {
+                        const plain = (item.details || '').replace(/<[^>]*>?/gm, '').replace(/&nbsp;/g, ' ').trim();
+                        const postedLabel = formatShortDate(item.posted || (typeof item.id === 'number' && item.id > 1e12 ? item.id : null));
+                        const typeLabel = item.activityType || 'Assignment';
+                        const openItem = () => { handleTabChange('classwork'); setExpandedId(item.id); };
+                        return (
+                          <motion.div 
+                            key={item.id} 
+                            initial={{ opacity: 0, y: 15 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{ duration: 0.3, delay: index * 0.05 }}
+                            className="vt-card" style={{ background: ui.surface, border: `1px solid ${ui.border}`, borderRadius: '14px', overflow: 'hidden' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '16px 16px 0' }}>
+                              {renderTeacherAvatar()}
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <div style={{ fontSize: '0.82rem', fontWeight: 600, color: ui.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                  {teacherName} posted a new {typeLabel.toLowerCase()}: {item.title}
+                                </div>
+                                <div style={{ fontSize: '0.7rem', color: ui.muted, marginTop: '2px' }}>
+                                  {[postedLabel, typeLabel].filter(Boolean).join(' · ')}
+                                </div>
+                              </div>
+                              <button className="vt-icon-btn" onClick={openItem} title="Open in Classwork" style={smallIconBtnStyle}>
+                                <MoreHorizontal size={18} />
+                              </button>
+                            </div>
+
+                            <div style={{
+                              display: 'flex',
+                              alignItems: isMobile ? 'flex-start' : 'center',
+                              flexDirection: isMobile ? 'column' : 'row',
+                              gap: '16px',
+                              padding: '16px'
+                            }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '16px', width: isMobile ? '100%' : 'auto', flex: isMobile ? 'none' : 1, minWidth: 0 }}>
+                                <div style={{ width: '72px', height: '72px', borderRadius: '10px', background: isDark ? 'rgba(52, 211, 153, 0.12)' : '#ecfdf5', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                                  {(() => {
+                                    const IconComp = getMaterialIcon(item);
+                                    return <IconComp size={28} color={ui.accentText} strokeWidth={1.6} />;
+                                  })()}
+                                </div>
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                                  <div style={{ fontSize: '0.62rem', fontWeight: 700, letterSpacing: '0.07em', textTransform: 'uppercase', color: ui.accentText }}>Classwork</div>
+                                  <div style={{ fontSize: '1.3rem', fontWeight: 500, color: ui.text, margin: '4px 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                    {item.title}
+                                  </div>
+                                  <div style={{ fontSize: '0.76rem', color: ui.muted, lineHeight: 1.5, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+                                    {plain || "View assignment instructions and manage your students' work."}
+                                  </div>
+                                </div>
+                              </div>
+                              <button
+                                className="vt-outline-btn"
+                                onClick={openItem}
+                                style={{
+                                  flexShrink: 0,
+                                  background: ui.surfaceAlt,
+                                  border: `1px solid ${ui.border}`,
+                                  color: ui.text,
+                                  padding: '9px 16px',
+                                  borderRadius: '9px',
+                                  fontSize: '0.76rem',
+                                  fontWeight: 600,
+                                  cursor: 'pointer',
+                                  fontFamily: 'inherit',
+                                  transition: 'all 0.2s ease',
+                                  width: isMobile ? '100%' : 'auto',
+                                  textAlign: 'center'
+                                }}
+                              >
+                                View assignment
+                              </button>
+                            </div>
+                          </motion.div>
+                        );
+                      })
+                    )}
+                  </div>
+                      </motion.div>
+                    </AnimatePresence>
+                  </div>
                 </div>
               )}
 
@@ -1374,15 +1677,17 @@ export default function TeacherClasswork({
                   <div style={styles.headerRow}>
                     <div>
                       <h2 style={{ color: isDark ? '#E8EAED' : '#1e293b', fontWeight: '700', fontSize: '1.4rem', margin: 0 }}>
-                        {classroom ? classroom.name : "Classwork"}
+                        List of Classworks
                       </h2>
                       <p style={{ margin: '4px 0 0 0', color: isDark ? '#a3a3a3' : '#64748b', fontSize: '0.85rem' }}>
                         Create and organize assignments, questions, and learning activities for this class.
                       </p>
                     </div>
-                    <button onClick={openCreate} style={styles.addButton} className="btn-anim">
-                      <Plus size={18} style={{ marginRight: '6px' }} /> Create
-                    </button>
+                    <div>
+                      <button onClick={() => openCreate()} style={styles.addButton} className="btn-anim">
+                        <Plus size={18} style={{ marginRight: '6px' }} /> Create
+                      </button>
+                    </div>
                   </div>
 
                   {/* List of Classwork */}
@@ -1396,34 +1701,120 @@ export default function TeacherClasswork({
                         <p style={{ margin: '6px 0 0 0', fontSize: '0.85rem' }}>Click "Create" to assign new work to your students.</p>
                       </div>
                     ) : (
-                      visibleClasswork.map((item) => {
+                      visibleClasswork.map((item, index) => {
                         const isOpen = expandedId === item.id;
                         const due = formatShortDate(item.dueDate);
                         const posted = formatShortDate(item.posted || (typeof item.id === 'number' && item.id > 1e12 ? item.id : null));
                         return (
-                          <div key={item.id} style={styles.itemWrapper}>
+                          <motion.div 
+                            key={item.id} 
+                            initial={{ opacity: 0, y: 15 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{ duration: 0.3, delay: index * 0.05 }}
+                            style={styles.itemWrapper}>
                             <div style={styles.itemHeader}>
-                              <div style={styles.titlePill} onClick={() => toggleExpand(item.id)}>
-                                <ClipboardList size={18} color="#10b981" style={{ marginRight: '10px', flexShrink: 0 }} />
-                                <span>{item.title}</span>
-                                {due && <span style={styles.itemDuePill}>Due {due}</span>}
-                              </div>
-                              <div style={styles.threeDots} onClick={(e) => toggleMenu(e, item.id)}>
-                                <MoreVertical size={20} color={isDark ? '#a3a3a3' : '#9ca3af'} />
-                                {activeMenu === item.id && (
-                                  <div style={styles.dropdownMenu}>
-                                    <div style={styles.dropdownItem} onClick={(e) => openModify(e, item)}>Modify</div>
-                                    <div style={styles.dropdownItem} onClick={(e) => handleArchive(e, item.id)}>Archive</div>
-                                    <div style={styles.dropdownItem} onClick={(e) => handleCopy(e, item)}>Copy</div>
-                                    <div style={{ ...styles.dropdownItem, color: '#ef4444' }} onClick={(e) => { e.stopPropagation(); handleDeleteClasswork(e, item.id); }}>Delete</div>
+                              <div
+                                style={{
+                                  width: '100%',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'space-between',
+                                  padding: '14px 20px',
+                                  borderRadius: '12px',
+                                  backgroundColor: isDark ? (isOpen ? '#242a2b' : '#1e2324') : (isOpen ? '#f1f5f9' : '#f8fafc'),
+                                  border: isDark ? (isOpen ? '1px solid #444c4f' : '1px solid #2d3335') : (isOpen ? '1px solid #cbd5e1' : '1px solid #e2e8f0'),
+                                  cursor: 'pointer',
+                                  userSelect: 'none',
+                                  transition: 'all 0.2s ease',
+                                  position: 'relative'
+                                }}
+                                onClick={() => toggleExpand(item.id)}
+                                onMouseOver={(e) => {
+                                  if (isDark && !isOpen) {
+                                    e.currentTarget.style.backgroundColor = '#242a2b';
+                                    e.currentTarget.style.borderColor = '#383e40';
+                                  }
+                                }}
+                                onMouseOut={(e) => {
+                                  if (isDark && !isOpen) {
+                                    e.currentTarget.style.backgroundColor = '#1e2324';
+                                    e.currentTarget.style.borderColor = '#2d3335';
+                                  }
+                                }}
+                              >
+                                <div style={{ display: 'flex', alignItems: 'center', minWidth: 0 }}>
+                                  {/* Icon Container */}
+                                  <div style={{ width: '36px', height: '36px', borderRadius: '10px', backgroundColor: isDark ? 'rgba(16, 185, 129, 0.12)' : '#dcfce7', border: isDark ? '1px solid rgba(16, 185, 129, 0.25)' : 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#10b981', marginRight: '16px', flexShrink: 0 }}>
+                                    {(() => {
+                                      const IconComp = getMaterialIcon(item);
+                                      return <IconComp size={18} />;
+                                    })()}
                                   </div>
-                                )}
+
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                    <span style={{ color: '#10b981', fontWeight: '700', fontSize: '0.82rem', backgroundColor: isDark ? 'rgba(16, 185, 129, 0.12)' : '#ecfdf5', padding: '3px 8px', borderRadius: '6px', border: isDark ? '1px solid rgba(16, 185, 129, 0.2)' : '1px solid #d1fae5', flexShrink: 0 }}>
+                                      {item.activityType || 'Assignment'}
+                                    </span>
+                                    <span style={{ color: isDark ? '#f5f5f5' : '#1e293b', fontSize: '1.05rem', fontWeight: '700', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                      {item.title}
+                                    </span>
+                                  </div>
+                                </div>
+
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexShrink: 0 }}>
+                                  {due ? (
+                                    <span style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.75rem', color: isDark ? '#a7f3d0' : '#059669', backgroundColor: isDark ? 'rgba(16, 185, 129, 0.08)' : '#ecfdf5', border: isDark ? '1px solid rgba(16, 185, 129, 0.2)' : '1px solid #d1fae5', padding: '5px 12px', borderRadius: '8px', fontWeight: '600' }}>
+                                      <Calendar size={12} /> Due {due}
+                                    </span>
+                                  ) : null}
+
+                                  {/* Vertical Divider */}
+                                  <div style={{ width: '1px', height: '24px', backgroundColor: isDark ? '#3d4447' : '#e2e8f0' }} />
+
+                                  {/* 3-dots Menu Button */}
+                                  <div
+                                    style={{
+                                      ...styles.threeDots,
+                                      width: '32px',
+                                      height: '32px',
+                                      borderRadius: '8px',
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      justifyContent: 'center',
+                                      transition: 'background 0.15s ease'
+                                    }}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      toggleMenu(e, item.id);
+                                    }}
+                                    onMouseOver={(e) => e.currentTarget.style.backgroundColor = isDark ? 'rgba(255,255,255,0.08)' : '#e2e8f0'}
+                                    onMouseOut={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+                                  >
+                                    <MoreVertical size={18} color={isDark ? '#a3a3a3' : '#64748b'} />
+                                    {activeMenu === item.id && (
+                                      <div style={styles.dropdownMenu} onClick={(e) => e.stopPropagation()}>
+                                        <div style={styles.dropdownItem} onClick={(e) => openModify(e, item)}>Modify</div>
+                                        <div style={styles.dropdownItem} onClick={(e) => handleArchive(e, item.id)}>Archive</div>
+                                        <div style={styles.dropdownItem} onClick={(e) => handleCopy(e, item)}>Copy</div>
+                                        <div style={{ ...styles.dropdownItem, color: '#ef4444' }} onClick={(e) => { e.stopPropagation(); handleDeleteClasswork(e, item.id); }}>Delete</div>
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
                               </div>
                             </div>
-
-                            {isOpen && (
-                              <div style={styles.detailCard}>
-                                <div style={styles.detailHeaderBar}>
+                            <AnimatePresence initial={false}>
+                              {isOpen && (
+                                <motion.div
+                                  key="detail"
+                                  initial={{ opacity: 0, height: 0 }}
+                                  animate={{ opacity: 1, height: 'auto' }}
+                                  exit={{ opacity: 0, height: 0 }}
+                                  transition={{ duration: 0.22, ease: 'easeOut' }}
+                                  style={{ overflow: 'hidden' }}
+                                >
+                                  <div style={styles.detailCard}>
+                                    <div style={styles.detailHeaderBar}>
                                   <ClipboardList size={30} color={isDark ? '#10b981' : '#4b5563'} />
                                   <div>
                                     <div style={styles.detailTitle}>{item.title}</div>
@@ -1434,7 +1825,46 @@ export default function TeacherClasswork({
                                 <div style={styles.detailBody}>
                                   <div style={styles.detailLeft}>
                                     {posted && <div style={styles.postedText}>Posted {posted}</div>}
-                                    <p style={styles.detailInstruction}>{item.details || 'No instructions provided.'}</p>
+                                  {item.details ? (
+                                    <>
+                                      <div 
+                                        style={{ 
+                                          ...styles.detailInstruction, 
+                                          whiteSpace: 'normal',
+                                          ...(expandedInstructionId === item.id ? {} : {
+                                            display: '-webkit-box',
+                                            WebkitLineClamp: 3,
+                                            WebkitBoxOrient: 'vertical',
+                                            overflow: 'hidden',
+                                            textOverflow: 'ellipsis'
+                                          })
+                                        }}
+                                      >
+                                        {expandedInstructionId === item.id 
+                                          ? <div dangerouslySetInnerHTML={{ __html: item.details }} />
+                                          : item.details.replace(/<[^>]*>?/gm, '').replace(/&nbsp;/g, ' ')
+                                        }
+                                      </div>
+                                      {expandedInstructionId !== item.id && item.details.replace(/<[^>]*>?/gm, '').length > 100 && (
+                                        <div 
+                                          style={{ color: '#10b981', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 'bold', marginTop: '6px' }}
+                                          onClick={(e) => { e.stopPropagation(); setExpandedInstructionId(item.id); }}
+                                        >
+                                          View activity details...
+                                        </div>
+                                      )}
+                                      {expandedInstructionId === item.id && (
+                                        <div 
+                                          style={{ color: '#10b981', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 'bold', marginTop: '6px' }}
+                                          onClick={(e) => { e.stopPropagation(); setExpandedInstructionId(null); }}
+                                        >
+                                          Show less
+                                        </div>
+                                      )}
+                                    </>
+                                  ) : (
+                                    <p style={styles.detailInstruction}>No instructions provided.</p>
+                                  )}
 
                                     {item.attachments?.length > 0 && (
                                       <div style={styles.cardAttachments}>
@@ -1446,12 +1876,8 @@ export default function TeacherClasswork({
                                             onClick={(clickedAtt) => {
                                               if (clickedAtt.type === 'image') setPreviewImage(clickedAtt);
                                               else if (clickedAtt.type === 'video') setPreviewVideo(clickedAtt);
-                                              else if (clickedAtt.type === 'link' && clickedAtt.url) {
-                                                const targetUrl = clickedAtt.url.startsWith('http://') || clickedAtt.url.startsWith('https://')
-                                                  ? clickedAtt.url
-                                                  : `https://${clickedAtt.url}`;
-                                                window.open(targetUrl, '_blank', 'noopener,noreferrer');
-                                              }
+                                              else if (clickedAtt.type === 'document') setPreviewIframe(clickedAtt);
+                                              else if (clickedAtt.type === 'link' && clickedAtt.url) setPreviewIframe(clickedAtt);
                                             }}
                                           />
                                         ))}
@@ -1495,8 +1921,239 @@ export default function TeacherClasswork({
                                     <Monitor size={16} /> Live Monitoring
                                   </button>
                                 </div>
+                                  </div>
+                                </motion.div>
+                              )}
+                            </AnimatePresence>
+                          </motion.div>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* ═══ TAB: MATERIALS ═══ */}
+              {activeTab === 'materials' && (
+                <div style={{ maxWidth: '1000px', margin: '0 auto', width: '100%' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', borderBottom: isDark ? '1px solid #4A4A4A' : '1px solid #e2e8f0', paddingBottom: '18px', marginBottom: '20px' }}>
+                    <div>
+                      <h2 style={{ margin: 0, color: isDark ? '#E8EAED' : '#1e293b', fontWeight: '700', fontSize: '1.4rem' }}>
+                        List of Materials
+                      </h2>
+                      <p style={{ margin: '4px 0 0 0', color: isDark ? '#a3a3a3' : '#64748b', fontSize: '0.85rem' }}>
+                        Upload and manage resources, syllabus, and study guides for {classroom?.name || 'this class'}.
+                      </p>
+                    </div>
+                    <div>
+                      <button onClick={() => openCreate('Material')} style={styles.addButton} className="btn-anim">
+                        <Plus size={18} style={{ marginRight: '6px' }} /> Create
+                      </button>
+                    </div>
+                  </div>
+                  <div style={{ ...styles.list, padding: '0 0 40px 0' }}>
+                    {visibleMaterials.length === 0 ? (
+                      <div style={{ padding: '40px', textAlign: 'center', color: isDark ? '#a3a3a3' : '#94a3b8', backgroundColor: isDark ? '#262626' : '#f8fafc', borderRadius: '12px', border: isDark ? '1px dashed #404040' : '1px dashed #cbd5e1' }}>
+                        <div style={{ marginBottom: '16px' }}>
+                          <FileText size={48} color={isDark ? '#525252' : '#94a3b8'} style={{ margin: '0 auto' }} />
+                        </div>
+                        <p style={{ margin: '0 0 12px 0', fontSize: '1.1rem', fontWeight: '600', color: isDark ? '#e5e5e5' : '#334155' }}>No materials uploaded yet</p>
+                        <p style={{ margin: 0, fontSize: '0.9rem' }}>Use the Create button to upload syllabus, readings, and reference documents.</p>
+                      </div>
+                    ) : (
+                      visibleMaterials.map((item) => {
+                        const isOpen = expandedId === item.id;
+                        const posted = formatShortDate(item.posted || (typeof item.id === 'number' && item.id > 1e12 ? item.id : null));
+                        return (
+                          <div key={item.id} style={styles.itemWrapper}>
+                            <div style={styles.itemHeader}>
+                              <div
+                                style={{
+                                  width: '100%',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'space-between',
+                                  padding: '14px 20px',
+                                  borderRadius: '12px',
+                                  backgroundColor: isDark ? (isOpen ? '#242a2b' : '#1e2324') : (isOpen ? '#f1f5f9' : '#f8fafc'),
+                                  border: isDark ? (isOpen ? '1px solid #444c4f' : '1px solid #2d3335') : (isOpen ? '1px solid #cbd5e1' : '1px solid #e2e8f0'),
+                                  cursor: 'pointer',
+                                  userSelect: 'none',
+                                  transition: 'all 0.2s ease',
+                                  position: 'relative'
+                                }}
+                                onClick={() => toggleExpand(item.id)}
+                                onMouseOver={(e) => {
+                                  if (isDark && !isOpen) {
+                                    e.currentTarget.style.backgroundColor = '#242a2b';
+                                    e.currentTarget.style.borderColor = '#383e40';
+                                  }
+                                }}
+                                onMouseOut={(e) => {
+                                  if (isDark && !isOpen) {
+                                    e.currentTarget.style.backgroundColor = '#1e2324';
+                                    e.currentTarget.style.borderColor = '#2d3335';
+                                  }
+                                }}
+                              >
+                                <div style={{ display: 'flex', alignItems: 'center', minWidth: 0 }}>
+                                  {/* Icon Container */}
+                                  <div style={{ width: '36px', height: '36px', borderRadius: '10px', backgroundColor: isDark ? 'rgba(16, 185, 129, 0.12)' : '#dcfce7', border: isDark ? '1px solid rgba(16, 185, 129, 0.25)' : 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#10b981', marginRight: '16px', flexShrink: 0 }}>
+                                    {(() => {
+                                      let type = 'file';
+                                      if (item.attachments && item.attachments.length > 0) type = item.attachments[0].type;
+                                      if (type === 'video') return <Video size={18} />;
+                                      if (type === 'image') return <Image size={18} />;
+                                      if (type === 'link') return <Link2 size={18} />;
+                                      return <FileText size={18} />;
+                                    })()}
+                                  </div>
+
+                                  <span style={{ color: isDark ? '#f5f5f5' : '#1e293b', fontSize: '1.05rem', fontWeight: '700', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                    {item.title}
+                                  </span>
+                                </div>
+
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexShrink: 0 }}>
+                                  {posted ? (
+                                    <span style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.75rem', color: isDark ? '#a7f3d0' : '#059669', backgroundColor: isDark ? 'rgba(16, 185, 129, 0.08)' : '#ecfdf5', border: isDark ? '1px solid rgba(16, 185, 129, 0.2)' : '1px solid #d1fae5', padding: '5px 12px', borderRadius: '8px', fontWeight: '600' }}>
+                                      Posted {posted}
+                                    </span>
+                                  ) : null}
+
+                                  {/* Vertical Divider */}
+                                  <div style={{ width: '1px', height: '24px', backgroundColor: isDark ? '#3d4447' : '#e2e8f0' }} />
+
+                                  {/* 3-dots Menu Button */}
+                                  <div
+                                    style={{
+                                      ...styles.threeDots,
+                                      width: '32px',
+                                      height: '32px',
+                                      borderRadius: '8px',
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      justifyContent: 'center',
+                                      transition: 'background 0.15s ease'
+                                    }}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      toggleMenu(e, item.id);
+                                    }}
+                                    onMouseOver={(e) => e.currentTarget.style.backgroundColor = isDark ? 'rgba(255,255,255,0.08)' : '#e2e8f0'}
+                                    onMouseOut={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+                                  >
+                                    <MoreVertical size={18} color={isDark ? '#a3a3a3' : '#64748b'} />
+                                    {activeMenu === item.id && (
+                                      <div style={styles.dropdownMenu} onClick={(e) => e.stopPropagation()}>
+                                        <div style={styles.dropdownItem} onClick={(e) => openModify(e, item)}>Modify</div>
+                                        <div style={styles.dropdownItem} onClick={(e) => handleArchive(e, item.id)}>Archive</div>
+                                        <div style={{ ...styles.dropdownItem, color: '#ef4444' }} onClick={(e) => { e.stopPropagation(); handleDeleteClasswork(e, item.id); }}>Delete</div>
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
                               </div>
-                            )}
+                            </div>
+
+                            <AnimatePresence initial={false}>
+                              {isOpen && (
+                                <motion.div
+                                  key="detail"
+                                  initial={{ opacity: 0, height: 0 }}
+                                  animate={{ opacity: 1, height: 'auto' }}
+                                  exit={{ opacity: 0, height: 0 }}
+                                  transition={{ duration: 0.22, ease: 'easeOut' }}
+                                  style={{ overflow: 'hidden' }}
+                                >
+                                  <div style={styles.detailCard}>
+                                    <div style={styles.detailHeaderBar}>
+                                  {(() => {
+                                    let type = 'file';
+                                    if (item.attachments && item.attachments.length > 0) type = item.attachments[0].type;
+                                    const props = { size: 30, color: isDark ? '#10b981' : '#4b5563' };
+                                    if (type === 'video') return <Video {...props} />;
+                                    if (type === 'image') return <Image {...props} />;
+                                    if (type === 'link') return <Link2 {...props} />;
+                                    return <FileText {...props} />;
+                                  })()}
+                                  <div>
+                                    <div style={styles.detailTitle}>{item.title}</div>
+                                  </div>
+                                </div>
+
+                                <div style={styles.detailBody}>
+                                  <div style={{ ...styles.detailLeft, flex: '1 1 100%' }}>
+                                    {posted && <div style={styles.postedText}>Posted {posted}</div>}
+                                  {item.details ? (
+                                    <>
+                                      <div 
+                                        style={{ 
+                                          ...styles.detailInstruction, 
+                                          whiteSpace: 'normal',
+                                          ...(expandedInstructionId === item.id ? {} : {
+                                            display: '-webkit-box',
+                                            WebkitLineClamp: 3,
+                                            WebkitBoxOrient: 'vertical',
+                                            overflow: 'hidden',
+                                            textOverflow: 'ellipsis'
+                                          })
+                                        }}
+                                      >
+                                        {expandedInstructionId === item.id 
+                                          ? <div dangerouslySetInnerHTML={{ __html: item.details }} />
+                                          : item.details.replace(/<[^>]*>?/gm, '').replace(/&nbsp;/g, ' ')
+                                        }
+                                      </div>
+                                      {expandedInstructionId !== item.id && item.details.replace(/<[^>]*>?/gm, '').length > 100 && (
+                                        <div 
+                                          style={{ color: '#10b981', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 'bold', marginTop: '6px' }}
+                                          onClick={(e) => { e.stopPropagation(); setExpandedInstructionId(item.id); }}
+                                        >
+                                          View details...
+                                        </div>
+                                      )}
+                                      {expandedInstructionId === item.id && (
+                                        <div 
+                                          style={{ color: '#10b981', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 'bold', marginTop: '6px' }}
+                                          onClick={(e) => { e.stopPropagation(); setExpandedInstructionId(null); }}
+                                        >
+                                          Show less
+                                        </div>
+                                      )}
+                                    </>
+                                  ) : (
+                                    <p style={styles.detailInstruction}>No instructions provided.</p>
+                                  )}
+
+                                    {item.attachments?.length > 0 && (
+                                      <div style={styles.cardAttachments}>
+                                        {item.attachments.map((att, i) => (
+                                          <AttachmentCard
+                                            key={i}
+                                            att={att}
+                                            isDark={isDark}
+                                            onClick={(clickedAtt) => {
+                                              if (clickedAtt.type === 'image') setPreviewImage(clickedAtt);
+                                              else if (clickedAtt.type === 'video') setPreviewVideo(clickedAtt);
+                                              else if (clickedAtt.type === 'document') window.open(clickedAtt.url, '_blank', 'noopener,noreferrer');
+                                              else if (clickedAtt.type === 'link' && clickedAtt.url) {
+                                                const targetUrl = clickedAtt.url.startsWith('http://') || clickedAtt.url.startsWith('https://')
+                                                  ? clickedAtt.url
+                                                  : `https://${clickedAtt.url}`;
+                                                window.open(targetUrl, '_blank', 'noopener,noreferrer');
+                                              }
+                                            }}
+                                          />
+                                        ))}
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                                  </div>
+                                </motion.div>
+                              )}
+                            </AnimatePresence>
                           </div>
                         );
                       })
@@ -1833,7 +2490,6 @@ export default function TeacherClasswork({
             </div>
           </div>
         </div>
-      </div>
 
       {/* ═══ MODAL: BANNER CUSTOMIZATION ═══ */}
       {isCustomizeOpen && (
@@ -2138,7 +2794,7 @@ export default function TeacherClasswork({
         <div style={styles.modalOverlay}>
           <div style={styles.modalCard}>
             <div style={styles.modalHeader}>
-              <h2 style={{ margin: 0, color: isDark ? '#E8EAED' : '#1f2937' }}>{editingId ? 'Modify Assignment' : 'Create Assignment'}</h2>
+              <h2 style={{ margin: 0, color: isDark ? '#E8EAED' : '#1f2937' }}>{editingId ? `Modify ${form.activityType}` : `Create ${form.activityType}`}</h2>
               <button onClick={() => setIsModalOpen(false)} style={styles.closeModalBtn}>
                 <X size={24} />
               </button>
@@ -2154,41 +2810,50 @@ export default function TeacherClasswork({
                 style={styles.input}
               />
 
-              <div style={styles.labelRow}>
-                <label style={styles.fieldLabel}>Due Date</label>
-                <label style={styles.checkboxLabel}>
+              {form.activityType !== 'Material' && (
+                <>
+                  <div style={styles.labelRow}>
+                    <label style={styles.fieldLabel}>Due Date</label>
+                    <label style={styles.checkboxLabel}>
+                      <input
+                        type="checkbox"
+                        checked={form.noDueDate}
+                        onChange={(e) => setForm({ ...form, noDueDate: e.target.checked })}
+                      />
+                      No Due Date
+                    </label>
+                  </div>
                   <input
-                    type="checkbox"
-                    checked={form.noDueDate}
-                    onChange={(e) => setForm({ ...form, noDueDate: e.target.checked })}
+                    type="date"
+                    disabled={form.noDueDate}
+                    value={form.dueDate}
+                    onChange={(e) => setForm({ ...form, dueDate: e.target.value })}
+                    style={{ ...styles.input, opacity: form.noDueDate ? 0.5 : 1 }}
                   />
-                  No Due Date
-                </label>
-              </div>
-              <input
-                type="date"
-                disabled={form.noDueDate}
-                value={form.dueDate}
-                onChange={(e) => setForm({ ...form, dueDate: e.target.value })}
-                style={{ ...styles.input, opacity: form.noDueDate ? 0.5 : 1 }}
-              />
+                </>
+              )}
 
               <div style={styles.labelRow}>
                 <label style={styles.fieldLabel}>Instruction</label>
                 <div style={styles.attachIcons}>
-                  <Link2 size={18} style={styles.attachIcon} title="Add link (Ctrl+K)" onClick={handleAddLink} />
-                  <Image size={18} style={styles.attachIcon} title="Upload image" onClick={() => imageInputRef.current?.click()} />
-                  <Video size={18} style={styles.attachIcon} title="Upload video" onClick={() => videoInputRef.current?.click()} />
+                  <Link2 size={18} style={styles.attachIcon} title="Add link (Ctrl+K)" onMouseDown={(e) => handleAttachmentClick(e, handleAddLink)} />
+                  <Image size={18} style={styles.attachIcon} title="Upload image" onMouseDown={(e) => handleAttachmentClick(e, () => imageInputRef.current?.click())} />
+                  <Video size={18} style={styles.attachIcon} title="Upload video" onMouseDown={(e) => handleAttachmentClick(e, () => videoInputRef.current?.click())} />
+                  <FileText size={18} style={styles.attachIcon} title="Upload document (PDF, DOC)" onMouseDown={(e) => handleAttachmentClick(e, () => docInputRef.current?.click())} />
                 </div>
               </div>
-              <textarea
-                value={form.instruction}
-                onChange={(e) => setForm({ ...form, instruction: e.target.value })}
-                style={{ ...styles.input, height: '90px', resize: 'vertical', fontFamily: 'inherit' }}
-              />
+              <div onDragOverCapture={(e) => e.preventDefault()} onDropCapture={handleDropCapture} onPasteCapture={handlePasteCapture}>
+                <JoditEditor
+                  ref={joditRef}
+                  value={form.instruction}
+                  config={joditConfig}
+                  onBlur={newContent => setForm(prev => ({ ...prev, instruction: newContent }))}
+                />
+              </div>
 
               <input ref={imageInputRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={(e) => handleFilePicked(e, 'image')} />
               <input ref={videoInputRef} type="file" accept="video/*,.mp4,.webm,.mov,.m4v,.mkv" style={{ display: 'none' }} onChange={(e) => handleFilePicked(e, 'video')} />
+              <input ref={docInputRef} type="file" accept=".pdf,.doc,.docx,.txt" style={{ display: 'none' }} onChange={(e) => handleFilePicked(e, 'document')} />
 
               {uploading && <span style={{ fontSize: '0.8rem', color: '#6b7280' }}>Uploading…</span>}
 
@@ -2203,87 +2868,157 @@ export default function TeacherClasswork({
                       onClick={(clickedAtt) => {
                         if (clickedAtt.type === 'image') setPreviewImage(clickedAtt);
                         else if (clickedAtt.type === 'video') setPreviewVideo(clickedAtt);
-                        else if (clickedAtt.type === 'link' && clickedAtt.url) {
-                          const targetUrl = clickedAtt.url.startsWith('http://') || clickedAtt.url.startsWith('https://')
-                            ? clickedAtt.url
-                            : `https://${clickedAtt.url}`;
-                          window.open(targetUrl, '_blank', 'noopener,noreferrer');
-                        }
+                        else if (clickedAtt.type === 'document') setPreviewIframe(clickedAtt);
+                        else if (clickedAtt.type === 'link' && clickedAtt.url) setPreviewIframe(clickedAtt);
                       }}
                     />
                   ))}
                 </div>
               )}
 
-              <label style={styles.fieldLabel}>Points</label>
-              <select
-                value={form.points}
-                onChange={(e) => setForm({ ...form, points: e.target.value })}
-                style={{ ...styles.input, width: '120px' }}
-              >
-                <option value="10">10</option>
-                <option value="20">20</option>
-                <option value="50">50</option>
-                <option value="100">100</option>
-              </select>
-
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px', marginTop: '10px' }}>
-                <div>
-                  <label style={styles.fieldLabel}>Time Limit (Minutes)</label>
-                  <input
-                    type="number"
-                    min="5" max="300"
-                    value={form.duration}
-                    onChange={(e) => setForm({ ...form, duration: parseInt(e.target.value) || 60 })}
-                    style={styles.input}
-                  />
-                </div>
-                <div>
-                  <label style={styles.fieldLabel}>Auto-Save Interval</label>
+              {form.activityType !== 'Material' && (
+                <>
+                  <label style={styles.fieldLabel}>Points</label>
                   <select
-                    value={form.autoSaveInterval}
-                    onChange={(e) => setForm({ ...form, autoSaveInterval: e.target.value })}
-                    style={styles.input}
+                    value={form.points}
+                    onChange={(e) => setForm({ ...form, points: e.target.value })}
+                    style={{ ...styles.input, width: '120px' }}
                   >
-                    <option value="10s">10 Seconds</option>
-                    <option value="30s">30 Seconds</option>
-                    <option value="1m">1 Minute</option>
+                    <option value="10">10</option>
+                    <option value="20">20</option>
+                    <option value="50">50</option>
+                    <option value="100">100</option>
                   </select>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px', marginTop: '10px' }}>
+                    <div>
+                      <label style={styles.fieldLabel}>Time Limit (Minutes)</label>
+                      <input
+                        type="number"
+                        min="5" max="300"
+                        value={form.duration}
+                        onChange={(e) => setForm({ ...form, duration: parseInt(e.target.value) || 60 })}
+                        style={styles.input}
+                      />
+                    </div>
+                    <div>
+                      <label style={styles.fieldLabel}>Auto-Save Interval</label>
+                      <select
+                        value={form.autoSaveInterval}
+                        onChange={(e) => setForm({ ...form, autoSaveInterval: e.target.value })}
+                        style={styles.input}
+                      >
+                        <option value="10s">10 Seconds</option>
+                        <option value="30s">30 Seconds</option>
+                        <option value="1m">1 Minute</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div style={{ ...styles.labelRow, marginTop: '5px', marginBottom: '10px' }}>
+                    <label style={styles.checkboxLabel}>
+                      <input
+                        type="checkbox"
+                        checked={form.treatWarningsAsErrors}
+                        onChange={(e) => setForm({ ...form, treatWarningsAsErrors: e.target.checked })}
+                      />
+                      Treat compiler warnings as errors
+                    </label>
+                  </div>
+                {/* Automated Test Cases */}
+                  <div style={{ marginTop: '12px', marginBottom: '14px', padding: '12px', backgroundColor: isDark ? '#262626' : '#f8fafc', borderRadius: '8px', border: isDark ? '1px solid #3c3c3c' : '1px solid #e2e8f0' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                    <div>
+                      <span style={{ fontSize: '0.85rem', fontWeight: '700', color: isDark ? '#E8EAED' : '#1e293b' }}>Automated Test Cases (Optional)</span>
+                      <p style={{ margin: '2px 0 0', fontSize: '0.75rem', color: isDark ? '#9ca3af' : '#64748b' }}>Pre-configured test cases for students to validate their code against.</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const list = Array.isArray(form.testCases) ? [...form.testCases] : [];
+                        list.push({ id: `tc-${Date.now()}`, name: `Case ${list.length + 1}`, input: '', expectedOutput: '' });
+                        setForm({ ...form, testCases: list });
+                      }}
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '4px',
+                        padding: '4px 10px',
+                        backgroundColor: isDark ? '#064e3b' : '#ecfdf5',
+                        border: '1px solid #10b981',
+                        borderRadius: '5px',
+                        color: isDark ? '#6ee7b7' : '#059669',
+                        fontSize: '0.78rem',
+                        fontWeight: '600',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      + Add Test Case
+                    </button>
+                  </div>
+
+                  {Array.isArray(form.testCases) && form.testCases.map((tc, idx) => (
+                    <div key={tc.id || idx} style={{ display: 'flex', gap: '8px', alignItems: 'center', marginTop: '8px' }}>
+
+                      <input
+                        type="text"
+                        placeholder="Expected Output (stdout)"
+                        value={tc.expectedOutput || ''}
+                        onChange={(e) => {
+                          const list = [...form.testCases];
+                          list[idx] = { ...list[idx], expectedOutput: e.target.value };
+                          setForm({ ...form, testCases: list });
+                        }}
+                        style={{ ...styles.input, flex: 1, margin: 0, fontSize: '0.82rem' }}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const list = form.testCases.filter((_, i) => i !== idx);
+                          setForm({ ...form, testCases: list });
+                        }}
+                        style={{
+                          background: 'transparent',
+                          border: 'none',
+                          color: '#ef4444',
+                          cursor: 'pointer',
+                          padding: '4px 8px',
+                          fontSize: '0.9rem',
+                          fontWeight: 'bold'
+                        }}
+                        title="Remove test case"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  ))}
                 </div>
-              </div>
-              <div style={{ ...styles.labelRow, marginTop: '5px', marginBottom: '10px' }}>
-                <label style={styles.checkboxLabel}>
-                  <input
-                    type="checkbox"
-                    checked={form.treatWarningsAsErrors}
-                    onChange={(e) => setForm({ ...form, treatWarningsAsErrors: e.target.checked })}
-                  />
-                  Treat compiler warnings as errors
-                </label>
-              </div>
+                </>
+              )}
 
               <div style={styles.bottomRow}>
-                <div style={styles.gradingGroup}>
-                  <span style={styles.fieldLabel}>Grading:</span>
-                  <label style={styles.radioLabel}>
-                    <input
-                      type="radio"
-                      name="grading"
-                      checked={form.grading === 'On'}
-                      onChange={() => setForm({ ...form, grading: 'On' })}
-                    />
-                    On
-                  </label>
-                  <label style={styles.radioLabel}>
-                    <input
-                      type="radio"
-                      name="grading"
-                      checked={form.grading === 'Off'}
-                      onChange={() => setForm({ ...form, grading: 'Off' })}
-                    />
-                    Off
-                  </label>
-                </div>
+                {form.activityType !== 'Material' ? (
+                  <div style={styles.gradingGroup}>
+                    <span style={styles.fieldLabel}>Grading:</span>
+                    <label style={styles.radioLabel}>
+                      <input
+                        type="radio"
+                        name="grading"
+                        checked={form.grading === 'On'}
+                        onChange={() => setForm({ ...form, grading: 'On' })}
+                      />
+                      On
+                    </label>
+                    <label style={styles.radioLabel}>
+                      <input
+                        type="radio"
+                        name="grading"
+                        checked={form.grading === 'Off'}
+                        onChange={() => setForm({ ...form, grading: 'Off' })}
+                      />
+                      Off
+                    </label>
+                  </div>
+                ) : <div />}
                 <button type="submit" style={styles.assignBtn}>{editingId ? 'Save' : 'Assign'}</button>
               </div>
             </form>
@@ -2322,7 +3057,7 @@ export default function TeacherClasswork({
         onSuccess={() => setRefreshStudentsKey(k => k + 1)}
         isDark={isDark}
       />
-    </div>
+    </motion.div>
   );
 }
 
@@ -2334,8 +3069,8 @@ const getStyles = (isDark) => ({
     width: '100%',
     display: 'flex',
     flexDirection: 'column',
-    backgroundColor: isDark ? '#3C3C3C' : '#EEF0F3',
-    fontFamily: 'Arial, Helvetica, sans-serif',
+    backgroundColor: isDark ? '#141615' : '#f4f5f7',
+    fontFamily: "'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif",
     position: 'relative',
     overflow: 'hidden',
     transition: 'background-color 0.25s ease'
@@ -2702,12 +3437,7 @@ const getStyles = (isDark) => ({
     padding: '18px 20px',
     boxShadow: isDark ? '0 4px 12px rgba(0,0,0,0.3)' : '0 1px 3px rgba(0,0,0,0.02)'
   },
-  announcementBodyText: {
-    margin: '12px 0 0 0',
-    color: isDark ? '#E8EAED' : '#334155',
-    fontSize: '0.92rem',
-    lineHeight: 1.5
-  },
+  
 
   assignmentStreamCard: {
     backgroundColor: isDark ? '#383838' : '#ffffff',
@@ -3023,7 +3753,7 @@ const getStyles = (isDark) => ({
     padding: '28px 32px', 
     borderRadius: '20px', 
     width: '90%', 
-    maxWidth: '540px', 
+    maxWidth: '800px', 
     maxHeight: '88vh',
     overflowY: 'auto',
     scrollbarWidth: 'none',

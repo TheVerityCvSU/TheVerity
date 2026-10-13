@@ -208,7 +208,7 @@ const DEFAULT_SETTINGS = {
   notifications: {
     soundAlerts: true,
     notifyOnSubmission: true,
-    showToastWarnings: true,
+    showToastWarnings: false,
     highSeverityBehavior: 'blinking',
   },
   roles: {

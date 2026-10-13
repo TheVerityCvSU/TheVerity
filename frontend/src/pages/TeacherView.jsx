@@ -72,7 +72,7 @@ export default function TeacherView({ socket, assignment, classroom, initialStud
   const [notifSettings, setNotifSettings] = useState({
     soundAlerts: true,
     notifyOnSubmission: true,
-    showToastWarnings: true,
+    showToastWarnings: false,
   });
   const notifSettingsRef = useRef(notifSettings);
   useEffect(() => { notifSettingsRef.current = notifSettings; }, [notifSettings]);
@@ -155,6 +155,47 @@ export default function TeacherView({ socket, assignment, classroom, initialStud
         }
       }
     } catch { }
+  }, [assignment?.id, classroom?.id]);
+
+  // Load session proctor warning logs so late-joining teachers immediately see all student warnings
+  useEffect(() => {
+    if (!assignment?.id) return;
+    const cId = classroom?.id ? `?classroomId=${classroom.id}` : '';
+    apiFetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/proctor-logs/${assignment.id}${cId}`)
+      .then((res) => res.ok ? res.json() : { logs: [] })
+      .then((data) => {
+        if (Array.isArray(data?.logs) && data.logs.length > 0) {
+          setStudents((prev) => {
+            const next = { ...prev };
+            data.logs.forEach((log) => {
+              const sId = log.student_id;
+              const sName = log.student_name || log.student_id;
+              const sKey = Object.keys(next).find(k => next[k].id === sId || next[k].name === sName || next[k].name === sId) || sId;
+              const existing = next[sKey] || { id: sId, name: sName, code: "", logs: [], status: "Live" };
+              const existingLogs = Array.isArray(existing.logs) ? existing.logs : [];
+              const logItem = {
+                id: log.id,
+                action: log.action || log.message || 'Violation',
+                message: log.message || log.action || 'Violation',
+                time: log.time,
+                color: log.color,
+                studentName: sName,
+                studentId: sId
+              };
+              const exists = existingLogs.some(l => l.id === log.id || (l.action === logItem.action && l.time === logItem.time));
+              if (!exists) {
+                existingLogs.push(logItem);
+              }
+              next[sKey] = {
+                ...existing,
+                logs: existingLogs.sort((a, b) => (b.id || 0) - (a.id || 0))
+              };
+            });
+            return next;
+          });
+        }
+      })
+      .catch(() => {});
   }, [assignment?.id, classroom?.id]);
 
   // Sync initialStudent prop
@@ -258,10 +299,34 @@ export default function TeacherView({ socket, assignment, classroom, initialStud
           const newHist = Array.isArray(existing.codeHistory) && existing.codeHistory.length > 0
             ? [...existing.codeHistory, { time: Date.now(), code: data.code }]
             : [{ time: Date.now(), code: data.code }];
+
+          // Merge logs so late-joining instructors see all prior student warnings
+          const incomingLogs = Array.isArray(data.logs) ? data.logs : [];
+          const existingLogs = Array.isArray(existing.logs) ? existing.logs : [];
+          const map = new Map();
+          [...incomingLogs, ...existingLogs].forEach(l => {
+            if (!l) return;
+            const k = `${l.id || ''}-${l.action || l.message || ''}-${l.time || ''}`;
+            if (!map.has(k)) {
+              map.set(k, {
+                id: l.id || Date.now(),
+                action: l.action || l.message || 'Violation',
+                message: l.message || l.action || 'Violation',
+                time: l.time || '',
+                color: l.color || '#ef4444',
+                studentName: l.studentName || data.name || existing.name || data.studentId,
+                studentId: l.studentId || data.studentId || existing.id
+              });
+            }
+          });
+          const mergedLogs = Array.from(map.values()).sort((a, b) => (b.id || 0) - (a.id || 0));
+
           next[sKey] = {
             ...existing,
-            code: data.code,
+            name: data.name || existing.name || data.studentId,
+            code: data.code !== undefined ? data.code : (existing.code || ''),
             codeHistory: newHist,
+            logs: mergedLogs,
             status: existing.status === 'Submitted' || existing.status === 'Graded' ? existing.status : 'Live'
           };
           return next;
@@ -273,10 +338,28 @@ export default function TeacherView({ socket, assignment, classroom, initialStud
         setStudents(prev => {
           const sKey = Object.keys(prev).find(k => prev[k].id === data.studentId || prev[k].name === data.name || prev[k].name === data.studentId) || data.studentId;
           const existing = prev[sKey] || { id: data.studentId, name: data.name || data.studentId, code: "", logs: [], status: "Live" };
-          const newLog = { id: Date.now(), action: data.action, time: data.time, color: data.color };
+          const actionText = data.action || data.message || 'Violation';
+          const newLog = { 
+            id: data.id || Date.now(), 
+            action: actionText, 
+            message: data.message || actionText,
+            time: data.time || new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }).toLowerCase(), 
+            color: data.color || '#ef4444',
+            studentName: data.name || existing.name || data.studentId,
+            studentId: data.studentId || existing.id
+          };
           const next = { ...prev };
           if (sKey !== data.studentId && next[data.studentId]) delete next[data.studentId];
-          next[sKey] = { ...existing, logs: [newLog, ...existing.logs], status: existing.status === 'Submitted' || existing.status === 'Graded' ? existing.status : 'Live' };
+
+          const existingLogs = Array.isArray(existing.logs) ? existing.logs : [];
+          const isDup = existingLogs.some(l => l.action === newLog.action && (l.time === newLog.time || Math.abs((l.id || 0) - newLog.id) < 1000));
+          const updatedLogs = isDup ? existingLogs : [newLog, ...existingLogs];
+
+          next[sKey] = { 
+            ...existing, 
+            logs: updatedLogs, 
+            status: existing.status === 'Submitted' || existing.status === 'Graded' ? existing.status : 'Live' 
+          };
           return next;
         });
         checkSelection(data.studentId);
@@ -292,10 +375,7 @@ export default function TeacherView({ socket, assignment, classroom, initialStud
           } catch (e) {}
         }
         
-        if (notifSettingsRef.current.showToastWarnings) {
-          setToast({ message: `Warning: ${data.name || data.studentId} - ${data.action}`, type: 'warning' });
-          setTimeout(() => setToast(null), 3500);
-        }
+        // Pop-up warnings in live monitoring removed per user request (recorded silently in Warning panel)
       });
 
       socket.on('teacher_terminal_update', (data) => {
@@ -430,8 +510,17 @@ export default function TeacherView({ socket, assignment, classroom, initialStud
 
       if (Array.isArray(student.logs)) {
         student.logs.forEach(log => {
-          const sanitizedAction = sanitizeAction(log.action);
-          logs.push({ ...log, studentName: student.name, action: sanitizedAction, message: sanitizeAction(log.message), color: getLogColor(sanitizedAction) });
+          const rawAction = log.action || log.message || 'Violation';
+          const sanitizedAction = sanitizeAction(rawAction);
+          logs.push({ 
+            ...log, 
+            id: log.id || Date.now(),
+            studentName: log.studentName || student.name, 
+            action: sanitizedAction, 
+            message: sanitizeAction(log.message || rawAction), 
+            color: log.color || getLogColor(sanitizedAction),
+            time: log.time || ''
+          });
         });
       }
       
@@ -773,8 +862,8 @@ export default function TeacherView({ socket, assignment, classroom, initialStud
             {allLogs.length === 0 ? (
               <span style={{ color: '#9ca3af', fontStyle: 'italic', fontSize: '0.9rem' }}>No warnings...</span>
             ) : (
-              allLogs.map(log => (
-                <div key={`${log.id}-${log.studentName}`} style={getStyles(isDark).logRow}>
+              allLogs.map((log, idx) => (
+                <div key={`${log.id || 'log'}-${log.studentName || 'student'}-${idx}`} style={getStyles(isDark).logRow}>
                   <span style={{ color: log.color, paddingRight: '15px', flex: 1, minWidth: 0, wordBreak: 'break-word' }}>
                     <span style={{ fontWeight: 'bold' }}>{log.studentName}</span> ({log.action})
                   </span>

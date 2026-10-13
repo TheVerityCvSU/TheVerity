@@ -12,7 +12,7 @@
   "scripts": {
     "dev": "concurrently \"cd frontend && vite\" \"node --watch server/server.js\"",
     "build": "npm --prefix frontend run build",
-    "build:server": "esbuild server/server.js --bundle --platform=node --outfile=dist-server/server-bundle.cjs --external:better-sqlite3",
+    "build:server": "esbuild server/server.js --bundle --platform=node --outfile=dist-server/server-bundle.cjs --external:better-sqlite3 --external:node:sqlite",
     "electron": "electron .",
     "electron:admin": "electron electron/admin-main.cjs",
     "package": "npm run build && npm run build:server && electron-builder",

@@ -1,11 +1,11 @@
-const Database = require('better-sqlite3');
+const { openSqliteDatabase } = require('./db/sqlite-adapter');
 const path = require('path');
 const fs = require('fs');
 
 const DATA_DIR = process.env.DATA_DIR || __dirname;
 const DB_FILE = path.join(DATA_DIR, 'database.sqlite');
 
-const db = new Database(DB_FILE);
+const db = openSqliteDatabase(DB_FILE);
 
 if (process.platform === 'win32') {
     try { db.pragma('journal_mode = WAL'); } catch (e) {}
@@ -109,6 +109,15 @@ db.exec(`
         otp_code TEXT NOT NULL,
         user_data TEXT,
         expires_at BIGINT NOT NULL,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS announcements (
+        id BIGINT PRIMARY KEY,
+        classroom_id BIGINT,
+        title TEXT,
+        details TEXT,
+        author TEXT,
+        posted BIGINT,
         created_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
     CREATE TABLE IF NOT EXISTS admin_users (

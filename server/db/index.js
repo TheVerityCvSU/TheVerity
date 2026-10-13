@@ -1,5 +1,6 @@
 const path = require('path');
 const fs = require('fs');
+const { openSqliteDatabase } = require('./sqlite-adapter');
 
 const envCandidates = [
     process.env.ENV_FILE_PATH,
@@ -76,13 +77,64 @@ function generateClassCodeSync(takenSet = new Set()) {
     return fallback;
 }
 
-function initSqlite() {
-    if (sqliteDb) return;
+function seedFromDatabaseJson(adapter, dataDir) {
     try {
-        const Database = require('better-sqlite3');
+        const candidatePaths = [
+            path.join(dataDir, 'database.json'),
+            path.join(__dirname, '..', 'database.json'),
+            path.join(__dirname, 'database.json'),
+            path.join(process.cwd(), 'server', 'database.json'),
+            path.join(process.cwd(), 'database.json'),
+            process.resourcesPath ? path.join(process.resourcesPath, 'database.json') : null
+        ].filter(Boolean);
+
+        const jsonFile = candidatePaths.find(p => fs.existsSync(p));
+        if (!jsonFile) return;
+
+        const data = JSON.parse(fs.readFileSync(jsonFile, 'utf8'));
+
+        const userCount = adapter.prepare('SELECT count(*) as c FROM users').get()?.c || 0;
+        if (userCount === 0 && Array.isArray(data.users) && data.users.length > 0) {
+            const insertUser = adapter.prepare('INSERT OR IGNORE INTO users (id, name, email, password, role, lastLogin, status) VALUES (?, ?, ?, ?, ?, ?, ?)');
+            const insertUserNoId = adapter.prepare('INSERT OR IGNORE INTO users (name, email, password, role, lastLogin, status) VALUES (?, ?, ?, ?, ?, ?)');
+            data.users.forEach(u => {
+                if (u.id) insertUser.run(u.id, u.name, u.email, u.password, u.role, u.lastLogin, u.status);
+                else insertUserNoId.run(u.name, u.email, u.password, u.role, u.lastLogin, u.status);
+            });
+            console.log(`[Database] Seeded ${data.users.length} users into SQLite from database.json.`);
+        }
+
+        const classCount = adapter.prepare('SELECT count(*) as c FROM classrooms').get()?.c || 0;
+        if (classCount === 0 && Array.isArray(data.classrooms) && data.classrooms.length > 0) {
+            const insertClassroom = adapter.prepare('INSERT OR IGNORE INTO classrooms (id, code, section, name, subject, instructor) VALUES (?, ?, ?, ?, ?, ?)');
+            data.classrooms.forEach(c => {
+                insertClassroom.run(c.id, c.code || '', c.section || '', c.name || '', c.subject || '', c.instructor || '');
+            });
+            console.log(`[Database] Seeded ${data.classrooms.length} classrooms into SQLite from database.json.`);
+        }
+
+        const cwCount = adapter.prepare('SELECT count(*) as c FROM classwork').get()?.c || 0;
+        if (cwCount === 0 && data.classwork && typeof data.classwork === 'object') {
+            const insertClasswork = adapter.prepare('INSERT OR IGNORE INTO classwork (id, classroom_id, title, description, dueDate, type) VALUES (?, ?, ?, ?, ?, ?)');
+            for (const [classroomId, cwArray] of Object.entries(data.classwork)) {
+                if (Array.isArray(cwArray)) {
+                    cwArray.forEach(cw => {
+                        insertClasswork.run(cw.id, parseInt(classroomId, 10), cw.title, cw.description, cw.dueDate, cw.type || '');
+                    });
+                }
+            }
+        }
+    } catch (e) {
+        console.warn('[Database] Seeding notice:', e.message);
+    }
+}
+
+function initSqlite() {
+    if (sqliteDb) return sqliteDb;
+    try {
         const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..');
         const DB_FILE = path.join(DATA_DIR, 'database.sqlite');
-        sqliteDb = new Database(DB_FILE);
+        sqliteDb = openSqliteDatabase(DB_FILE);
         
         // WAL mode uses POSIX shared memory (mmap) which segfaults (exit 139) in Docker overlayfs
         if (process.platform === 'win32') {
@@ -203,6 +255,31 @@ function initSqlite() {
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
 
+        CREATE TABLE IF NOT EXISTS proctor_session_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            classroom_id TEXT,
+            assignment_id TEXT,
+            student_id TEXT,
+            student_name TEXT,
+            action TEXT,
+            message TEXT,
+            time TEXT,
+            color TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS announcements (
+            id BIGINT PRIMARY KEY,
+            classroom_id BIGINT,
+            title TEXT,
+            details TEXT,
+            author TEXT,
+            posted BIGINT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_announcements_classroom ON announcements(classroom_id);
+
         CREATE TABLE IF NOT EXISTS admin_users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL,
@@ -260,7 +337,9 @@ function initSqlite() {
     }
 
     provider = 'sqlite';
-    console.log(`[Database] Connected to SQLite (Local Storage): ${DB_FILE}`);
+    seedFromDatabaseJson(sqliteDb, DATA_DIR);
+    console.log(`[Database] Connected to SQLite (Local Storage, engine: ${sqliteDb.engine}): ${DB_FILE}`);
+    return sqliteDb;
     } catch (err) {
         console.error('[Database] Failed to initialize SQLite:', err.message);
     }
@@ -349,14 +428,36 @@ async function initPostgres(connStr = cleanedUrl) {
     }
 }
 
+function isNetworkError(err) {
+    if (!err) return false;
+    const msg = String(err.message || '').toLowerCase();
+    const code = String(err.code || '');
+    return code === 'ECONNREFUSED' ||
+           code === 'ECONNRESET' ||
+           code === 'ETIMEDOUT' ||
+           code === 'ENOTFOUND' ||
+           code === 'EAI_AGAIN' ||
+           code === '57P01' ||
+           msg.includes('connection terminated') ||
+           msg.includes('client has already been closed') ||
+           msg.includes('timeout') ||
+           msg.includes('getaddrinfo') ||
+           msg.includes('connection error');
+}
+
 // Initialization promise
 const readyPromise = (async () => {
+    // ALWAYS initialize local SQLite first so offline fallback is ready instantly
+    initSqlite();
+
     if (cleanedUrl) {
         if (parsedDb && parsedDb.hasPlaceholder) {
             console.error('❌ [Database] Configuration Error: Your DATABASE_URL still contains the placeholder "[YOUR-PASSWORD]".');
             console.error('👉 Please go to Render Dashboard -> Environment -> edit DATABASE_URL and replace [YOUR-PASSWORD] with your actual Supabase database password.');
+            provider = 'sqlite';
         } else if (!cleanedUrl.startsWith('postgres://') && !cleanedUrl.startsWith('postgresql://')) {
             console.error(`❌ [Database] Provided DATABASE_URL is not recognized as a PostgreSQL URL (must start with postgresql:// or postgres://).`);
+            provider = 'sqlite';
         } else {
             try {
                 console.log('[Database] Attempting connection to PostgreSQL...');
@@ -369,6 +470,7 @@ const readyPromise = (async () => {
                     console.warn('⚠️  [Database] Fix: In your Supabase Dashboard, click "Connect" -> select "Connection Pooler" (pooler.supabase.com:6543 or 5432) which supports IPv4!');
                 }
                 console.warn('[Database] Falling back to local SQLite so your app stays fully functional.');
+                provider = 'sqlite';
             }
         }
     } else {
@@ -377,8 +479,8 @@ const readyPromise = (async () => {
         } else {
             console.log('[Database] No DATABASE_URL found. Running with local SQLite database.');
         }
+        provider = 'sqlite';
     }
-    initSqlite();
 })();
 
 const db = {
@@ -391,11 +493,36 @@ const db = {
         await readyPromise;
         const params = normalizeParams(args);
         if (provider === 'postgres') {
-            const pgSql = convertPlaceholders(sql);
-            const res = await pgPool.query(pgSql, params);
-            return res.rows.map(normalizeRow);
+            try {
+                const pgSql = convertPlaceholders(sql);
+                const res = await pgPool.query(pgSql, params);
+                let rows = res.rows.map(normalizeRow);
+                if (rows.length === 0 && /FROM\s+(?:users|admin_users)\b/i.test(sql) && sqliteDb) {
+                    try {
+                        const localRows = sqliteDb.prepare(sql).all(...params);
+                        if (localRows.length > 0) rows = localRows.map(normalizeRow);
+                    } catch (_) {}
+                }
+                return rows;
+            } catch (err) {
+                if (isNetworkError(err)) {
+                    console.warn(`[Database] PostgreSQL connection lost (${err.message}). Switching to local SQLite.`);
+                    provider = 'sqlite';
+                    initSqlite();
+                    return sqliteDb.prepare(sql).all(...params);
+                }
+                throw err;
+            }
         } else {
-            return sqliteDb.prepare(sql).all(...params);
+            if (!sqliteDb) initSqlite();
+            let rows = sqliteDb.prepare(sql).all(...params);
+            if (rows.length === 0 && /FROM\s+(?:users|admin_users)\b/i.test(sql) && pgPool) {
+                try {
+                    const pgRes = await pgPool.query(convertPlaceholders(sql), params);
+                    if (pgRes.rows.length > 0) rows = pgRes.rows.map(normalizeRow);
+                } catch (_) {}
+            }
+            return rows;
         }
     },
 
@@ -404,11 +531,42 @@ const db = {
         await readyPromise;
         const params = normalizeParams(args);
         if (provider === 'postgres') {
-            const pgSql = convertPlaceholders(sql);
-            const res = await pgPool.query(pgSql, params);
-            return res.rows[0] ? normalizeRow(res.rows[0]) : undefined;
+            try {
+                const pgSql = convertPlaceholders(sql);
+                const res = await pgPool.query(pgSql, params);
+                let row = res.rows[0] ? normalizeRow(res.rows[0]) : undefined;
+                // Fallback for user authentication & accounts: check SQLite if not found in Postgres
+                if (!row && /FROM\s+(?:users|admin_users)\b/i.test(sql) && sqliteDb) {
+                    try {
+                        const localRow = sqliteDb.prepare(sql).get(...params);
+                        if (localRow) {
+                            row = normalizeRow(localRow);
+                        }
+                    } catch (_) {}
+                }
+                return row;
+            } catch (err) {
+                if (isNetworkError(err)) {
+                    console.warn(`[Database] PostgreSQL connection lost (${err.message}). Switching to local SQLite.`);
+                    provider = 'sqlite';
+                    initSqlite();
+                    return sqliteDb.prepare(sql).get(...params);
+                }
+                throw err;
+            }
         } else {
-            return sqliteDb.prepare(sql).get(...params);
+            if (!sqliteDb) initSqlite();
+            let row = sqliteDb.prepare(sql).get(...params);
+            // Fallback for user authentication & accounts: check Postgres if not found in SQLite
+            if (!row && /FROM\s+(?:users|admin_users)\b/i.test(sql) && pgPool) {
+                try {
+                    const pgRes = await pgPool.query(convertPlaceholders(sql), params);
+                    if (pgRes.rows[0]) {
+                        row = normalizeRow(pgRes.rows[0]);
+                    }
+                } catch (_) {}
+            }
+            return row;
         }
     },
 
@@ -417,33 +575,68 @@ const db = {
         await readyPromise;
         const params = normalizeParams(args);
         if (provider === 'postgres') {
-            let pgSql = convertPlaceholders(sql);
-            const isInsert = /^\s*INSERT\s+INTO/i.test(pgSql);
-            const hasReturning = /RETURNING/i.test(pgSql);
-            const isIdLessTable = /INSERT\s+INTO\s+(?:system_settings|security_flags)\b/i.test(pgSql);
-            if (isInsert && !hasReturning && !isIdLessTable) {
-                pgSql += ' RETURNING id';
-            }
-            let res;
             try {
-                res = await pgPool.query(pgSql, params);
-            } catch (err) {
-                if (err && err.code === '42703' && pgSql.includes('RETURNING id')) {
-                    // Fallback: column "id" does not exist in this table
-                    res = await pgPool.query(convertPlaceholders(sql), params);
-                } else {
-                    throw err;
+                let pgSql = convertPlaceholders(sql);
+                const isInsert = /^\s*INSERT\s+INTO/i.test(pgSql);
+                const hasReturning = /RETURNING/i.test(pgSql);
+                const isIdLessTable = /INSERT\s+INTO\s+(?:system_settings|security_flags)\b/i.test(pgSql);
+                if (isInsert && !hasReturning && !isIdLessTable) {
+                    pgSql += ' RETURNING id';
                 }
+                let res;
+                try {
+                    res = await pgPool.query(pgSql, params);
+                } catch (err) {
+                    if (err && err.code === '42703' && pgSql.includes('RETURNING id')) {
+                        // Fallback: column "id" does not exist in this table
+                        res = await pgPool.query(convertPlaceholders(sql), params);
+                    } else {
+                        throw err;
+                    }
+                }
+                const rawId = res.rows && res.rows[0] && res.rows[0].id ? res.rows[0].id : null;
+                const lastId = rawId !== null && !isNaN(Number(rawId)) ? Number(rawId) : rawId;
+
+                // DUAL-WRITE: Mirror mutation into local SQLite database
+                if (sqliteDb) {
+                    try {
+                        sqliteDb.prepare(sql).run(...params);
+                    } catch (_) {}
+                }
+
+                return {
+                    lastInsertRowid: lastId,
+                    changes: res.rowCount || 0
+                };
+            } catch (err) {
+                if (isNetworkError(err)) {
+                    console.warn(`[Database] PostgreSQL connection lost (${err.message}). Switching to local SQLite.`);
+                    provider = 'sqlite';
+                    initSqlite();
+                    return sqliteDb.prepare(sql).run(...params);
+                }
+                throw err;
             }
-            const rawId = res.rows && res.rows[0] && res.rows[0].id ? res.rows[0].id : null;
-            const lastId = rawId !== null && !isNaN(Number(rawId)) ? Number(rawId) : rawId;
-            return {
-                lastInsertRowid: lastId,
-                changes: res.rowCount || 0
-            };
         } else {
+            if (!sqliteDb) initSqlite();
             const stmt = sqliteDb.prepare(sql);
-            return stmt.run(...params);
+            const res = stmt.run(...params);
+
+            // DUAL-WRITE: Mirror mutation into PostgreSQL if pool is available
+            if (pgPool) {
+                try {
+                    let pgSql = convertPlaceholders(sql);
+                    const isInsert = /^\s*INSERT\s+INTO/i.test(pgSql);
+                    const hasReturning = /RETURNING/i.test(pgSql);
+                    const isIdLessTable = /INSERT\s+INTO\s+(?:system_settings|security_flags)\b/i.test(pgSql);
+                    if (isInsert && !hasReturning && !isIdLessTable) {
+                        pgSql += ' RETURNING id';
+                    }
+                    pgPool.query(pgSql, params).catch(() => {});
+                } catch (_) {}
+            }
+
+            return res;
         }
     },
 
@@ -451,8 +644,19 @@ const db = {
     async exec(sql) {
         await readyPromise;
         if (provider === 'postgres') {
-            return pgPool.query(sql);
+            try {
+                return await pgPool.query(sql);
+            } catch (err) {
+                if (isNetworkError(err)) {
+                    console.warn(`[Database] PostgreSQL connection lost (${err.message}). Switching to local SQLite.`);
+                    provider = 'sqlite';
+                    initSqlite();
+                    return sqliteDb.exec(sql);
+                }
+                throw err;
+            }
         } else {
+            if (!sqliteDb) initSqlite();
             return sqliteDb.exec(sql);
         }
     },
@@ -470,58 +674,68 @@ const db = {
     async transaction(callback) {
         await readyPromise;
         if (provider === 'postgres') {
-            const client = await pgPool.connect();
             try {
-                await client.query('BEGIN');
-                const txObj = {
-                    get: async (sql, ...args) => {
-                        const params = normalizeParams(args);
-                        const res = await client.query(convertPlaceholders(sql), params);
-                        return res.rows[0] ? normalizeRow(res.rows[0]) : undefined;
-                    },
-                    all: async (sql, ...args) => {
-                        const params = normalizeParams(args);
-                        const res = await client.query(convertPlaceholders(sql), params);
-                        return res.rows.map(normalizeRow);
-                    },
-                    run: async (sql, ...args) => {
-                        const params = normalizeParams(args);
-                        let pgSql = convertPlaceholders(sql);
-                        const isInsert = /^\s*INSERT\s+INTO/i.test(pgSql);
-                        const hasReturning = /RETURNING/i.test(pgSql);
-                        if (isInsert && !hasReturning) {
-                            pgSql += ' RETURNING id';
-                        }
-                        const res = await client.query(pgSql, params);
-                        const rawId = res.rows && res.rows[0] && res.rows[0].id ? res.rows[0].id : null;
-                        const lastId = rawId !== null && !isNaN(Number(rawId)) ? Number(rawId) : rawId;
-                        return {
-                            lastInsertRowid: lastId,
-                            changes: res.rowCount || 0
-                        };
-                    },
-                    prepare: (sql) => ({
-                        get: (...args) => txObj.get(sql, ...args),
-                        all: (...args) => txObj.all(sql, ...args),
-                        run: (...args) => txObj.run(sql, ...args)
-                    })
-                };
-                const result = await callback(txObj);
-                await client.query('COMMIT');
-                return result;
-            } catch (e) {
-                await client.query('ROLLBACK');
-                throw e;
-            } finally {
-                client.release();
+                const client = await pgPool.connect();
+                try {
+                    await client.query('BEGIN');
+                    const txObj = {
+                        get: async (sql, ...args) => {
+                            const params = normalizeParams(args);
+                            const res = await client.query(convertPlaceholders(sql), params);
+                            return res.rows[0] ? normalizeRow(res.rows[0]) : undefined;
+                        },
+                        all: async (sql, ...args) => {
+                            const params = normalizeParams(args);
+                            const res = await client.query(convertPlaceholders(sql), params);
+                            return res.rows.map(normalizeRow);
+                        },
+                        run: async (sql, ...args) => {
+                            const params = normalizeParams(args);
+                            let pgSql = convertPlaceholders(sql);
+                            const isInsert = /^\s*INSERT\s+INTO/i.test(pgSql);
+                            const hasReturning = /RETURNING/i.test(pgSql);
+                            if (isInsert && !hasReturning) {
+                                pgSql += ' RETURNING id';
+                            }
+                            const res = await client.query(pgSql, params);
+                            const rawId = res.rows && res.rows[0] && res.rows[0].id ? res.rows[0].id : null;
+                            const lastId = rawId !== null && !isNaN(Number(rawId)) ? Number(rawId) : rawId;
+                            return {
+                                lastInsertRowid: lastId,
+                                changes: res.rowCount || 0
+                            };
+                        },
+                        prepare: (sql) => ({
+                            get: (...args) => txObj.get(sql, ...args),
+                            all: (...args) => txObj.all(sql, ...args),
+                            run: (...args) => txObj.run(sql, ...args)
+                        })
+                    };
+                    const result = await callback(txObj);
+                    await client.query('COMMIT');
+                    return result;
+                } catch (e) {
+                    await client.query('ROLLBACK');
+                    throw e;
+                } finally {
+                    client.release();
+                }
+            } catch (connErr) {
+                if (isNetworkError(connErr)) {
+                    console.warn(`[Database] PostgreSQL connection lost (${connErr.message}). Switching to local SQLite.`);
+                    provider = 'sqlite';
+                    initSqlite();
+                    return sqliteDb.transaction(async () => {
+                        return callback(db);
+                    })();
+                }
+                throw connErr;
             }
         } else {
-            // SQLite transaction
-            const tx = sqliteDb.transaction((txCallback) => {
-                return txCallback();
-            });
-            // We pass db wrapper to callback
-            return callback(db);
+            if (!sqliteDb) initSqlite();
+            return sqliteDb.transaction(async () => {
+                return callback(db);
+            })();
         }
     },
 

@@ -108,6 +108,33 @@ CREATE TABLE IF NOT EXISTS otp_verifications (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS proctor_session_logs (
+    id BIGSERIAL PRIMARY KEY,
+    classroom_id VARCHAR(255),
+    assignment_id VARCHAR(255),
+    student_id VARCHAR(255),
+    student_name VARCHAR(255),
+    action TEXT,
+    message TEXT,
+    time VARCHAR(100),
+    color VARCHAR(50),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_proctor_logs_assignment ON proctor_session_logs(assignment_id, classroom_id);
+
+CREATE TABLE IF NOT EXISTS announcements (
+    id BIGINT PRIMARY KEY,
+    classroom_id BIGINT,
+    title TEXT,
+    details TEXT,
+    author TEXT,
+    posted BIGINT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_announcements_classroom ON announcements(classroom_id);
+
 -- Indices for rapid querying
 CREATE INDEX IF NOT EXISTS idx_classwork_classroom ON classwork(classroom_id);
 CREATE INDEX IF NOT EXISTS idx_submissions_assignment ON submissions(assignment_id);

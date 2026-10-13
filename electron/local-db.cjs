@@ -2,7 +2,7 @@ const path = require('path');
 const fs = require('fs');
 
 let db = null;
-let useJsonFallback = false;
+let useJsonFallback = true;
 let fallbackFile = null;
 let fallbackData = {
     drafts: {},
@@ -12,20 +12,117 @@ let fallbackData = {
     key_value: {}
 };
 
+function wrapSqlite(rawDb, engine) {
+    const sanitize = (args) => {
+        let params = args;
+        if (params.length === 1 && Array.isArray(params[0])) params = params[0];
+        return params.map(p => (p === undefined ? null : p));
+    };
+
+    return {
+        engine,
+        get raw() { return rawDb; },
+        pragma(cmd) {
+            if (typeof rawDb.pragma === 'function') {
+                try { return rawDb.pragma(cmd); } catch (_) {}
+            }
+            try { return rawDb.exec(`PRAGMA ${cmd};`); } catch (_) {}
+        },
+        exec(sql) {
+            return rawDb.exec(sql);
+        },
+        prepare(sql) {
+            const rawStmt = rawDb.prepare(sql);
+            return {
+                all(...args) {
+                    const clean = sanitize(args);
+                    const rows = rawStmt.all(...clean);
+                    return (rows || []).map(r => ({ ...r }));
+                },
+                get(...args) {
+                    const clean = sanitize(args);
+                    const row = rawStmt.get(...clean);
+                    return row ? { ...row } : undefined;
+                },
+                run(...args) {
+                    const clean = sanitize(args);
+                    const res = rawStmt.run(...clean);
+                    return {
+                        lastInsertRowid: res && res.lastInsertRowid !== undefined && !isNaN(Number(res.lastInsertRowid))
+                            ? Number(res.lastInsertRowid)
+                            : (res ? res.lastInsertRowid : null),
+                        changes: res && res.changes !== undefined ? res.changes : 0
+                    };
+                }
+            };
+        },
+        transaction(fn) {
+            if (typeof rawDb.transaction === 'function') {
+                return rawDb.transaction(fn);
+            }
+            return (...args) => {
+                rawDb.exec('BEGIN');
+                try {
+                    const res = fn(...args);
+                    rawDb.exec('COMMIT');
+                    return res;
+                } catch (e) {
+                    rawDb.exec('ROLLBACK');
+                    throw e;
+                }
+            };
+        },
+        close() {
+            if (typeof rawDb.close === 'function') {
+                try { rawDb.close(); } catch (_) {}
+            }
+        }
+    };
+}
+
 function initLocalDb(userDataPath) {
     const dataDir = userDataPath || path.join(__dirname, '..');
     const dbFile = path.join(dataDir, 'local-cache.sqlite');
     fallbackFile = path.join(dataDir, 'local-cache.json');
 
     try {
-        let Database;
-        try {
-            Database = require('better-sqlite3');
-        } catch (_) {
-            Database = require('../server/node_modules/better-sqlite3');
+        if (!fs.existsSync(dataDir)) {
+            try { fs.mkdirSync(dataDir, { recursive: true }); } catch (_) {}
         }
 
-        db = new Database(dbFile);
+        let rawDb = null;
+        let engine = null;
+
+        // 1. Try better-sqlite3
+        try {
+            let Database;
+            try {
+                Database = require('better-sqlite3');
+            } catch (_) {
+                Database = require('../server/node_modules/better-sqlite3');
+            }
+            rawDb = new Database(dbFile);
+            engine = 'better-sqlite3';
+        } catch (_) {}
+
+        // 2. Try Node built-in node:sqlite
+        if (!rawDb) {
+            try {
+                const { DatabaseSync } = require('node:sqlite');
+                rawDb = new DatabaseSync(dbFile);
+                engine = 'node:sqlite';
+            } catch (err) {
+                console.warn('[LocalDB] node:sqlite error:', err.message);
+            }
+        }
+
+        if (!rawDb) {
+            throw new Error('Neither better-sqlite3 nor node:sqlite could be loaded.');
+        }
+
+        db = wrapSqlite(rawDb, engine);
+        useJsonFallback = false;
+
         db.pragma('journal_mode = WAL');
 
         // Create local storage tables
@@ -68,11 +165,12 @@ function initLocalDb(userDataPath) {
             );
         `);
 
-        console.log(`[LocalDB] SQLite local client storage initialized: ${dbFile}`);
-        return { type: 'sqlite', path: dbFile };
+        console.log(`[LocalDB] SQLite local client storage initialized (${engine}): ${dbFile}`);
+        return { type: 'sqlite', engine, path: dbFile };
     } catch (err) {
         console.warn(`[LocalDB] Could not open SQLite directly in Electron (${err.message}). Using JSON fallback store.`);
         useJsonFallback = true;
+        db = null;
         if (fs.existsSync(fallbackFile)) {
             try {
                 fallbackData = JSON.parse(fs.readFileSync(fallbackFile, 'utf8'));

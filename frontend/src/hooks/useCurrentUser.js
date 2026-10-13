@@ -73,7 +73,6 @@ export async function updateCurrentUser(updates) {
         },
         body: JSON.stringify({
           name: updated.name,
-          email: updated.email,
           avatar: updated.avatar !== undefined ? updated.avatar : (updated.profilePicture || null)
         })
       });

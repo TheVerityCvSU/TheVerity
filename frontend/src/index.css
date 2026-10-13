@@ -667,3 +667,141 @@ html.dark textarea::placeholder {
 html.dark .auth-container {
   background: linear-gradient(180deg, #323232 0%, #262626 45%, #1a1a1a 100%) !important;
 }
+
+/* ========================================
+   SMOOTH INTERACTION UTILITIES
+   ======================================== */
+
+/* Inline code highlight */
+code.inline-code-highlight {
+  background-color: rgba(0, 0, 0, 0.08);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  color: inherit;
+}
+
+html.dark code.inline-code-highlight {
+  background-color: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+/* Smooth focus ring for all interactive elements */
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid #10b981;
+  outline-offset: 2px;
+  border-radius: 6px;
+  transition: outline-offset 0.15s ease;
+}
+
+/* Stagger-fade-in for list children */
+@keyframes staggerFadeUp {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.stagger-children > * {
+  animation: staggerFadeUp 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+.stagger-children > *:nth-child(1) { animation-delay: 0ms; }
+.stagger-children > *:nth-child(2) { animation-delay: 60ms; }
+.stagger-children > *:nth-child(3) { animation-delay: 120ms; }
+.stagger-children > *:nth-child(4) { animation-delay: 180ms; }
+.stagger-children > *:nth-child(5) { animation-delay: 240ms; }
+.stagger-children > *:nth-child(6) { animation-delay: 300ms; }
+
+/* Ripple effect for clickable cards */
+.ripple-card {
+  position: relative;
+  overflow: hidden;
+}
+
+.ripple-card::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at var(--ripple-x, 50%) var(--ripple-y, 50%), rgba(16, 185, 129, 0.12) 0%, transparent 70%);
+  opacity: 0;
+  transition: opacity 0.4s ease;
+  pointer-events: none;
+  border-radius: inherit;
+}
+
+.ripple-card:hover::after {
+  opacity: 1;
+}
+
+/* Sidebar nav link hover glow effect */
+.sidebar-nav-link {
+  position: relative;
+  transition: color 0.2s ease, background-color 0.2s ease;
+}
+
+.sidebar-nav-link::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%) scaleY(0);
+  width: 3px;
+  height: 60%;
+  background: #10b981;
+  border-radius: 0 3px 3px 0;
+  transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.sidebar-nav-link.active::before,
+.sidebar-nav-link:hover::before {
+  transform: translateY(-50%) scaleY(1);
+}
+
+/* Smooth page transitions */
+.page-enter {
+  animation: pageSlideIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes pageSlideIn {
+  from {
+    opacity: 0;
+    transform: translateX(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+/* Floating hover for classroom cards */
+.classroom-card-hover {
+  transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1),
+    box-shadow 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.classroom-card-hover:hover {
+  transform: translateY(-6px) scale(1.01);
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.14) !important;
+}
+
+/* Animated gradient border for active elements */
+@keyframes gradientShift {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+.gradient-border-active {
+  background: linear-gradient(90deg, #10b981, #059669, #34d399, #10b981);
+  background-size: 300% 300%;
+  animation: gradientShift 4s ease infinite;
+}
