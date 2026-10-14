@@ -125,6 +125,15 @@ export default function ChangeEmailModal({
 
       if (data.token) {
         localStorage.setItem('verity_token', data.token);
+        localStorage.setItem('token', data.token);
+      }
+
+      if (data.user) {
+        try {
+          const stored = JSON.parse(localStorage.getItem('currentUser') || '{}');
+          const updated = { ...stored, ...data.user, email: cleanEmail };
+          localStorage.setItem('currentUser', JSON.stringify(updated));
+        } catch (_) {}
       }
 
       if (onSuccess) {

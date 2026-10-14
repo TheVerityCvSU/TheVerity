@@ -11,11 +11,10 @@ import VideoPreviewModal from '../components/VideoPreviewModal';
 import VideoAttachment from '../components/VideoAttachment';
 import AttachmentCard from '../components/AttachmentCard';
 import { localStore } from '../services/localStore';
+import { getClassroomStorageKey, getCachedClassrooms, saveCachedClassrooms } from '../utils/classroomUtils';
+import { getStudentGrade, isStudentGraded, formatGradeScore } from '../utils/gradeUtils';
 
-const getStorageKey = (user) => {
-  const identifier = user?.email || user?.id || (user?.name ? user.name.toLowerCase().replace(/\s+/g, '_') : null);
-  return identifier ? `verity_student_classrooms_${identifier}` : 'verity_student_classrooms_anon';
-};
+const getStorageKey = (user) => getClassroomStorageKey(user, 'student');
 
 export default function StudentActivityDetail({
   classroom,
@@ -56,6 +55,7 @@ export default function StudentActivityDetail({
   const [submission, setSubmission] = useState(() => {
     try {
       const saved = localStorage.getItem(submissionKey) ||
+        (currentUser?.id ? localStorage.getItem(`verity_sub_${classroomId}_${assignmentId}_id_${currentUser.id}`) : null) ||
         (currentUser?.name ? localStorage.getItem(`verity_sub_${classroomId}_${assignmentId}_${currentUser.name}`) : null) ||
         (currentUser?.email ? localStorage.getItem(`verity_sub_${classroomId}_${assignmentId}_${currentUser.email}`) : null);
       return saved ? JSON.parse(saved) : null;
@@ -71,7 +71,10 @@ export default function StudentActivityDetail({
     try {
       const saved = localStorage.getItem(gradesKey);
       const allGrades = saved ? JSON.parse(saved) : {};
-      return allGrades[studentId] || allGrades[safeUsername] || null;
+      return getStudentGrade(allGrades, { id: currentUser?.id, name: currentUser?.name, email: currentUser?.email }) ||
+             getStudentGrade(allGrades, studentId) ||
+             getStudentGrade(allGrades, safeUsername) ||
+             null;
     } catch {
       return null;
     }
@@ -82,21 +85,12 @@ export default function StudentActivityDetail({
 
   // Sidebar & Layout state - only load the current student's enrolled classrooms
   const [classrooms, setClassrooms] = useState(() => {
-    try {
-      const saved = localStorage.getItem(getStorageKey(currentUser));
-      return saved ? JSON.parse(saved) : [];
-    } catch { return []; }
+    return getCachedClassrooms(currentUser, 'student');
   });
 
   useEffect(() => {
-    const key = getStorageKey(currentUser);
     const sync = () => {
-      try {
-        const saved = localStorage.getItem(key);
-        setClassrooms(saved ? JSON.parse(saved) : []);
-      } catch {
-        setClassrooms([]);
-      }
+      setClassrooms(getCachedClassrooms(currentUser, 'student'));
     };
     sync();
 
@@ -107,9 +101,7 @@ export default function StudentActivityDetail({
         const list = (Array.isArray(data) ? data : (data.classrooms || [])).filter(c => c && c.name);
         if (list.length > 0) {
           setClassrooms(list);
-          try {
-            localStorage.setItem(key, JSON.stringify(list));
-          } catch {}
+          saveCachedClassrooms(list, currentUser, 'student');
         }
       })
       .catch(() => {});
@@ -145,7 +137,8 @@ export default function StudentActivityDetail({
       `verity_sub_${classroomId}_${assignmentId}_${studentId}`,
       `verity_sub_${classroomId}_${assignmentId}_${safeUsername}`,
       currentUser?.name ? `verity_sub_${classroomId}_${assignmentId}_${currentUser.name}` : null,
-      currentUser?.email ? `verity_sub_${classroomId}_${assignmentId}_${currentUser.email}` : null
+      currentUser?.email ? `verity_sub_${classroomId}_${assignmentId}_${currentUser.email}` : null,
+      currentUser?.id ? `verity_sub_${classroomId}_${assignmentId}_id_${currentUser.id}` : null
     ].filter(Boolean);
 
     // 1. Fetch submissions for this assignment to check if currently submitted
@@ -159,7 +152,9 @@ export default function StudentActivityDetail({
             const sId = (s.student_id || s.studentId || '').toLowerCase();
             const targetName = safeUsername.toLowerCase();
             const targetId = studentId.toLowerCase();
-            return sName === targetName || sName === targetId || (sId && (sId === targetName || sId === targetId));
+            const targetEmail = (currentUser?.email || '').toLowerCase();
+            return sName === targetName || sName === targetId || sName === targetEmail ||
+                   (sId && (sId === targetName || sId === targetId || sId === targetEmail));
           });
           if (mySub) {
             setSubmission(mySub);
@@ -180,7 +175,9 @@ export default function StudentActivityDetail({
       .then(data => {
         if (cancelled) return;
         if (data?.grades) {
-          const myGrade = data.grades[studentId] || data.grades[safeUsername];
+          const myGrade = getStudentGrade(data.grades, { id: currentUser?.id, name: currentUser?.name, email: currentUser?.email }) ||
+                          getStudentGrade(data.grades, studentId) ||
+                          getStudentGrade(data.grades, safeUsername);
           if (myGrade) {
             setGradeData(myGrade);
           }
@@ -200,7 +197,9 @@ export default function StudentActivityDetail({
       try {
         const savedGrades = localStorage.getItem(gradesKey);
         const allGrades = savedGrades ? JSON.parse(savedGrades) : {};
-        const myGrade = allGrades[studentId] || allGrades[safeUsername];
+        const myGrade = getStudentGrade(allGrades, { id: currentUser?.id, name: currentUser?.name, email: currentUser?.email }) ||
+                        getStudentGrade(allGrades, studentId) ||
+                        getStudentGrade(allGrades, safeUsername);
         if (myGrade) setGradeData(myGrade);
       } catch { /* ignore */ }
     };
@@ -261,16 +260,57 @@ export default function StudentActivityDetail({
           });
         }
       };
+
+      const handleLiveGradeUpdate = (data) => {
+        if (!data || String(data.assignmentId) !== String(assignmentId)) return;
+        const myGrade = getStudentGrade({ [data.studentId]: data }, { id: currentUser?.id, name: currentUser?.name, email: currentUser?.email }) ||
+                        getStudentGrade({ [data.studentId]: data }, studentId) ||
+                        getStudentGrade({ [data.studentId]: data }, safeUsername);
+        if (myGrade) {
+          setGradeData({ grade: data.grade, feedback: data.feedback, gradedAt: data.gradedAt });
+        }
+      };
+
+      const handleLiveBulkGradesUpdate = (data) => {
+        if (!data || String(data.assignmentId) !== String(assignmentId) || !Array.isArray(data.grades)) return;
+        const map = {};
+        data.grades.forEach(g => { if (g.studentId) map[g.studentId] = g; });
+        const myGrade = getStudentGrade(map, { id: currentUser?.id, name: currentUser?.name, email: currentUser?.email }) ||
+                        getStudentGrade(map, studentId) ||
+                        getStudentGrade(map, safeUsername);
+        if (myGrade) {
+          setGradeData({ grade: myGrade.grade, feedback: myGrade.feedback, gradedAt: myGrade.gradedAt });
+        }
+      };
+
+      const handleLiveGradeDelete = (data) => {
+        if (!data || String(data.assignmentId) !== String(assignmentId)) return;
+        const myGrade = getStudentGrade({ [data.studentId]: true }, { id: currentUser?.id, name: currentUser?.name, email: currentUser?.email }) ||
+                        getStudentGrade({ [data.studentId]: true }, studentId) ||
+                        getStudentGrade({ [data.studentId]: true }, safeUsername);
+        if (myGrade) {
+          setGradeData(null);
+        }
+      };
+
       socket.on('student_unsubmitted', handleSocketUnsub);
       socket.on('teacher_student_unsubmitted', handleSocketUnsub);
+      socket.on('grade_updated', handleLiveGradeUpdate);
+      socket.on('bulk_grades_updated', handleLiveBulkGradesUpdate);
+      socket.on('grade_deleted', handleLiveGradeDelete);
     }
 
     return () => {
       cancelled = true;
       window.removeEventListener('storage', onStorageUpdate);
-      if (socket && handleSocketUnsub) {
-        socket.off('student_unsubmitted', handleSocketUnsub);
-        socket.off('teacher_student_unsubmitted', handleSocketUnsub);
+      if (socket) {
+        if (handleSocketUnsub) {
+          socket.off('student_unsubmitted', handleSocketUnsub);
+          socket.off('teacher_student_unsubmitted', handleSocketUnsub);
+        }
+        socket.off('grade_updated');
+        socket.off('bulk_grades_updated');
+        socket.off('grade_deleted');
       }
     };
   }, [assignmentId, classroomId, studentId, safeUsername, submissionKey, gradesKey, socket, currentUser]);
@@ -343,7 +383,8 @@ export default function StudentActivityDetail({
       `verity_sub_${classroomId}_${assignmentId}_${studentId}`,
       `verity_sub_${classroomId}_${assignmentId}_${safeUsername}`,
       currentUser?.name ? `verity_sub_${classroomId}_${assignmentId}_${currentUser.name}` : null,
-      currentUser?.email ? `verity_sub_${classroomId}_${assignmentId}_${currentUser.email}` : null
+      currentUser?.email ? `verity_sub_${classroomId}_${assignmentId}_${currentUser.email}` : null,
+      currentUser?.id ? `verity_sub_${classroomId}_${assignmentId}_id_${currentUser.id}` : null
     ].filter(Boolean);
     allKeys.forEach(k => {
       try { localStorage.setItem(k, JSON.stringify(subData)); } catch { }
@@ -754,23 +795,37 @@ export default function StudentActivityDetail({
                             </span>
                             {displayScore !== null && (
                               <span style={{ fontSize: '0.8rem', color: '#10b981', marginLeft: '10px', fontWeight: 'bold' }}>
-                                Score: {displayScore}
+                                Score: {displayScore} / {assignment?.points || 100} pts
                               </span>
                             )}
                           </div>
                         </div>
 
-                        <button
-                          onClick={() => setShowCodePreview(true)}
-                          style={styles.viewCodeBtn}
-                        >
-                          <Code2 size={15} style={{ marginRight: '5px' }} /> View Code
-                        </button>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <button
+                            onClick={onStartCoding}
+                            style={{
+                              ...styles.viewCodeBtn,
+                              backgroundColor: isDark ? '#262626' : '#f1f5f9',
+                              color: isDark ? '#E8EAED' : '#334155',
+                              border: isDark ? '1px solid #404040' : '1px solid #cbd5e1'
+                            }}
+                            title="Open workspace in read-only mode"
+                          >
+                            <TerminalSquare size={15} style={{ marginRight: '5px' }} /> View Workspace
+                          </button>
+                          <button
+                            onClick={() => setShowCodePreview(true)}
+                            style={styles.viewCodeBtn}
+                          >
+                            <Code2 size={15} style={{ marginRight: '5px' }} /> View Code
+                          </button>
+                        </div>
                       </div>
 
                       {/* Instructor Feedback if available */}
-                      {submission?.feedback && (
-                        <div>
+                      {(gradeData?.grade != null || gradeData?.feedback) && (
+                        <div style={{ marginTop: '16px' }}>
                           <div style={styles.feedbackHeading}>Instructor Feedback</div>
                           <div style={{ ...styles.feedbackBox, backgroundColor: isDark ? '#1a201e' : '#f8fafc', border: isDark ? '1px solid #232a29' : '1px solid #e2e8f0' }}>
                             <p style={{ margin: 0, color: isDark ? '#E8EAED' : '#334155', fontSize: '0.95rem', lineHeight: '1.5' }}>

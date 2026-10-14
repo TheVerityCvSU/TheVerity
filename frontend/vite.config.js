@@ -14,6 +14,7 @@ export default defineConfig(({ mode }) => {
     base: './', // relative asset paths so the build works from file:// in Electron
     plugins: [react()],
     server: {
+      host: true, // Listen on all network interfaces including LAN (0.0.0.0)
       port: 5173,
       strictPort: true, // This forces Vite to fail if 5173 isn't available
       watch: {
@@ -38,8 +39,22 @@ export default defineConfig(({ mode }) => {
       }
     },
     define: {
-      'import.meta.env.VITE_API_URL': JSON.stringify(apiUrl),
-      'import.meta.env.VITE_SOCKET_URL': JSON.stringify(socketUrl)
+      'import.meta.env.VITE_API_URL': `((typeof window !== "undefined") ? ((() => {
+        const custom = localStorage.getItem("verity_server_url") || localStorage.getItem("verity_cloud_url");
+        if (custom && custom.trim()) return custom.trim().replace(/\\/$/, "");
+        if (window.location && window.location.hostname && window.location.hostname !== "localhost" && window.location.hostname !== "127.0.0.1" && window.location.protocol.startsWith("http")) {
+          return window.location.protocol + "//" + window.location.hostname + ":3001";
+        }
+        return "${apiUrl}";
+      })()) : "${apiUrl}")`,
+      'import.meta.env.VITE_SOCKET_URL': `((typeof window !== "undefined") ? ((() => {
+        const custom = localStorage.getItem("verity_server_url") || localStorage.getItem("verity_cloud_url");
+        if (custom && custom.trim()) return custom.trim().replace(/\\/$/, "");
+        if (window.location && window.location.hostname && window.location.hostname !== "localhost" && window.location.hostname !== "127.0.0.1" && window.location.protocol.startsWith("http")) {
+          return window.location.protocol + "//" + window.location.hostname + ":3001";
+        }
+        return "${socketUrl}";
+      })()) : "${socketUrl}")`
     }
   };
 })

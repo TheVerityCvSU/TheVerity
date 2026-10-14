@@ -13,7 +13,7 @@ import { apiFetch } from '../utils/api';
 import Skeleton from '../components/Skeleton';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { useMediaQuery } from '../hooks/useMediaQuery';
-import { isPhantomClassroom, mergeClassroomsPreservingOrder, THEME_PRESETS, getClassroomTheme, saveClassroomTheme } from '../utils/classroomUtils';
+import { isPhantomClassroom, mergeClassroomsPreservingOrder, THEME_PRESETS, getClassroomTheme, saveClassroomTheme, getClassroomStorageKey, getCachedClassrooms, saveCachedClassrooms, sortClassroomsAlphabetically } from '../utils/classroomUtils';
 import ImagePreviewModal from '../components/ImagePreviewModal';
 import AddLinkModal from '../components/AddLinkModal';
 import VideoPreviewModal from '../components/VideoPreviewModal';
@@ -21,6 +21,7 @@ import IframePreviewModal from '../components/IframePreviewModal';
 import AddStudentModal from '../components/AddStudentModal';
 import VideoAttachment from '../components/VideoAttachment';
 import AttachmentCard from '../components/AttachmentCard';
+import { getStudentGrade, isStudentGraded, formatGradeScore } from '../utils/gradeUtils';
 
 const EMPTY_FORM = { title: '', activityType: 'Activity', noDueDate: true, dueDate: '', instruction: '', points: '100', grading: 'On', attachments: [], duration: 60, autoSaveInterval: '30s', treatWarningsAsErrors: false, testCases: [] };
 
@@ -108,18 +109,7 @@ export default function TeacherClasswork({
   const isPhantom = isPhantomClassroom;
 
   const [classrooms, setClassrooms] = useState(() => {
-    try {
-      const id = currentUser?.email || currentUser?.id || (currentUser?.name ? currentUser.name.toLowerCase().replace(/\s+/g, '_') : null);
-      const key = id ? `verity_teacher_classrooms_${id}` : 'verity_teacher_classrooms_anon';
-      const raw = localStorage.getItem(key);
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed)) {
-          return parsed.filter(c => !isPhantomClassroom(c));
-        }
-      }
-      return [];
-    } catch { return []; }
+    return sortClassroomsAlphabetically(getCachedClassrooms(currentUser, 'teacher').filter(c => !isPhantomClassroom(c)));
   });
 
   useEffect(() => {
@@ -128,18 +118,19 @@ export default function TeacherClasswork({
       .then(data => {
         if (!data) return;
         const serverList = (Array.isArray(data) ? data : (data.classrooms || [])).filter(c => !isPhantomClassroom(c));
-        const teacherClasses = serverList.filter(c => 
-          (currentUser?.email && c.instructor_email && c.instructor_email.toLowerCase() === currentUser.email.toLowerCase()) || 
-          (currentUser?.email && c.instructorEmail && c.instructorEmail.toLowerCase() === currentUser.email.toLowerCase()) || 
-          (currentUser?.name && c.instructor && c.instructor.toLowerCase() === currentUser.name.toLowerCase()) ||
-          (!c.instructor_email && !c.instructor)
-        );
-        setClassrooms(teacherClasses);
-        try {
-          const id = currentUser?.email || currentUser?.id || (currentUser?.name ? currentUser.name.toLowerCase().replace(/\s+/g, '_') : null);
-          const key = id ? `verity_teacher_classrooms_${id}` : 'verity_teacher_classrooms_anon';
-          localStorage.setItem(key, JSON.stringify(teacherClasses));
-        } catch {}
+        const teacherClasses = serverList.filter(c => {
+          const emailStr = (c.instructor_email || c.instructorEmail || '').toLowerCase();
+          const matchesEmail = Boolean(currentUser?.email && emailStr && emailStr === currentUser.email.toLowerCase());
+          const nameStr = (c.instructor || '').trim().toLowerCase();
+          const curName = (currentUser?.name || '').trim().toLowerCase();
+          const matchesName = Boolean(curName && nameStr && nameStr === curName);
+          return matchesEmail || matchesName || (!emailStr && !nameStr);
+        });
+        const sortedTeacherClasses = sortClassroomsAlphabetically(teacherClasses);
+        if (sortedTeacherClasses.length > 0 || classrooms.length === 0) {
+          setClassrooms(sortedTeacherClasses);
+          saveCachedClassrooms(sortedTeacherClasses, currentUser, 'teacher');
+        }
       })
       .catch(() => {});
   }, [currentUser]);
@@ -241,7 +232,10 @@ export default function TeacherClasswork({
 
   useEffect(() => {
     const load = () => {
-      apiFetch(`${import.meta.env.VITE_API_URL}/submission-counts`)
+      const url = (classroomId && classroomId !== 'default')
+        ? `${import.meta.env.VITE_API_URL}/submission-counts?classroomId=${classroomId}`
+        : `${import.meta.env.VITE_API_URL}/submission-counts`;
+      apiFetch(url)
         .then(res => res.json())
         .then(data => setSubmissionData({ counts: data.counts || {}, studentCount: data.studentCount || 0 }))
         .catch(() => {});
@@ -249,7 +243,7 @@ export default function TeacherClasswork({
     load();
     const interval = setInterval(load, 10000);
     return () => clearInterval(interval);
-  }, []);
+  }, [classroomId]);
 
   // Class code & theme
   const classCode = classroom?.code || classroom?.section || (classroom?.id ? `vji${classroom.id}ku4` : 'vji3bku4');
@@ -318,6 +312,11 @@ export default function TeacherClasswork({
 
   // Enrolled students and Instructor Info for People tab
   const [enrolledStudents, setEnrolledStudents] = useState([]);
+  const sortedEnrolledStudents = useMemo(() => {
+    return [...enrolledStudents].sort((a, b) =>
+      (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base', numeric: true })
+    );
+  }, [enrolledStudents]);
   const [loadingStudents, setLoadingStudents] = useState(false);
   const [isAddStudentOpen, setIsAddStudentOpen] = useState(false);
   const [refreshStudentsKey, setRefreshStudentsKey] = useState(0);
@@ -406,7 +405,10 @@ export default function TeacherClasswork({
         }
       } catch {}
 
-      setEnrolledStudents(Object.values(studentsMap));
+      const sortedStudents = Object.values(studentsMap).sort((a, b) =>
+        (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base', numeric: true })
+      );
+      setEnrolledStudents(sortedStudents);
       setLoadingStudents(false);
     };
 
@@ -470,6 +472,8 @@ export default function TeacherClasswork({
   });
   const [studentGradeInput, setStudentGradeInput] = useState(String(maxPoints));
   const [studentFeedbackInput, setStudentFeedbackInput] = useState('');
+  const [indivSaveStatus, setIndivSaveStatus] = useState('idle'); // 'idle' | 'saving' | 'saved' | 'error'
+  const [indivSaveError, setIndivSaveError] = useState('');
   const [showBulkGradeModal, setShowBulkGradeModal] = useState(false);
   const [bulkGradeVal, setBulkGradeVal] = useState(String(maxPoints));
   const [bulkFeedbackVal, setBulkFeedbackVal] = useState('Great work!');
@@ -513,7 +517,9 @@ export default function TeacherClasswork({
             }
           });
 
-          const list = Object.values(map);
+          const list = Object.values(map).sort((a, b) =>
+            (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base', numeric: true })
+          );
           setGradingStudents(list);
           setSelectedStudentId(prev => (prev && map[prev] ? prev : (list[0]?.id || null)));
         })
@@ -528,50 +534,123 @@ export default function TeacherClasswork({
         if (data?.grades) setGradingGrades(prev => ({ ...prev, ...data.grades }));
       })
       .catch(() => {});
-  }, [activeGradingActivity?.id, classroom?.id]);
+
+    const onGradeUpdated = (data) => {
+      if (!data || String(data.assignmentId) !== String(activeGradingActivity?.id) || !data.studentId) return;
+      setGradingGrades(prev => ({
+        ...prev,
+        [data.studentId]: { grade: data.grade, feedback: data.feedback, gradedAt: data.gradedAt || new Date().toISOString() }
+      }));
+    };
+
+    const onBulkGradesUpdated = (data) => {
+      if (!data || String(data.assignmentId) !== String(activeGradingActivity?.id) || !Array.isArray(data.grades)) return;
+      setGradingGrades(prev => {
+        const next = { ...prev };
+        data.grades.forEach(g => {
+          if (g.studentId) {
+            next[g.studentId] = { grade: g.grade, feedback: g.feedback, gradedAt: g.gradedAt || new Date().toISOString() };
+          }
+        });
+        return next;
+      });
+    };
+
+    const onGradeDeleted = (data) => {
+      if (!data || String(data.assignmentId) !== String(activeGradingActivity?.id) || !data.studentId) return;
+      const target = String(data.studentId).toLowerCase();
+      setGradingGrades(prev => {
+        const next = { ...prev };
+        Object.keys(next).forEach(k => {
+          if (k.toLowerCase() === target) delete next[k];
+        });
+        return next;
+      });
+    };
+
+    if (socket) {
+      socket.on('grade_updated', onGradeUpdated);
+      socket.on('bulk_grades_updated', onBulkGradesUpdated);
+      socket.on('grade_deleted', onGradeDeleted);
+    }
+
+    return () => {
+      if (socket) {
+        socket.off('grade_updated', onGradeUpdated);
+        socket.off('bulk_grades_updated', onBulkGradesUpdated);
+        socket.off('grade_deleted', onGradeDeleted);
+      }
+    };
+  }, [activeGradingActivity?.id, classroom?.id, socket]);
 
   useEffect(() => {
-    localStorage.setItem(gradesKey, JSON.stringify(gradingGrades));
+    try {
+      localStorage.setItem(gradesKey, JSON.stringify(gradingGrades));
+    } catch {}
   }, [gradingGrades, gradesKey]);
 
   useEffect(() => {
     if (selectedStudentId) {
-      const saved = gradingGrades[selectedStudentId];
+      const curStudent = gradingStudents.find(s => s.id === selectedStudentId);
+      const saved = getStudentGrade(gradingGrades, curStudent || selectedStudentId);
       setStudentGradeInput(saved?.grade != null ? String(saved.grade) : String(maxPoints));
       setStudentFeedbackInput(saved?.feedback || '');
+      setIndivSaveStatus('idle');
+      setIndivSaveError('');
     }
-  }, [selectedStudentId, gradingGrades, maxPoints]);
+  }, [selectedStudentId, gradingGrades, maxPoints, gradingStudents]);
 
-  const handleSaveIndividualGrade = () => {
+  const handleSaveIndividualGrade = async () => {
     if (!selectedStudentId || !activeGradingActivity) return;
+    setIndivSaveStatus('saving');
+    setIndivSaveError('');
+    const now = new Date().toISOString();
     const updated = {
       ...gradingGrades,
-      [selectedStudentId]: { grade: studentGradeInput, feedback: studentFeedbackInput, gradedAt: true }
+      [selectedStudentId]: { grade: studentGradeInput, feedback: studentFeedbackInput, gradedAt: now }
     };
     setGradingGrades(updated);
-    localStorage.setItem(gradesKey, JSON.stringify(updated));
+    try {
+      localStorage.setItem(gradesKey, JSON.stringify(updated));
+    } catch {}
 
-    apiFetch(`${import.meta.env.VITE_API_URL}/grades/${activeGradingActivity.id}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ studentId: selectedStudentId, grade: studentGradeInput, feedback: studentFeedbackInput })
-    }).catch(() => {});
+    try {
+      const res = await apiFetch(`${import.meta.env.VITE_API_URL}/grades/${activeGradingActivity.id}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ studentId: selectedStudentId, grade: studentGradeInput, feedback: studentFeedbackInput })
+      });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.message || 'Failed to save grade');
+      }
+      setIndivSaveStatus('saved');
+      setTimeout(() => setIndivSaveStatus('idle'), 2500);
+    } catch (err) {
+      console.error('Error saving grade:', err);
+      setIndivSaveStatus('error');
+      setIndivSaveError(err.message || 'Failed to save');
+      setTimeout(() => setIndivSaveStatus('idle'), 3500);
+    }
   };
 
   // BULK GRADING: Grades ONLY the students who have submitted!
   const handleApplyBulkGrade = async () => {
     if (!activeGradingActivity || gradingStudents.length === 0) return;
 
+    const now = new Date().toISOString();
     const updated = { ...gradingGrades };
     const payload = [];
 
     gradingStudents.forEach(s => {
-      updated[s.id] = { grade: bulkGradeVal, feedback: bulkFeedbackVal, gradedAt: true };
+      updated[s.id] = { grade: bulkGradeVal, feedback: bulkFeedbackVal, gradedAt: now };
       payload.push({ studentId: s.id, grade: bulkGradeVal, feedback: bulkFeedbackVal });
     });
 
     setGradingGrades(updated);
-    localStorage.setItem(gradesKey, JSON.stringify(updated));
+    try {
+      localStorage.setItem(gradesKey, JSON.stringify(updated));
+    } catch {}
 
     try {
       await apiFetch(`${import.meta.env.VITE_API_URL}/grades/${activeGradingActivity.id}/bulk`, {
@@ -952,6 +1031,8 @@ export default function TeacherClasswork({
     } catch (err) {}
 
     const data = {
+      classroom_id: classroomId,
+      classId: classroomId,
       title: form.title,
       activityType: form.activityType || 'Assignment',
       details: currentInstruction,
@@ -968,7 +1049,7 @@ export default function TeacherClasswork({
     if (editingId) {
       setClasswork(classwork.map(item => item.id === editingId ? { ...item, ...data } : item));
     } else {
-      setClasswork([{ id: Date.now(), archived: false, posted: new Date().toISOString(), ...data }, ...classwork]);
+      setClasswork([{ id: Date.now(), archived: false, posted: new Date().toISOString(), classroom_id: classroomId, classId: classroomId, ...data }, ...classwork]);
     }
     setIsModalOpen(false);
     setEditingId(null);
@@ -983,7 +1064,7 @@ export default function TeacherClasswork({
 
   const handleCopy = (e, item) => {
     e.stopPropagation();
-    const copy = { ...item, id: Date.now(), title: `${item.title} (Copy)` };
+    const copy = { ...item, id: Date.now(), title: `${item.title} (Copy)`, classroom_id: classroomId, classId: classroomId };
     setClasswork([copy, ...classwork]);
     setActiveMenu(null);
   };
@@ -1139,7 +1220,7 @@ export default function TeacherClasswork({
     violet: '#8b5cf6'
   };
   const BADGE_COLORS = ['#a78bfa', '#60a5fa', '#fb7185', '#38bdf8', '#fbbf24', '#34d399'];
-  const activeClassrooms = (classrooms || []).filter(c => !c.archived);
+  const activeClassrooms = sortClassroomsAlphabetically((classrooms || []).filter(c => !c.archived));
   const teacherName = currentUser?.name || classroom?.instructor || 'Instructor';
   const teacherInitial = teacherName.charAt(0).toUpperCase();
   const CLASSROOM_TABS = [
@@ -1589,7 +1670,7 @@ export default function TeacherClasswork({
                     ) : (
                       visibleClasswork.map((item, index) => {
                         const plain = (item.details || '').replace(/<[^>]*>?/gm, '').replace(/&nbsp;/g, ' ').trim();
-                        const postedLabel = formatShortDate(item.posted || (typeof item.id === 'number' && item.id > 1e12 ? item.id : null));
+                        const postedLabel = formatShortDate(item.posted || item.createdAt || (typeof item.id === 'number' && item.id > 1e12 ? item.id : null));
                         const typeLabel = item.activityType || 'Assignment';
                         const openItem = () => { handleTabChange('classwork'); setExpandedId(item.id); };
                         return (
@@ -1602,11 +1683,8 @@ export default function TeacherClasswork({
                             <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '16px 16px 0' }}>
                               {renderTeacherAvatar()}
                               <div style={{ flex: 1, minWidth: 0 }}>
-                                <div style={{ fontSize: '0.82rem', fontWeight: 600, color: ui.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                  {teacherName} posted a new {typeLabel.toLowerCase()}: {item.title}
-                                </div>
-                                <div style={{ fontSize: '0.7rem', color: ui.muted, marginTop: '2px' }}>
-                                  {[postedLabel, typeLabel].filter(Boolean).join(' · ')}
+                                <div style={{ fontSize: '0.82rem', fontWeight: 500, color: ui.muted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                  {postedLabel || 'Recently'}
                                 </div>
                               </div>
                               <button className="vt-icon-btn" onClick={openItem} title="Open in Classwork" style={smallIconBtnStyle}>
@@ -1892,7 +1970,7 @@ export default function TeacherClasswork({
                                     </div>
                                     <div style={styles.statColDivider} />
                                     <div style={styles.statCol}>
-                                      <span style={styles.statNum}>{submissionData.studentCount}</span>
+                                      <span style={styles.statNum}>{enrolledStudents.length || submissionData.studentCount || 0}</span>
                                       <span style={styles.statLabel}>Assigned</span>
                                     </div>
                                   </div>
@@ -1900,9 +1978,19 @@ export default function TeacherClasswork({
 
                                 <div style={styles.detailDivider} />
 
-                                <div style={styles.detailFooter}>
-                                  <span
-                                    style={styles.viewActivityLink}
+                                <div style={{
+                                  ...styles.detailFooter,
+                                  flexDirection: isMobile ? 'column' : 'row',
+                                  alignItems: isMobile ? 'stretch' : 'center',
+                                  padding: isMobile ? '14px 20px' : '16px 28px'
+                                }}>
+                                  <button
+                                    style={{
+                                      ...styles.viewGradingBtn,
+                                      width: isMobile ? '100%' : 'auto',
+                                      justifyContent: 'center'
+                                    }}
+                                    className="btn-anim"
                                     onClick={() => {
                                       if (onOpenGrading) onOpenGrading(item);
                                       else {
@@ -1910,11 +1998,17 @@ export default function TeacherClasswork({
                                         handleTabChange('grades');
                                       }
                                     }}
+                                    title="Open activity details and grade student submissions"
                                   >
-                                    View Activity & Grading
-                                  </span>
+                                    <ClipboardList size={16} /> View Activity & Grading
+                                  </button>
                                   <button
-                                    style={styles.liveMonitorBtn}
+                                    style={{
+                                      ...styles.liveMonitorBtn,
+                                      width: isMobile ? '100%' : 'auto',
+                                      justifyContent: 'center'
+                                    }}
+                                    className="btn-anim"
                                     onClick={(e) => { e.stopPropagation(); onStartMonitoring && onStartMonitoring(item); }}
                                     title="Open live proctoring & monitoring"
                                   >
@@ -1953,7 +2047,7 @@ export default function TeacherClasswork({
                   </div>
                   <div style={{ ...styles.list, padding: '0 0 40px 0' }}>
                     {visibleMaterials.length === 0 ? (
-                      <div style={{ padding: '40px', textAlign: 'center', color: isDark ? '#a3a3a3' : '#94a3b8', backgroundColor: isDark ? '#262626' : '#f8fafc', borderRadius: '12px', border: isDark ? '1px dashed #404040' : '1px dashed #cbd5e1' }}>
+                      <div style={{ padding: '40px 0', textAlign: 'center', color: isDark ? '#a3a3a3' : '#94a3b8' }}>
                         <div style={{ marginBottom: '16px' }}>
                           <FileText size={48} color={isDark ? '#525252' : '#94a3b8'} style={{ margin: '0 auto' }} />
                         </div>
@@ -2241,7 +2335,7 @@ export default function TeacherClasswork({
                           </p>
                         </div>
                       ) : (
-                        enrolledStudents.map((student, idx) => (
+                        sortedEnrolledStudents.map((student, idx) => (
                           <div key={idx} style={styles.peopleRow}>
                             {student.avatar ? (
                               <img
@@ -2316,23 +2410,32 @@ export default function TeacherClasswork({
                   ) : (
                     <>
                       <div style={styles.activitySelectionRow}>
-                        <span style={{ fontSize: '0.85rem', fontWeight: '700', color: isDark ? '#E8EAED' : '#475569', marginRight: '8px' }}>
-                          Activity:
-                        </span>
-                        {visibleClasswork.map(act => (
-                          <button
-                            key={act.id}
-                            onClick={() => setSelectedGradingActivityId(act.id)}
-                            style={{
-                              ...styles.activityChipBtn,
-                              backgroundColor: selectedGradingActivityId === act.id ? '#10b981' : (isDark ? '#3A3A3A' : '#f1f5f9'),
-                              color: selectedGradingActivityId === act.id ? 'white' : (isDark ? '#E8EAED' : '#475569'),
-                              fontWeight: selectedGradingActivityId === act.id ? '700' : '600'
-                            }}
-                          >
-                            {act.title}
-                          </button>
-                        ))}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0, marginRight: '4px' }}>
+                          <span style={{ fontSize: '0.85rem', fontWeight: '700', color: isDark ? '#E8EAED' : '#475569' }}>
+                            Activity:
+                          </span>
+                        </div>
+                        {visibleClasswork.map(act => {
+                          const isSelected = selectedGradingActivityId === act.id;
+                          return (
+                            <button
+                              key={act.id}
+                              onClick={() => setSelectedGradingActivityId(act.id)}
+                              style={{
+                                ...styles.activityChipBtn,
+                                backgroundColor: isSelected ? '#10b981' : (isDark ? '#2e3032' : '#f1f5f9'),
+                                color: isSelected ? 'white' : (isDark ? '#E8EAED' : '#475569'),
+                                border: isSelected ? '1px solid #10b981' : (isDark ? '1px solid #44474a' : '1px solid #e2e8f0'),
+                                fontWeight: isSelected ? '700' : '600',
+                                boxShadow: isSelected ? '0 2px 8px rgba(16, 185, 129, 0.3)' : 'none'
+                              }}
+                              className="btn-anim"
+                              title={act.title}
+                            >
+                              {act.title}
+                            </button>
+                          );
+                        })}
                       </div>
 
                       <div style={styles.gradingColumnsLayout}>
@@ -2353,7 +2456,8 @@ export default function TeacherClasswork({
                               </div>
                             ) : (
                               gradingStudents.map(s => {
-                                const isEvaluated = !!gradingGrades[s.id]?.gradedAt;
+                                const curGrade = getStudentGrade(gradingGrades, s);
+                                const isEvaluated = isStudentGraded(gradingGrades, s);
                                 const isSelected = selectedStudentId === s.id;
                                 return (
                                   <div
@@ -2389,7 +2493,7 @@ export default function TeacherClasswork({
                                     <div style={{ flexShrink: 0 }}>
                                       {isEvaluated ? (
                                         <span style={styles.gradeBadgeGraded}>
-                                          {gradingGrades[s.id]?.grade}/{maxPoints}
+                                          {curGrade?.grade ?? maxPoints}/{maxPoints}
                                         </span>
                                       ) : (
                                         <span style={styles.gradeBadgeTurnedIn}>
@@ -2465,9 +2569,25 @@ export default function TeacherClasswork({
                                   <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '6px' }}>
                                     <button
                                       onClick={handleSaveIndividualGrade}
-                                      style={styles.saveGradeBtn}
+                                      disabled={indivSaveStatus === 'saving'}
+                                      style={{
+                                        ...styles.saveGradeBtn,
+                                        backgroundColor: indivSaveStatus === 'saved' ? '#10b981' : (indivSaveStatus === 'error' ? '#ef4444' : styles.saveGradeBtn.backgroundColor),
+                                        cursor: indivSaveStatus === 'saving' ? 'wait' : 'pointer',
+                                        opacity: indivSaveStatus === 'saving' ? 0.75 : 1,
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: '6px'
+                                      }}
                                     >
-                                      Save Grade
+                                      {indivSaveStatus === 'saving' && 'Saving...'}
+                                      {indivSaveStatus === 'saved' && (
+                                        <>
+                                          <Check size={15} /> Saved
+                                        </>
+                                      )}
+                                      {indivSaveStatus === 'error' && (indivSaveError || 'Error')}
+                                      {indivSaveStatus === 'idle' && 'Save Grade'}
                                     </button>
                                   </div>
                                 </div>
@@ -3531,23 +3651,47 @@ const getStyles = (isDark) => ({
   statNum: { fontSize: '1.4rem', fontWeight: 'bold', color: isDark ? '#E8EAED' : '#1e293b' },
   statLabel: { fontSize: '0.85rem', color: isDark ? '#a3a3a3' : '#64748b', marginTop: '4px' },
   detailDivider: { height: '1px', backgroundColor: isDark ? '#4A4A4A' : '#e2e8f0', margin: '0 28px' },
-  detailFooter: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 28px' },
+  detailFooter: { 
+    display: 'flex', 
+    justifyContent: 'space-between', 
+    alignItems: 'center', 
+    padding: '16px 28px',
+    gap: '12px',
+    flexWrap: 'wrap'
+  },
   viewActivityLink: { color: '#10b981', fontSize: '0.95rem', cursor: 'pointer', fontWeight: '700' },
+  viewGradingBtn: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    padding: '9px 20px',
+    backgroundColor: isDark ? 'rgba(16, 185, 129, 0.12)' : '#ecfdf5',
+    border: `1px solid ${isDark ? 'rgba(16, 185, 129, 0.35)' : '#a7f3d0'}`,
+    borderRadius: '50px',
+    color: isDark ? '#34d399' : '#059669',
+    fontWeight: '700',
+    fontSize: '0.88rem',
+    cursor: 'pointer',
+    transition: 'all 0.2s cubic-bezier(0.16, 1, 0.3, 1)',
+    boxShadow: isDark
+      ? '0 0 12px rgba(16, 185, 129, 0.12)'
+      : '0 1px 3px rgba(16, 185, 129, 0.10)'
+  },
   liveMonitorBtn: { 
     display: 'flex', 
     alignItems: 'center', 
-    gap: '6px', 
-    padding: '8px 20px', 
+    gap: '7px', 
+    padding: '9px 22px', 
     backgroundColor: '#10b981', 
     border: 'none', 
     borderRadius: '50px', 
-    color: 'white', 
-    fontWeight: 'bold', 
+    color: '#ffffff', 
+    fontWeight: '700', 
     fontSize: '0.88rem', 
     cursor: 'pointer', 
     boxShadow: isDark 
-      ? '0 0 14px rgba(16, 185, 129, 0.32), 0 2px 6px rgba(0, 0, 0, 0.3)' 
-      : '0 2px 6px rgba(16, 185, 129, 0.22), 0 1px 2px rgba(0, 0, 0, 0.05)',
+      ? '0 0 16px rgba(16, 185, 129, 0.35), 0 2px 6px rgba(0, 0, 0, 0.3)' 
+      : '0 2px 8px rgba(16, 185, 129, 0.25), 0 1px 2px rgba(0, 0, 0, 0.05)',
     transition: 'transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.2s cubic-bezier(0.16, 1, 0.3, 1), filter 0.2s ease'
   },
 
@@ -3605,20 +3749,23 @@ const getStyles = (isDark) => ({
   // Grades Tab
   activitySelectionRow: {
     display: 'flex',
+    flexWrap: 'wrap',
     alignItems: 'center',
-    gap: '8px',
-    overflowX: 'auto',
-    paddingBottom: '14px',
-    marginBottom: '16px'
+    gap: '10px',
+    marginBottom: '20px',
+    width: '100%'
   },
   activityChipBtn: {
-    padding: '6px 14px',
+    padding: '7px 16px',
     borderRadius: '50px',
     border: 'none',
-    fontSize: '0.82rem',
+    fontSize: '0.84rem',
     cursor: 'pointer',
-    whiteSpace: 'nowrap',
-    transition: 'all 0.15s'
+    maxWidth: '100%',
+    lineHeight: 1.35,
+    whiteSpace: 'normal',
+    textAlign: 'left',
+    transition: 'all 0.15s ease'
   },
   bulkGradeActionBtn: {
     padding: '8px 16px',

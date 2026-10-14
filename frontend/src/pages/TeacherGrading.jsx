@@ -1,128 +1,81 @@
-import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
-import { Home, Calendar, ClipboardList, Settings, ArrowLeft, Activity, PlayCircle, Menu, Archive, Code2, X } from 'lucide-react';
+import React, { useState, useEffect, useLayoutEffect, useRef, useMemo } from 'react';
+import { 
+  ArrowLeft, CheckCircle2, ClipboardList, Code2, PlayCircle, Award, 
+  Calendar, Clock, Users, Sparkles, Check, X, Search, ChevronDown, 
+  ChevronUp, Copy, Eye, FileText, Filter, AlertCircle, RefreshCw, Send,
+  Home, Archive, Settings, CheckCheck
+} from 'lucide-react';
 import ProfileMenu from './ProfileMenu';
 import { apiFetch } from '../utils/api';
 import Skeleton from '../components/Skeleton';
 import { useDarkMode } from '../hooks/useDarkMode';
-import { useSidebarNav } from '../hooks/useSidebarNav';
-import { isPhantomClassroom, mergeClassroomsPreservingOrder } from '../utils/classroomUtils';
+import { useMediaQuery } from '../hooks/useMediaQuery';
+import AttachmentCard from '../components/AttachmentCard';
+import ImagePreviewModal from '../components/ImagePreviewModal';
+import VideoPreviewModal from '../components/VideoPreviewModal';
+import VideoAttachment from '../components/VideoAttachment';
+import { getStudentGrade, isStudentGraded, formatGradeScore } from '../utils/gradeUtils';
 
-/**
- * TeacherGrading — the Instructor "Feedback and Grading" view.
- * Opened from a classwork item's "View Activity". Lists the class's students
- * (sortable, with a separate "Graded" group) and lets the instructor pick a
- * grade and leave feedback per student.
- */
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const formatShortDate = (value) => {
+  if (!value) return '';
+  let d;
+  if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}/.test(value)) {
+    const parts = value.split('T')[0].split('-').map(Number);
+    d = new Date(parts[0], parts[1] - 1, parts[2]);
+  } else {
+    d = new Date(value);
+  }
+  if (isNaN(d.getTime())) return '';
+  return `${MONTHS[d.getMonth()]} ${d.getDate()}`;
+};
 
-export default function TeacherGrading({ classroom, assignment, onBack, onLogout, onStartMonitoring, onOpenPlayback, onEnterClassroom, onNavigateView, socket, currentUser: propCurrentUser }) {
+const formatFullDate = (value) => {
+  if (!value) return '';
+  const d = new Date(value);
+  if (isNaN(d.getTime())) return String(value);
+  return d.toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit'
+  });
+};
+
+export default function TeacherGrading({
+  classroom,
+  assignment,
+  onBack,
+  onLogout,
+  onStartMonitoring,
+  onOpenPlayback,
+  onEnterClassroom,
+  onNavigateView,
+  socket,
+  currentUser: propCurrentUser
+}) {
   const { isDark } = useDarkMode();
-  const styles = getStyles(isDark);
-
+  const isMobile = useMediaQuery('(max-width: 900px)');
   const currentUser = propCurrentUser || (() => {
     try { return JSON.parse(localStorage.getItem('verity_user')); } catch { return null; }
   })();
 
-  const isPhantom = isPhantomClassroom;
-
-  const [classrooms, setClassrooms] = useState(() => {
-    try {
-      const id = currentUser?.email || currentUser?.id || (currentUser?.name ? currentUser.name.toLowerCase().replace(/\s+/g, '_') : null);
-      const key = id ? `verity_teacher_classrooms_${id}` : 'verity_teacher_classrooms_anon';
-      const raw = localStorage.getItem(key);
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed)) {
-          return parsed.filter(c => !isPhantomClassroom(c));
-        }
-      }
-      return [];
-    } catch { return []; }
-  });
-
-  useEffect(() => {
-    apiFetch(`${import.meta.env.VITE_API_URL}/classrooms`)
-      .then(res => res.ok ? res.json() : null)
-      .then(data => {
-        if (!data) return;
-        const serverList = (Array.isArray(data) ? data : (data.classrooms || [])).filter(c => !isPhantomClassroom(c));
-        const teacherClasses = serverList.filter(c => 
-          (currentUser?.email && c.instructor_email && c.instructor_email.toLowerCase() === currentUser.email.toLowerCase()) || 
-          (currentUser?.email && c.instructorEmail && c.instructorEmail.toLowerCase() === currentUser.email.toLowerCase()) || 
-          (currentUser?.name && c.instructor && c.instructor.toLowerCase() === currentUser.name.toLowerCase()) ||
-          (!c.instructor_email && !c.instructor)
-        );
-        setClassrooms(teacherClasses);
-        try {
-          const id = currentUser?.email || currentUser?.id || (currentUser?.name ? currentUser.name.toLowerCase().replace(/\s+/g, '_') : null);
-          const key = id ? `verity_teacher_classrooms_${id}` : 'verity_teacher_classrooms_anon';
-          localStorage.setItem(key, JSON.stringify(teacherClasses));
-        } catch {}
-      })
-      .catch(() => {});
-  }, [currentUser]);
-  const { collapsed, toggleSidebar, sidebarProps, isPinned } = useSidebarNav();
-  const navRefs = useRef({});
-  const enrolledRefs = useRef({});
-  const [indicatorStyle, setIndicatorStyle] = useState(() => {
-    try {
-      const savedTop = sessionStorage.getItem('verity_teacher_nav_indicator_top');
-      const savedHeight = sessionStorage.getItem('verity_teacher_nav_indicator_height');
-      if (savedTop !== null && !isNaN(Number(savedTop))) {
-        return {
-          top: Number(savedTop),
-          height: savedHeight ? Number(savedHeight) : 42,
-          opacity: 1,
-          transition: true
-        };
-      }
-    } catch { /* ignore */ }
-    return { top: 0, height: 42, opacity: 0, transition: false };
-  });
-
-  useLayoutEffect(() => {
-    const update = () => {
-      let activeRef = null;
-      if (typeof classroom !== 'undefined' && classroom) {
-        activeRef = enrolledRefs.current['cls_' + classroom.id];
-      }
-      if (activeRef) {
-        try {
-          sessionStorage.setItem('verity_teacher_nav_indicator_top', String(activeRef.offsetTop));
-          sessionStorage.setItem('verity_teacher_nav_indicator_height', String(activeRef.offsetHeight));
-        } catch { /* ignore */ }
-
-        setIndicatorStyle(prev => {
-          const distance = Math.abs(activeRef.offsetTop - prev.top);
-          const bounceOvershoot = distance > 0 ? Math.min(0.42, Math.max(0.03, 16 / distance)) : 0;
-          const bounceRatio = (1 + bounceOvershoot).toFixed(3);
-          const duration = distance > 150 ? '0.46s' : '0.38s';
-          const transitionStr = `top ${duration} cubic-bezier(0.34, ${bounceRatio}, 0.64, 1), height 0.25s ease, opacity 0.2s ease`;
-
-          if (prev.top === activeRef.offsetTop && prev.height === activeRef.offsetHeight && prev.opacity === 1 && prev.transition === transitionStr) return prev;
-          return { top: activeRef.offsetTop, height: activeRef.offsetHeight, opacity: 1, transition: transitionStr };
-        });
-      } else {
-        setIndicatorStyle(prev => prev.opacity === 0 ? prev : { ...prev, opacity: 0 });
-      }
-    };
-
-    update();
-    const timer = setTimeout(update, 20);
-    return () => clearTimeout(timer);
-  }, [classroom, collapsed, classrooms]);
-
-
-
   const maxPoints = parseInt(assignment?.points, 10) || 100;
-  const gradesKey = `verity_grades_${assignment?.id ?? 'default'}`;
+  const assignmentId = assignment?.id ?? 'default';
+  const classroomId = classroom?.id ?? 'default';
+  const gradesKey = `verity_grades_${assignmentId}`;
 
-  const [students, setStudents] = useState([]);
+  // State
   const [loading, setLoading] = useState(true);
+  const [students, setStudents] = useState([]);
+  const [totalEnrolledCount, setTotalEnrolledCount] = useState(0);
   const [selectedId, setSelectedId] = useState(null);
-  const [sortBy, setSortBy] = useState('status');
-  const [showCodePreview, setShowCodePreview] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [filterTab, setFilterTab] = useState('all'); // 'all' | 'ungraded' | 'graded'
+  const [isInstructionsOpen, setIsInstructionsOpen] = useState(false);
 
-  // Per-student grade + feedback, persisted locally.
+  // Per-student grade & feedback
   const [grades, setGrades] = useState(() => {
     try {
       return JSON.parse(localStorage.getItem(gradesKey)) || {};
@@ -131,25 +84,391 @@ export default function TeacherGrading({ classroom, assignment, onBack, onLogout
     }
   });
 
-  const [grade, setGrade] = useState(String(maxPoints));
-  const [feedback, setFeedback] = useState('');
+  const [gradeInput, setGradeInput] = useState(String(maxPoints));
+  const [feedbackInput, setFeedbackInput] = useState('');
+  const [saveStatus, setSaveStatus] = useState('idle'); // 'idle' | 'saving' | 'saved' | 'error'
+  const [saveError, setSaveError] = useState('');
 
-  // Bulk grading state for all submitted students
+  // Bulk Grading Modal
   const [showBulkModal, setShowBulkModal] = useState(false);
   const [bulkGrade, setBulkGrade] = useState(String(maxPoints));
-  const [bulkFeedback, setBulkFeedback] = useState('Great work!');
+  const [bulkFeedback, setBulkFeedback] = useState('Great work on this assignment!');
   const [bulkSuccessMsg, setBulkSuccessMsg] = useState('');
 
+  // Code View & Modals
+  const [showCodeModal, setShowCodeModal] = useState(false);
+  const [copiedCode, setCopiedCode] = useState(false);
+  const [previewImage, setPreviewImage] = useState(null);
+  const [previewVideo, setPreviewVideo] = useState(null);
+
+  // Top header indicator state
+  const [isHeaderHovered, setIsHeaderHovered] = useState(false);
+  const [headerIndicatorStyle, setHeaderIndicatorStyle] = useState({ left: 0, width: 0, opacity: 0 });
+  const headerNavRefs = useRef({});
+
+  // 1. Load submissions + enrolled students
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadData = async () => {
+      setLoading(true);
+
+      const submissionsMap = {};
+
+      // A. Load submissions from API
+      if (assignment?.id) {
+        try {
+          const res = await apiFetch(`${import.meta.env.VITE_API_URL}/submissions/${assignment.id}`);
+          if (res.ok) {
+            const data = await res.json();
+            const subs = Array.isArray(data?.submissions) ? data.submissions : [];
+            subs.forEach(s => {
+              const name = s.student_name || s.studentName || 'Student';
+              submissionsMap[name.toLowerCase()] = {
+                id: name,
+                name: name,
+                email: s.student_email || s.studentEmail || `${name.toLowerCase().replace(/\s+/g, '.')}@student.verity.edu`,
+                submittedAt: s.submittedAt || null,
+                finalCode: s.finalCode || null,
+                history: s.history || []
+              };
+            });
+          }
+        } catch {}
+      }
+
+      // B. Also scan local storage for client submissions
+      try {
+        const cId = classroom?.id ?? 'default';
+        const aId = assignment?.id ?? 'default';
+        for (let i = 0; i < localStorage.length; i++) {
+          const key = localStorage.key(i);
+          if (key && (key.startsWith(`verity_sub_${cId}_${aId}_`) || key.startsWith(`verity_sub_default_${aId}_`))) {
+            const val = JSON.parse(localStorage.getItem(key));
+            if (val && (val.studentName || val.studentId)) {
+              const name = val.studentName || val.studentId;
+              const low = name.toLowerCase();
+              if (!submissionsMap[low]) {
+                submissionsMap[low] = {
+                  id: name,
+                  name: name,
+                  email: val.studentEmail || `${name.toLowerCase().replace(/\s+/g, '.')}@student.verity.edu`,
+                  submittedAt: val.submittedAt || null,
+                  finalCode: val.finalCode || null,
+                  history: val.codeHistory || []
+                };
+              } else {
+                if (val.finalCode && !submissionsMap[low].finalCode) {
+                  submissionsMap[low].finalCode = val.finalCode;
+                }
+                const h = val.codeHistory || val.history;
+                if (Array.isArray(h) && h.length > (submissionsMap[low].history?.length || 0)) {
+                  submissionsMap[low].history = h;
+                }
+              }
+            }
+          }
+        }
+      } catch {}
+
+      // C. Check persistent playback history
+      const cId = classroom?.id ?? 'default';
+      const aId = assignment?.id ?? 'default';
+      Object.keys(submissionsMap).forEach(key => {
+        const s = submissionsMap[key];
+        const hKeys = [
+          `verity_history_${cId}_${aId}_${s.name}`,
+          `verity_history_${aId}_${s.name}`
+        ];
+        for (const hk of hKeys) {
+          try {
+            const raw = localStorage.getItem(hk);
+            if (raw) {
+              const parsed = JSON.parse(raw);
+              if (Array.isArray(parsed) && parsed.length > (s.history?.length || 0)) {
+                s.history = parsed;
+              }
+            }
+          } catch {}
+        }
+      });
+
+      // D. Count enrolled students for the "Assigned" stat in hero banner
+      let enrolledCount = 0;
+      if (classroom?.id) {
+        const uniqueEnrolled = new Set();
+        try {
+          const res = await apiFetch(`${import.meta.env.VITE_API_URL}/classroom-students/${classroom.id}`);
+          if (res.ok) {
+            const data = await res.json();
+            if (Array.isArray(data.students)) {
+              data.students.forEach(st => {
+                if (st && st.name) uniqueEnrolled.add(st.name.toLowerCase());
+              });
+            }
+          }
+        } catch {}
+
+        // Check local storage enrollments
+        try {
+          const localKey = `verity_classroom_enrollments_${classroom.id}`;
+          const raw = localStorage.getItem(localKey);
+          if (raw) {
+            const arr = JSON.parse(raw);
+            if (Array.isArray(arr)) {
+              arr.forEach(st => {
+                if (st && st.name) uniqueEnrolled.add(st.name.toLowerCase());
+              });
+            }
+          }
+        } catch {}
+
+        enrolledCount = uniqueEnrolled.size;
+        setTotalEnrolledCount(enrolledCount);
+      }
+
+      if (cancelled) return;
+
+      const submissionList = Object.values(submissionsMap).sort((a, b) => {
+        return (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base', numeric: true });
+      });
+
+      setStudents(submissionList);
+
+      // Select first student with submission if none selected
+      setSelectedId(prev => {
+        if (prev && submissionsMap[prev.toLowerCase()]) return prev;
+        return submissionList[0]?.id || null;
+      });
+
+      setLoading(false);
+    };
+
+    loadData();
+
+    // E. Load existing grades
+    if (assignment?.id) {
+      apiFetch(`${import.meta.env.VITE_API_URL}/grades/${assignment.id}`)
+        .then(res => res.json())
+        .then(data => {
+          if (cancelled) return;
+          if (data?.grades && Object.keys(data.grades).length > 0) {
+            setGrades(prev => ({ ...prev, ...data.grades }));
+          }
+        })
+        .catch(() => {});
+    }
+
+    // Socket & storage listeners
+    const onStorage = () => loadData();
+    window.addEventListener('storage', onStorage);
+
+    const onNewSubmission = () => loadData();
+
+    const onUnsubmit = (data) => {
+      if (data?.studentName || data?.studentId) {
+        const removedName = (data.studentName || data.studentId || '').toLowerCase();
+        setStudents(prev => prev.filter(s => s.name.toLowerCase() !== removedName && s.id.toLowerCase() !== removedName));
+        setSelectedId(prev => {
+          if (prev && prev.toLowerCase() === removedName) return null;
+          return prev;
+        });
+
+        setGrades(prev => {
+          const next = { ...prev };
+          Object.keys(next).forEach(k => {
+            if (k.toLowerCase() === removedName) delete next[k];
+          });
+          return next;
+        });
+
+        // Delete from backend
+        if (assignment?.id) {
+          apiFetch(`${import.meta.env.VITE_API_URL}/grades/${assignment.id}/${encodeURIComponent(data.studentName || data.studentId)}`, {
+            method: 'DELETE'
+          }).catch(() => {});
+        }
+      }
+      setTimeout(loadData, 500);
+    };
+
+    const onGradeUpdated = (data) => {
+      if (!data || String(data.assignmentId) !== String(assignment?.id) || !data.studentId) return;
+      setGrades(prev => ({
+        ...prev,
+        [data.studentId]: { grade: data.grade, feedback: data.feedback, gradedAt: data.gradedAt || new Date().toISOString() }
+      }));
+    };
+
+    const onBulkGradesUpdated = (data) => {
+      if (!data || String(data.assignmentId) !== String(assignment?.id) || !Array.isArray(data.grades)) return;
+      setGrades(prev => {
+        const next = { ...prev };
+        data.grades.forEach(g => {
+          if (g.studentId) {
+            next[g.studentId] = { grade: g.grade, feedback: g.feedback, gradedAt: g.gradedAt || new Date().toISOString() };
+          }
+        });
+        return next;
+      });
+    };
+
+    const onGradeDeleted = (data) => {
+      if (!data || String(data.assignmentId) !== String(assignment?.id) || !data.studentId) return;
+      const target = String(data.studentId).toLowerCase();
+      setGrades(prev => {
+        const next = { ...prev };
+        Object.keys(next).forEach(k => {
+          if (k.toLowerCase() === target) delete next[k];
+        });
+        return next;
+      });
+    };
+
+    if (socket) {
+      socket.on('teacher_receive_submission', onNewSubmission);
+      socket.on('teacher_student_unsubmitted', onUnsubmit);
+      socket.on('student_unsubmitted', onUnsubmit);
+      socket.on('grade_updated', onGradeUpdated);
+      socket.on('bulk_grades_updated', onBulkGradesUpdated);
+      socket.on('grade_deleted', onGradeDeleted);
+    }
+
+    return () => {
+      cancelled = true;
+      window.removeEventListener('storage', onStorage);
+      if (socket) {
+        socket.off('teacher_receive_submission', onNewSubmission);
+        socket.off('teacher_student_unsubmitted', onUnsubmit);
+        socket.off('student_unsubmitted', onUnsubmit);
+        socket.off('grade_updated', onGradeUpdated);
+        socket.off('bulk_grades_updated', onBulkGradesUpdated);
+        socket.off('grade_deleted', onGradeDeleted);
+      }
+    };
+  }, [assignment?.id, classroom?.id, socket]);
+
+  // Sync grades to localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem(gradesKey, JSON.stringify(grades));
+    } catch {}
+  }, [grades, gradesKey]);
+
+  // Sync inputs when selected student changes
+  const selectedStudent = useMemo(() => {
+    return students.find(s => s.id === selectedId) || null;
+  }, [students, selectedId]);
+
+  useEffect(() => {
+    if (selectedStudent) {
+      const saved = getStudentGrade(grades, selectedStudent);
+      setGradeInput(saved?.grade != null ? String(saved.grade) : String(maxPoints));
+      setFeedbackInput(saved?.feedback || '');
+      setSaveStatus('idle');
+      setSaveError('');
+    } else {
+      setGradeInput(String(maxPoints));
+      setFeedbackInput('');
+      setSaveStatus('idle');
+      setSaveError('');
+    }
+  }, [selectedStudent, grades, maxPoints]);
+
+  // Evaluate single student
+  const handleEvaluate = async () => {
+    if (!selectedStudent) return;
+    setSaveStatus('saving');
+    setSaveError('');
+    const now = new Date().toISOString();
+    const studentIdentifier = selectedStudent.id || selectedStudent.name;
+
+    const updated = {
+      ...grades,
+      [studentIdentifier]: { grade: gradeInput, feedback: feedbackInput, gradedAt: now }
+    };
+    setGrades(updated);
+    try {
+      localStorage.setItem(gradesKey, JSON.stringify(updated));
+    } catch {}
+
+    if (assignment?.id) {
+      try {
+        const res = await apiFetch(`${import.meta.env.VITE_API_URL}/grades/${assignment.id}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ studentId: studentIdentifier, grade: gradeInput, feedback: feedbackInput })
+        });
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.message || 'Failed to save grade');
+        }
+        setSaveStatus('saved');
+        setTimeout(() => setSaveStatus('idle'), 2500);
+      } catch (err) {
+        console.error('Error evaluating student:', err);
+        setSaveStatus('error');
+        setSaveError(err.message || 'Failed to save');
+        setTimeout(() => setSaveStatus('idle'), 3500);
+      }
+    } else {
+      setSaveStatus('saved');
+      setTimeout(() => setSaveStatus('idle'), 2500);
+    }
+  };
+
+  // Clear single student grade
+  const handleClearGrade = async () => {
+    if (!selectedStudent) return;
+    const studentIdentifier = selectedStudent.id || selectedStudent.name;
+    const target = studentIdentifier.toLowerCase();
+
+    setGrades(prev => {
+      const next = { ...prev };
+      Object.keys(next).forEach(k => {
+        if (k.toLowerCase() === target) delete next[k];
+      });
+      return next;
+    });
+
+    if (assignment?.id) {
+      try {
+        await apiFetch(`${import.meta.env.VITE_API_URL}/grades/${assignment.id}/${encodeURIComponent(studentIdentifier)}`, {
+          method: 'DELETE'
+        });
+      } catch {}
+    }
+  };
+
+  // Bulk grade all turned in students
+  const turnedInStudents = useMemo(() => {
+    return students.filter(s => Boolean(s.submittedAt || s.finalCode));
+  }, [students]);
+
+  const gradedStudents = useMemo(() => {
+    return students.filter(s => isStudentGraded(grades, s));
+  }, [students, grades]);
+
+  const ungradedStudents = useMemo(() => {
+    return students.filter(s => !isStudentGraded(grades, s));
+  }, [students, grades]);
+
   const handleBulkGrade = async () => {
-    if (students.length === 0) return;
+    if (turnedInStudents.length === 0) return;
+    const now = new Date().toISOString();
     const updated = { ...grades };
     const payload = [];
-    students.forEach(s => {
-      updated[s.id] = { grade: bulkGrade, feedback: bulkFeedback, gradedAt: true };
-      payload.push({ studentId: s.id, grade: bulkGrade, feedback: bulkFeedback });
+
+    turnedInStudents.forEach(s => {
+      const sId = s.id || s.name;
+      updated[sId] = { grade: bulkGrade, feedback: bulkFeedback, gradedAt: now };
+      payload.push({ studentId: sId, grade: bulkGrade, feedback: bulkFeedback });
     });
+
     setGrades(updated);
-    localStorage.setItem(gradesKey, JSON.stringify(updated));
+    try {
+      localStorage.setItem(gradesKey, JSON.stringify(updated));
+    } catch {}
 
     if (assignment?.id) {
       try {
@@ -168,729 +487,707 @@ export default function TeacherGrading({ classroom, assignment, onBack, onLogout
         });
       }
     }
-    setBulkSuccessMsg(`Successfully graded all ${students.length} submitted student(s)!`);
+
+    setBulkSuccessMsg(`Successfully graded all ${turnedInStudents.length} turned-in student(s)!`);
     setTimeout(() => setBulkSuccessMsg(''), 3500);
     setShowBulkModal(false);
   };
 
-  // Load ONLY students who have submitted this activity
-  useEffect(() => {
-    let cancelled = false;
-
-    const loadSubmissions = () => {
-      if (!assignment?.id) {
-        setStudents([]);
-        return;
+  // Filter students
+  const filteredStudents = useMemo(() => {
+    return students.filter(s => {
+      // Search match
+      if (searchTerm.trim()) {
+        const q = searchTerm.toLowerCase();
+        const matchesName = s.name.toLowerCase().includes(q);
+        const matchesEmail = s.email && s.email.toLowerCase().includes(q);
+        if (!matchesName && !matchesEmail) return false;
       }
+      // Tab filter
+      const isGrad = isStudentGraded(grades, s);
+      if (filterTab === 'ungraded' || filterTab === 'turned_in') return !isGrad;
+      if (filterTab === 'graded') return isGrad;
+      return true; // 'all'
+    });
+  }, [students, searchTerm, filterTab, grades]);
 
-      apiFetch(`${import.meta.env.VITE_API_URL}/submissions/${assignment.id}`)
-        .then((res) => res.json())
-        .then((data) => {
-          if (cancelled) return;
-          const subs = Array.isArray(data?.submissions) ? data.submissions : [];
-
-          // Also check localStorage for client-side saved submissions
-          const localSubs = [];
-          const cId = classroom?.id ?? 'default';
-          const aId = assignment.id;
-          try {
-            for (let i = 0; i < localStorage.length; i++) {
-              const key = localStorage.key(i);
-              if (key && (key.startsWith(`verity_sub_${cId}_${aId}_`) || key.startsWith(`verity_sub_default_${aId}_`))) {
-                const val = JSON.parse(localStorage.getItem(key));
-                if (val && (val.studentName || val.studentId)) {
-                  localSubs.push(val);
-                }
-              }
-            }
-          } catch { }
-
-          const studentMap = {};
-          subs.forEach((s) => {
-            const sName = s.student_name || s.studentName || 'Unknown';
-            studentMap[sName] = {
-              id: sName,
-              name: sName,
-              submittedAt: s.submittedAt || null,
-              finalCode: s.finalCode || null,
-              history: s.history || []
-            };
-          });
-
-          localSubs.forEach((s) => {
-            const sName = s.studentName || s.studentId || 'Unknown';
-            if (!studentMap[sName]) {
-              studentMap[sName] = {
-                id: sName,
-                name: sName,
-                submittedAt: s.submittedAt || null,
-                finalCode: s.finalCode || null,
-                history: s.codeHistory || []
-              };
-            } else {
-              if (s.finalCode && !studentMap[sName].finalCode) {
-                studentMap[sName].finalCode = s.finalCode;
-              }
-              const h = s.codeHistory || s.history;
-              if (Array.isArray(h) && h.length > (studentMap[sName].history?.length || 0)) {
-                studentMap[sName].history = h;
-              }
-            }
-          });
-
-          // Also check persistent history keys in localStorage to ensure the complete playback history is loaded
-          Object.keys(studentMap).forEach((sName) => {
-            const hKeys = [
-              `verity_history_${cId}_${aId}_${sName}`,
-              `verity_history_${aId}_${sName}`
-            ];
-            for (const hk of hKeys) {
-              try {
-                const raw = localStorage.getItem(hk);
-                if (raw) {
-                  const parsed = JSON.parse(raw);
-                  if (Array.isArray(parsed) && parsed.length > (studentMap[sName].history?.length || 0)) {
-                    studentMap[sName].history = parsed;
-                  }
-                }
-              } catch {}
-            }
-          });
-
-          const list = Object.values(studentMap);
-          setStudents(list);
-
-          setSelectedId((prev) => {
-            if (prev && studentMap[prev]) return prev;
-            return list.length > 0 ? list[0].id : null;
-          });
-        })
-        .catch(() => {
-          // Fallback to localStorage
-          const studentMap = {};
-          const cId = classroom?.id ?? 'default';
-          const aId = assignment?.id ?? 'default';
-          try {
-            for (let i = 0; i < localStorage.length; i++) {
-              const key = localStorage.key(i);
-              if (key && (key.startsWith(`verity_sub_${cId}_${aId}_`) || key.startsWith(`verity_sub_default_${aId}_`))) {
-                const val = JSON.parse(localStorage.getItem(key));
-                if (val && (val.studentName || val.studentId)) {
-                  const sName = val.studentName || val.studentId;
-                  const hist = Array.isArray(val.codeHistory) ? val.codeHistory : [];
-                  studentMap[sName] = {
-                    id: sName,
-                    name: sName,
-                    submittedAt: val.submittedAt || null,
-                    finalCode: val.finalCode || null,
-                    history: hist
-                  };
-                }
-              }
-            }
-          } catch { }
-
-          const list = Object.values(studentMap);
-          setStudents(list);
-          setSelectedId((prev) => {
-            if (prev && studentMap[prev]) return prev;
-            return list.length > 0 ? list[0].id : null;
-          });
-        })
-        .finally(() => {
-          if (!cancelled) setLoading(false);
-        });
-    };
-
-    loadSubmissions();
-
-    if (assignment?.id) {
-      apiFetch(`${import.meta.env.VITE_API_URL}/grades/${assignment.id}`)
-        .then((res) => res.json())
-        .then((data) => {
-          if (cancelled) return;
-          if (data?.grades && Object.keys(data.grades).length > 0) {
-            setGrades((prev) => ({ ...prev, ...data.grades }));
-          }
-        })
-        .catch(() => {});
-    }
-
-    const onStorage = () => loadSubmissions();
-    window.addEventListener('storage', onStorage);
-
-    const onNewSubmission = () => loadSubmissions();
-
-    // Instantly remove the student from state when they unsubmit, then re-fetch
-    // to confirm. This ensures the Playback button disappears immediately without
-    // waiting for a round-trip to the server.
-    const onUnsubmit = (data) => {
-      if (data?.studentName || data?.studentId) {
-        const removedName = (data.studentName || data.studentId || '').toLowerCase();
-        setStudents(prev => prev.filter(s => s.name.toLowerCase() !== removedName));
-        setSelectedId(prev => {
-          if ((prev || '').toLowerCase() === removedName) return null;
-          return prev;
-        });
-
-        // Reset grade: remove from local state and localStorage
-        setGrades(prev => {
-          const next = { ...prev };
-          Object.keys(next).forEach(k => {
-            if (k.toLowerCase() === removedName) delete next[k];
-          });
-          return next;
-        });
-
-        // Purge their localStorage submission entry so it doesn't come back
-        const cId = classroom?.id ?? 'default';
-        const aId = assignment?.id ?? 'default';
-        try {
-          for (let i = localStorage.length - 1; i >= 0; i--) {
-            const key = localStorage.key(i);
-            if (key && (key.startsWith(`verity_sub_${cId}_${aId}_`) || key.startsWith(`verity_sub_default_${aId}_`))) {
-              const val = JSON.parse(localStorage.getItem(key));
-              const valName = (val?.studentName || val?.studentId || '').toLowerCase();
-              if (valName === removedName) {
-                const hist = val?.codeHistory || val?.history;
-                if (Array.isArray(hist) && hist.length > 0) {
-                  try {
-                    const hKey = `verity_history_${cId}_${aId}_${val?.studentName || val?.studentId}`;
-                    const curH = localStorage.getItem(hKey);
-                    if (!curH || JSON.parse(curH).length < hist.length) {
-                      localStorage.setItem(hKey, JSON.stringify(hist));
-                    }
-                  } catch {}
-                }
-                localStorage.removeItem(key);
-              }
-            }
-          }
-        } catch { }
-
-        // Delete grade from backend
-        const aId2 = assignment?.id;
-        const studentName = data.studentName || data.studentId;
-        if (aId2 && studentName) {
-          apiFetch(`${import.meta.env.VITE_API_URL}/grades/${aId2}/${encodeURIComponent(studentName)}`, { method: 'DELETE' }).catch(() => {});
-        }
-      }
-      // Still refresh from server after a short delay to stay in sync
-      setTimeout(loadSubmissions, 500);
-    };
-
-    if (socket) {
-      socket.on('teacher_receive_submission', onNewSubmission);
-      socket.on('teacher_student_unsubmitted', onUnsubmit);
-      socket.on('student_unsubmitted', onUnsubmit);
-    }
-
-    return () => {
-      cancelled = true;
-      window.removeEventListener('storage', onStorage);
-      if (socket) {
-        socket.off('teacher_receive_submission', onNewSubmission);
-        socket.off('teacher_student_unsubmitted', onUnsubmit);
-        socket.off('student_unsubmitted', onUnsubmit);
-      }
-    };
-  }, [assignment?.id, classroom?.id, socket]);
-
-  useEffect(() => {
-    localStorage.setItem(gradesKey, JSON.stringify(grades));
-  }, [grades, gradesKey]);
-
-  // When selected student changes, update grade & feedback form values
-  useEffect(() => {
-    if (selectedId) {
-      const saved = grades[selectedId];
-      setGrade(saved?.grade != null ? String(saved.grade) : String(maxPoints));
-      setFeedback(saved?.feedback || '');
-    } else {
-      setGrade(String(maxPoints));
-      setFeedback('');
-    }
-  }, [selectedId, grades, maxPoints]);
-
-  const selectStudent = (id) => {
-    setSelectedId(id);
+  // Copy code helper
+  const handleCopyCode = (text) => {
+    if (!text) return;
+    navigator.clipboard.writeText(text);
+    setCopiedCode(true);
+    setTimeout(() => setCopiedCode(false), 2000);
   };
 
-  const handleEvaluate = () => {
-    if (!selectedId) return;
-    setGrades((prev) => ({
-      ...prev,
-      [selectedId]: { grade, feedback, gradedAt: true },
-    }));
 
-    if (assignment?.id) {
-      apiFetch(`${import.meta.env.VITE_API_URL}/grades/${assignment.id}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ studentId: selectedId, grade, feedback })
-      }).catch(() => {});
-    }
-  };
+  // Quick grade presets
+  const scorePresets = useMemo(() => {
+    const list = [
+      maxPoints,
+      Math.round(maxPoints * 0.95),
+      Math.round(maxPoints * 0.9),
+      Math.round(maxPoints * 0.85),
+      Math.round(maxPoints * 0.8),
+      Math.round(maxPoints * 0.75),
+      Math.round(maxPoints * 0.7),
+      0
+    ];
+    return Array.from(new Set(list));
+  }, [maxPoints]);
 
-  const isGraded = (id) => !!grades[id]?.gradedAt;
+  const quickFeedbacks = [
+    'Great job! Clean and well structured code.',
+    'Good implementation, all requirements met.',
+    'Solid attempt! Make sure to test edge cases.',
+    'Check variable naming and indentation style.',
+    'Needs better error handling and comments.'
+  ];
 
-  // Split into ungraded / graded, with optional name sort.
-  const sorted = [...students].sort((a, b) =>
-    sortBy === 'name' ? a.name.localeCompare(b.name) : 0
-  );
-  const ungraded = sorted.filter((s) => !isGraded(s.id));
-  const graded = sorted.filter((s) => isGraded(s.id));
-
-  const classTitle = classroom
-    ? `${classroom.section ? classroom.section + ' ' : ''}${classroom.name || ''}`.trim()
-    : 'Class';
-
-  const gradeOptions = [];
-  for (let g = maxPoints; g >= 0; g -= 5) gradeOptions.push(g);
-
-  const StudentPill = ({ s }) => {
-    const active = selectedId === s.id;
-    return (
-      <div
-        onClick={() => selectStudent(s.id)}
-        style={{ ...styles.studentPill, ...(active ? styles.studentPillActive : {}) }}
-        title={s.name}
-      >
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
-          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.name}</span>
-          <span style={{ 
-            fontSize: '0.75rem', 
-            color: active ? '#ffffff' : (isGraded(s.id) ? (isDark ? '#34d399' : '#059669') : (isDark ? '#60a5fa' : '#0284c7')), 
-            fontWeight: '700', 
-            marginLeft: '8px', 
-            flexShrink: 0 
-          }}>
-            {isGraded(s.id) ? `${grades[s.id]?.grade}/${maxPoints}` : 'Turned In'}
-          </span>
-        </div>
-      </div>
-    );
-  };
-
-  const selectedStudent = students.find((s) => s.id === selectedId);
+  const styles = getStyles(isDark, isMobile);
 
   return (
     <div style={styles.container}>
-
-      {/* ═══ GLOBAL TOP HEADER (Instructor Pattern) ═══ */}
-      <header style={styles.header}>
-        <div style={{ display: 'flex', alignItems: 'center' }}>
-          <button
-            onClick={toggleSidebar}
-            style={{
-              background: 'none',
-              border: 'none',
-              padding: '6px',
-              borderRadius: '8px',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              color: isDark ? '#E8EAED' : '#64748b',
-              flexShrink: 0,
-              marginRight: '16px'
-            }}
-            title={isPinned ? "Unpin sidebar" : "Pin sidebar"}
-            className="icon-btn-anim"
-          >
-            <Menu size={24} color={isDark ? '#E8EAED' : '#64748b'} />
-          </button>
-
-          <div
-            style={{ display: 'flex', alignItems: 'baseline', fontSize: '2.5rem', fontWeight: '900', fontStyle: 'italic', cursor: 'pointer' }}
-            onClick={() => {
-              if (onNavigateView) onNavigateView('classrooms');
-              else onBack();
-            }}
-          >
-            <span style={{ color: '#10b981' }}>V</span>
-            <span style={{ color: isDark ? '#E8EAED' : '#1e293b' }}>erity</span>
-            <span style={styles.badge}>Instructor</span>
-          </div>
+      {/* ═══ STICKY GLASSMORPHIC TOP HEADER ═══ */}
+      <header
+        style={styles.header}
+        onMouseEnter={() => setIsHeaderHovered(true)}
+        onMouseLeave={() => {
+          setIsHeaderHovered(false);
+          setHeaderIndicatorStyle(prev => ({ ...prev, opacity: 0 }));
+        }}
+      >
+        <div
+          style={{ display: 'flex', alignItems: 'baseline', cursor: 'pointer', flex: 1, justifyContent: 'flex-start' }}
+          onClick={() => {
+            if (onNavigateView) onNavigateView('classrooms');
+            else onBack();
+          }}
+        >
+          <span style={{ color: '#10b981', fontSize: '1.75rem', fontWeight: '900', fontStyle: 'italic' }}>V</span>
+          <span style={{ color: isDark ? '#f5f5f5' : '#111827', fontSize: '1.75rem', fontWeight: '900', fontStyle: 'italic' }}>erity</span>
+          <span style={styles.instructorTag}>Instructor</span>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+        {/* Center Hover Navigation */}
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: '8px',
+          opacity: isHeaderHovered ? 1 : 0,
+          pointerEvents: isHeaderHovered ? 'auto' : 'none',
+          transition: 'opacity 0.3s ease, transform 0.3s ease',
+          transform: isHeaderHovered ? 'translateY(0)' : 'translateY(-10px)',
+          position: 'relative'
+        }}>
+          <div style={{
+            position: 'absolute',
+            left: headerIndicatorStyle.left,
+            width: headerIndicatorStyle.width,
+            top: 0,
+            bottom: 0,
+            backgroundColor: isDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(255, 255, 255, 0.25)',
+            backdropFilter: 'blur(8px)',
+            WebkitBackdropFilter: 'blur(8px)',
+            borderRadius: '50px',
+            boxShadow: isDark ? '0 4px 16px rgba(0,0,0,0.4)' : '0 4px 16px rgba(16,185,129,0.15)',
+            border: isDark ? '1px solid rgba(255,255,255,0.1)' : '1px solid rgba(255,255,255,0.35)',
+            transition: headerIndicatorStyle.transition || 'none',
+            opacity: headerIndicatorStyle.opacity,
+            pointerEvents: 'none',
+            zIndex: 0
+          }} />
+
+          {[
+            { id: 'classrooms', label: 'Home', Icon: Home },
+            { id: 'calendar', label: 'Calendar', Icon: Calendar },
+            { id: 'archived', label: 'Archived', Icon: Archive },
+            { id: 'settings', label: 'Settings', Icon: Settings }
+          ].map(item => (
+            <button
+              key={item.id}
+              ref={el => headerNavRefs.current[item.id] = el}
+              onClick={() => {
+                if (onNavigateView) onNavigateView(item.id);
+                else onBack();
+              }}
+              onMouseEnter={(e) => {
+                setHeaderIndicatorStyle({
+                  left: e.currentTarget.offsetLeft,
+                  width: e.currentTarget.offsetWidth,
+                  opacity: 1,
+                  transition: 'all 0.28s cubic-bezier(0.25, 1, 0.5, 1)'
+                });
+              }}
+              style={styles.headerNavBtn(item.id === 'classrooms')}
+            >
+              <item.Icon size={17} />
+              <span>{item.label}</span>
+            </button>
+          ))}
+        </div>
+
+        {/* Profile Menu */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', flex: 1, gap: '16px' }}>
           <ProfileMenu currentUser={currentUser} onLogout={onLogout} />
         </div>
       </header>
 
-      {/* ═══ MAIN LAYOUT WITH SIDEBAR ═══ */}
-      <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
-        {/* ═══ SIDEBAR NAVIGATION ═══ */}
-        <aside {...sidebarProps} style={styles.sidebar(collapsed)}>
-          <nav style={{ display: 'flex', flexDirection: 'column', gap: '10px', flex: 1, position: 'relative' }}>
-            {/* Liquid sliding indicator */}
-            <div style={{
-              position: 'absolute',
-              left: 0,
-              right: 0,
-              top: indicatorStyle.top,
-              height: indicatorStyle.height,
-              background: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.25)',
-              backdropFilter: 'blur(8px)',
-              WebkitBackdropFilter: 'blur(8px)',
-              borderRadius: '14px',
-              boxShadow: isDark ? '0 4px 16px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.1)' : '0 4px 16px rgba(16,185,129,0.15), inset 0 1px 0 rgba(255,255,255,0.5)',
-              border: isDark ? '1px solid rgba(255,255,255,0.1)' : '1px solid rgba(255,255,255,0.35)',
-              transition: indicatorStyle.transition || 'none',
-              opacity: indicatorStyle.opacity,
-              pointerEvents: 'none',
-              zIndex: 0,
-            }} />
+      {/* ═══ MAIN SCROLLABLE VIEWPORT ═══ */}
+      <div style={styles.scrollArea}>
+        <div style={styles.contentWrapper}>
 
+          {/* ═══ SUBHEADER / BREADCRUMB BAR ═══ */}
+          <div style={styles.breadcrumbBar}>
             <button
-              ref={el => navRefs.current['classrooms'] = el}
-              onClick={() => {
-                if (onNavigateView) onNavigateView('classrooms');
-                else onBack();
-              }}
-              style={styles.sidebarBtn(collapsed)}
-              title={collapsed ? 'Home' : ''}
+              onClick={onBack}
+              style={styles.backBtn}
+              className="btn-anim"
+              title="Return to Classwork"
             >
-              <Home size={20} color={isDark ? '#a3a3a3' : '#475569'} style={{ flexShrink: 0 }} />
-              {!collapsed && (
-                <span style={styles.sidebarBtnText}>
-                  Home
-                </span>
-              )}
+              <ArrowLeft size={16} /> Back to Classwork
             </button>
+          </div>
 
-            <button
-              ref={el => navRefs.current['calendar'] = el}
-              onClick={() => {
-                if (onNavigateView) onNavigateView('calendar');
-                else onBack();
-              }}
-              style={styles.sidebarBtn(collapsed)}
-              title={collapsed ? 'Calendar' : ''}
-            >
-              <Calendar size={20} color={isDark ? '#a3a3a3' : '#475569'} style={{ flexShrink: 0 }} />
-              {!collapsed && (
-                <span style={styles.sidebarBtnText}>
-                  Calendar
-                </span>
-              )}
-            </button>
+          {/* ═══ ACTIVITY HERO BANNER ═══ */}
+          <div style={styles.heroCard}>
+            <div style={styles.heroTopRow}>
+              <div style={styles.heroLeft}>
+                <div style={styles.heroIconBox}>
+                  <ClipboardList size={26} color="#10b981" strokeWidth={2.2} />
+                </div>
+                <div>
+                  <div style={styles.heroPreTitle}>Evaluation & Grading</div>
+                  <h1 style={styles.heroTitle}>
+                    {assignment?.title || 'Class Activity'}
+                  </h1>
 
-            <button
-              ref={el => navRefs.current['archived'] = el}
-              onClick={() => {
-                if (onNavigateView) onNavigateView('archived');
-                else onBack();
-              }}
-              style={styles.sidebarBtn(collapsed)}
-              title={collapsed ? 'Archived' : ''}
-            >
-              <Archive size={20} color={isDark ? '#a3a3a3' : '#475569'} style={{ flexShrink: 0 }} />
-              {!collapsed && (
-                <span style={styles.sidebarBtnText}>
-                  Archived
-                </span>
-              )}
-            </button>
+                  <div style={styles.heroMetaRow}>
+                    <span style={styles.metaBadgeEmerald}>
+                      {assignment?.activityType || 'Activity'}
+                    </span>
+                    <span style={styles.metaBadgeGray}>
+                      <Award size={13} /> {maxPoints} Points
+                    </span>
+                    <span style={styles.metaBadgeGray}>
+                      <Clock size={13} />
+                      {assignment?.noDueDate ? 'No Due Date' : (assignment?.dueDate ? `Due ${formatShortDate(assignment.dueDate)}` : 'No Due Date')}
+                    </span>
+                  </div>
+                </div>
+              </div>
 
-            {/* Teaching Section */}
-            {classrooms.filter(c => !c.archived).length > 0 && (
-              <div style={{ marginTop: '12px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                {!collapsed && (
-                  <div style={{
-                    padding: '0 18px',
-                    fontSize: '0.75rem',
-                    fontWeight: 'bold',
-                    color: isDark ? '#10b981' : '#9ca3af',
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.05em',
-                    marginBottom: '4px'
-                  }}>
-                    Teaching
+              {/* Right: Quick Stats & Toggle Instructions */}
+              <div style={styles.heroRight}>
+                <div style={styles.statsPillRow}>
+                  <div style={styles.statPillItem}>
+                    <span style={styles.statPillNum}>{turnedInStudents.length}</span>
+                    <span style={styles.statPillLabel}>Turned In</span>
+                  </div>
+                  <div style={styles.statPillDivider} />
+                  <div style={styles.statPillItem}>
+                    <span style={styles.statPillNum}>{gradedStudents.length}</span>
+                    <span style={styles.statPillLabel}>Graded</span>
+                  </div>
+                  <div style={styles.statPillDivider} />
+                  <div style={styles.statPillItem}>
+                    <span style={styles.statPillNum}>{totalEnrolledCount || students.length}</span>
+                    <span style={styles.statPillLabel}>Assigned</span>
+                  </div>
+                </div>
+
+                {(assignment?.details || assignment?.instruction || assignment?.attachments?.length > 0) && (
+                  <button
+                    onClick={() => setIsInstructionsOpen(prev => !prev)}
+                    style={styles.toggleInstructionsBtn}
+                    className="btn-anim"
+                  >
+                    {isInstructionsOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                    <span>{isInstructionsOpen ? 'Hide Activity Details' : 'View Activity Details'}</span>
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Expandable Activity Details Drawer */}
+            {isInstructionsOpen && (
+              <div style={styles.instructionsDrawer}>
+                <div style={styles.instructionsDivider} />
+                <h4 style={styles.instructionsHeading}>Activity Instructions & Resources</h4>
+
+                {assignment?.details || assignment?.instruction ? (
+                  <div
+                    style={styles.instructionsContent}
+                    dangerouslySetInnerHTML={{
+                      __html: assignment.details || assignment.instruction
+                    }}
+                  />
+                ) : (
+                  <p style={{ margin: 0, color: isDark ? '#94a3b8' : '#64748b', fontSize: '0.9rem' }}>
+                    No instructions specified for this activity.
+                  </p>
+                )}
+
+                {/* Attachments */}
+                {Array.isArray(assignment?.attachments) && assignment.attachments.length > 0 && (
+                  <div style={{ marginTop: '16px' }}>
+                    <div style={{ fontSize: '0.8rem', fontWeight: '700', color: isDark ? '#94a3b8' : '#64748b', marginBottom: '8px' }}>
+                      Attachments & Materials ({assignment.attachments.length})
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: '10px' }}>
+                      {assignment.attachments.map((att, i) => (
+                        <AttachmentCard
+                          key={i}
+                          att={att}
+                          isDark={isDark}
+                          onClick={(clickedAtt) => {
+                            if (clickedAtt.type === 'image') setPreviewImage(clickedAtt);
+                            else if (clickedAtt.type === 'video') setPreviewVideo(clickedAtt);
+                            else if (clickedAtt.url) window.open(clickedAtt.url, '_blank', 'noopener,noreferrer');
+                          }}
+                        />
+                      ))}
+                    </div>
                   </div>
                 )}
-                {classrooms.filter(c => !c.archived).map((cls) => {
-                  const colors = ['#3b82f6', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981'];
-                  const color = colors[cls.id % colors.length];
-                  const active = classroom?.id === cls.id;
-
-                  return (
-                    <button
-                      key={cls.id}
-                      ref={el => enrolledRefs.current['cls_' + cls.id] = el}
-                      onClick={() => {
-                        if (onEnterClassroom) onEnterClassroom(cls);
-                        else onBack();
-                      }}
-                      style={styles.sidebarBtn(collapsed)}
-                      title={cls.name}
-                    >
-                      <div style={{
-                        width: '20px',
-                        height: '20px',
-                        borderRadius: '6px',
-                        backgroundColor: color,
-                        color: 'white',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        fontSize: '0.75rem',
-                        fontWeight: 'bold',
-                        flexShrink: 0
-                      }}>
-                        {cls.name.charAt(0).toUpperCase()}
-                      </div>
-                      {!collapsed && (
-                        <span style={{ fontSize: '0.85rem', fontWeight: active ? '700' : '600', color: active ? '#10b981' : (isDark ? '#E8EAED' : '#334155'), overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                          {cls.name}
-                        </span>
-                      )}
-                    </button>
-                  );
-                })}
               </div>
             )}
+          </div>
 
-            {/* Settings at Bottom */}
-            <div style={{ marginTop: 'auto' }}>
-              <button
-                ref={el => navRefs.current['settings'] = el}
-                onClick={() => {
-                  if (onNavigateView) onNavigateView('settings');
-                  else onBack();
-                }}
-                style={styles.sidebarBtn(collapsed)}
-                title={collapsed ? 'Settings' : ''}
-              >
-                <Settings size={20} color={isDark ? '#a3a3a3' : '#475569'} style={{ flexShrink: 0 }} />
-                {!collapsed && (
-                  <span style={styles.sidebarBtnText}>
-                    Settings
-                  </span>
-                )}
-              </button>
-            </div>
-          </nav>
-        </aside>
-
-        {/* MAIN CONTENT */}
-        <div style={styles.mainContent}>
-          {/* Card Container */}
-          <div style={styles.whiteCard}>
-            {loading ? (
+          {/* ═══ MAIN TWO-COLUMN WORKSPACE ═══ */}
+          {loading ? (
+            <div style={{ marginTop: '24px' }}>
               <Skeleton.Grading />
-            ) : (
-              <>
-            <div style={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'flex-start',
-              padding: '0 0 20px 0',
-              borderBottom: isDark ? '1px solid #4A4A4A' : '1px solid #e5e7eb',
-              marginBottom: '20px'
-            }}>
-              <div>
-                <h2 style={styles.classTitle}>{classTitle}</h2>
-                {assignment?.title && <div style={styles.activitySub}>{assignment.title}</div>}
-              </div>
             </div>
+          ) : (
+            <div style={styles.workspaceGrid}>
 
-          <div style={styles.gradeLayout}>
+              {/* ═══ LEFT COLUMN: STUDENT ROSTER ═══ */}
+              <div style={styles.rosterCard}>
+                <div style={styles.rosterHeader}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <Users size={18} color="#10b981" />
+                      <h3 style={styles.rosterTitle}>Class Roster</h3>
+                      <span style={styles.rosterCountBadge}>{filteredStudents.length}</span>
+                    </div>
 
-            {/* LEFT: student roster */}
-            <div style={styles.rosterCol}>
-              <div style={styles.rosterHead}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', marginBottom: '6px' }}>
-                  <h3 style={styles.rosterTitle}>Submitted ({students.length})</h3>
-                  {students.length > 0 && (
-                    <button
-                      onClick={() => setShowBulkModal(true)}
-                      style={{
-                        padding: '5px 12px',
-                        backgroundColor: '#10b981',
-                        color: 'white',
-                        border: 'none',
-                        borderRadius: '8px',
-                        fontSize: '0.78rem',
-                        fontWeight: '700',
-                        cursor: 'pointer',
-                        boxShadow: '0 2px 4px rgba(16,185,129,0.2)'
-                      }}
-                      title="Grade all students who submitted"
-                    >
-                      Grade All
-                    </button>
+                    {turnedInStudents.length > 0 && (
+                      <button
+                        onClick={() => setShowBulkModal(true)}
+                        style={styles.bulkGradeBtn}
+                        className="btn-anim"
+                        title="Grade all turned in students in one click"
+                      >
+                        <Sparkles size={14} /> Grade All
+                      </button>
+                    )}
+                  </div>
+
+                  {bulkSuccessMsg && (
+                    <div style={styles.bulkToast}>
+                      <Check size={14} /> {bulkSuccessMsg}
+                    </div>
+                  )}
+
+                  {/* Filter Pills */}
+                  <div style={styles.filterPillsRow}>
+                    {[
+                      { id: 'all', label: `All (${students.length})` },
+                      { id: 'ungraded', label: `Ungraded (${ungradedStudents.length})` },
+                      { id: 'graded', label: `Graded (${gradedStudents.length})` }
+                    ].map(tab => (
+                      <button
+                        key={tab.id}
+                        onClick={() => setFilterTab(tab.id)}
+                        style={styles.filterPillBtn(filterTab === tab.id)}
+                      >
+                        {tab.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Search Input */}
+                  <div style={styles.searchWrapper}>
+                    <Search size={14} color={isDark ? '#94a3b8' : '#64748b'} />
+                    <input
+                      type="text"
+                      placeholder="Search student name..."
+                      value={searchTerm}
+                      onChange={(e) => setSearchTerm(e.target.value)}
+                      style={styles.searchInput}
+                    />
+                    {searchTerm && (
+                      <button onClick={() => setSearchTerm('')} style={styles.clearSearchBtn}>
+                        <X size={14} />
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Scrollable Student List */}
+                <div style={styles.studentList}>
+                  {filteredStudents.length === 0 ? (
+                    <div style={styles.emptyRoster}>
+                      <AlertCircle size={32} color={isDark ? '#4b5563' : '#cbd5e1'} style={{ margin: '0 auto 8px auto' }} />
+                      <p style={{ margin: 0, fontWeight: '600', color: isDark ? '#e2e8f0' : '#334155' }}>
+                        {searchTerm ? 'No matching students' : 'No Submissions Yet'}
+                      </p>
+                      <p style={{ margin: '4px 0 0 0', fontSize: '0.82rem', color: isDark ? '#94a3b8' : '#64748b' }}>
+                        {searchTerm ? 'Try adjusting your search filter' : 'Students will appear in this roster once they submit their work.'}
+                      </p>
+                    </div>
+                  ) : (
+                    filteredStudents.map(student => {
+                      const isSelected = selectedId === student.id;
+                      const isGrad = isStudentGraded(grades, student);
+                      const curGrade = getStudentGrade(grades, student);
+
+                      return (
+                        <div
+                          key={student.id}
+                          onClick={() => setSelectedId(student.id)}
+                          style={styles.studentRow(isSelected)}
+                          className="btn-anim"
+                        >
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0 }}>
+                            <div style={styles.studentAvatar(isGrad ? 'graded' : 'turned_in')}>
+                              {student.name.charAt(0).toUpperCase()}
+                            </div>
+                            <div style={{ minWidth: 0 }}>
+                              <div style={styles.studentRowName(isSelected)}>
+                                {student.name}
+                              </div>
+                              <div style={styles.studentRowSub}>
+                                {student.submittedAt ? `Turned in ${formatShortDate(student.submittedAt)}` : 'Turned In'}
+                              </div>
+                            </div>
+                          </div>
+
+                          <div style={{ flexShrink: 0 }}>
+                            {isGrad ? (
+                              <span style={styles.statusBadgeGraded}>
+                                <Check size={11} strokeWidth={3} /> {curGrade?.grade ?? maxPoints}/{maxPoints}
+                              </span>
+                            ) : (
+                              <span style={styles.statusBadgeTurnedIn}>
+                                Turned In
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })
                   )}
                 </div>
-                {bulkSuccessMsg && (
-                  <div style={{ padding: '6px 10px', backgroundColor: isDark ? '#064e3b' : '#ecfdf5', color: isDark ? '#34d399' : '#059669', fontSize: '0.75rem', borderRadius: '6px', marginBottom: '8px', fontWeight: '600' }}>
-                    {bulkSuccessMsg}
-                  </div>
-                )}
-                {students.length > 1 && (
-                  <select
-                    value={sortBy}
-                    onChange={(e) => setSortBy(e.target.value)}
-                    style={styles.sortSelect}
-                  >
-                    <option value="status">Sort by Status</option>
-                    <option value="name">Sort by Name</option>
-                  </select>
-                )}
               </div>
 
-              <div style={styles.studentList}>
-                {students.length === 0 ? (
-                  <div style={{ padding: '24px 12px', textAlign: 'center', color: isDark ? '#a3a3a3' : '#9ca3af', fontSize: '0.9rem', fontStyle: 'italic' }}>
-                    No students have submitted this activity yet.
+              {/* ═══ RIGHT COLUMN: EVALUATION DESK ═══ */}
+              <div style={styles.evalCard}>
+                {!selectedStudent ? (
+                  <div style={styles.emptyEval}>
+                    <ClipboardList size={52} color="#10b981" style={{ margin: '0 auto 12px auto' }} />
+                    <h3 style={{ margin: 0, color: isDark ? '#f1f5f9' : '#0f172a', fontSize: '1.2rem', fontWeight: '700' }}>
+                      Select a Student
+                    </h3>
+                    <p style={{ margin: '6px 0 0 0', color: isDark ? '#94a3b8' : '#64748b', fontSize: '0.9rem', maxWidth: '360px', lineHeight: 1.5 }}>
+                      Choose a student from the roster on the left to inspect their submitted code, review VCR proctoring playback, and assign their score and feedback.
+                    </p>
                   </div>
                 ) : (
                   <>
-                    {ungraded.length > 0 && ungraded.map((s) => <StudentPill key={s.id} s={s} />)}
-                    {ungraded.length === 0 && graded.length > 0 && (
-                      <span style={styles.gradedEmpty}>All submitted students evaluated!</span>
-                    )}
+                    {/* Selected Student Banner */}
+                    <div style={styles.evalStudentHeader}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '14px', minWidth: 0 }}>
+                        <div style={styles.evalLargeAvatar}>
+                          {selectedStudent.name.charAt(0).toUpperCase()}
+                        </div>
+                        <div style={{ minWidth: 0 }}>
+                          <h2 style={styles.evalStudentName}>
+                            {selectedStudent.name}
+                          </h2>
+                          <div style={styles.evalStudentSub}>
+                            {selectedStudent.submittedAt ? (
+                              <span style={{ color: isDark ? '#34d399' : '#059669', display: 'flex', alignItems: 'center', gap: '6px', fontWeight: '600' }}>
+                                <CheckCircle2 size={14} /> Turned in on {formatFullDate(selectedStudent.submittedAt)}
+                              </span>
+                            ) : selectedStudent.finalCode ? (
+                              <span style={{ color: isDark ? '#34d399' : '#059669', display: 'flex', alignItems: 'center', gap: '6px', fontWeight: '600' }}>
+                                <CheckCircle2 size={14} /> Code Submitted
+                              </span>
+                            ) : (
+                              <span style={{ color: isDark ? '#94a3b8' : '#64748b', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                <Clock size={14} /> Activity Assigned (No submission yet)
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Header Actions */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                        <button
+                          onClick={() => {
+                            const handler = onOpenPlayback || onStartMonitoring;
+                            if (handler) handler(assignment, selectedStudent);
+                          }}
+                          style={styles.playbackActionBtn}
+                          className="btn-anim"
+                          title="Open Proctoring Playback timeline for this student"
+                        >
+                          <PlayCircle size={16} /> Proctoring Playback
+                        </button>
+
+                        {selectedStudent.finalCode && (
+                          <button
+                            onClick={() => setShowCodeModal(true)}
+                            style={styles.fullscreenCodeBtn}
+                            className="btn-anim"
+                            title="Expand code in fullscreen modal"
+                          >
+                            <Code2 size={16} /> Fullscreen
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Submitted Code Preview */}
+                    <div style={styles.codeSnippetSection}>
+                      <div style={styles.codeSnippetHeader}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <Code2 size={16} color="#10b981" />
+                          <span style={{ fontSize: '0.85rem', fontWeight: '700', color: isDark ? '#f1f5f9' : '#1e293b' }}>
+                            Submitted Code
+                          </span>
+                          {selectedStudent.finalCode && (
+                            <span style={styles.codeLengthBadge}>
+                              {selectedStudent.finalCode.split('\n').length} lines
+                            </span>
+                          )}
+                        </div>
+
+                        {selectedStudent.finalCode && (
+                          <button
+                            onClick={() => handleCopyCode(selectedStudent.finalCode)}
+                            style={styles.copyCodeBtn}
+                            className="btn-anim"
+                          >
+                            {copiedCode ? <Check size={14} color="#10b981" /> : <Copy size={14} />}
+                            <span>{copiedCode ? 'Copied' : 'Copy'}</span>
+                          </button>
+                        )}
+                      </div>
+
+                      <div style={styles.codeBlockWrapper}>
+                        {selectedStudent.finalCode ? (
+                          <pre style={styles.codePre}>
+                            <code>{selectedStudent.finalCode}</code>
+                          </pre>
+                        ) : (
+                          <div style={styles.emptyCodeNotice}>
+                            <AlertCircle size={24} color={isDark ? '#64748b' : '#94a3b8'} style={{ margin: '0 auto 6px auto' }} />
+                            <span>No code has been submitted or saved yet for this student.</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* ═══ GRADING DESK: SCORE & FEEDBACK ═══ */}
+                    <div style={styles.gradingFormCard}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <Award size={18} color="#10b981" />
+                          <span style={{ fontSize: '0.98rem', fontWeight: '700', color: isDark ? '#f1f5f9' : '#0f172a' }}>
+                            Evaluation & Scoring
+                          </span>
+                        </div>
+
+                        {isStudentGraded(grades, selectedStudent) && (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                            <span style={{ fontSize: '0.78rem', color: isDark ? '#34d399' : '#059669', fontWeight: '600' }}>
+                              ✓ Graded {getStudentGrade(grades, selectedStudent)?.gradedAt ? formatShortDate(getStudentGrade(grades, selectedStudent).gradedAt) : ''}
+                            </span>
+                            <button
+                              onClick={handleClearGrade}
+                              style={styles.clearGradeBtn}
+                              title="Clear grade from this student"
+                            >
+                              Reset
+                            </button>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Score Input + Presets */}
+                      <div style={{ marginBottom: '18px' }}>
+                        <label style={styles.inputLabel}>
+                          Score (out of {maxPoints} pts):
+                        </label>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap', marginTop: '6px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <input
+                              type="number"
+                              min="0"
+                              max={maxPoints}
+                              value={gradeInput}
+                              onChange={(e) => setGradeInput(e.target.value)}
+                              style={styles.scoreInput}
+                            />
+                            <span style={{ fontSize: '0.95rem', fontWeight: '700', color: isDark ? '#94a3b8' : '#64748b' }}>
+                              / {maxPoints}
+                            </span>
+                          </div>
+
+                          {/* Preset Score Pills */}
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                            {scorePresets.map(preset => {
+                              const isActive = String(gradeInput) === String(preset);
+                              return (
+                                <button
+                                  key={preset}
+                                  type="button"
+                                  onClick={() => setGradeInput(String(preset))}
+                                  style={styles.scorePresetBtn(isActive)}
+                                  className="btn-anim"
+                                >
+                                  {preset}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Feedback Textarea */}
+                      <div style={{ marginBottom: '18px' }}>
+                        <label style={styles.inputLabel}>
+                          Private Feedback & Notes:
+                        </label>
+                        <textarea
+                          rows={3}
+                          value={feedbackInput}
+                          onChange={(e) => setFeedbackInput(e.target.value)}
+                          placeholder={`Leave constructive feedback or review comments for ${selectedStudent.name}...`}
+                          style={styles.feedbackTextarea}
+                        />
+
+                        {/* Quick feedback suggestions */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', marginTop: '8px' }}>
+                          <span style={{ fontSize: '0.72rem', color: isDark ? '#94a3b8' : '#64748b', fontWeight: '600' }}>
+                            Suggestions:
+                          </span>
+                          {quickFeedbacks.map((q, idx) => (
+                            <button
+                              key={idx}
+                              type="button"
+                              onClick={() => {
+                                setFeedbackInput(prev => prev ? `${prev} ${q}` : q);
+                              }}
+                              style={styles.quickFeedbackPill}
+                              className="btn-anim"
+                            >
+                              + {q}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Evaluate CTA Row */}
+                      <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '14px', paddingTop: '10px', borderTop: isDark ? '1px solid #3d3d3d' : '1px solid #f1f5f9' }}>
+                        {saveStatus === 'error' && (
+                          <span style={{ color: '#ef4444', fontSize: '0.85rem', fontWeight: '600' }}>
+                            {saveError || 'Failed to save grade'}
+                          </span>
+                        )}
+
+                        <button
+                          onClick={handleEvaluate}
+                          disabled={saveStatus === 'saving'}
+                          style={styles.evaluateSubmitBtn(saveStatus)}
+                          className="btn-anim"
+                        >
+                          {saveStatus === 'saving' ? (
+                            <>
+                              <RefreshCw size={16} className="spin" />
+                              <span>Saving...</span>
+                            </>
+                          ) : saveStatus === 'saved' ? (
+                            <>
+                              <CheckCheck size={16} />
+                              <span>Grade Saved!</span>
+                            </>
+                          ) : (
+                            <>
+                              <CheckCircle2 size={16} />
+                              <span>{isStudentGraded(grades, selectedStudent) ? 'Update Grade' : 'Save Grade'}</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    </div>
                   </>
                 )}
               </div>
 
-              {students.length > 0 && graded.length > 0 && (
-                <>
-                  <div style={styles.gradedLabel}>Graded ({graded.length})</div>
-                  <div style={styles.studentList}>
-                    {graded.map((s) => <StudentPill key={s.id} s={s} />)}
-                  </div>
-                </>
-              )}
             </div>
+          )}
 
-            {/* Divider */}
-            <div style={styles.vDivider} />
-
-            {/* RIGHT: grading controls */}
-            <div style={styles.gradeCol}>
-              {!selectedStudent && (
-                <p style={styles.hint}>
-                  {students.length === 0
-                    ? "No student submissions yet for this activity."
-                    : "Select a student to view their activity and grade."}
-                </p>
-              )}
-
-              {selectedStudent && (
-                <>
-                  {/* Selected Student Header Info */}
-                  <div style={{ marginBottom: '16px', paddingBottom: '12px', borderBottom: isDark ? '1px solid #4A4A4A' : '1px solid #e5e7eb' }}>
-                    <div style={{ fontWeight: '700', fontSize: '1.2rem', color: isDark ? '#E8EAED' : '#1f2937' }}>
-                      {selectedStudent.name}
-                    </div>
-                    {selectedStudent.submittedAt && (
-                      <div style={{ fontSize: '0.85rem', color: isDark ? '#34d399' : '#059669', marginTop: '4px', fontWeight: '500' }}>
-                        Turned in on {selectedStudent.submittedAt}
-                      </div>
-                    )}
-                  </div>
-
-                  {/* View Submitted Code */}
-                  {selectedStudent.finalCode && (
-                    <div style={styles.actionRow}>
-                      <span style={styles.actionLabel}>Submitted Code</span>
-                      <button
-                        style={styles.actionBtn}
-                        onClick={() => setShowCodePreview(true)}
-                      >
-                        <Code2 size={16} /> View Code
-                      </button>
-                    </div>
-                  )}
-
-                  {/* VCR Playback */}
-                  <div style={styles.actionRow}>
-                    <span style={styles.actionLabel}>Playback</span>
-                    <button
-                      style={styles.actionBtn}
-                      onClick={() => {
-                        const handler = onOpenPlayback || onStartMonitoring;
-                        if (handler) handler(assignment, selectedStudent);
-                      }}
-                      title="View VCR playback of student's activity"
-                    >
-                      <PlayCircle size={16} /> Playback
-                    </button>
-                  </div>
-
-                  {/* Grade */}
-                  <label style={styles.fieldLabel}>Grade:</label>
-                  <select
-                    value={grade}
-                    onChange={(e) => setGrade(e.target.value)}
-                    style={styles.gradeSelect}
-                  >
-                    {gradeOptions.map((g) => (
-                      <option key={g} value={g}>{g}</option>
-                    ))}
-                  </select>
-
-                  {/* Feedback */}
-                  <label style={styles.fieldLabel}>Feedback:</label>
-                  <textarea
-                    value={feedback}
-                    onChange={(e) => setFeedback(e.target.value)}
-                    style={styles.feedbackBox}
-                    placeholder="Write feedback for this student…"
-                  />
-
-                  <div style={styles.evaluateRow}>
-                    <button style={styles.evaluateBtn} onClick={handleEvaluate}>
-                      Evaluate
-                    </button>
-                  </div>
-                </>
-              )}
-            </div>
-
-          </div>
-              </>
-            )}
         </div>
       </div>
-    </div>
 
-      {/* Code Preview Modal */}
-      {showCodePreview && (
-        <div style={styles.modalOverlay}>
-          <div style={styles.modalCard}>
+      {/* ═══ FULLSCREEN CODE MODAL ═══ */}
+      {showCodeModal && selectedStudent && (
+        <div style={styles.modalOverlay} onClick={() => setShowCodeModal(false)}>
+          <div style={styles.codeModalCard} onClick={(e) => e.stopPropagation()}>
             <div style={styles.modalHeader}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                 <Code2 size={20} color="#10b981" />
-                <h3 style={{ margin: 0, color: isDark ? '#E8EAED' : '#1e293b', fontSize: '1.1rem' }}>
-                  {selectedStudent?.name}'s Submitted Code
-                </h3>
+                <div>
+                  <h3 style={styles.modalTitle}>
+                    {selectedStudent.name}'s Submitted Code
+                  </h3>
+                  <div style={{ fontSize: '0.78rem', color: isDark ? '#94a3b8' : '#64748b' }}>
+                    {assignment?.title} • {selectedStudent.finalCode?.split('\n').length || 0} lines
+                  </div>
+                </div>
               </div>
-              <button
-                onClick={() => setShowCodePreview(false)}
-                style={styles.closeModalBtn}
-              >
-                <X size={20} />
-              </button>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                {selectedStudent.finalCode && (
+                  <button
+                    onClick={() => handleCopyCode(selectedStudent.finalCode)}
+                    style={styles.modalCopyBtn}
+                    className="btn-anim"
+                  >
+                    {copiedCode ? <Check size={14} color="#10b981" /> : <Copy size={14} />}
+                    <span>{copiedCode ? 'Copied' : 'Copy Code'}</span>
+                  </button>
+                )}
+                <button
+                  onClick={() => setShowCodeModal(false)}
+                  style={styles.closeModalBtn}
+                >
+                  <X size={20} />
+                </button>
+              </div>
             </div>
+
             <pre style={styles.modalCodeBody}>
-              {selectedStudent?.finalCode || "No code found."}
+              <code>{selectedStudent.finalCode || '// No code found for this submission.'}</code>
             </pre>
           </div>
         </div>
       )}
 
-      {/* Bulk Grading Modal */}
+      {/* ═══ BULK GRADING MODAL ═══ */}
       {showBulkModal && (
-        <div style={styles.modalOverlay}>
-          <div style={{ ...styles.modalCard, maxWidth: '440px' }}>
+        <div style={styles.modalOverlay} onClick={() => setShowBulkModal(false)}>
+          <div style={styles.bulkModalCard} onClick={(e) => e.stopPropagation()}>
             <div style={styles.modalHeader}>
               <div>
-                <h3 style={{ margin: 0, color: isDark ? '#E8EAED' : '#1e293b', fontSize: '1.15rem' }}>Bulk Grade All Submitted</h3>
-                <p style={{ margin: '4px 0 0 0', color: isDark ? '#a3a3a3' : '#64748b', fontSize: '0.82rem' }}>
-                  Assign grades to all {students.length} students who turned in this activity.
+                <h3 style={styles.modalTitle}>Bulk Grade Submissions</h3>
+                <p style={{ margin: '4px 0 0 0', color: isDark ? '#94a3b8' : '#64748b', fontSize: '0.84rem' }}>
+                  Assign grades to all {turnedInStudents.length} students who have turned in this activity.
                 </p>
               </div>
               <button onClick={() => setShowBulkModal(false)} style={styles.closeModalBtn}>
@@ -898,368 +1195,863 @@ export default function TeacherGrading({ classroom, assignment, onBack, onLogout
               </button>
             </div>
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', marginTop: '16px' }}>
+            <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
               <div>
-                <label style={styles.fieldLabel}>Grade (out of {maxPoints}):</label>
-                <select
-                  value={bulkGrade}
-                  onChange={(e) => setBulkGrade(e.target.value)}
-                  style={{ ...styles.gradeSelect, width: '100%', marginTop: '6px' }}
-                >
-                  {gradeOptions.map((g) => (
-                    <option key={g} value={g}>{g} / {maxPoints}</option>
-                  ))}
-                </select>
+                <label style={styles.inputLabel}>Grade (out of {maxPoints}):</label>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '6px' }}>
+                  <input
+                    type="number"
+                    min="0"
+                    max={maxPoints}
+                    value={bulkGrade}
+                    onChange={(e) => setBulkGrade(e.target.value)}
+                    style={{ ...styles.scoreInput, width: '100px' }}
+                  />
+                  <div style={{ display: 'flex', gap: '6px' }}>
+                    {scorePresets.slice(0, 5).map(p => (
+                      <button
+                        key={p}
+                        type="button"
+                        onClick={() => setBulkGrade(String(p))}
+                        style={styles.scorePresetBtn(String(bulkGrade) === String(p))}
+                      >
+                        {p}
+                      </button>
+                    ))}
+                  </div>
+                </div>
               </div>
 
               <div>
-                <label style={styles.fieldLabel}>Feedback for all submitted:</label>
+                <label style={styles.inputLabel}>Feedback for all submitted students:</label>
                 <textarea
+                  rows={3}
                   value={bulkFeedback}
                   onChange={(e) => setBulkFeedback(e.target.value)}
-                  style={{ ...styles.feedbackBox, height: '80px', marginTop: '6px' }}
-                  placeholder="e.g. Great work on this assignment!"
+                  style={{ ...styles.feedbackTextarea, marginTop: '6px' }}
+                  placeholder="e.g. Great work completing this assignment!"
                 />
               </div>
 
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '10px' }}>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '8px' }}>
                 <button
                   type="button"
                   onClick={() => setShowBulkModal(false)}
-                  style={{ padding: '8px 16px', borderRadius: '8px', border: isDark ? '1px solid #4A4A4A' : '1px solid #cbd5e1', background: isDark ? '#3A3A3A' : 'white', color: isDark ? '#E8EAED' : '#475569', fontWeight: '600', cursor: 'pointer' }}
+                  style={styles.cancelModalBtn}
                 >
                   Cancel
                 </button>
                 <button
                   type="button"
                   onClick={handleBulkGrade}
-                  style={{ padding: '8px 20px', borderRadius: '8px', border: 'none', background: '#10b981', color: 'white', fontWeight: '700', cursor: 'pointer', boxShadow: '0 2px 6px rgba(16,185,129,0.3)' }}
+                  style={styles.applyBulkBtn}
+                  className="btn-anim"
                 >
-                  Apply to All ({students.length})
+                  Apply to All ({turnedInStudents.length})
                 </button>
               </div>
             </div>
           </div>
         </div>
       )}
-  </div>
+
+      {/* Image Preview Modal */}
+      {previewImage && (
+        <ImagePreviewModal
+          image={previewImage}
+          onClose={() => setPreviewImage(null)}
+          isDark={isDark}
+        />
+      )}
+
+      {/* Video Preview Modal */}
+      {previewVideo && (
+        <VideoPreviewModal
+          video={previewVideo}
+          onClose={() => setPreviewVideo(null)}
+          isDark={isDark}
+        />
+      )}
+    </div>
   );
 }
 
-const getStyles = (isDark) => ({
+const getStyles = (isDark, isMobile) => ({
   container: {
     height: '100vh',
     minHeight: '100vh',
     width: '100%',
     display: 'flex',
     flexDirection: 'column',
-    backgroundColor: isDark ? '#3C3C3C' : '#EEF0F3',
-    fontFamily: 'Arial, Helvetica, sans-serif',
+    backgroundColor: isDark ? '#141414' : '#f8fafc',
+    color: isDark ? '#f8fafc' : '#0f172a',
     position: 'relative',
     overflow: 'hidden',
     transition: 'background-color 0.25s ease'
   },
   header: {
-    height: '72px',
-    flexShrink: 0,
+    position: 'sticky',
+    top: 0,
+    zIndex: 40,
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'space-between',
     padding: '0 24px',
-    backgroundColor: isDark ? '#3C3C3C' : '#EEF0F3',
-    zIndex: 50,
-    transition: 'background-color 0.25s ease'
-  },
-  sidebar: (collapsed) => ({
-    width: collapsed ? '84px' : '240px',
-    minWidth: collapsed ? '84px' : '240px',
-    padding: '20px 14px 20px',
-    display: 'flex',
-    flexDirection: 'column',
+    height: '64px',
+    background: isDark ? 'rgba(20, 20, 20, 0.85)' : 'rgba(255, 255, 255, 0.85)',
+    backdropFilter: 'blur(12px)',
+    WebkitBackdropFilter: 'blur(12px)',
+    borderBottom: isDark ? '1px solid #2e2e2e' : '1px solid #e2e8f0',
     flexShrink: 0,
-    transition: 'all 0.28s cubic-bezier(0.16, 1, 0.3, 1)',
-    background: 'transparent',
-    overflowY: 'auto',
-    overflowX: 'hidden'
-  }),
-  sidebarBtn: (collapsed) => ({
+    transition: 'background 0.25s ease'
+  },
+  instructorTag: {
+    fontSize: '0.68rem',
+    fontWeight: '700',
+    backgroundColor: isDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)',
+    color: isDark ? '#e2e8f0' : '#475569',
+    padding: '3px 8px',
+    borderRadius: '8px',
+    marginLeft: '8px',
+    letterSpacing: '0.04em',
+    textTransform: 'uppercase'
+  },
+  headerNavBtn: (isActive) => ({
+    position: 'relative',
+    zIndex: 1,
     display: 'flex',
     alignItems: 'center',
-    justifyContent: 'flex-start',
-    gap: '16px',
-    padding: '10px 18px',
-    width: '100%',
-    height: '42px',
-    borderRadius: '14px',
+    gap: '8px',
+    padding: '8px 16px',
+    borderRadius: '50px',
+    background: 'transparent',
     border: 'none',
-    backgroundColor: 'transparent',
+    color: isActive ? '#10b981' : (isDark ? '#a3a3a3' : '#64748b'),
+    fontWeight: isActive ? '700' : '600',
+    fontSize: '0.88rem',
     cursor: 'pointer',
-    transition: 'all 0.2s ease',
-    overflow: 'hidden',
-    whiteSpace: 'nowrap',
-    position: 'relative',
-    zIndex: 1
+    transition: 'all 0.2s ease'
   }),
-  sidebarBtnText: {
-    fontSize: '0.85rem',
-    fontWeight: '600',
-    color: isDark ? '#E8EAED' : '#334155',
-    overflow: 'hidden',
-    textOverflow: 'ellipsis'
-  },
-  badge: {
-    fontSize: '0.7rem',
-    backgroundColor: isDark ? '#4A4A4A' : '#EEF0F3',
-    color: isDark ? '#E8EAED' : '#475569',
-    padding: '3px 8px',
-    borderRadius: '10px',
-    marginLeft: '6px',
-    fontStyle: 'normal',
-    transform: 'translateY(-5px)',
-    border: isDark ? '1px solid #5A5A5A' : '1px solid #cbd5e1'
-  },
-  mainContent: {
+  scrollArea: {
     flex: 1,
-    padding: '14px 24px 24px 24px',
+    overflowY: 'auto',
+    overflowX: 'hidden',
+    padding: isMobile ? '16px 14px 40px' : '20px clamp(16px, 3vw, 40px) 48px',
+    boxSizing: 'border-box'
+  },
+  contentWrapper: {
+    maxWidth: '1240px',
+    margin: '0 auto',
+    width: '100%',
     display: 'flex',
     flexDirection: 'column',
+    gap: '18px'
+  },
+  breadcrumbBar: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    flexWrap: 'wrap',
+    gap: '12px'
+  },
+  backBtn: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    padding: '8px 16px',
+    borderRadius: '10px',
+    border: isDark ? '1px solid #3d3d3d' : '1px solid #cbd5e1',
+    backgroundColor: isDark ? '#262626' : '#ffffff',
+    color: isDark ? '#f1f5f9' : '#1e293b',
+    fontSize: '0.88rem',
+    fontWeight: '700',
+    cursor: 'pointer',
+    transition: 'all 0.2s cubic-bezier(0.16, 1, 0.3, 1)',
+    boxShadow: isDark ? '0 2px 6px rgba(0,0,0,0.2)' : '0 1px 3px rgba(0,0,0,0.04)'
+  },
+  classroomBadge: {
+    fontSize: '0.88rem',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '6px'
+  },
+  classCodeChip: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    padding: '5px 12px',
+    borderRadius: '8px',
+    backgroundColor: isDark ? 'rgba(16, 185, 129, 0.08)' : 'rgba(16, 185, 129, 0.08)',
+    border: isDark ? '1px solid rgba(16, 185, 129, 0.25)' : '1px solid rgba(16, 185, 129, 0.3)',
+    cursor: 'pointer',
+    fontSize: '0.82rem'
+  },
+  liveSyncBadge: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '6px',
+    fontSize: '0.78rem',
+    color: isDark ? '#34d399' : '#059669',
+    fontWeight: '600',
+    backgroundColor: isDark ? 'rgba(16, 185, 129, 0.1)' : '#ecfdf5',
+    padding: '4px 10px',
+    borderRadius: '50px'
+  },
+  livePulseDot: {
+    width: '7px',
+    height: '7px',
+    borderRadius: '50%',
+    backgroundColor: '#10b981',
+    boxShadow: '0 0 8px #10b981'
+  },
+  heroCard: {
+    backgroundColor: isDark ? '#242424' : '#ffffff',
+    borderRadius: '16px',
+    border: isDark ? '1px solid #383838' : '1px solid #e2e8f0',
+    padding: isMobile ? '18px' : '24px 28px',
+    boxShadow: isDark ? '0 8px 24px rgba(0,0,0,0.3)' : '0 4px 16px rgba(0,0,0,0.03)',
+    transition: 'all 0.25s ease'
+  },
+  heroTopRow: {
+    display: 'flex',
+    alignItems: isMobile ? 'flex-start' : 'center',
+    flexDirection: isMobile ? 'column' : 'row',
+    justifyContent: 'space-between',
+    gap: '20px'
+  },
+  heroLeft: {
+    display: 'flex',
+    alignItems: 'flex-start',
+    gap: '16px',
     minWidth: 0,
-    overflow: 'hidden'
+    flex: 1
   },
-  whiteCard: {
-    backgroundColor: isDark ? '#323232' : '#ffffff',
-    flex: 1,
-    borderRadius: '24px',
-    padding: 'clamp(20px, 4vw, 40px)',
-    boxShadow: isDark ? '0 10px 30px rgba(0,0,0,0.25)' : '0 10px 25px rgba(0,0,0,0.05)',
-    border: isDark ? '1px solid #4A4A4A' : 'none',
-    overflowY: 'auto',
-    transition: 'background-color 0.25s ease'
+  heroIconBox: {
+    width: '54px',
+    height: '54px',
+    borderRadius: '12px',
+    backgroundColor: isDark ? 'rgba(16, 185, 129, 0.14)' : '#ecfdf5',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0
   },
-  classTitle: {
-    color: isDark ? '#E8EAED' : '#1e293b',
-    margin: 0,
-    fontSize: '1.6rem',
-    fontWeight: '700'
-  },
-  activitySub: {
+  heroPreTitle: {
+    fontSize: '0.72rem',
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: '0.06em',
     color: '#10b981',
-    fontSize: '0.95rem',
-    marginTop: '4px',
-    marginBottom: '10px',
+    marginBottom: '2px'
+  },
+  heroTitle: {
+    fontSize: isMobile ? '1.25rem' : '1.5rem',
+    fontWeight: '800',
+    color: isDark ? '#f8fafc' : '#0f172a',
+    margin: 0,
+    lineHeight: 1.25,
+    wordBreak: 'break-word'
+  },
+  heroMetaRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    flexWrap: 'wrap',
+    marginTop: '8px'
+  },
+  metaBadgeEmerald: {
+    fontSize: '0.74rem',
+    fontWeight: '700',
+    padding: '3px 9px',
+    borderRadius: '6px',
+    backgroundColor: isDark ? 'rgba(16, 185, 129, 0.16)' : '#d1fae5',
+    color: isDark ? '#34d399' : '#065f46'
+  },
+  metaBadgeGray: {
+    fontSize: '0.74rem',
+    fontWeight: '600',
+    padding: '3px 9px',
+    borderRadius: '6px',
+    backgroundColor: isDark ? '#323232' : '#f1f5f9',
+    color: isDark ? '#94a3b8' : '#475569',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '4px'
+  },
+  heroRight: {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: isMobile ? 'flex-start' : 'flex-end',
+    gap: '12px',
+    flexShrink: 0
+  },
+  statsPillRow: {
+    display: 'flex',
+    alignItems: 'center',
+    padding: '6px 14px',
+    borderRadius: '10px',
+    backgroundColor: isDark ? '#1a1a1a' : '#f8fafc',
+    border: isDark ? '1px solid #333333' : '1px solid #e2e8f0',
+    gap: '12px'
+  },
+  statPillItem: {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    minWidth: '50px'
+  },
+  statPillNum: {
+    fontSize: '1.05rem',
+    fontWeight: '800',
+    color: isDark ? '#f8fafc' : '#0f172a'
+  },
+  statPillLabel: {
+    fontSize: '0.68rem',
+    color: isDark ? '#94a3b8' : '#64748b',
     fontWeight: '600'
   },
-  gradeLayout: {
-    display: 'flex',
-    gap: '30px',
-    marginTop: '20px',
-    alignItems: 'stretch'
+  statPillDivider: {
+    width: '1px',
+    height: '24px',
+    backgroundColor: isDark ? '#333333' : '#e2e8f0'
   },
-  rosterCol: {
-    flex: 1,
-    display: 'flex',
-    flexDirection: 'column'
-  },
-  rosterHead: {
+  toggleInstructionsBtn: {
     display: 'flex',
     alignItems: 'center',
-    gap: '15px',
+    gap: '6px',
+    padding: '6px 12px',
+    borderRadius: '8px',
+    backgroundColor: 'transparent',
+    border: isDark ? '1px solid #383838' : '1px solid #cbd5e1',
+    color: isDark ? '#94a3b8' : '#475569',
+    fontSize: '0.8rem',
+    fontWeight: '700',
+    cursor: 'pointer'
+  },
+  instructionsDrawer: {
+    marginTop: '16px'
+  },
+  instructionsDivider: {
+    height: '1px',
+    backgroundColor: isDark ? '#383838' : '#e2e8f0',
     marginBottom: '16px'
+  },
+  instructionsHeading: {
+    margin: '0 0 10px 0',
+    fontSize: '0.92rem',
+    fontWeight: '700',
+    color: isDark ? '#f8fafc' : '#0f172a'
+  },
+  instructionsContent: {
+    fontSize: '0.92rem',
+    lineHeight: 1.6,
+    color: isDark ? '#cbd5e1' : '#334155'
+  },
+  workspaceGrid: {
+    display: 'flex',
+    flexDirection: isMobile ? 'column' : 'row',
+    gap: '20px',
+    alignItems: 'flex-start'
+  },
+  rosterCard: {
+    width: isMobile ? '100%' : '340px',
+    flexShrink: 0,
+    backgroundColor: isDark ? '#242424' : '#ffffff',
+    borderRadius: '16px',
+    border: isDark ? '1px solid #383838' : '1px solid #e2e8f0',
+    overflow: 'hidden',
+    boxShadow: isDark ? '0 8px 24px rgba(0,0,0,0.3)' : '0 4px 16px rgba(0,0,0,0.03)'
+  },
+  rosterHeader: {
+    padding: '16px 16px 12px',
+    borderBottom: isDark ? '1px solid #383838' : '1px solid #e2e8f0',
+    backgroundColor: isDark ? '#202020' : '#ffffff'
   },
   rosterTitle: {
     margin: 0,
-    color: isDark ? '#E8EAED' : '#4b5563',
-    fontSize: '1.15rem',
-    fontWeight: '700'
+    fontSize: '0.98rem',
+    fontWeight: '700',
+    color: isDark ? '#f8fafc' : '#0f172a'
   },
-  sortSelect: {
-    padding: '6px 12px',
+  rosterCountBadge: {
+    fontSize: '0.72rem',
+    fontWeight: '800',
+    padding: '2px 7px',
+    borderRadius: '50px',
+    backgroundColor: isDark ? '#333333' : '#f1f5f9',
+    color: isDark ? '#94a3b8' : '#475569'
+  },
+  bulkGradeBtn: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '6px',
+    padding: '5px 11px',
+    backgroundColor: '#10b981',
+    color: '#ffffff',
+    border: 'none',
     borderRadius: '8px',
-    border: isDark ? '1px solid #4A4A4A' : '1px solid #d1d5db',
-    backgroundColor: isDark ? '#383838' : '#f9fafb',
-    color: isDark ? '#E8EAED' : '#4b5563',
-    fontSize: '0.85rem',
-    cursor: 'pointer'
+    fontSize: '0.78rem',
+    fontWeight: '700',
+    cursor: 'pointer',
+    boxShadow: '0 2px 6px rgba(16,185,129,0.25)'
+  },
+  bulkToast: {
+    marginTop: '10px',
+    padding: '6px 10px',
+    borderRadius: '6px',
+    backgroundColor: isDark ? 'rgba(16, 185, 129, 0.15)' : '#ecfdf5',
+    color: isDark ? '#34d399' : '#059669',
+    fontSize: '0.75rem',
+    fontWeight: '600',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '6px'
+  },
+  filterPillsRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '4px',
+    marginTop: '12px'
+  },
+  filterPillBtn: (isActive) => ({
+    flex: 1,
+    padding: '5px 8px',
+    borderRadius: '7px',
+    border: 'none',
+    fontSize: '0.74rem',
+    fontWeight: isActive ? '700' : '500',
+    cursor: 'pointer',
+    backgroundColor: isActive ? (isDark ? '#34d399' : '#10b981') : 'transparent',
+    color: isActive ? '#ffffff' : (isDark ? '#94a3b8' : '#64748b'),
+    transition: 'all 0.15s ease',
+    textAlign: 'center'
+  }),
+  searchWrapper: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    marginTop: '10px',
+    padding: '6px 10px',
+    borderRadius: '8px',
+    backgroundColor: isDark ? '#1a1a1a' : '#f1f5f9',
+    border: isDark ? '1px solid #333333' : '1px solid #e2e8f0'
+  },
+  searchInput: {
+    flex: 1,
+    background: 'transparent',
+    border: 'none',
+    outline: 'none',
+    color: isDark ? '#f8fafc' : '#0f172a',
+    fontSize: '0.82rem'
+  },
+  clearSearchBtn: {
+    background: 'none',
+    border: 'none',
+    padding: 0,
+    cursor: 'pointer',
+    color: isDark ? '#94a3b8' : '#64748b',
+    display: 'flex',
+    alignItems: 'center'
   },
   studentList: {
     display: 'flex',
     flexDirection: 'column',
-    gap: '10px'
+    maxHeight: '560px',
+    overflowY: 'auto'
   },
-  studentPill: {
-    backgroundColor: isDark ? '#383838' : '#d1d5db',
-    padding: '12px 20px',
-    borderRadius: '50px',
-    color: isDark ? '#E8EAED' : '#4b5563',
-    fontWeight: 'bold',
-    cursor: 'pointer',
-    boxShadow: isDark ? 'inset 1px 1px 3px rgba(255,255,255,0.05), 0 2px 4px rgba(0,0,0,0.2)' : 'inset 2px 2px 5px rgba(255,255,255,0.6), inset -2px -2px 5px rgba(0,0,0,0.08)',
-    border: isDark ? '1px solid #4A4A4A' : 'none',
-    userSelect: 'none',
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-    whiteSpace: 'nowrap',
-    transition: 'all 0.15s ease'
-  },
-  studentPillActive: {
-    backgroundColor: '#10b981',
-    color: '#ffffff',
-    border: '1px solid #10b981',
-    boxShadow: isDark 
-      ? '0 0 16px rgba(16, 185, 129, 0.42), 0 2px 6px rgba(0, 0, 0, 0.35)' 
-      : '0 4px 12px rgba(16, 185, 129, 0.3), 0 1px 3px rgba(0, 0, 0, 0.04)'
-  },
-  gradedLabel: {
-    color: isDark ? '#E8EAED' : '#6b7280',
-    fontWeight: 'bold',
-    margin: '22px 0 12px 0'
-  },
-  gradedEmpty: {
-    color: isDark ? '#a3a3a3' : '#94a3af',
-    fontSize: '0.85rem',
-    fontStyle: 'italic'
-  },
-  vDivider: {
-    width: '1px',
-    backgroundColor: isDark ? '#4A4A4A' : '#e5e7eb'
-  },
-  gradeCol: {
-    flex: 1,
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '12px'
-  },
-  hint: {
-    color: isDark ? '#a3a3a3' : '#9ca3af',
-    fontSize: '0.95rem'
-  },
-  actionRow: {
+  studentRow: (isSelected) => ({
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'space-between',
-    gap: '15px'
+    padding: '12px 16px',
+    cursor: 'pointer',
+    borderBottom: isDark ? '1px solid #2e2e2e' : '1px solid #f1f5f9',
+    borderLeft: isSelected ? '3px solid #10b981' : '3px solid transparent',
+    backgroundColor: isSelected
+      ? (isDark ? 'rgba(16, 185, 129, 0.1)' : '#ecfdf5')
+      : 'transparent',
+    transition: 'all 0.15s ease'
+  }),
+  studentAvatar: (status) => ({
+    width: '34px',
+    height: '34px',
+    borderRadius: '50%',
+    backgroundColor: status === 'graded' ? '#10b981' : (status === 'turned_in' ? '#3b82f6' : (isDark ? '#4b5563' : '#cbd5e1')),
+    color: '#ffffff',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    fontSize: '0.85rem',
+    fontWeight: '800',
+    flexShrink: 0
+  }),
+  studentRowName: (isSelected) => ({
+    fontSize: '0.88rem',
+    fontWeight: isSelected ? '700' : '600',
+    color: isSelected ? '#10b981' : (isDark ? '#f8fafc' : '#0f172a'),
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap'
+  }),
+  studentRowSub: {
+    fontSize: '0.74rem',
+    color: isDark ? '#94a3b8' : '#64748b',
+    marginTop: '2px'
   },
-  actionLabel: {
-    color: isDark ? '#E8EAED' : '#4b5563',
-    fontWeight: 'bold',
-    fontSize: '1rem'
+  statusBadgeGraded: {
+    fontSize: '0.75rem',
+    fontWeight: '800',
+    padding: '3px 8px',
+    borderRadius: '6px',
+    backgroundColor: isDark ? 'rgba(16, 185, 129, 0.18)' : '#d1fae5',
+    color: isDark ? '#34d399' : '#065f46',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '3px'
   },
-  actionBtn: {
+  statusBadgeTurnedIn: {
+    fontSize: '0.72rem',
+    fontWeight: '700',
+    padding: '3px 8px',
+    borderRadius: '6px',
+    backgroundColor: isDark ? 'rgba(59, 130, 246, 0.18)' : '#dbeafe',
+    color: isDark ? '#60a5fa' : '#1e40af'
+  },
+  statusBadgeAssigned: {
+    fontSize: '0.72rem',
+    fontWeight: '600',
+    padding: '3px 8px',
+    borderRadius: '6px',
+    backgroundColor: isDark ? '#333333' : '#f1f5f9',
+    color: isDark ? '#94a3b8' : '#64748b'
+  },
+  emptyRoster: {
+    padding: '36px 16px',
+    textAlign: 'center'
+  },
+  evalCard: {
+    flex: 1,
+    minWidth: 0,
+    backgroundColor: isDark ? '#242424' : '#ffffff',
+    borderRadius: '16px',
+    border: isDark ? '1px solid #383838' : '1px solid #e2e8f0',
+    padding: isMobile ? '18px' : '28px',
+    boxShadow: isDark ? '0 8px 24px rgba(0,0,0,0.3)' : '0 4px 16px rgba(0,0,0,0.03)',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '20px'
+  },
+  emptyEval: {
+    padding: '60px 20px',
+    textAlign: 'center',
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flex: 1
+  },
+  evalStudentHeader: {
+    display: 'flex',
+    alignItems: isMobile ? 'flex-start' : 'center',
+    flexDirection: isMobile ? 'column' : 'row',
+    justifyContent: 'space-between',
+    gap: '16px',
+    paddingBottom: '18px',
+    borderBottom: isDark ? '1px solid #383838' : '1px solid #e2e8f0'
+  },
+  evalLargeAvatar: {
+    width: '46px',
+    height: '46px',
+    borderRadius: '50%',
+    backgroundColor: '#10b981',
+    color: '#ffffff',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    fontSize: '1.2rem',
+    fontWeight: '800',
+    flexShrink: 0
+  },
+  evalStudentName: {
+    margin: 0,
+    fontSize: '1.25rem',
+    fontWeight: '800',
+    color: isDark ? '#f8fafc' : '#0f172a'
+  },
+  evalStudentSub: {
+    fontSize: '0.84rem',
+    marginTop: '4px'
+  },
+  playbackActionBtn: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '7px',
+    padding: '8px 16px',
+    borderRadius: '10px',
+    border: 'none',
+    backgroundColor: '#10b981',
+    color: '#ffffff',
+    fontSize: '0.86rem',
+    fontWeight: '700',
+    cursor: 'pointer',
+    boxShadow: '0 2px 8px rgba(16,185,129,0.3)'
+  },
+  fullscreenCodeBtn: {
     display: 'flex',
     alignItems: 'center',
     gap: '6px',
-    padding: '8px 18px',
-    backgroundColor: isDark ? '#383838' : '#ffffff',
-    border: isDark ? '1px solid #4A4A4A' : '1px solid #d1d5db',
-    borderRadius: '50px',
-    color: isDark ? '#E8EAED' : '#4b5563',
-    fontWeight: 'bold',
-    fontSize: '0.85rem',
-    cursor: 'pointer',
-    boxShadow: isDark 
-      ? '0 0 10px rgba(255, 255, 255, 0.04), 0 2px 5px rgba(0,0,0,0.3)' 
-      : '0 1px 3px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04)',
-    transition: 'transform 0.18s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.18s cubic-bezier(0.16, 1, 0.3, 1), filter 0.18s ease'
-  },
-  fieldLabel: {
-    color: isDark ? '#E8EAED' : '#4b5563',
-    fontWeight: 'bold',
-    fontSize: '1rem',
-    marginTop: '8px'
-  },
-  gradeSelect: {
-    width: '120px',
-    padding: '10px 14px',
+    padding: '8px 14px',
     borderRadius: '10px',
-    border: isDark ? '1px solid #4A4A4A' : '1px solid #d1d5db',
-    backgroundColor: isDark ? '#383838' : '#f9fafb',
-    color: isDark ? '#E8EAED' : '#4b5563',
-    fontSize: '1rem',
+    border: isDark ? '1px solid #3d3d3d' : '1px solid #cbd5e1',
+    backgroundColor: isDark ? '#2e2e2e' : '#ffffff',
+    color: isDark ? '#f1f5f9' : '#1e293b',
+    fontSize: '0.84rem',
+    fontWeight: '700',
     cursor: 'pointer'
   },
-  feedbackBox: {
-    width: '100%',
-    height: '120px',
-    padding: '14px',
+  codeSnippetSection: {
     borderRadius: '12px',
-    border: isDark ? '1px solid #4A4A4A' : '1px solid #d1d5db',
-    backgroundColor: isDark ? '#383838' : '#f9fafb',
-    color: isDark ? '#E8EAED' : '#4b5563',
-    fontSize: '0.95rem',
-    resize: 'vertical',
+    border: isDark ? '1px solid #383838' : '1px solid #e2e8f0',
+    overflow: 'hidden',
+    backgroundColor: isDark ? '#1a1a1a' : '#f8fafc'
+  },
+  codeSnippetHeader: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: '10px 14px',
+    borderBottom: isDark ? '1px solid #2e2e2e' : '1px solid #e2e8f0',
+    backgroundColor: isDark ? '#202020' : '#ffffff'
+  },
+  codeLengthBadge: {
+    fontSize: '0.72rem',
+    color: isDark ? '#94a3b8' : '#64748b',
+    backgroundColor: isDark ? '#2d2d2d' : '#f1f5f9',
+    padding: '2px 6px',
+    borderRadius: '4px'
+  },
+  copyCodeBtn: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '5px',
+    padding: '4px 10px',
+    borderRadius: '6px',
+    border: isDark ? '1px solid #3d3d3d' : '1px solid #cbd5e1',
+    backgroundColor: 'transparent',
+    color: isDark ? '#cbd5e1' : '#475569',
+    fontSize: '0.76rem',
+    fontWeight: '600',
+    cursor: 'pointer'
+  },
+  codeBlockWrapper: {
+    maxHeight: '300px',
+    overflowY: 'auto'
+  },
+  codePre: {
+    margin: 0,
+    padding: '16px',
+    fontFamily: '"Fira Code", Menlo, Monaco, Consolas, monospace',
+    fontSize: '0.86rem',
+    lineHeight: 1.55,
+    color: isDark ? '#e2e8f0' : '#1e293b',
+    backgroundColor: isDark ? '#141414' : '#ffffff',
+    whiteSpace: 'pre-wrap',
+    wordBreak: 'break-word'
+  },
+  emptyCodeNotice: {
+    padding: '30px 16px',
+    textAlign: 'center',
+    color: isDark ? '#94a3b8' : '#64748b',
+    fontSize: '0.86rem',
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center'
+  },
+  gradingFormCard: {
+    backgroundColor: isDark ? '#1e1e1e' : '#f8fafc',
+    borderRadius: '14px',
+    border: isDark ? '1px solid #333333' : '1px solid #e2e8f0',
+    padding: '20px'
+  },
+  inputLabel: {
+    display: 'block',
+    fontSize: '0.84rem',
+    fontWeight: '700',
+    color: isDark ? '#e2e8f0' : '#334155',
+    marginBottom: '4px'
+  },
+  scoreInput: {
+    width: '84px',
+    padding: '8px 12px',
+    borderRadius: '8px',
+    border: isDark ? '1px solid #3d3d3d' : '1px solid #cbd5e1',
+    backgroundColor: isDark ? '#262626' : '#ffffff',
+    color: isDark ? '#f8fafc' : '#0f172a',
+    fontSize: '1rem',
+    fontWeight: '800',
+    textAlign: 'center',
+    outline: 'none'
+  },
+  scorePresetBtn: (isActive) => ({
+    padding: '6px 10px',
+    borderRadius: '6px',
+    border: isDark ? '1px solid #383838' : '1px solid #cbd5e1',
+    backgroundColor: isActive ? '#10b981' : (isDark ? '#2a2a2a' : '#ffffff'),
+    color: isActive ? '#ffffff' : (isDark ? '#e2e8f0' : '#475569'),
+    fontSize: '0.78rem',
+    fontWeight: '700',
+    cursor: 'pointer',
+    transition: 'all 0.15s ease'
+  }),
+  feedbackTextarea: {
+    width: '100%',
+    padding: '12px 14px',
+    borderRadius: '10px',
+    border: isDark ? '1px solid #3d3d3d' : '1px solid #cbd5e1',
+    backgroundColor: isDark ? '#262626' : '#ffffff',
+    color: isDark ? '#f8fafc' : '#0f172a',
+    fontSize: '0.9rem',
+    lineHeight: 1.5,
     fontFamily: 'inherit',
+    outline: 'none',
+    resize: 'vertical',
     boxSizing: 'border-box'
   },
-  evaluateRow: {
-    display: 'flex',
-    justifyContent: 'flex-end',
-    marginTop: '10px'
+  quickFeedbackPill: {
+    fontSize: '0.72rem',
+    fontWeight: '600',
+    padding: '3px 8px',
+    borderRadius: '50px',
+    border: isDark ? '1px solid #383838' : '1px solid #e2e8f0',
+    backgroundColor: isDark ? '#2a2a2a' : '#ffffff',
+    color: isDark ? '#94a3b8' : '#475569',
+    cursor: 'pointer'
   },
-  evaluateBtn: {
-    backgroundColor: '#10b981',
-    color: 'white',
+  clearGradeBtn: {
+    background: 'none',
     border: 'none',
-    borderRadius: '8px',
-    padding: '10px 24px',
-    fontSize: '0.95rem',
-    fontWeight: 'bold',
+    color: '#ef4444',
+    fontSize: '0.76rem',
+    fontWeight: '700',
     cursor: 'pointer',
-    boxShadow: isDark 
-      ? '0 0 16px rgba(16, 185, 129, 0.38), 0 2px 6px rgba(0, 0, 0, 0.35)' 
-      : '0 2px 8px rgba(16, 185, 129, 0.25), 0 1px 2px rgba(0, 0, 0, 0.05)',
-    transition: 'transform 0.18s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.18s cubic-bezier(0.16, 1, 0.3, 1), filter 0.18s ease'
+    textDecoration: 'underline'
   },
+  evaluateSubmitBtn: (status) => ({
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    padding: '10px 24px',
+    borderRadius: '10px',
+    border: 'none',
+    backgroundColor: status === 'saved' ? '#10b981' : (status === 'error' ? '#ef4444' : '#10b981'),
+    color: '#ffffff',
+    fontSize: '0.92rem',
+    fontWeight: '800',
+    cursor: status === 'saving' ? 'wait' : 'pointer',
+    opacity: status === 'saving' ? 0.75 : 1,
+    boxShadow: '0 2px 10px rgba(16,185,129,0.3)',
+    transition: 'all 0.2s ease'
+  }),
   modalOverlay: {
     position: 'fixed',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    inset: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.65)',
+    backdropFilter: 'blur(4px)',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
     zIndex: 9999,
-    padding: '20px',
-    backdropFilter: 'blur(3px)'
+    padding: '20px'
   },
-  modalCard: {
-    backgroundColor: isDark ? '#323232' : 'white',
+  codeModalCard: {
+    backgroundColor: isDark ? '#202020' : '#ffffff',
     borderRadius: '16px',
     width: '100%',
-    maxWidth: '700px',
-    maxHeight: '80vh',
+    maxWidth: '850px',
+    maxHeight: '85vh',
     display: 'flex',
     flexDirection: 'column',
-    boxShadow: isDark ? '0 20px 40px rgba(0,0,0,0.5)' : '0 20px 25px -5px rgba(0, 0, 0, 0.2)',
-    border: isDark ? '1px solid #4A4A4A' : 'none',
+    boxShadow: '0 24px 48px rgba(0,0,0,0.5)',
+    border: isDark ? '1px solid #3d3d3d' : 'none',
     overflow: 'hidden'
   },
   modalHeader: {
     display: 'flex',
     justifyContent: 'space-between',
     alignItems: 'center',
-    padding: '16px 20px',
-    borderBottom: isDark ? '1px solid #4A4A4A' : '1px solid #e2e8f0'
+    padding: '16px 22px',
+    borderBottom: isDark ? '1px solid #333333' : '1px solid #e2e8f0',
+    backgroundColor: isDark ? '#262626' : '#ffffff'
+  },
+  modalTitle: {
+    margin: 0,
+    fontSize: '1.1rem',
+    fontWeight: '800',
+    color: isDark ? '#f8fafc' : '#0f172a'
+  },
+  modalCopyBtn: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '6px',
+    padding: '6px 12px',
+    borderRadius: '8px',
+    border: isDark ? '1px solid #3d3d3d' : '1px solid #cbd5e1',
+    backgroundColor: isDark ? '#2e2e2e' : '#f8fafc',
+    color: isDark ? '#f1f5f9' : '#1e293b',
+    fontSize: '0.8rem',
+    fontWeight: '700',
+    cursor: 'pointer'
   },
   closeModalBtn: {
-    background: 'transparent',
+    background: 'none',
     border: 'none',
+    color: isDark ? '#94a3b8' : '#64748b',
     cursor: 'pointer',
-    color: isDark ? '#a3a3a3' : '#64748b',
     display: 'flex',
-    alignItems: 'center'
+    alignItems: 'center',
+    padding: '4px'
   },
   modalCodeBody: {
     flex: 1,
     margin: 0,
-    padding: '20px',
-    backgroundColor: '#1e1e1e',
+    padding: '24px',
+    backgroundColor: isDark ? '#141414' : '#1e1e1e',
     color: '#d4d4d4',
-    fontFamily: 'monospace',
-    fontSize: '0.9rem',
-    lineHeight: 1.5,
+    fontFamily: '"Fira Code", Menlo, Monaco, Consolas, monospace',
+    fontSize: '0.88rem',
+    lineHeight: 1.6,
     overflowY: 'auto',
-    whiteSpace: 'pre-wrap'
+    whiteSpace: 'pre-wrap',
+    wordBreak: 'break-word'
+  },
+  bulkModalCard: {
+    backgroundColor: isDark ? '#242424' : '#ffffff',
+    borderRadius: '16px',
+    width: '100%',
+    maxWidth: '480px',
+    boxShadow: '0 24px 48px rgba(0,0,0,0.5)',
+    border: isDark ? '1px solid #3d3d3d' : 'none',
+    overflow: 'hidden'
+  },
+  cancelModalBtn: {
+    padding: '9px 18px',
+    borderRadius: '8px',
+    border: isDark ? '1px solid #3d3d3d' : '1px solid #cbd5e1',
+    backgroundColor: isDark ? '#2e2e2e' : '#ffffff',
+    color: isDark ? '#f1f5f9' : '#475569',
+    fontSize: '0.86rem',
+    fontWeight: '700',
+    cursor: 'pointer'
+  },
+  applyBulkBtn: {
+    padding: '9px 20px',
+    borderRadius: '8px',
+    border: 'none',
+    backgroundColor: '#10b981',
+    color: '#ffffff',
+    fontSize: '0.86rem',
+    fontWeight: '800',
+    cursor: 'pointer',
+    boxShadow: '0 2px 8px rgba(16,185,129,0.3)'
   }
 });

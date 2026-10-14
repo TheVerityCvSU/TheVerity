@@ -9,7 +9,20 @@
  * 3. Auto-Reconnection: Probes cloud health when network is restored and resumes Cloud Mode.
  */
 
-export const LOCAL_API_URL = 'http://localhost:3001';
+export const getLocalApiUrl = () => {
+  if (typeof window !== 'undefined') {
+    const custom = localStorage.getItem('verity_server_url') || localStorage.getItem('verity_cloud_url');
+    if (custom && custom.trim()) {
+      return custom.trim().replace(/\/$/, '');
+    }
+    if (window.location && window.location.hostname && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1' && window.location.protocol.startsWith('http')) {
+      return `${window.location.protocol}//${window.location.hostname}:3001`;
+    }
+  }
+  return (import.meta.env.VITE_API_URL || 'http://localhost:3001').replace(/\/$/, '');
+};
+
+export const LOCAL_API_URL = getLocalApiUrl();
 
 export const getCloudUrl = () => {
   if (typeof window !== 'undefined') {
@@ -113,9 +126,11 @@ export const apiFetch = async (url, options = {}) => {
   const cloudUrl = getCloudUrl();
   let targetUrl = url;
 
+  const localUrl = getLocalApiUrl();
+
   // Resolve relative URLs to current active base
   if (targetUrl.startsWith('/')) {
-    targetUrl = `${cloudUrl || LOCAL_API_URL}${targetUrl}`;
+    targetUrl = `${cloudUrl || localUrl}${targetUrl}`;
   }
 
   // Cache busting for GET requests to prevent stale data
@@ -124,8 +139,8 @@ export const apiFetch = async (url, options = {}) => {
     targetUrl = `${targetUrl}${sep}_t=${Date.now()}`;
   }
 
-  const isTargetingCloud = cloudUrl && targetUrl.startsWith(cloudUrl) && cloudUrl !== LOCAL_API_URL;
-  const localFallbackUrl = isTargetingCloud ? targetUrl.replace(cloudUrl, LOCAL_API_URL) : targetUrl;
+  const isTargetingCloud = cloudUrl && targetUrl.startsWith(cloudUrl) && cloudUrl !== localUrl;
+  const localFallbackUrl = isTargetingCloud ? targetUrl.replace(cloudUrl, localUrl) : targetUrl;
 
   // 1. If we already know the device is offline or cloud is down, go straight to local
   if (isTargetingCloud && (!navigator.onLine || isCloudDown)) {

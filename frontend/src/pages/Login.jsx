@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useGoogleLogin } from '@react-oauth/google';
-import { Moon, Sun, Loader2, Construction, AlertTriangle, Eye, EyeOff } from 'lucide-react';
+import { Moon, Sun, Loader2, Construction, AlertTriangle, Eye, EyeOff, Server, Check, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { apiFetch } from '../utils/api';
 import { useDarkMode } from '../hooks/useDarkMode';
@@ -15,6 +15,27 @@ export default function Login({ onLogin, onGoToRegister }) {
   const [isGoogleLoading, setIsGoogleLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [maintenance, setMaintenance] = useState({ enabled: false, message: '' });
+  const [showServerModal, setShowServerModal] = useState(false);
+  const [serverUrlInput, setServerUrlInput] = useState(() => {
+    return localStorage.getItem('verity_server_url') || localStorage.getItem('verity_cloud_url') || (import.meta.env.VITE_API_URL || 'http://localhost:3001');
+  });
+
+  const handleSaveServerUrl = () => {
+    let clean = (serverUrlInput || '').trim().replace(/\/$/, '');
+    if (!clean) clean = 'http://localhost:3001';
+    if (!clean.startsWith('http://') && !clean.startsWith('https://')) {
+      clean = `http://${clean}`;
+    }
+    localStorage.setItem('verity_server_url', clean);
+    localStorage.setItem('verity_cloud_url', clean);
+    window.location.reload();
+  };
+
+  const handleResetServerUrl = () => {
+    localStorage.removeItem('verity_server_url');
+    localStorage.removeItem('verity_cloud_url');
+    window.location.reload();
+  };
 
   // Check maintenance status on mount
   useEffect(() => {
@@ -273,6 +294,37 @@ export default function Login({ onLogin, onGoToRegister }) {
         <span style={{ ...styles.logoText, color: isDark ? '#f4f4f5' : 'white' }}>erity</span>
       </motion.div>
 
+      {/* Top Right Server Setup (ComLab / LAN) */}
+      <motion.button
+        initial={{ opacity: 0, x: 20 }}
+        animate={{ opacity: 1, x: 0 }}
+        transition={{ duration: 0.5, ease: 'easeOut', delay: 0.05 }}
+        whileHover={{ scale: 1.08 }}
+        whileTap={{ scale: 0.92 }}
+        onClick={() => setShowServerModal(true)}
+        type="button"
+        style={{
+          position: 'absolute',
+          top: '30px',
+          right: '94px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          width: '42px',
+          height: '42px',
+          borderRadius: '50%',
+          backgroundColor: isDark ? '#262626' : 'white',
+          border: isDark ? '1px solid #3f3f46' : '1px solid #e2e8f0',
+          color: isDark ? '#34d399' : '#10b981',
+          boxShadow: isDark ? '0 4px 12px rgba(0,0,0,0.4)' : '0 2px 8px rgba(0,0,0,0.1)',
+          cursor: 'pointer',
+          transition: 'all 0.2s ease',
+        }}
+        title="Configure LAN / ComLab Server IP"
+      >
+        <Server size={18} />
+      </motion.button>
+
       {/* Top Right Dark Mode Switch */}
       <motion.button
         initial={{ opacity: 0, x: 20 }}
@@ -484,6 +536,89 @@ export default function Login({ onLogin, onGoToRegister }) {
           </p>
         </form>
       </motion.div>
+
+      {/* Server Config Modal */}
+      <AnimatePresence>
+        {showServerModal && (
+          <div style={{
+            position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+            backgroundColor: 'rgba(0,0,0,0.65)', backdropFilter: 'blur(5px)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            zIndex: 9999, padding: '20px'
+          }}>
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              style={{
+                backgroundColor: isDark ? '#1f2425' : '#ffffff',
+                border: isDark ? '1px solid #374151' : '1px solid #e2e8f0',
+                borderRadius: '18px', padding: '26px', width: '100%', maxWidth: '440px',
+                boxShadow: '0 20px 40px rgba(0,0,0,0.3)', color: isDark ? '#f3f4f6' : '#1f2937'
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 700, fontSize: '1.1rem' }}>
+                  <Server size={20} color="#10b981" />
+                  <span>ComLab / LAN Server Setup</span>
+                </div>
+                <button onClick={() => setShowServerModal(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: isDark ? '#9ca3af' : '#6b7280' }}>
+                  <X size={20} />
+                </button>
+              </div>
+
+              <p style={{ fontSize: '0.84rem', color: isDark ? '#9ca3af' : '#6b7280', margin: '0 0 16px', lineHeight: 1.5 }}>
+                In an offline computer lab, enter the Teacher's computer IP address on the local network (e.g. <code>http://192.168.1.100:3001</code>).
+              </p>
+
+              <div style={{ marginBottom: '18px' }}>
+                <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: 600, marginBottom: '6px', color: isDark ? '#d1d5db' : '#374151' }}>
+                  Backend Server Address:
+                </label>
+                <input
+                  type="text"
+                  value={serverUrlInput}
+                  onChange={(e) => setServerUrlInput(e.target.value)}
+                  placeholder="http://192.168.1.100:3001"
+                  style={{
+                    width: '100%', padding: '10px 14px', borderRadius: '10px',
+                    border: isDark ? '1px solid #4b5563' : '1px solid #d1d5db',
+                    backgroundColor: isDark ? '#111827' : '#f9fafb',
+                    color: isDark ? '#f9fafb' : '#111827',
+                    fontSize: '0.9rem', boxSizing: 'border-box', outline: 'none'
+                  }}
+                />
+              </div>
+
+              <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+                <button
+                  type="button"
+                  onClick={handleResetServerUrl}
+                  style={{
+                    padding: '8px 14px', borderRadius: '8px', border: isDark ? '1px solid #4b5563' : '1px solid #d1d5db',
+                    backgroundColor: 'transparent', color: isDark ? '#9ca3af' : '#6b7280',
+                    fontSize: '0.82rem', fontWeight: 600, cursor: 'pointer'
+                  }}
+                >
+                  Reset Default
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveServerUrl}
+                  style={{
+                    padding: '8px 18px', borderRadius: '8px', border: 'none',
+                    backgroundColor: '#10b981', color: 'white',
+                    fontSize: '0.82rem', fontWeight: 700, cursor: 'pointer',
+                    display: 'flex', alignItems: 'center', gap: '6px'
+                  }}
+                >
+                  <Check size={16} /> Save & Connect
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

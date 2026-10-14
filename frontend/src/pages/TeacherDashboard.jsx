@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef, useMemo } from 'react';
 import { Home, Calendar, ClipboardList, Settings, MoreVertical, Plus, LogOut, User, X, Menu, Archive, RefreshCw, Trash2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import SettingsPanel from './SettingsPanel';
@@ -12,13 +12,18 @@ import { useDarkMode } from '../hooks/useDarkMode';
 import { useSidebarNav } from '../hooks/useSidebarNav';
 import { useMediaQuery } from '../hooks/useMediaQuery';
 
-const getStorageKey = (user) => {
-  const identifier = user?.email || user?.id || (user?.name ? user.name.toLowerCase().replace(/\s+/g, '_') : null);
-  return identifier ? `verity_teacher_classrooms_${identifier}` : 'verity_teacher_classrooms_anon';
-};
-
-import { isPhantomClassroom, mergeClassroomsPreservingOrder, generateClassCode } from '../utils/classroomUtils';
+import { 
+  isPhantomClassroom, 
+  mergeClassroomsPreservingOrder, 
+  generateClassCode,
+  getClassroomStorageKey,
+  getCachedClassrooms,
+  saveCachedClassrooms,
+  sortClassroomsAlphabetically
+} from '../utils/classroomUtils';
 export { isPhantomClassroom, mergeClassroomsPreservingOrder, generateClassCode };
+
+const getStorageKey = (user) => getClassroomStorageKey(user, 'teacher');
 
 const cardThemes = [
   { // 0: C# Programming
@@ -385,22 +390,19 @@ export default function TeacherDashboard({ currentUser, onLogout, onEnterClassro
 // Load saved classrooms from localStorage so they survive a refresh.
   const [classrooms, setClassrooms] = useState(() => {
     try {
-      const key = getStorageKey(currentUser);
-      const raw = localStorage.getItem(key);
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed)) {
-          const valid = parsed.filter(c => !isPhantomClassroom(c));
-          const taken = new Set();
-          return valid.map(c => {
-            let code = (c.code || '').toString().trim().toLowerCase();
-            if (!code || taken.has(code)) {
-              code = generateClassCode(taken);
-            }
-            taken.add(code);
-            return { ...c, code };
-          });
-        }
+      const parsed = getCachedClassrooms(currentUser, 'teacher');
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        const valid = parsed.filter(c => !isPhantomClassroom(c));
+        const taken = new Set();
+        const mapped = valid.map(c => {
+          let code = (c.code || '').toString().trim().toLowerCase();
+          if (!code || taken.has(code)) {
+            code = generateClassCode(taken);
+          }
+          taken.add(code);
+          return { ...c, code };
+        });
+        return sortClassroomsAlphabetically(mapped);
       }
       return [];
     } catch {
@@ -410,7 +412,7 @@ export default function TeacherDashboard({ currentUser, onLogout, onEnterClassro
 
   // Show skeleton only when there's no cached data yet.
   const [loadingClassrooms, setLoadingClassrooms] = useState(
-    () => !localStorage.getItem(getStorageKey(currentUser))
+    () => getCachedClassrooms(currentUser, 'teacher').length === 0
   );
 
   const [allowDelete, setAllowDelete] = useState(false);
@@ -439,20 +441,20 @@ export default function TeacherDashboard({ currentUser, onLogout, onEnterClassro
         if (res.ok && active) {
           const data = await res.json();
           const serverList = (Array.isArray(data) ? data : (data.classrooms || [])).filter(c => !isPhantomClassroom(c));
-          // Filter strictly for this teacher
+          // Filter strictly for this teacher: match by email OR instructor name
           const teacherClasses = serverList.filter(c => {
-            const hasEmail = c.instructor_email || c.instructorEmail;
-            if (hasEmail) {
-              const emailStr = (c.instructor_email || c.instructorEmail).toLowerCase();
-              return currentUser?.email && emailStr === currentUser.email.toLowerCase();
-            }
-            const nameStr = (c.instructor || '').toLowerCase();
-            return (currentUser?.name && nameStr && nameStr === currentUser.name.toLowerCase()) || !nameStr;
+            const emailStr = (c.instructor_email || c.instructorEmail || '').toLowerCase();
+            const matchesEmail = Boolean(currentUser?.email && emailStr && emailStr === currentUser.email.toLowerCase());
+            const nameStr = (c.instructor || '').trim().toLowerCase();
+            const curName = (currentUser?.name || '').trim().toLowerCase();
+            const matchesName = Boolean(curName && nameStr && nameStr === curName);
+            return matchesEmail || matchesName || (!emailStr && !nameStr);
           });
-          setClassrooms(teacherClasses);
-          try {
-            localStorage.setItem(getStorageKey(currentUser), JSON.stringify(teacherClasses));
-          } catch {}
+          const sortedTeacherClasses = sortClassroomsAlphabetically(teacherClasses);
+          if (sortedTeacherClasses.length > 0 || classrooms.length === 0) {
+            setClassrooms(sortedTeacherClasses);
+            saveCachedClassrooms(sortedTeacherClasses, currentUser, 'teacher');
+          }
         }
       } catch {} finally {
         if (active) setLoadingClassrooms(false);
@@ -490,8 +492,8 @@ export default function TeacherDashboard({ currentUser, onLogout, onEnterClassro
   // Persist classrooms whenever they change — locally (survives refresh) and to
   // the backend (so the Admin dashboard can count them server-wide).
   useEffect(() => {
-    const key = getStorageKey(currentUser);
-    localStorage.setItem(key, JSON.stringify(classrooms));
+    saveCachedClassrooms(classrooms, currentUser, 'teacher');
+    if (!classrooms || classrooms.length === 0) return;
     const withInstructor = classrooms.map(c => ({
       ...c,
       instructor: c.instructor || currentUser?.name || 'Instructor',
@@ -622,12 +624,18 @@ export default function TeacherDashboard({ currentUser, onLogout, onEnterClassro
       instructorEmail: currentUser?.email || ''
     };
 
-    setClassrooms([newClassroom, ...classrooms]);
+    setClassrooms(sortClassroomsAlphabetically([newClassroom, ...classrooms]));
     setIsModalOpen(false); // Close the modal
     setNewClass({ name: '', section: '', subject: '', code: '' }); // Reset form
   };
 
+  const activeClassrooms = useMemo(() => {
+    return sortClassroomsAlphabetically(classrooms.filter(c => !c.archived));
+  }, [classrooms]);
 
+  const archivedClassrooms = useMemo(() => {
+    return sortClassroomsAlphabetically(classrooms.filter(c => c.archived));
+  }, [classrooms]);
 
   return (
     <motion.div 
@@ -789,14 +797,14 @@ export default function TeacherDashboard({ currentUser, onLogout, onEnterClassro
                 <h2 style={{ color: isDark ? '#E8EAED' : '#4b5563', margin: 0 }}>Archived Classrooms</h2>
               </div>
 
-              {classrooms.filter(c => c.archived).length === 0 ? (
+              {archivedClassrooms.length === 0 ? (
                 <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: isDark ? '#6b7280' : '#9ca3af' }}>
                   <h3 style={{ margin: 0, color: isDark ? '#a3a3a3' : '#6b7280' }}>No Archived Classrooms</h3>
                   <p style={{ marginTop: '10px', color: isDark ? '#6b7280' : '#9ca3af' }}>Classrooms you archive will appear here.</p>
                 </div>
               ) : (
                 <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(12, 1fr)', gap: '24px' }}>
-                  {classrooms.filter(c => c.archived).map((cls, idx) => (
+                  {archivedClassrooms.map((cls, idx) => (
                     <TeacherCourseCard
                       key={cls.id}
                       classroom={cls}
@@ -824,7 +832,7 @@ export default function TeacherDashboard({ currentUser, onLogout, onEnterClassro
                 classroom={settingsClassroom}
                 onClose={() => { setSettingsClassroom(null); handleSetView('classrooms'); }}
                 onUpdate={(updated) => {
-                  setClassrooms(prev => prev.map(c => c.id === updated.id ? { ...c, ...updated } : c));
+                  setClassrooms(prev => sortClassroomsAlphabetically(prev.map(c => c.id === updated.id ? { ...c, ...updated } : c)));
                   setSettingsClassroom(updated);
                 }}
               />
@@ -856,7 +864,7 @@ export default function TeacherDashboard({ currentUser, onLogout, onEnterClassro
               }}>
                 {loadingClassrooms
                   ? Array.from({ length: 4 }).map((_, i) => <Skeleton.Card key={i} />)
-                  : classrooms.filter(c => !c.archived).length === 0 ? (
+                  : activeClassrooms.length === 0 ? (
                     <div style={{
                       gridColumn: '1 / -1',
                       padding: '50px 20px',
@@ -888,7 +896,7 @@ export default function TeacherDashboard({ currentUser, onLogout, onEnterClassro
                         Click <strong>Create</strong> above to create your first classroom.
                       </p>
                     </div>
-                  ) : classrooms.filter(c => !c.archived).map((cls, idx) => (
+                  ) : activeClassrooms.map((cls, idx) => (
                     <TeacherCourseCard
                       key={cls.id}
                       classroom={cls}

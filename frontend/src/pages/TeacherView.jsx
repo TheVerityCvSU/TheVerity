@@ -4,6 +4,7 @@ import { Home, ArrowLeft, Maximize2, Play, Pause, Settings, X, Moon, Sun, Bell, 
 import { apiFetch } from '../utils/api';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useDarkMode } from '../hooks/useDarkMode';
+import { getStudentGrade, isStudentGraded } from '../utils/gradeUtils';
 
 export default function TeacherView({ socket, assignment, classroom, initialStudent, onBack, onLogout, mode = 'live' }) {
   const { isDark, toggle: toggleDarkMode } = useDarkMode();
@@ -258,6 +259,54 @@ export default function TeacherView({ socket, assignment, classroom, initialStud
     }
   }, [students, selectedStudentId]);
 
+  // Load backend grades to keep submitted students marked as Graded
+  useEffect(() => {
+    if (!assignment?.id) return;
+    apiFetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/grades/${assignment.id}`)
+      .then(res => res.ok ? res.json() : null)
+      .then(data => {
+        if (data?.grades) {
+          const gradesKey = `verity_grades_${assignment.id}`;
+          let merged = {};
+          try {
+            const current = JSON.parse(localStorage.getItem(gradesKey)) || {};
+            merged = { ...current, ...data.grades };
+            localStorage.setItem(gradesKey, JSON.stringify(merged));
+          } catch {}
+
+          setStudents(prev => {
+            const next = { ...prev };
+            Object.keys(next).forEach(k => {
+              if (isStudentGraded(merged, next[k])) {
+                next[k] = { ...next[k], status: 'Graded' };
+              }
+            });
+            return next;
+          });
+        }
+      })
+      .catch(() => {});
+  }, [assignment?.id]);
+
+  // Pre-populate grade form when selected student changes
+  useEffect(() => {
+    if (selectedStudentId && assignment?.id) {
+      const gradesKey = `verity_grades_${assignment.id}`;
+      try {
+        const savedGrades = JSON.parse(localStorage.getItem(gradesKey)) || {};
+        const curStudent = students[selectedStudentId] || { id: selectedStudentId };
+        const saved = getStudentGrade(savedGrades, curStudent);
+        if (saved) {
+          if (saved.grade != null) setGradeInput(String(saved.grade));
+          if (saved.feedback != null) setFeedbackInput(saved.feedback);
+        } else {
+          setGradeInput(assignment?.points ? String(assignment.points) : '100');
+          setFeedbackInput('');
+        }
+      } catch {}
+    }
+  }, [selectedStudentId, assignment?.id, students]);
+
   // The instruction comes from the assignment the teacher created (its "details").
   const assignmentInstruction = assignment?.details || "";
 
@@ -462,6 +511,25 @@ export default function TeacherView({ socket, assignment, classroom, initialStud
         });
       });
 
+      const handleLiveGradeUpdate = (data) => {
+        if (!data || String(data.assignmentId) !== String(assignment?.id) || !data.studentId) return;
+        const gradesKey = `verity_grades_${assignment.id}`;
+        try {
+          const current = JSON.parse(localStorage.getItem(gradesKey)) || {};
+          current[data.studentId] = { grade: data.grade, feedback: data.feedback, gradedAt: data.gradedAt };
+          localStorage.setItem(gradesKey, JSON.stringify(current));
+        } catch {}
+        setStudents(prev => {
+          const sKey = Object.keys(prev).find(k => k === data.studentId || prev[k].id === data.studentId || prev[k].name === data.studentId) || data.studentId;
+          if (!prev[sKey]) return prev;
+          return {
+            ...prev,
+            [sKey]: { ...prev[sKey], status: 'Graded' }
+          };
+        });
+      };
+      socket.on('grade_updated', handleLiveGradeUpdate);
+
       return () => {
         if (mode === 'live') {
           socket.off('teacher_update_code');
@@ -472,6 +540,7 @@ export default function TeacherView({ socket, assignment, classroom, initialStud
         socket.off('teacher_receive_submission');
         socket.off('teacher_student_unsubmitted');
         socket.off('student_unsubmitted');
+        socket.off('grade_updated', handleLiveGradeUpdate);
       };
   }, [socket, mode, classroom?.id, assignment?.id]);
 
@@ -647,20 +716,25 @@ export default function TeacherView({ socket, assignment, classroom, initialStud
   const handleSaveGrade = async () => {
     if (!assignment?.id || !selectedStudentId) return;
     try {
+      const now = new Date().toISOString();
       const gradesKey = `verity_grades_${assignment.id}`;
       const savedGrades = JSON.parse(localStorage.getItem(gradesKey)) || {};
       const updated = {
         ...savedGrades,
-        [selectedStudentId]: { grade: gradeInput, feedback: feedbackInput, gradedAt: true }
+        [selectedStudentId]: { grade: gradeInput, feedback: feedbackInput, gradedAt: now }
       };
-      localStorage.setItem(gradesKey, JSON.stringify(updated));
+      try {
+        localStorage.setItem(gradesKey, JSON.stringify(updated));
+      } catch {}
 
-      if (import.meta.env.VITE_API_URL) {
-        await fetch(`${import.meta.env.VITE_API_URL}/grades/${assignment.id}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('token')}` },
-          body: JSON.stringify({ studentId: selectedStudentId, grade: gradeInput, feedback: feedbackInput })
-        }).catch(err => console.error("Error saving grade to API", err));
+      const res = await apiFetch(`${import.meta.env.VITE_API_URL}/grades/${assignment.id}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ studentId: selectedStudentId, grade: gradeInput, feedback: feedbackInput })
+      });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.message || 'Failed to save grade');
       }
 
       setStudents(prev => {

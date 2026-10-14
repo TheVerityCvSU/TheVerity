@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useLayoutEffect } from 'react';
+import React, { useState, useEffect, useRef, useLayoutEffect, useMemo } from 'react';
 import { Home, Calendar, ClipboardList, Settings, Plus, X, Archive, TerminalSquare, Play, MoreHorizontal, Calendar as CalendarIcon, CheckCircle2, Code2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import SettingsPanel from './SettingsPanel';
@@ -11,13 +11,17 @@ import { apiFetch } from '../utils/api';
 import Skeleton from '../components/Skeleton';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { useMediaQuery } from '../hooks/useMediaQuery';
-import { getThemeStorageKeys } from '../utils/classroomUtils';
+import { 
+  getThemeStorageKeys,
+  getClassroomStorageKey,
+  getCachedClassrooms,
+  saveCachedClassrooms,
+  isPhantomClassroom,
+  sortClassroomsAlphabetically
+} from '../utils/classroomUtils';
 
 // Storage key uniquely scoped per student account
-const getStorageKey = (user) => {
-  const identifier = user?.email || user?.id || (user?.name ? user.name.toLowerCase().replace(/\s+/g, '_') : null);
-  return identifier ? `verity_student_classrooms_${identifier}` : 'verity_student_classrooms_anon';
-};
+const getStorageKey = (user) => getClassroomStorageKey(user, 'student');
 
 const cardThemes = [
   { // 0: C# Programming
@@ -196,22 +200,23 @@ export default function StudentDashboard({ currentUser, onLogout, onEnterClassro
 
   // Load the student's joined classrooms
   const [classrooms, setClassrooms] = useState(() => {
-    try {
-      const saved = localStorage.getItem(getStorageKey(currentUser));
-      return saved ? JSON.parse(saved) : [];
-    } catch {
-      return [];
-    }
+    return sortClassroomsAlphabetically(getCachedClassrooms(currentUser, 'student').filter(c => !isPhantomClassroom(c)));
   });
 
   const [loadingClassrooms, setLoadingClassrooms] = useState(
-    () => !localStorage.getItem(getStorageKey(currentUser))
+    () => getCachedClassrooms(currentUser, 'student').length === 0
   );
 
+  const activeClassrooms = useMemo(() => {
+    return sortClassroomsAlphabetically(classrooms.filter(c => !c.archived));
+  }, [classrooms]);
+
+  const archivedClassrooms = useMemo(() => {
+    return sortClassroomsAlphabetically(classrooms.filter(c => c.archived));
+  }, [classrooms]);
+
   useEffect(() => {
-    try {
-      localStorage.setItem(getStorageKey(currentUser), JSON.stringify(classrooms));
-    } catch {}
+    saveCachedClassrooms(classrooms, currentUser, 'student');
   }, [classrooms, currentUser]);
 
   useEffect(() => {
@@ -221,11 +226,12 @@ export default function StudentDashboard({ currentUser, onLogout, onEnterClassro
         const res = await apiFetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/classrooms`);
         if (res.ok && active) {
           const data = await res.json();
-          const serverList = (Array.isArray(data) ? data : (data.classrooms || [])).filter(c => c && c.name);
-          setClassrooms(serverList);
-          try {
-            localStorage.setItem(getStorageKey(currentUser), JSON.stringify(serverList));
-          } catch {}
+          const serverList = (Array.isArray(data) ? data : (data.classrooms || [])).filter(c => c && c.name && !isPhantomClassroom(c));
+          const sortedList = sortClassroomsAlphabetically(serverList);
+          if (sortedList.length > 0 || classrooms.length === 0) {
+            setClassrooms(sortedList);
+            saveCachedClassrooms(sortedList, currentUser, 'student');
+          }
         }
       } catch {} finally {
         if (active) setLoadingClassrooms(false);
@@ -427,7 +433,7 @@ export default function StudentDashboard({ currentUser, onLogout, onEnterClassro
           try { localStorage.setItem(k, JSON.stringify(joined.theme)); } catch {}
         });
       }
-      const updated = [joined, ...classrooms.filter(c => c.id !== joined.id)];
+      const updated = sortClassroomsAlphabetically([joined, ...classrooms.filter(c => c.id !== joined.id)]);
       setClassrooms(updated);
       setIsJoining(false);
       setIsModalOpen(false);
@@ -712,7 +718,7 @@ export default function StudentDashboard({ currentUser, onLogout, onEnterClassro
                 <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '24px' }}>
                   <h2 style={{ fontSize: '1.25rem', fontWeight: 'bold', margin: 0 }}>Enrolled courses</h2>
                   <span style={{ fontSize: '0.85rem', color: textMuted }}>
-                    {classrooms.filter(c => !c.archived).length.toString().padStart(2, '0')} active
+                    {activeClassrooms.length.toString().padStart(2, '0')} active
                   </span>
                 </div>
                 
@@ -726,7 +732,7 @@ export default function StudentDashboard({ currentUser, onLogout, onEnterClassro
                       <div key={i} style={{ gridColumn: `span ${isMobile ? 12 : cardThemes[i % cardThemes.length].colSpan}`, height: '240px', backgroundColor: cardBg, borderRadius: '20px', animation: 'pulse 1.5s infinite' }} />
                     ))
                   ) : (
-                    classrooms.filter(c => !c.archived).map((cls, idx) => (
+                    activeClassrooms.map((cls, idx) => (
                       <motion.div
                         key={cls.id}
                         initial={{ opacity: 0, y: 24 }}
@@ -738,7 +744,7 @@ export default function StudentDashboard({ currentUser, onLogout, onEnterClassro
                       </motion.div>
                     ))
                   )}
-                  {classrooms.filter(c => !c.archived).length === 0 && !loadingClassrooms && (
+                  {activeClassrooms.length === 0 && !loadingClassrooms && (
                     <div style={{ gridColumn: '1 / -1', padding: '40px', textAlign: 'center', backgroundColor: cardBg, borderRadius: '24px' }}>
                       <p style={{ color: textMuted }}>You have not enrolled in any courses yet.</p>
                       <button onClick={() => setIsModalOpen(true)} style={{ marginTop: '12px', padding: '8px 16px', backgroundColor: '#10b981', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer' }}>
@@ -912,12 +918,12 @@ export default function StudentDashboard({ currentUser, onLogout, onEnterClassro
             <motion.div key="archived" custom={slideDirection} variants={drillVariants} initial="initial" animate="animate" exit="exit">
               <h2 style={{ fontSize: '2rem', marginBottom: '24px' }}>Archived Classrooms</h2>
             <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(12, 1fr)', gap: '24px' }}>
-              {classrooms.filter(c => c.archived).map((cls, idx) => (
+              {archivedClassrooms.map((cls, idx) => (
                 <div key={cls.id} style={{ gridColumn: `span ${isMobile ? 12 : cardThemes[idx % cardThemes.length].colSpan}`, opacity: 0.7 }}>
                   <StudentCourseCard classroom={cls} index={idx} onClick={handleEnterClassroom} />
                 </div>
               ))}
-              {classrooms.filter(c => c.archived).length === 0 && (
+              {archivedClassrooms.length === 0 && (
                 <p style={{ color: textMuted }}>No archived classrooms.</p>
               )}
             </div>

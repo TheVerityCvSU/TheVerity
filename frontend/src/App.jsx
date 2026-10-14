@@ -24,7 +24,7 @@ import { notifyUserListeners } from './hooks/useCurrentUser';
 
 // Connect to Backend (Cloud-first with local offline fallback)
 const CLOUD_SOCKET = (import.meta.env.VITE_SOCKET_URL || '').replace(/\/$/, '');
-const LOCAL_SOCKET = 'http://localhost:3001';
+const LOCAL_SOCKET = (import.meta.env.VITE_SOCKET_URL || import.meta.env.VITE_API_URL || 'http://localhost:3001').replace(/\/$/, '');
 
 const socket = io(CLOUD_SOCKET || LOCAL_SOCKET, {
   reconnectionAttempts: 10,

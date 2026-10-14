@@ -79,7 +79,7 @@ export async function updateCurrentUser(updates) {
       if (res.ok) {
         const data = await res.json();
         if (data.user) {
-          const synced = { ...updated, ...data.user };
+          const synced = { ...updated, ...data.user, email: updated.email || data.user.email };
           localStorage.setItem(STORAGE_KEY, JSON.stringify(synced));
           globalUser = synced;
           notifyUserListeners(synced);

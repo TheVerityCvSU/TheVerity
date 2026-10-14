@@ -8,6 +8,7 @@ import { useCurrentUser } from '../hooks/useCurrentUser';
 import Skeleton from '../components/Skeleton';
 import ChangeEmailModal from '../components/ChangeEmailModal';
 import ChangePasswordModal from '../components/ChangePasswordModal';
+import { migrateUserClassroomsOnEmailChange } from '../utils/classroomUtils';
 
 const PRESET_AVATARS = [
   {
@@ -884,7 +885,10 @@ export default function SettingsPanel({ role = 'Student', onBack, loading = fals
         isOpen={isEmailModalOpen}
         onClose={() => setIsEmailModalOpen(false)}
         currentEmail={values['User Details:Email Address'] || currentUser?.email || ''}
-        onSuccess={(newEmail) => {
+        onSuccess={(newEmail, updatedUserData) => {
+          const oldEmail = values['User Details:Email Address'] || currentUser?.email || '';
+          migrateUserClassroomsOnEmailChange(oldEmail, newEmail, currentUser?.id);
+
           setValues(prev => {
             const nextVals = {
               ...prev,
@@ -895,7 +899,7 @@ export default function SettingsPanel({ role = 'Student', onBack, loading = fals
             } catch (_) {}
             return nextVals;
           });
-          updateCurrentUser({ email: newEmail });
+          updateCurrentUser({ email: newEmail, ...(updatedUserData || {}) });
           setSecurityNotice({
             type: 'success',
             msg: `Email successfully verified and updated to ${newEmail}!`

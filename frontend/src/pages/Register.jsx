@@ -132,12 +132,21 @@ export default function Register({ onBackToLogin }) {
 
       if (response.ok) {
         setStep('otp');
-        setOtpDigits(['', '', '', '', '', '']);
+        if (data.devOtp) {
+          const digits = String(data.devOtp).split('').slice(0, 6);
+          setOtpDigits(digits);
+          setMessage({
+            type: 'info',
+            text: data.message || `Offline mode: Verification code is ${data.devOtp}`
+          });
+        } else {
+          setOtpDigits(['', '', '', '', '', '']);
+          setMessage({
+            type: 'info',
+            text: `A 6-digit verification code has been sent to ${payload.email}.`
+          });
+        }
         setResendCooldown(30);
-        setMessage({
-          type: 'info',
-          text: `A 6-digit verification code has been sent to ${payload.email}.`
-        });
       } else {
         setMessage({ type: 'error', text: data.message || 'Failed to send verification code.' });
       }
@@ -294,9 +303,15 @@ export default function Register({ onBackToLogin }) {
       const data = await response.json();
 
       if (response.ok) {
-        setOtpDigits(['', '', '', '', '', '']);
+        if (data.devOtp) {
+          const digits = String(data.devOtp).split('').slice(0, 6);
+          setOtpDigits(digits);
+          setMessage({ type: 'info', text: data.message || `Offline mode: Verification code is ${data.devOtp}` });
+        } else {
+          setOtpDigits(['', '', '', '', '', '']);
+          setMessage({ type: 'info', text: 'A new 6-digit verification code was sent to your email.' });
+        }
         setResendCooldown(45);
-        setMessage({ type: 'info', text: 'A new 6-digit verification code was sent to your email.' });
         setTimeout(() => inputRefs.current[0]?.focus(), 100);
       } else {
         setMessage({ type: 'error', text: data.message || 'Failed to resend code.' });

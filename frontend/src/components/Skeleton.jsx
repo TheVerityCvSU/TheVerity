@@ -74,9 +74,8 @@ Skeleton.StreamCard = function SkeletonStreamCard() {
     <div className="skeleton-stream-card">
       <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
         <div className="skeleton-shimmer skeleton-avatar" style={{ width: 38, height: 38 }} />
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '6px' }}>
-          <div className="skeleton-shimmer skeleton-text-line" style={{ width: '40%', height: 14 }} />
-          <div className="skeleton-shimmer skeleton-text-line" style={{ width: '22%', height: 10 }} />
+        <div style={{ flex: 1, display: 'flex', alignItems: 'center' }}>
+          <div className="skeleton-shimmer skeleton-text-line" style={{ width: '25%', height: 12 }} />
         </div>
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: 4 }}>

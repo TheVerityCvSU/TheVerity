@@ -27,6 +27,7 @@ export default function StudentView({ socket, currentUser, username, assignment,
     `verity_sub_${classroomId}_${assignmentId}_${safeUsername}`,
     currentUser?.name ? `verity_sub_${classroomId}_${assignmentId}_${currentUser.name}` : null,
     currentUser?.email ? `verity_sub_${classroomId}_${assignmentId}_${currentUser.email}` : null,
+    currentUser?.id ? `verity_sub_${classroomId}_${assignmentId}_id_${currentUser.id}` : null,
     `verity_sub_${classroomId}_${assignmentId}`
   ].filter(Boolean);
 
@@ -69,6 +70,7 @@ export default function StudentView({ socket, currentUser, username, assignment,
   };
 
   const handleAddFile = () => {
+    if (submitted) return;
     const num = extraFiles.length + 2;
     const newFile = { id: `ef_${Date.now()}`, name: `File${num}`, code: `// File${num}.cs\npublic class File${num}\n{\n    // Add your code here\n}\n` };
     const updated = [...extraFiles, newFile];
@@ -78,6 +80,7 @@ export default function StudentView({ socket, currentUser, username, assignment,
   };
 
   const handleDeleteFile = (id) => {
+    if (submitted) return;
     const updated = extraFiles.filter(f => f.id !== id);
     setExtraFiles(updated);
     persistExtraFiles(updated);
@@ -85,6 +88,7 @@ export default function StudentView({ socket, currentUser, username, assignment,
   };
 
   const handleRenameFile = (id, newName) => {
+    if (submitted) return;
     const safeName = newName.replace(/[^a-zA-Z0-9_\-]/g, '').slice(0, 40) || 'File';
     const updated = extraFiles.map(f => f.id === id ? { ...f, name: safeName } : f);
     setExtraFiles(updated);
@@ -93,6 +97,7 @@ export default function StudentView({ socket, currentUser, username, assignment,
   };
 
   const handleExtraFileCodeChange = (id, newCode) => {
+    if (submitted) return;
     const updated = extraFiles.map(f => f.id === id ? { ...f, code: newCode } : f);
     setExtraFiles(updated);
     persistExtraFiles(updated);
@@ -414,7 +419,8 @@ export default function StudentView({ socket, currentUser, username, assignment,
     const token = localStorage.getItem('verity_token') || localStorage.getItem('token');
 
     try {
-      const local = io('http://localhost:3001', {
+      const socketEndpoint = (import.meta.env.VITE_SOCKET_URL || import.meta.env.VITE_API_URL || 'http://localhost:3001').replace(/\/$/, '');
+      const local = io(socketEndpoint, {
         timeout: 2500,
         reconnectionAttempts: 5,
         reconnectionDelay: 2000,
@@ -511,6 +517,7 @@ export default function StudentView({ socket, currentUser, username, assignment,
   }, [testCases, activeTestCaseId]);
 
   const handleAddTestCase = () => {
+    if (submitted) return;
     const newId = `tc-${Date.now()}`;
     const newCase = {
       id: newId,
@@ -528,7 +535,7 @@ export default function StudentView({ socket, currentUser, username, assignment,
 
   const handleDeleteTestCase = (id, e) => {
     if (e) e.stopPropagation();
-    if (testCases.length <= 1) return;
+    if (submitted || testCases.length <= 1) return;
     const remaining = testCases.filter(tc => tc.id !== id);
     setTestCases(remaining);
     if (activeTestCaseId === id) {
@@ -537,10 +544,12 @@ export default function StudentView({ socket, currentUser, username, assignment,
   };
 
   const handleUpdateTestCase = (id, field, value) => {
+    if (submitted) return;
     setTestCases(prev => prev.map(tc => tc.id === id ? { ...tc, [field]: value, status: 'idle' } : tc));
   };
 
   const handleRunTestCase = (targetCase = null) => {
+    if (submitted) return;
     const caseToRun = targetCase || testCases.find(tc => tc.id === activeTestCaseId) || testCases[0];
     if (!caseToRun) return;
 
@@ -570,7 +579,7 @@ export default function StudentView({ socket, currentUser, username, assignment,
   };
 
   const handleRunAllTestCases = () => {
-    if (!testCases || testCases.length === 0) return;
+    if (submitted || !testCases || testCases.length === 0) return;
 
     setBottomTab('testcases');
     setIsRunningTests(true);
@@ -851,6 +860,7 @@ export default function StudentView({ socket, currentUser, username, assignment,
   const saveTimeoutRef = useRef(null);
 
   const handleSaveCode = () => {
+    if (submitted) return;
     const currentCode = codeRef.current;
     const curHist = codeHistoryRef.current?.length > 0 ? codeHistoryRef.current : codeHistory;
     try {
@@ -883,6 +893,7 @@ export default function StudentView({ socket, currentUser, username, assignment,
     const handleGlobalKeyDown = (e) => {
       if ((e.ctrlKey || e.metaKey) && (e.key === 's' || e.key === 'S')) {
         e.preventDefault();
+        if (submitted) return;
         handleSaveCode();
       } else if ((e.ctrlKey || e.metaKey) && (e.key === 'b' || e.key === 'B')) {
         e.preventDefault();
@@ -891,7 +902,7 @@ export default function StudentView({ socket, currentUser, username, assignment,
     };
     window.addEventListener('keydown', handleGlobalKeyDown);
     return () => window.removeEventListener('keydown', handleGlobalKeyDown);
-  }, [draftKey, safeUsername, studentId, assignmentId, classroom?.id, socket, isInstructionCollapsed]);
+  }, [draftKey, safeUsername, studentId, assignmentId, classroom?.id, socket, isInstructionCollapsed, submitted]);
 
   const checkLocalSubmitted = () => {
     const keys = getSubKeys();
@@ -1127,9 +1138,18 @@ export default function StudentView({ socket, currentUser, username, assignment,
     editorRef.current = editor;
     monacoRef.current = monaco;
 
+    if (editor) {
+      editor.updateOptions({
+        readOnly: submitted,
+        domReadOnly: submitted
+      });
+    }
+
     if (monaco) {
       editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
-        handleSaveCode();
+        if (!submitted) {
+          handleSaveCode();
+        }
       });
     }
 
@@ -1148,6 +1168,10 @@ export default function StudentView({ socket, currentUser, username, assignment,
     }
 
     editor.onDidPaste((e) => {
+      if (submitted) {
+        editor.trigger('keyboard', 'undo', null);
+        return;
+      }
       const pastedText = editor.getModel().getValueInRange(e.range);
       const key = normalize(pastedText);
       // Pasting back something copied from inside the app (editor or terminal) is allowed
@@ -1267,22 +1291,32 @@ export default function StudentView({ socket, currentUser, username, assignment,
       .then(data => {
         if (cancelled) return;
         const subs = data?.submissions || [];
-        const isSub = subs.some(s => {
+        const mySub = subs.find(s => {
           const sName = (s.student_name || s.studentName || '').toLowerCase();
           const sId = (s.student_id || s.studentId || '').toLowerCase();
           const targetName = safeUsername.toLowerCase();
           const targetId = studentId.toLowerCase();
-          return sName === targetName || sName === targetId || (sId && (sId === targetName || sId === targetId));
+          const targetEmail = (currentUser?.email || '').toLowerCase();
+          return sName === targetName || sName === targetId || sName === targetEmail ||
+                 (sId && (sId === targetName || sId === targetId || sId === targetEmail));
         });
+        const isSub = !!mySub;
 
         if (!isSub) {
-          // Definitely not submitted on server! Clear local storage submission keys
-          setSubmitted(false);
-          getSubKeys().forEach(k => {
-            try { localStorage.removeItem(k); } catch { }
-          });
+          // If server responded and definitely no submission found: check local storage before clearing
+          const localSub = checkLocalSubmitted();
+          if (!localSub) {
+            setSubmitted(false);
+            getSubKeys().forEach(k => {
+              try { localStorage.removeItem(k); } catch { }
+            });
+          }
         } else {
           setSubmitted(true);
+          if (mySub.finalCode && mySub.finalCode !== codeRef.current) {
+            setCode(mySub.finalCode);
+            codeRef.current = mySub.finalCode;
+          }
           const sHist = mySub.codeHistory || mySub.history;
           if (Array.isArray(sHist) && sHist.length > 0) {
             setCodeHistory(prev => {
@@ -1301,7 +1335,17 @@ export default function StudentView({ socket, currentUser, username, assignment,
       });
 
     return () => { cancelled = true; };
-  }, [assignment?.id, safeUsername, studentId, classroomId]);
+  }, [assignment?.id, safeUsername, studentId, classroomId, currentUser?.email]);
+
+  // Synchronize Monaco editor read-only mode dynamically with submitted state
+  useEffect(() => {
+    if (editorRef.current) {
+      editorRef.current.updateOptions({
+        readOnly: submitted,
+        domReadOnly: submitted
+      });
+    }
+  }, [submitted]);
 
   // Sync on window storage event (e.g. unsubmitted in another tab or parent screen)
   useEffect(() => {
@@ -1344,6 +1388,7 @@ export default function StudentView({ socket, currentUser, username, assignment,
   }, [socket, safeUsername, studentId, classroomId, assignmentId]);
 
   const handleRunCode = () => {
+    if (submitted) return;
     setBottomTab('terminal');
     updateEditorMarkers([]);
     setIsRunning(true);
@@ -1405,9 +1450,7 @@ export default function StudentView({ socket, currentUser, username, assignment,
     }
     setIsRunning(false);
     setProgramStarted(false);
-  };
-
-  const handleSubmit = () => {
+  };  const handleSubmit = () => {
     if (submitted) return;
     if (strictCompiler && diagnosticsRef.current?.length > 0) {
       const msg = "Notice: Strict compiler mode is active and your code currently has compiler errors/warnings. Are you sure you want to submit anyway?";
@@ -1415,7 +1458,19 @@ export default function StudentView({ socket, currentUser, username, assignment,
     } else {
       if (!window.confirm("Submit your work? You won't be able to make changes after submitting.")) return;
     }
+
+    if (isRunning) {
+      handleStopCode();
+    }
+
     setSubmitted(true);
+    if (editorRef.current) {
+      editorRef.current.updateOptions({
+        readOnly: true,
+        domReadOnly: true
+      });
+    }
+
     const aId = assignment?.id ?? 'default';
     const subHistory = codeHistoryRef.current?.length > 0 ? codeHistoryRef.current : codeHistory;
     persistHistory(subHistory, code);
@@ -1432,6 +1487,11 @@ export default function StudentView({ socket, currentUser, username, assignment,
     getSubKeys().forEach(k => {
       try { localStorage.setItem(k, JSON.stringify(subRecord)); } catch { }
     });
+    if (currentUser?.id) {
+      try {
+        localStorage.setItem(`verity_sub_${classroomId}_${assignmentId}_id_${currentUser.id}`, JSON.stringify(subRecord));
+      } catch { }
+    }
 
     // Save to backend database
     apiFetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/submissions/${aId}`, {
@@ -1466,6 +1526,13 @@ export default function StudentView({ socket, currentUser, username, assignment,
     persistHistory(curHist, code);
 
     setSubmitted(false);
+    if (editorRef.current) {
+      editorRef.current.updateOptions({
+        readOnly: false,
+        domReadOnly: false
+      });
+    }
+
     getSubKeys().forEach(k => {
       try { localStorage.removeItem(k); } catch { }
     });
@@ -1474,6 +1541,7 @@ export default function StudentView({ socket, currentUser, username, assignment,
     apiFetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/submissions/${aId}/${encodeURIComponent(safeUsername)}`, {
       method: 'DELETE'
     }).catch(() => {});
+
     if (studentId && studentId !== safeUsername) {
       apiFetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/submissions/${aId}/${encodeURIComponent(studentId)}`, {
         method: 'DELETE'
@@ -1491,6 +1559,7 @@ export default function StudentView({ socket, currentUser, username, assignment,
   };
 
   const handleTerminalInput = (e) => {
+    if (submitted) return;
     if (e.key === 'Enter') {
       const targetSocket = getCompilerSocket();
       targetSocket.emit('terminal_input', inputValue);
@@ -1899,12 +1968,14 @@ export default function StudentView({ socket, currentUser, username, assignment,
             </button>
             <button
               onClick={handleSaveCode}
+              disabled={submitted}
               style={{
                 ...styles.iconButton,
                 ...(isDark ? { backgroundColor: '#333333', borderColor: '#484848', color: '#E8EAED' } : {}),
+                ...(submitted ? { opacity: 0.4, cursor: 'not-allowed' } : {}),
                 ...(saveStatus ? styles.iconButtonSaved : {})
               }}
-              title="Save draft (Ctrl+S)"
+              title={submitted ? "Workspace is locked — saving is disabled" : "Save draft (Ctrl+S)"}
             >
               {saveStatus ? (
                 <>
@@ -1917,17 +1988,18 @@ export default function StudentView({ socket, currentUser, username, assignment,
             </button>
             <button 
               onClick={handleRunCode} 
-              disabled={isRunning || isRunningTests}
+              disabled={isRunning || isRunningTests || submitted}
               style={{ 
                 ...styles.runButton, 
                 ...(isDark ? { backgroundColor: 'rgba(52, 211, 153, 0.15)', color: '#34d399', border: '1px solid rgba(52, 211, 153, 0.3)' } : {}),
-                opacity: (isRunning || isRunningTests) ? 0.6 : 1,
-                cursor: (isRunning || isRunningTests) ? 'not-allowed' : 'pointer'
+                opacity: (isRunning || isRunningTests || submitted) ? 0.45 : 1,
+                cursor: (isRunning || isRunningTests || submitted) ? 'not-allowed' : 'pointer'
               }}
+              title={submitted ? "Workspace is locked — execution is disabled" : "Run code"}
             >
               <Play size={16} fill="currentColor" /> Run
             </button>
-            <button onClick={handleStopCode} disabled={!isRunning} style={{ ...styles.stopButton, ...(isDark ? { backgroundColor: 'rgba(248, 113, 113, 0.15)', color: '#f87171', border: '1px solid rgba(248, 113, 113, 0.3)' } : {}), opacity: isRunning ? 1 : 0.5, cursor: isRunning ? 'pointer' : 'not-allowed' }}><Square size={14} fill="currentColor" /> Stop</button>
+            <button onClick={handleStopCode} disabled={!isRunning || submitted} style={{ ...styles.stopButton, ...(isDark ? { backgroundColor: 'rgba(248, 113, 113, 0.15)', color: '#f87171', border: '1px solid rgba(248, 113, 113, 0.3)' } : {}), opacity: (isRunning && !submitted) ? 1 : 0.45, cursor: (isRunning && !submitted) ? 'pointer' : 'not-allowed' }}><Square size={14} fill="currentColor" /> Stop</button>
 
             {strictCompiler && (
               <div
@@ -1946,16 +2018,35 @@ export default function StudentView({ socket, currentUser, username, assignment,
           <div style={styles.toolGroupRight}>
             {!isSandbox && (
               submitted ? (
-                <button
-                  onClick={handleUnsubmit}
-                  style={{
-                    ...styles.unsubmitBtn,
-                    ...(isDark ? { backgroundColor: '#333333', borderColor: '#484848', color: '#E8EAED' } : {})
-                  }}
-                  title="Unsubmit to edit and re-submit your code"
-                >
-                  Unsubmit
-                </button>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '5px',
+                      padding: '6px 12px',
+                      borderRadius: '5px',
+                      backgroundColor: isDark ? 'rgba(16, 185, 129, 0.15)' : '#ecfdf5',
+                      border: '1px solid #10b981',
+                      color: isDark ? '#34d399' : '#065f46',
+                      fontWeight: '700',
+                      fontSize: '0.82rem'
+                    }}
+                  >
+                    <CheckCircle2 size={14} color="#10b981" />
+                    <span>Submitted</span>
+                  </div>
+                  <button
+                    onClick={handleUnsubmit}
+                    style={{
+                      ...styles.unsubmitBtn,
+                      ...(isDark ? { backgroundColor: '#333333', borderColor: '#484848', color: '#E8EAED' } : {})
+                    }}
+                    title="Unsubmit to edit and re-submit your code"
+                  >
+                    Unsubmit
+                  </button>
+                </div>
               ) : (
                 <button
                   onClick={handleSubmit}
@@ -1986,6 +2077,39 @@ export default function StudentView({ socket, currentUser, username, assignment,
         </div>
 
         <div style={styles.editorWrapper}>
+          {/* Locked Workspace Banner */}
+          {submitted && (
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              padding: '7px 16px',
+              backgroundColor: isDark ? 'rgba(16, 185, 129, 0.12)' : '#ecfdf5',
+              borderBottom: isDark ? '1px solid rgba(16, 185, 129, 0.25)' : '1px solid #a7f3d0',
+              color: isDark ? '#34d399' : '#065f46',
+              fontSize: '0.85rem',
+              fontWeight: '600',
+              flexShrink: 0
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <CheckCircle2 size={16} color="#10b981" />
+                <span>Work Submitted — Workspace is locked in read-only mode. Editing, saving, and executing code are disabled.</span>
+              </div>
+              <div style={{
+                fontSize: '0.72rem',
+                padding: '2px 8px',
+                borderRadius: '4px',
+                backgroundColor: isDark ? 'rgba(16, 185, 129, 0.2)' : 'rgba(16, 185, 129, 0.15)',
+                border: '1px solid #10b981',
+                textTransform: 'uppercase',
+                letterSpacing: '0.05em',
+                fontWeight: '700'
+              }}>
+                Read Only
+              </div>
+            </div>
+          )}
+
           {/* ── File Tabs ────────────────────────────────────── */}
           <div style={{
             display: 'flex',
@@ -2113,7 +2237,12 @@ export default function StudentView({ socket, currentUser, username, assignment,
             theme={isDark ? "vs-dark" : "light"}
             value={activeCode}
             onChange={(newCode) => {
-              if (submitted) return;
+              if (submitted) {
+                if (editorRef.current && editorRef.current.getValue() !== activeCode) {
+                  editorRef.current.setValue(activeCode);
+                }
+                return;
+              }
               resetCognitivePauseTimer();
               if (activeFileId === 'main') {
                 if (diagnosticsRef.current?.length > 0) updateEditorMarkers([]);
@@ -2148,7 +2277,9 @@ export default function StudentView({ socket, currentUser, username, assignment,
               fontSize: editorFontSize,
               minimap: { enabled: false },
               readOnly: submitted,
-              readOnlyMessage: { value: 'Unsubmit your work before editing' }
+              domReadOnly: submitted,
+              readOnlyMessage: { value: 'Work submitted — editing is disabled.' },
+              contextmenu: !submitted
             }}
           />
           </div>
@@ -2244,14 +2375,17 @@ export default function StudentView({ socket, currentUser, username, assignment,
                   <button
                     type="button"
                     onClick={handleAddTestCase}
+                    disabled={submitted}
                     style={{
                       ...styles.terminalActionBtn,
                       backgroundColor: isDark ? '#1e1e1e' : '#f0fdf4',
                       borderColor: isDark ? '#10b981' : '#bbf7d0',
                       color: isDark ? '#10b981' : '#16a34a',
-                      fontWeight: '600'
+                      fontWeight: '600',
+                      opacity: submitted ? 0.5 : 1,
+                      cursor: submitted ? 'not-allowed' : 'pointer'
                     }}
-                    title="Add a new test case"
+                    title={submitted ? "Disabled after submission" : "Add a new test case"}
                   >
                     <Plus size={13} style={{ marginRight: '3px' }} />
                     <span>Add Test Case</span>
@@ -2260,17 +2394,17 @@ export default function StudentView({ socket, currentUser, username, assignment,
                   <button
                     type="button"
                     onClick={() => handleRunTestCase()}
-                    disabled={isRunningTests || isRunning}
+                    disabled={isRunningTests || isRunning || submitted}
                     style={{
                       ...styles.terminalActionBtn,
                       backgroundColor: isDark ? 'rgba(52, 211, 153, 0.15)' : '#ecfdf5',
                       borderColor: isDark ? 'rgba(52, 211, 153, 0.3)' : '#10b981',
                       color: isDark ? '#34d399' : '#065f46',
                       fontWeight: '600',
-                      opacity: (isRunningTests || isRunning) ? 0.6 : 1,
-                      cursor: (isRunningTests || isRunning) ? 'not-allowed' : 'pointer'
+                      opacity: (isRunningTests || isRunning || submitted) ? 0.45 : 1,
+                      cursor: (isRunningTests || isRunning || submitted) ? 'not-allowed' : 'pointer'
                     }}
-                    title="Run selected test case"
+                    title={submitted ? "Disabled after submission" : "Run selected test case"}
                   >
                     <Play size={11} fill="currentColor" style={{ marginRight: '4px' }} />
                     <span>Run Case</span>
@@ -2279,17 +2413,17 @@ export default function StudentView({ socket, currentUser, username, assignment,
                   <button
                     type="button"
                     onClick={handleRunAllTestCases}
-                    disabled={isRunningTests || isRunning}
+                    disabled={isRunningTests || isRunning || submitted}
                     style={{
                       ...styles.terminalActionBtn,
                       backgroundColor: isDark ? 'rgba(52, 211, 153, 0.15)' : '#10b981',
                       borderColor: isDark ? 'rgba(52, 211, 153, 0.3)' : '#10b981',
                       color: isDark ? '#34d399' : '#ffffff',
                       fontWeight: '700',
-                      opacity: (isRunningTests || isRunning) ? 0.6 : 1,
-                      cursor: (isRunningTests || isRunning) ? 'not-allowed' : 'pointer'
+                      opacity: (isRunningTests || isRunning || submitted) ? 0.45 : 1,
+                      cursor: (isRunningTests || isRunning || submitted) ? 'not-allowed' : 'pointer'
                     }}
-                    title="Run all test cases"
+                    title={submitted ? "Disabled after submission" : "Run all test cases"}
                   >
                     <PlayCircle size={13} style={{ marginRight: '4px' }} />
                     <span>Run All</span>
@@ -2335,18 +2469,20 @@ export default function StudentView({ socket, currentUser, username, assignment,
                   ...styles.terminalInputRow,
                   ...(isDark ? { backgroundColor: '#252525', borderColor: '#3c3c3c' } : {})
                 }}>
-                  <span style={{ marginRight: '8px', color: '#10b981', fontWeight: 'bold' }}>{'>'}</span>
+                  <span style={{ marginRight: '8px', color: submitted ? '#9ca3af' : '#10b981', fontWeight: 'bold' }}>{'>'}</span>
                   <input
                     type="text"
                     value={inputValue}
                     onChange={(e) => setInputValue(e.target.value)}
                     onKeyDown={handleTerminalInput}
-                    autoFocus
+                    autoFocus={!submitted}
+                    disabled={submitted}
                     style={{
                       ...styles.terminalInput,
-                      ...(isDark ? { color: '#E8EAED' } : {})
+                      ...(isDark ? { color: '#E8EAED' } : {}),
+                      ...(submitted ? { opacity: 0.6, cursor: 'not-allowed' } : {})
                     }}
-                    placeholder="Type input here and press Enter..."
+                    placeholder={submitted ? "Workspace is locked — execution is disabled" : "Type input here and press Enter..."}
                   />
                 </div>
               )}
@@ -2476,7 +2612,8 @@ export default function StudentView({ socket, currentUser, username, assignment,
                     <textarea
                       value={activeCase.expectedOutput || ''}
                       onChange={(e) => handleUpdateTestCase(activeCase.id, 'expectedOutput', e.target.value)}
-                      placeholder="Expected output from your code..."
+                      disabled={submitted}
+                      placeholder={submitted ? "Expected output (read only)" : "Expected output from your code..."}
                       style={{
                         flex: 1,
                         minHeight: '75px',
@@ -2488,7 +2625,9 @@ export default function StudentView({ socket, currentUser, username, assignment,
                         fontFamily: "Consolas, 'Cascadia Code', monospace",
                         fontSize: '0.85rem',
                         resize: 'none',
-                        outline: 'none'
+                        outline: 'none',
+                        opacity: submitted ? 0.7 : 1,
+                        cursor: submitted ? 'not-allowed' : 'text'
                       }}
                     />
                   </div>

@@ -131,7 +131,11 @@ const requireRole = (...allowedRoles) => {
         if (!req.user || !req.user.role) {
             return res.status(401).json({ message: 'User role not found.' });
         }
-        if (!allowedRoles.includes(req.user.role)) {
+        const userRoleLower = String(req.user.role).toLowerCase();
+        const allowedLowers = allowedRoles.map(r => String(r).toLowerCase());
+        if (allowedLowers.includes('teacher') && !allowedLowers.includes('instructor')) allowedLowers.push('instructor');
+        if (allowedLowers.includes('instructor') && !allowedLowers.includes('teacher')) allowedLowers.push('teacher');
+        if (!allowedLowers.includes(userRoleLower)) {
             return res.status(403).json({ message: 'Access denied. Insufficient permissions.' });
         }
         next();
@@ -388,17 +392,12 @@ app.post('/auth/send-otp', async (req, res) => {
         });
 
         if (!emailResult.success) {
-            console.error(`[AUTH] Failed to send OTP to ${cleanEmail}:`, emailResult.error);
-            if (emailResult.simulated) {
-                return res.status(200).json({
-                    message: `SMTP not configured on server. Dev verification code: ${otpCode}`,
-                    email: cleanEmail,
-                    devOtp: otpCode,
-                    expiresInMinutes: 15
-                });
-            }
-            return res.status(500).json({
-                message: `Failed to deliver verification email: ${emailResult.error || 'Delivery failed'}. Please check your email configuration.`
+            console.warn(`[AUTH] Email delivery failed or offline for ${cleanEmail} (${emailResult.error}). Operating in Offline ComLab mode.`);
+            return res.status(200).json({
+                message: `Offline ComLab mode: Verification code is ${otpCode}`,
+                email: cleanEmail,
+                devOtp: otpCode,
+                expiresInMinutes: 15
             });
         }
 
@@ -550,17 +549,12 @@ app.post('/auth/resend-otp', async (req, res) => {
         });
 
         if (!emailResult.success) {
-            console.error(`[AUTH] Failed to resend OTP to ${cleanEmail}:`, emailResult.error);
-            if (emailResult.simulated) {
-                return res.status(200).json({
-                    message: `SMTP not configured on server. Dev verification code: ${otpCode}`,
-                    email: cleanEmail,
-                    devOtp: otpCode,
-                    expiresInMinutes: 15
-                });
-            }
-            return res.status(500).json({
-                message: `Failed to resend verification email: ${emailResult.error || 'Delivery failed'}.`
+            console.warn(`[AUTH] Failed to resend email or offline for ${cleanEmail} (${emailResult.error}). Operating in Offline ComLab mode.`);
+            return res.status(200).json({
+                message: `Offline ComLab mode: Verification code is ${otpCode}`,
+                email: cleanEmail,
+                devOtp: otpCode,
+                expiresInMinutes: 15
             });
         }
 
@@ -1153,12 +1147,7 @@ app.put('/users/:email', authenticateToken, requireRole('Admin'), async (req, re
             );
         }
 
-        if (existing.role === 'Teacher') {
-            await db.run(
-                'UPDATE classrooms SET instructor = ?, instructor_email = ? WHERE LOWER(instructor_email) = ? OR instructor = ?',
-                newName, newEmail, existing.email.toLowerCase(), existing.name
-            );
-        }
+        await syncUserEmailAcrossData(existing.id, existing.email, newEmail, newName, newRole);
 
         const updatedUser = await db.get('SELECT id, name, email, role, status, lastLogin FROM users WHERE id = ?', existing.id);
         res.status(200).json({ message: 'User updated successfully', user: updatedUser });
@@ -1166,6 +1155,70 @@ app.put('/users/:email', authenticateToken, requireRole('Admin'), async (req, re
         res.status(500).json({ message: e.message });
     }
 });
+
+// Helper to synchronize email changes across classrooms and enrollments safely
+async function syncUserEmailAcrossData(userId, oldEmail, newEmail, name, role) {
+    if (!userId || !newEmail) return;
+    const cleanOldEmail = (oldEmail || '').trim().toLowerCase();
+    const cleanNewEmail = newEmail.trim().toLowerCase();
+    const cleanName = (name || '').trim();
+    const roleLower = String(role || '').toLowerCase();
+    const isTeacher = roleLower === 'teacher' || roleLower === 'instructor';
+
+    // 1. Keep student enrollments in sync safely without unique constraint collision
+    try {
+        const oldEnrollments = await db.all(
+            `SELECT * FROM enrollments 
+             WHERE (student_email IS NOT NULL AND LOWER(student_email) = ?)
+                OR (student_id IS NOT NULL AND (student_id = ? OR CAST(student_id AS TEXT) = CAST(? AS TEXT)))`,
+            cleanOldEmail, userId, String(userId)
+        ).catch(() => []);
+
+        for (const en of (oldEnrollments || [])) {
+            const conflict = await db.get(
+                'SELECT id FROM enrollments WHERE classroom_id = ? AND LOWER(student_email) = LOWER(?) AND id != ?',
+                en.classroom_id, cleanNewEmail, en.id
+            ).catch(() => null);
+
+            if (conflict) {
+                await db.run(
+                    'UPDATE enrollments SET student_id = ?, student_name = COALESCE(NULLIF(student_name, \'\'), ?) WHERE id = ?',
+                    userId, cleanName, conflict.id
+                ).catch(() => {});
+                await db.run('DELETE FROM enrollments WHERE id = ?', en.id).catch(() => {});
+            } else {
+                await db.run(
+                    'UPDATE enrollments SET student_email = ?, student_id = ?, student_name = COALESCE(NULLIF(student_name, \'\'), ?) WHERE id = ?',
+                    cleanNewEmail, userId, cleanName, en.id
+                ).catch(() => {});
+            }
+        }
+    } catch (e) {
+        console.error('[syncUserEmailAcrossData] Error updating enrollments:', e);
+    }
+
+    // 2. Keep teacher classrooms in sync so the teacher retains all their classes
+    if (isTeacher || cleanName) {
+        try {
+            await db.run(
+                `UPDATE classrooms SET 
+                    instructor_email = ?, 
+                    instructor = COALESCE(NULLIF(instructor, ''), ?) 
+                 WHERE (instructor_email IS NOT NULL AND LOWER(instructor_email) = ?) 
+                    OR (instructor IS NOT NULL AND TRIM(LOWER(instructor)) = TRIM(LOWER(?)))`,
+                cleanNewEmail, cleanName, cleanOldEmail, cleanName
+            ).catch(() => {});
+        } catch (e) {
+            console.error('[syncUserEmailAcrossData] Error updating teacher classrooms:', e);
+        }
+    }
+
+    // 3. Emit real-time updates so open student and teacher views refresh immediately
+    try {
+        io.emit('classrooms_updated');
+        io.emit('classroom_students_changed', {});
+    } catch (_) {}
+}
 
 // --- CHANGE EMAIL VERIFICATION OTP ENDPOINTS ---
 app.post('/users/send-email-change-otp', authenticateToken, async (req, res) => {
@@ -1296,19 +1349,8 @@ app.post('/users/verify-email-change', authenticateToken, async (req, res) => {
             await db.run('UPDATE users SET password = ? WHERE id = ?', newPassword.trim(), userId);
         }
 
-        // Keep student enrollments in sync so the student retains all their classes
-        await db.run(
-            'UPDATE enrollments SET student_email = ? WHERE LOWER(student_email) = LOWER(?)',
-            cleanEmail, current.email
-        ).catch(() => {});
-
-        // Keep teacher classrooms in sync so the teacher retains all their classes
-        if (current.role === 'Teacher') {
-            await db.run(
-                'UPDATE classrooms SET instructor_email = ? WHERE LOWER(instructor_email) = LOWER(?)',
-                cleanEmail, current.email
-            ).catch(() => {});
-        }
+        // Keep student enrollments and teacher classrooms in sync so classrooms remain intact
+        await syncUserEmailAcrossData(userId, current.email, cleanEmail, current.name, current.role);
 
         if (current.role === 'Admin') {
             await db.run('UPDATE admin_users SET email = ? WHERE id = ?', cleanEmail, userId).catch(() => {});
@@ -1484,29 +1526,54 @@ const saveClassworkToDb = async (classroomId, classwork) => {
 
 // --- ACCESS CONTROL HELPERS ---
 async function checkClassroomAccess(req, classroomId) {
-    if (req.user?.role === 'Admin') return true;
-    if (req.user?.role === 'Teacher') {
+    const roleLower = String(req.user?.role || '').toLowerCase();
+    if (roleLower === 'admin') return true;
+    if (roleLower === 'teacher' || roleLower === 'instructor') {
         const c = await db.get('SELECT instructor_email, instructor FROM classrooms WHERE id = ?', classroomId);
         if (!c) return false;
         const teacherEmail = (req.user.email || '').trim().toLowerCase();
         const teacherName = (req.user.name || '').trim().toLowerCase();
         const cEmail = (c.instructor_email || '').trim().toLowerCase();
         const cName = (c.instructor || '').trim().toLowerCase();
-        if (cEmail) return teacherEmail && cEmail === teacherEmail;
-        return teacherName && cName && cName === teacherName;
+        const matchesEmail = Boolean(teacherEmail && cEmail && cEmail === teacherEmail);
+        const matchesName = Boolean(teacherName && cName && cName === teacherName);
+        if (matchesEmail || matchesName) {
+            // Self-heal: keep instructor_email up-to-date
+            if (teacherEmail && cEmail !== teacherEmail && matchesName) {
+                db.run('UPDATE classrooms SET instructor_email = ? WHERE id = ?', teacherEmail, classroomId).catch(() => {});
+            }
+            return true;
+        }
+        return false;
     }
-    if (req.user?.role === 'Student') {
+    if (roleLower === 'student') {
         const studentEmail = (req.user.email || '').trim().toLowerCase();
+        const studentName = (req.user.name || '').trim().toLowerCase();
         const studentId = req.user.id || 0;
-        const e = await db.get('SELECT 1 FROM enrollments WHERE classroom_id = ? AND ((student_email IS NOT NULL AND LOWER(student_email) = ?) OR (student_id IS NOT NULL AND student_id = ?))', classroomId, studentEmail, studentId);
+        const e = await db.get(
+            `SELECT 1 FROM enrollments 
+             WHERE (classroom_id = ? OR CAST(classroom_id AS TEXT) = CAST(? AS TEXT))
+               AND ((student_email IS NOT NULL AND LOWER(student_email) = ?) 
+                 OR (student_id IS NOT NULL AND (student_id = ? OR CAST(student_id AS TEXT) = CAST(? AS TEXT)))
+                 OR (student_name IS NOT NULL AND LOWER(student_name) = ?))`,
+            classroomId, String(classroomId), studentEmail, studentId, String(studentId), studentName
+        );
         return !!e;
     }
     return false;
 }
 
 async function checkAssignmentAccess(req, assignmentId) {
-    if (req.user?.role === 'Admin') return true;
-    const cw = await db.get('SELECT classroom_id FROM classwork WHERE id = ?', assignmentId);
+    const roleLower = String(req.user?.role || '').toLowerCase();
+    if (roleLower === 'admin') return true;
+    const numId = Number(assignmentId);
+    let cw = null;
+    if (!isNaN(numId) && numId > 0) {
+        cw = await db.get('SELECT classroom_id FROM classwork WHERE id = ?', numId);
+    }
+    if (!cw) {
+        cw = await db.get('SELECT classroom_id FROM classwork WHERE CAST(id AS TEXT) = ?', String(assignmentId));
+    }
     if (!cw) return false;
     return checkClassroomAccess(req, cw.classroom_id);
 }
@@ -1647,28 +1714,45 @@ app.delete('/classrooms/:classroomId/announcements/:id', authenticateToken, requ
 app.get('/classrooms', authenticateToken, async (req, res) => {
     try {
         let rawClassrooms = [];
-        if (req.user?.role === 'Student') {
+        const roleLower = String(req.user?.role || '').toLowerCase();
+        if (roleLower === 'student') {
             const studentEmail = (req.user.email || '').trim().toLowerCase();
             const studentId = req.user.id || 0;
             rawClassrooms = await db.all(`
                 SELECT DISTINCT c.* FROM classrooms c
                 INNER JOIN enrollments e ON e.classroom_id = c.id
                 WHERE (e.student_email IS NOT NULL AND LOWER(e.student_email) = ?)
-                   OR (e.student_id IS NOT NULL AND e.student_id = ?)
-                ORDER BY c.id ASC
-            `, studentEmail, studentId);
-        } else if (req.user?.role === 'Teacher') {
+                   OR (e.student_id IS NOT NULL AND (e.student_id = ? OR CAST(e.student_id AS TEXT) = CAST(? AS TEXT)))
+                ORDER BY c.name COLLATE NOCASE ASC, c.id ASC
+            `, studentEmail, studentId, String(studentId));
+
+            // Self-heal enrollments: if any enrollment has student_id matching this user, sync student_email
+            if (studentEmail && studentId) {
+                db.run(
+                    'UPDATE enrollments SET student_email = ? WHERE (student_id = ? OR CAST(student_id AS TEXT) = CAST(? AS TEXT)) AND LOWER(student_email) != ?',
+                    studentEmail, studentId, String(studentId), studentEmail
+                ).catch(() => {});
+            }
+        } else if (roleLower === 'teacher' || roleLower === 'instructor') {
             const teacherEmail = (req.user.email || '').trim().toLowerCase();
             const teacherName = (req.user.name || '').trim().toLowerCase();
             rawClassrooms = await db.all(`
                 SELECT * FROM classrooms
                 WHERE (instructor_email IS NOT NULL AND instructor_email != '' AND LOWER(instructor_email) = ?)
-                   OR ((instructor_email IS NULL OR instructor_email = '') AND instructor IS NOT NULL AND instructor != '' AND LOWER(instructor) = ?)
-                ORDER BY id ASC
+                   OR (instructor IS NOT NULL AND instructor != '' AND TRIM(LOWER(instructor)) = ?)
+                ORDER BY name COLLATE NOCASE ASC, id ASC
             `, teacherEmail, teacherName);
+
+            // Self-heal classrooms: if matched by teacher name but instructor_email is missing or outdated, update it
+            if (teacherEmail && teacherName) {
+                db.run(
+                    'UPDATE classrooms SET instructor_email = ? WHERE (instructor IS NOT NULL AND TRIM(LOWER(instructor)) = ?) AND (instructor_email IS NULL OR instructor_email = \'\' OR LOWER(instructor_email) != ?)',
+                    teacherEmail, teacherName, teacherEmail
+                ).catch(() => {});
+            }
         } else {
             // Admin can view all classrooms
-            rawClassrooms = await db.all('SELECT * FROM classrooms ORDER BY id ASC');
+            rawClassrooms = await db.all('SELECT * FROM classrooms ORDER BY name COLLATE NOCASE ASC, id ASC');
         }
 
         // Filter out phantom/dummy classrooms with no valid section/subject
@@ -1714,6 +1798,10 @@ app.get('/classrooms', authenticateToken, async (req, res) => {
                 instructorAvatar: realTeacher?.avatar || null
             };
         }));
+
+        // Strictly sort classrooms alphabetically by name
+        formatted.sort((a, b) => (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base', numeric: true }));
+
         res.status(200).json({ classrooms: formatted });
     } catch (e) {
         res.status(500).json({ message: e.message });
@@ -1985,11 +2073,14 @@ app.get('/grades/:assignmentId', authenticateToken, requireRole('Teacher', 'Admi
         if (!(await checkAssignmentAccess(req, req.params.assignmentId))) {
             return res.status(403).json({ message: 'Access denied' });
         }
-        const rows = await db.all('SELECT * FROM grades WHERE assignment_id = ?', req.params.assignmentId);
+        const aId = String(req.params.assignmentId);
+        const rows = await db.all('SELECT * FROM grades WHERE assignment_id = ? OR CAST(assignment_id AS TEXT) = ?', aId, aId);
         const gradesMap = {};
+        const roleLower = String(req.user?.role || '').toLowerCase();
         rows.forEach(r => {
+            const gradedAtVal = r.graded_at || r.gradedAt || new Date().toISOString();
             // If Student, only expose their own grade (fixes IDOR)
-            if (req.user.role === 'Student') {
+            if (roleLower === 'student') {
                 const isStudentGrade = (
                     r.student_id === String(req.user.id) ||
                     r.student_id === req.user.name ||
@@ -1998,10 +2089,10 @@ app.get('/grades/:assignmentId', authenticateToken, requireRole('Teacher', 'Admi
                     (req.user.email && r.student_id.toLowerCase() === req.user.email.toLowerCase())
                 );
                 if (isStudentGrade) {
-                    gradesMap[r.student_id] = { grade: r.grade, feedback: r.feedback, gradedAt: r.graded_at };
+                    gradesMap[r.student_id] = { grade: r.grade, feedback: r.feedback, gradedAt: gradedAtVal };
                 }
             } else {
-                gradesMap[r.student_id] = { grade: r.grade, feedback: r.feedback, gradedAt: r.graded_at };
+                gradesMap[r.student_id] = { grade: r.grade, feedback: r.feedback, gradedAt: gradedAtVal };
             }
         });
         res.status(200).json({ grades: gradesMap });
@@ -2017,6 +2108,12 @@ app.post('/grades/:assignmentId', authenticateToken, requireRole('Teacher', 'Adm
         }
         const { studentId, grade, feedback } = req.body || {};
         if (!studentId) return res.status(400).json({ message: 'studentId is required' });
+        const now = new Date().toISOString();
+        const aId = String(req.params.assignmentId);
+        const sId = String(studentId);
+        const gVal = String(grade ?? '100');
+        const fbVal = feedback || '';
+
         await db.run(`
             INSERT INTO grades (assignment_id, student_id, grade, feedback, graded_at)
             VALUES (?, ?, ?, ?, ?)
@@ -2024,8 +2121,19 @@ app.post('/grades/:assignmentId', authenticateToken, requireRole('Teacher', 'Adm
                 grade = excluded.grade,
                 feedback = excluded.feedback,
                 graded_at = excluded.graded_at
-        `, req.params.assignmentId, studentId, String(grade), feedback || '', new Date().toISOString());
-        res.status(200).json({ message: 'Grade saved' });
+        `, aId, sId, gVal, fbVal, now);
+
+        if (typeof io !== 'undefined' && io) {
+            io.emit('grade_updated', {
+                assignmentId: aId,
+                studentId: sId,
+                grade: gVal,
+                feedback: fbVal,
+                gradedAt: now
+            });
+        }
+
+        res.status(200).json({ message: 'Grade saved', grade: gVal, feedback: fbVal, gradedAt: now });
     } catch (e) {
         res.status(500).json({ message: e.message });
     }
@@ -2039,8 +2147,14 @@ app.post('/grades/:assignmentId/bulk', authenticateToken, requireRole('Teacher',
         const { grades } = req.body || {};
         if (!Array.isArray(grades)) return res.status(400).json({ message: 'grades must be an array' });
         const now = new Date().toISOString();
+        const aId = String(req.params.assignmentId);
+        const savedList = [];
+
         for (const g of grades) {
             if (g.studentId) {
+                const sId = String(g.studentId);
+                const gVal = String(g.grade ?? '100');
+                const fbVal = g.feedback || '';
                 await db.run(`
                     INSERT INTO grades (assignment_id, student_id, grade, feedback, graded_at)
                     VALUES (?, ?, ?, ?, ?)
@@ -2048,10 +2162,42 @@ app.post('/grades/:assignmentId/bulk', authenticateToken, requireRole('Teacher',
                         grade = excluded.grade,
                         feedback = excluded.feedback,
                         graded_at = excluded.graded_at
-                `, req.params.assignmentId, g.studentId, String(g.grade), g.feedback || '', now);
+                `, aId, sId, gVal, fbVal, now);
+                savedList.push({ studentId: sId, grade: gVal, feedback: fbVal, gradedAt: now });
             }
         }
-        res.status(200).json({ message: 'Bulk grades saved' });
+
+        if (typeof io !== 'undefined' && io && savedList.length > 0) {
+            io.emit('bulk_grades_updated', {
+                assignmentId: aId,
+                grades: savedList
+            });
+        }
+
+        res.status(200).json({ message: 'Bulk grades saved', count: savedList.length });
+    } catch (e) {
+        res.status(500).json({ message: e.message });
+    }
+});
+
+app.delete('/grades/:assignmentId/:studentName', authenticateToken, requireRole('Teacher', 'Admin', 'Student'), async (req, res) => {
+    try {
+        if (!(await checkAssignmentAccess(req, req.params.assignmentId))) {
+            return res.status(403).json({ message: 'Access denied' });
+        }
+        const aId = String(req.params.assignmentId);
+        const studentName = decodeURIComponent(req.params.studentName);
+        await db.run(
+            'DELETE FROM grades WHERE (assignment_id = ? OR CAST(assignment_id AS TEXT) = ?) AND (student_id = ? OR LOWER(student_id) = LOWER(?))',
+            aId, aId, studentName, studentName
+        );
+        if (typeof io !== 'undefined' && io) {
+            io.emit('grade_deleted', {
+                assignmentId: aId,
+                studentId: studentName
+            });
+        }
+        res.status(200).json({ message: 'Grade deleted' });
     } catch (e) {
         res.status(500).json({ message: e.message });
     }
@@ -2143,8 +2289,12 @@ app.get('/classroom-students/:classroomId', authenticateToken, async (req, res) 
             }
         }
 
+        const sortedStudents = Object.values(studentsMap).sort((a, b) =>
+            (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base', numeric: true })
+        );
+
         res.status(200).json({ 
-            students: Object.values(studentsMap),
+            students: sortedStudents,
             instructor
         });
     } catch (e) {
@@ -2317,8 +2467,31 @@ app.get('/submission-counts', authenticateToken, requireRole('Teacher', 'Admin')
         }
         const counts = {};
         subs.forEach(s => counts[s.assignment_id] = Number(s.c));
-        const studentRow = await db.get("SELECT COUNT(id) as c FROM users WHERE role = 'Student'");
-        const studentCount = studentRow ? Number(studentRow.c) : 0;
+
+        // Calculate studentCount ONLY for students inside the specified classroom
+        let studentCount = 0;
+        const cid = req.query.classroomId;
+        if (cid && cid !== 'default' && cid !== 'all') {
+            const enrolledRow = await db.get(`
+                SELECT COUNT(DISTINCT COALESCE(student_id, student_email, student_name)) as c 
+                FROM enrollments 
+                WHERE classroom_id = ? OR CAST(classroom_id AS TEXT) = CAST(? AS TEXT)
+            `, cid, String(cid));
+            studentCount = enrolledRow ? Number(enrolledRow.c) : 0;
+        } else if (req.user?.role !== 'Admin') {
+            const enrolledRow = await db.get(`
+                SELECT COUNT(DISTINCT COALESCE(e.student_id, e.student_email, e.student_name)) as c 
+                FROM enrollments e
+                JOIN classrooms cr ON (e.classroom_id = cr.id OR CAST(e.classroom_id AS TEXT) = CAST(cr.id AS TEXT))
+                WHERE (cr.instructor_email IS NOT NULL AND cr.instructor_email != '' AND LOWER(cr.instructor_email) = ?)
+                   OR ((cr.instructor_email IS NULL OR cr.instructor_email = '') AND cr.instructor IS NOT NULL AND cr.instructor != '' AND LOWER(cr.instructor) = ?)
+            `, (req.user.email || '').trim().toLowerCase(), (req.user.name || '').trim().toLowerCase());
+            studentCount = enrolledRow ? Number(enrolledRow.c) : 0;
+        } else {
+            const studentRow = await db.get("SELECT COUNT(id) as c FROM users WHERE role = 'Student'");
+            studentCount = studentRow ? Number(studentRow.c) : 0;
+        }
+
         res.status(200).json({ counts, studentCount });
     } catch (e) {
         res.status(500).json({ message: e.message });
@@ -3862,12 +4035,84 @@ app.delete('/question-bank/:id', authenticateToken, requireRole('Admin', 'Teache
 });
 
 // START SERVER (deferred when loaded from Electron; auto-start when run directly)
+async function reconcileDatabaseClassrooms() {
+    try {
+        const teachers = await db.all("SELECT id, name, email FROM users WHERE LOWER(role) = 'teacher' OR LOWER(role) = 'instructor'").catch(() => []);
+        for (const t of (teachers || [])) {
+            if (!t.name || !t.email) continue;
+            await db.run(
+                `UPDATE classrooms SET instructor_email = ? 
+                 WHERE (instructor IS NOT NULL AND TRIM(LOWER(instructor)) = TRIM(LOWER(?)))
+                   AND (instructor_email IS NULL OR instructor_email = '' OR LOWER(instructor_email) != LOWER(?))`,
+                t.email.trim().toLowerCase(), t.name.trim(), t.email.trim().toLowerCase()
+            ).catch(() => {});
+        }
+    } catch (e) {
+        console.warn('[reconcileDatabaseClassrooms] Warning during startup sync:', e.message);
+    }
+}
+
+// --- COMLAB OFFLINE / LAN: SERVE FRONTEND BUNDLE IF PRESENT ---
+const candidateDistDirs = [
+    path.join(__dirname, '..', 'dist'),
+    path.join(__dirname, 'dist'),
+    path.join(process.cwd(), 'dist'),
+    process.resourcesPath ? path.join(process.resourcesPath, 'dist') : null
+].filter(Boolean);
+
+const frontendDistPath = candidateDistDirs.find(d => fs.existsSync(path.join(d, 'index.html')));
+
+if (frontendDistPath) {
+    app.use(express.static(frontendDistPath));
+    app.use((req, res, next) => {
+        if (req.method !== 'GET') return next();
+        if (req.path.startsWith('/api') || 
+            req.path.startsWith('/socket.io') || 
+            req.path.startsWith('/uploads') || 
+            req.path === '/health' ||
+            req.path.includes('.')) {
+            return next();
+        }
+        res.sendFile(path.join(frontendDistPath, 'index.html'));
+    });
+}
+
+function getLanIpAddresses() {
+    const interfaces = os.networkInterfaces();
+    const ips = [];
+    for (const name of Object.keys(interfaces)) {
+        for (const iface of interfaces[name]) {
+            if (iface.family === 'IPv4' && !iface.internal) {
+                ips.push(iface.address);
+            }
+        }
+    }
+    return ips;
+}
+
 function start(port = process.env.PORT || 3001) {
     return new Promise((resolve) => {
         const p = parseInt(port, 10) || 3001;
         server.listen(p, '0.0.0.0', () => {
-            console.log(`✅ BACKEND IS ALIVE: http://0.0.0.0:${p}`);
-            console.log(`📦 Database Provider: ${db.providerName}`);
+            const lanIps = getLanIpAddresses();
+            console.log('\n========================================================');
+            console.log('  🎓 THE VERITY - OFFLINE COMLAB / LAN SERVER READY');
+            console.log('========================================================');
+            console.log(`  Local Machine:     http://localhost:${p}`);
+            if (lanIps.length > 0) {
+                lanIps.forEach(ip => {
+                    console.log(`  LAN (ComLab Web):  http://${ip}:${p}`);
+                    console.log(`  LAN (Vite Dev):    http://${ip}:5173`);
+                });
+            }
+            console.log('--------------------------------------------------------');
+            console.log(`  📦 Database Provider: ${db.providerName}`);
+            if (frontendDistPath) {
+                console.log(`  🌐 Serving Web App:   ${frontendDistPath}`);
+            }
+            console.log('  🔒 100% Offline Capable: No external internet required');
+            console.log('========================================================\n');
+            reconcileDatabaseClassrooms().catch(() => {});
             resolve(p);
         });
     });

@@ -10,7 +10,7 @@ import Skeleton from '../components/Skeleton';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { useSidebarNav } from '../hooks/useSidebarNav';
 import { useMediaQuery } from '../hooks/useMediaQuery';
-import { THEME_PRESETS, getClassroomTheme, saveClassroomTheme } from '../utils/classroomUtils';
+import { THEME_PRESETS, getClassroomTheme, saveClassroomTheme, getClassroomStorageKey, getCachedClassrooms, saveCachedClassrooms, sortClassroomsAlphabetically } from '../utils/classroomUtils';
 import ImagePreviewModal from '../components/ImagePreviewModal';
 import VideoPreviewModal from '../components/VideoPreviewModal';
 import IframePreviewModal from '../components/IframePreviewModal';
@@ -34,10 +34,7 @@ const formatShortDate = (value) => {
 
 const isLegacyHardcoded = (item) => (item?.id === 1 || item?.id === 2) && (item?.title?.startsWith('Activity 1:') || item?.title?.startsWith('Activity 2:'));
 
-const getStorageKey = (user) => {
-  const identifier = user?.email || user?.id || (user?.name ? user.name.toLowerCase().replace(/\s+/g, '_') : null);
-  return identifier ? `verity_student_classrooms_${identifier}` : 'verity_student_classrooms_anon';
-};
+const getStorageKey = (user) => getClassroomStorageKey(user, 'student');
 
 const TAB_ORDER = { stream: 0, classwork: 1, people: 2 };
 
@@ -120,21 +117,13 @@ export default function ClassroomView({
   const isPhantom = (c) => !c || !c.name || (/^Classroom \d+$/i.test(String(c.name).trim()) && (!c.section || !String(c.section).trim()) && (!c.subject || !String(c.subject).trim()));
 
   const [classrooms, setClassrooms] = useState(() => {
-    try {
-      const saved = localStorage.getItem(getStorageKey(currentUser));
-      return saved ? JSON.parse(saved).filter(c => !isPhantom(c)) : [];
-    } catch { return []; }
+    return sortClassroomsAlphabetically(getCachedClassrooms(currentUser, 'student').filter(c => !isPhantom(c)));
   });
 
   useEffect(() => {
-    const key = getStorageKey(currentUser);
     const sync = () => {
-      try {
-        const saved = localStorage.getItem(key);
-        setClassrooms(saved ? JSON.parse(saved).filter(c => !isPhantom(c)) : []);
-      } catch {
-        setClassrooms([]);
-      }
+      const cached = sortClassroomsAlphabetically(getCachedClassrooms(currentUser, 'student').filter(c => !isPhantom(c)));
+      setClassrooms(cached);
     };
     sync();
 
@@ -143,12 +132,10 @@ export default function ClassroomView({
       .then(res => res.ok ? res.json() : null)
       .then(data => {
         if (!data) return;
-        const list = (Array.isArray(data) ? data : (data.classrooms || [])).filter(c => !isPhantom(c));
+        const list = sortClassroomsAlphabetically((Array.isArray(data) ? data : (data.classrooms || [])).filter(c => !isPhantom(c)));
         if (list.length > 0) {
           setClassrooms(list);
-          try {
-            localStorage.setItem(key, JSON.stringify(list));
-          } catch {}
+          saveCachedClassrooms(list, currentUser, 'student');
         }
       })
       .catch(() => {});
@@ -424,7 +411,8 @@ export default function ClassroomView({
           `verity_sub_${classroomId}_${task.id}_${studentId}`,
           `verity_sub_${classroomId}_${task.id}_${safeUsername}`,
           currentUser?.name ? `verity_sub_${classroomId}_${task.id}_${currentUser.name}` : null,
-          currentUser?.email ? `verity_sub_${classroomId}_${task.id}_${currentUser.email}` : null
+          currentUser?.email ? `verity_sub_${classroomId}_${task.id}_${currentUser.email}` : null,
+          currentUser?.id ? `verity_sub_${classroomId}_${task.id}_id_${currentUser.id}` : null
         ].filter(Boolean);
 
         if (keys.some(k => { try { return !!localStorage.getItem(k); } catch { return false; } })) {
@@ -441,12 +429,14 @@ export default function ClassroomView({
         .then(res => res.json())
         .then(data => {
           if (Array.isArray(data?.submissions)) {
+            const targetEmail = (currentUser?.email || '').toLowerCase();
             const hasSub = data.submissions.some(s => {
               const sName = (s.student_name || s.studentName || '').toLowerCase();
               const sId = (s.student_id || s.studentId || '').toLowerCase();
               const targetName = safeUsername.toLowerCase();
               const targetId = studentId.toLowerCase();
-              return sName === targetName || sName === targetId || (sId && (sId === targetName || sId === targetId));
+              return sName === targetName || sName === targetId || sName === targetEmail ||
+                     (sId && (sId === targetName || sId === targetId || sId === targetEmail));
             });
             if (hasSub) {
               setSubmittedTasks(prev => ({ ...prev, [task.id]: true }));
@@ -570,7 +560,10 @@ export default function ClassroomView({
         }).catch(() => {});
       }
 
-      setEnrolledStudents(Object.values(studentsMap));
+      const sortedStudents = Object.values(studentsMap).sort((a, b) =>
+        (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base', numeric: true })
+      );
+      setEnrolledStudents(sortedStudents);
       setLoadingStudents(false);
     };
 
