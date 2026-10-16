@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useLayoutEffect, useRef, useMemo } from 'react';
 import ProfileMenu from './ProfileMenu';
 import { 
-  Calendar, ClipboardList, Settings, Bell, MessageSquare, FileText, PlayCircle, MoreVertical, ArrowLeft, X, Link2, 
+  Calendar, ClipboardList, Settings, MessageSquare, FileText, PlayCircle, MoreVertical, ArrowLeft, X, Link2, 
   Menu, Home, Archive, Info, Users, BookOpen, ChevronRight, CheckCircle2, TerminalSquare, Plus, Code2, Award, Clock, ArrowUpRight, ArrowRight
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -903,9 +903,6 @@ export default function ClassroomView({
               <ArrowLeft size={18} /> All courses
             </button>
             <div style={{ display: 'flex', gap: '12px' }}>
-              <div style={{ width: '36px', height: '36px', borderRadius: '50%', backgroundColor: 'rgba(255,255,255,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', backdropFilter: 'blur(8px)', cursor: 'pointer' }}>
-                <Bell size={18} />
-              </div>
               <div style={{ padding: '8px 16px', borderRadius: '50px', backgroundColor: 'rgba(255,255,255,0.15)', color: 'white', fontSize: '0.85rem', fontWeight: '500', backdropFilter: 'blur(8px)' }}>
                 Class code <span style={{ fontWeight: 'bold', marginLeft: '6px' }}>{classroom?.code || 'CS101'}</span>
               </div>

@@ -609,26 +609,13 @@ export default function StudentActivityDetail({
             <div style={{ maxWidth: '1100px', width: '100%', margin: '0 auto', display: 'flex', flexDirection: 'column' }}>
               
               {/* Top Navigation Row (Outside the card) */}
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+              <div style={{ display: 'flex', justifyContent: 'flex-start', alignItems: 'center', marginBottom: '24px' }}>
                 <button
                   onClick={onBack}
                   style={styles.backBtn}
                 >
                   <ArrowLeft size={16} style={{ marginRight: '6px' }} /> Back to Activities
                 </button>
-                
-                {classroom && (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                    <span style={{ color: isDark ? '#a3a3a3' : '#64748b', fontSize: '0.85rem', fontWeight: '500' }}>
-                      {classroom.name}
-                    </span>
-                    {classroom.code && (
-                      <span style={{ backgroundColor: isDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.05)', color: isDark ? '#e2e8f0' : '#1e293b', border: isDark ? '1px solid rgba(255, 255, 255, 0.12)' : '1px solid rgba(0, 0, 0, 0.08)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', padding: '4px 10px', borderRadius: '6px', fontSize: '0.75rem', fontWeight: '700' }}>
-                        {classroom.code}
-                      </span>
-                    )}
-                  </div>
-                )}
               </div>
 
               {/* Main Dark Card */}

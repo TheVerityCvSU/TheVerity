@@ -66,7 +66,7 @@ const cardThemes = [
   }
 ];
 
-const StudentCourseCard = ({ classroom, onClick, index, colSpan }) => {
+const StudentCourseCard = ({ classroom, onClick, index, colSpan, isArchived = false }) => {
   const theme = cardThemes[index % cardThemes.length];
   const imageUrl = classroom.theme?.customImageUrl || theme.image;
   const isMobile = typeof window !== 'undefined' && window.innerWidth <= 768;
@@ -100,21 +100,53 @@ const StudentCourseCard = ({ classroom, onClick, index, colSpan }) => {
         color: theme.textColor,
         gridColumn: `span ${finalSpan}`,
         width: '100%',
-        boxSizing: 'border-box'
+        boxSizing: 'border-box',
+        filter: isArchived ? 'grayscale(20%)' : 'none'
       }}
     >
+      {/* Subtle overlay for archived state */}
+      {isArchived && (
+        <div style={{
+          position: 'absolute',
+          inset: 0,
+          backgroundColor: 'rgba(15, 23, 42, 0.35)',
+          pointerEvents: 'none',
+          zIndex: 1
+        }} />
+      )}
+
       <div style={{ position: 'relative', zIndex: 10 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px', flexWrap: 'wrap' }}>
           <span style={{ 
-            backgroundColor: theme.pillBg, 
-            color: theme.pillText,
+            backgroundColor: isArchived ? 'rgba(255, 255, 255, 0.2)' : theme.pillBg, 
+            color: isArchived ? '#ffffff' : theme.pillText,
             padding: '4px 10px', 
             borderRadius: '20px', 
             fontSize: '0.75rem',
             fontWeight: 'bold',
+            backdropFilter: isArchived ? 'blur(6px)' : 'none'
           }}>
             {classroom.code || `C${classroom.id}`}
           </span>
+          {isArchived && (
+            <span style={{
+              backgroundColor: 'rgba(0, 0, 0, 0.5)',
+              color: '#f8fafc',
+              border: '1px solid rgba(255, 255, 255, 0.25)',
+              backdropFilter: 'blur(8px)',
+              padding: '3px 8px',
+              borderRadius: '20px',
+              fontSize: '0.7rem',
+              fontWeight: '700',
+              letterSpacing: '0.04em',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '4px'
+            }}>
+              <Archive size={11} />
+              ARCHIVED
+            </span>
+          )}
           <span style={{ fontSize: '0.85rem', color: theme.textColor, fontWeight: '500', opacity: 0.9, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
             {classroom.instructor || 'Instructor'}
           </span>
@@ -125,8 +157,8 @@ const StudentCourseCard = ({ classroom, onClick, index, colSpan }) => {
       </div>
       
       <div style={{ position: 'relative', zIndex: 10 }}>
-        <p style={{ margin: 0, fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: theme.statusColor, marginBottom: '4px' }}>
-          {theme.status}
+        <p style={{ margin: 0, fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: isArchived ? '#cbd5e1' : theme.statusColor, marginBottom: '4px' }}>
+          {isArchived ? 'COMPLETED / READ-ONLY' : theme.status}
         </p>
         <p style={{ margin: 0, fontSize: '0.95rem', fontWeight: '600', color: theme.textColor, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
           {classroom.section || 'Methods, parameters, and clean interfaces'}
@@ -715,11 +747,8 @@ export default function StudentDashboard({ currentUser, onLogout, onEnterClassro
               
               {/* Left Column: Enrolled Courses */}
               <div style={{ flex: '1 1 0%', minWidth: 0, width: '100%' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '24px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', marginBottom: '24px' }}>
                   <h2 style={{ fontSize: '1.25rem', fontWeight: 'bold', margin: 0 }}>Enrolled courses</h2>
-                  <span style={{ fontSize: '0.85rem', color: textMuted }}>
-                    {activeClassrooms.length.toString().padStart(2, '0')} active
-                  </span>
                 </div>
                 
                 <div style={{
@@ -745,9 +774,9 @@ export default function StudentDashboard({ currentUser, onLogout, onEnterClassro
                     ))
                   )}
                   {activeClassrooms.length === 0 && !loadingClassrooms && (
-                    <div style={{ gridColumn: '1 / -1', padding: '40px', textAlign: 'center', backgroundColor: cardBg, borderRadius: '24px' }}>
-                      <p style={{ color: textMuted }}>You have not enrolled in any courses yet.</p>
-                      <button onClick={() => setIsModalOpen(true)} style={{ marginTop: '12px', padding: '8px 16px', backgroundColor: '#10b981', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer' }}>
+                    <div style={{ gridColumn: '1 / -1', padding: '60px 20px', textAlign: 'center' }}>
+                      <p style={{ color: textMuted, margin: '0 0 16px', fontSize: '0.95rem' }}>You have not enrolled in any courses yet.</p>
+                      <button onClick={() => setIsModalOpen(true)} style={{ padding: '8px 20px', backgroundColor: '#10b981', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: '600' }}>
                         Join a Course
                       </button>
                     </div>
@@ -915,18 +944,71 @@ export default function StudentDashboard({ currentUser, onLogout, onEnterClassro
             </motion.div>
           )}
           {activeView === 'archived' && (
-            <motion.div key="archived" custom={slideDirection} variants={drillVariants} initial="initial" animate="animate" exit="exit">
-              <h2 style={{ fontSize: '2rem', marginBottom: '24px' }}>Archived Classrooms</h2>
-            <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(12, 1fr)', gap: '24px' }}>
-              {archivedClassrooms.map((cls, idx) => (
-                <div key={cls.id} style={{ gridColumn: `span ${isMobile ? 12 : cardThemes[idx % cardThemes.length].colSpan}`, opacity: 0.7 }}>
-                  <StudentCourseCard classroom={cls} index={idx} onClick={handleEnterClassroom} />
+            <motion.div
+              key="archived"
+              custom={slideDirection}
+              variants={drillVariants}
+              initial="initial"
+              animate="animate"
+              exit="exit"
+              style={{ display: 'flex', flexDirection: 'column', minHeight: '100%', width: '100%' }}
+            >
+              {/* Header */}
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                marginBottom: '30px'
+              }}>
+                <h1 style={{ fontSize: '2.25rem', fontWeight: '800', margin: 0, letterSpacing: '-0.02em', color: textColor }}>
+                  Archived Classrooms
+                </h1>
+              </div>
+
+              {/* Content Grid or Empty State */}
+              {archivedClassrooms.length === 0 ? (
+                <div style={{
+                  flex: 1,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  padding: '80px 20px',
+                  textAlign: 'center'
+                }}>
+                  <h3 style={{ margin: 0, fontSize: '1.25rem', color: isDark ? '#a3a3a3' : '#6b7280', fontWeight: '600' }}>
+                    No Archived Classrooms
+                  </h3>
+                  <p style={{ marginTop: '10px', fontSize: '0.95rem', color: isDark ? '#6b7280' : '#9ca3af', maxWidth: '420px', lineHeight: 1.5 }}>
+                    Classrooms that are archived will appear here.
+                  </p>
                 </div>
-              ))}
-              {archivedClassrooms.length === 0 && (
-                <p style={{ color: textMuted }}>No archived classrooms.</p>
+              ) : (
+                <div style={{
+                  display: 'grid',
+                  gridTemplateColumns: isMobile ? '1fr' : 'repeat(12, 1fr)',
+                  gap: '24px',
+                  width: '100%'
+                }}>
+                  {archivedClassrooms.map((cls, idx) => (
+                    <motion.div
+                      key={cls.id}
+                      initial={{ opacity: 0, y: 20 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ duration: 0.35, delay: idx * 0.05, ease: [0.16, 1, 0.3, 1] }}
+                      style={{ gridColumn: `span ${isMobile ? 12 : cardThemes[idx % cardThemes.length].colSpan}` }}
+                    >
+                      <StudentCourseCard
+                        classroom={cls}
+                        index={idx}
+                        colSpan={cardThemes[idx % cardThemes.length].colSpan}
+                        onClick={handleEnterClassroom}
+                        isArchived={true}
+                      />
+                    </motion.div>
+                  ))}
+                </div>
               )}
-            </div>
             </motion.div>
           )}
         </AnimatePresence>
