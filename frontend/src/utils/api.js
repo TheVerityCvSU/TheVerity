@@ -2,37 +2,48 @@
  * Hybrid Cloud-First with Local Offline Fallback API Client
  * 
  * Behavior:
- * 1. Cloud-First: Directs API requests to Cloud Server (Render / Supabase).
- * 2. Instant Local Fallback: If device has no internet (navigator.onLine === false)
- *    or the Cloud Server is down / unreachable, automatically reroutes requests
- *    to the local embedded server (http://localhost:3001) without crashing or hanging.
- * 3. Auto-Reconnection: Probes cloud health when network is restored and resumes Cloud Mode.
+ * 1. Cloud-First: Directs API requests to Cloud Server (Render / Supabase: https://verity-2z4v.onrender.com).
+ * 2. Instant Local Fallback (Desktop/Electron/Dev): If device has no internet or cloud is down,
+ *    automatically reroutes to local embedded server (http://localhost:3001).
+ * 3. Hosted Web Safe: On hosted web platforms (e.g. Vercel), requests always target the cloud server
+ *    and never mistakenly attempt to route to localhost:3001 or domain:3001.
  */
 
-export const getLocalApiUrl = () => {
-  if (typeof window !== 'undefined') {
-    const custom = localStorage.getItem('verity_server_url') || localStorage.getItem('verity_cloud_url');
-    if (custom && custom.trim()) {
-      return custom.trim().replace(/\/$/, '');
-    }
-    if (window.location && window.location.hostname && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1' && window.location.protocol.startsWith('http')) {
-      return `${window.location.protocol}//${window.location.hostname}:3001`;
-    }
-  }
-  return (import.meta.env.VITE_API_URL || 'http://localhost:3001').replace(/\/$/, '');
-};
+export const DEFAULT_CLOUD_API_URL = 'https://verity-2z4v.onrender.com';
+export const LOCAL_DEV_API_URL = 'http://localhost:3001';
 
-export const LOCAL_API_URL = getLocalApiUrl();
+// Purge any stale or corrupted localStorage keys from older versions
+if (typeof window !== 'undefined') {
+  try {
+    localStorage.removeItem('verity_server_url');
+    const cloud = localStorage.getItem('verity_cloud_url');
+    if (cloud && (cloud.includes(':3001') || cloud.includes('vercel.app'))) {
+      localStorage.removeItem('verity_cloud_url');
+    }
+  } catch (_) {}
+}
 
 export const getCloudUrl = () => {
   if (typeof window !== 'undefined') {
     const custom = localStorage.getItem('verity_cloud_url');
-    if (custom && custom.trim()) {
+    if (custom && custom.trim() && !custom.includes(':3001') && !custom.includes('vercel.app')) {
       return custom.trim().replace(/\/$/, '');
     }
   }
-  return (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
+
+  const envUrl = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
+  if (envUrl && !envUrl.includes(':3001') && !envUrl.includes('localhost') && !envUrl.includes('127.0.0.1')) {
+    return envUrl;
+  }
+
+  return DEFAULT_CLOUD_API_URL;
 };
+
+export const getLocalApiUrl = () => {
+  return LOCAL_DEV_API_URL;
+};
+
+export const LOCAL_API_URL = getLocalApiUrl();
 
 // Tracking state
 let isCloudDown = false;
@@ -40,16 +51,29 @@ const statusListeners = new Set();
 
 export const getConnectionStatus = () => {
   const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
+  const isWebHosted = typeof window !== 'undefined' && 
+                      window.location && 
+                      window.location.hostname !== 'localhost' && 
+                      window.location.hostname !== '127.0.0.1' &&
+                      !window.electronAPI;
+
   const cloudUrl = getCloudUrl();
-  const hasCloud = Boolean(cloudUrl && cloudUrl !== LOCAL_API_URL);
-  const activeMode = (hasCloud && isOnline && !isCloudDown) ? 'cloud' : 'local';
+
+  let activeMode = 'cloud';
+  if (isWebHosted) {
+    activeMode = (!isOnline || isCloudDown) ? 'offline' : 'cloud';
+  } else {
+    const hasCloud = Boolean(cloudUrl && cloudUrl !== LOCAL_API_URL);
+    activeMode = (hasCloud && isOnline && !isCloudDown) ? 'cloud' : 'local';
+  }
 
   return {
     isOnline,
     isCloudDown,
-    activeMode, // 'cloud' | 'local'
+    activeMode, // 'cloud' | 'local' | 'offline'
     cloudUrl,
-    localUrl: LOCAL_API_URL
+    localUrl: LOCAL_API_URL,
+    isWebHosted
   };
 };
 
@@ -69,7 +93,7 @@ const notifyListeners = () => {
 // Probe Cloud Server health
 export const checkCloudHealth = async () => {
   const cloudUrl = getCloudUrl();
-  if (!cloudUrl || cloudUrl === LOCAL_API_URL || (typeof navigator !== 'undefined' && !navigator.onLine)) {
+  if (!cloudUrl || (typeof navigator !== 'undefined' && !navigator.onLine)) {
     isCloudDown = true;
     notifyListeners();
     return false;
@@ -77,7 +101,7 @@ export const checkCloudHealth = async () => {
 
   try {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 4000);
+    const timer = setTimeout(() => controller.abort(), 6000);
     const res = await fetch(`${cloudUrl}/health`, { signal: controller.signal });
     clearTimeout(timer);
 
@@ -105,7 +129,7 @@ if (typeof window !== 'undefined') {
   });
 
   window.addEventListener('offline', () => {
-    console.warn('[Network] Network is offline. Switched to local offline fallback.');
+    console.warn('[Network] Network is offline.');
     isCloudDown = true;
     notifyListeners();
   });
@@ -124,13 +148,27 @@ export const apiFetch = async (url, options = {}) => {
   }
 
   const cloudUrl = getCloudUrl();
-  let targetUrl = url;
-
   const localUrl = getLocalApiUrl();
+  const isWebHosted = typeof window !== 'undefined' &&
+                      window.location &&
+                      window.location.hostname !== 'localhost' &&
+                      window.location.hostname !== '127.0.0.1' &&
+                      !window.electronAPI;
+
+  let targetUrl = url;
 
   // Resolve relative URLs to current active base
   if (targetUrl.startsWith('/')) {
-    targetUrl = `${cloudUrl || localUrl}${targetUrl}`;
+    targetUrl = `${isWebHosted ? cloudUrl : (cloudUrl || localUrl)}${targetUrl}`;
+  }
+
+  // On hosted web (e.g. Vercel), rewrite any accidentally passed localhost:3001 or domain:3001 to cloudUrl
+  if (isWebHosted) {
+    if (targetUrl.startsWith('http://localhost:3001') || targetUrl.startsWith('http://127.0.0.1:3001')) {
+      targetUrl = targetUrl.replace(/^http:\/\/(localhost|127\.0\.0\.1):3001/, cloudUrl);
+    } else if (targetUrl.includes(':3001')) {
+      targetUrl = targetUrl.replace(/https?:\/\/[^/]+:3001/, cloudUrl);
+    }
   }
 
   // Cache busting for GET requests to prevent stale data
@@ -139,10 +177,27 @@ export const apiFetch = async (url, options = {}) => {
     targetUrl = `${targetUrl}${sep}_t=${Date.now()}`;
   }
 
+  // 1. Hosted Web: Pure cloud mode (no local fallback server)
+  if (isWebHosted) {
+    try {
+      const response = await fetch(targetUrl, { ...options, headers });
+      if (isCloudDown) {
+        isCloudDown = false;
+        notifyListeners();
+      }
+      return response;
+    } catch (err) {
+      isCloudDown = true;
+      notifyListeners();
+      console.warn(`[apiFetch] Request to cloud server failed: ${targetUrl}`, err.message);
+      throw err;
+    }
+  }
+
+  // 2. Desktop / Electron / Local dev: Cloud with local fallback
   const isTargetingCloud = cloudUrl && targetUrl.startsWith(cloudUrl) && cloudUrl !== localUrl;
   const localFallbackUrl = isTargetingCloud ? targetUrl.replace(cloudUrl, localUrl) : targetUrl;
 
-  // 1. If we already know the device is offline or cloud is down, go straight to local
   if (isTargetingCloud && (!navigator.onLine || isCloudDown)) {
     try {
       return await fetch(localFallbackUrl, { ...options, headers });
@@ -152,17 +207,14 @@ export const apiFetch = async (url, options = {}) => {
     }
   }
 
-  // 2. Attempt Cloud Request
   try {
     const response = await fetch(targetUrl, { ...options, headers });
-    // Valid response from cloud
     if (isCloudDown) {
       isCloudDown = false;
       notifyListeners();
     }
     return response;
   } catch (err) {
-    // 3. Fallback to Local Server on Network / Unreachable error
     if (isTargetingCloud) {
       console.warn(`⚠️ [apiFetch] Cloud server unreachable (${err.message}). Seamlessly falling back to local server: ${localFallbackUrl}`);
       isCloudDown = true;

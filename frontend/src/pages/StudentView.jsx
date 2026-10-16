@@ -31,6 +31,18 @@ export default function StudentView({ socket, currentUser, username, assignment,
     `verity_sub_${classroomId}_${assignmentId}`
   ].filter(Boolean);
 
+  const checkLocalSubmitted = () => {
+    const keys = getSubKeys();
+    for (const k of keys) {
+      try {
+        if (localStorage.getItem(k)) return true;
+      } catch { /* ignore */ }
+    }
+    return false;
+  };
+
+  const [submitted, setSubmitted] = useState(() => checkLocalSubmitted());
+
   const getHistoryKeys = () => [
     `verity_history_${classroomId}_${assignmentId}_${studentId}`,
     `verity_history_${classroomId}_${assignmentId}_${safeUsername}`,
@@ -903,18 +915,6 @@ export default function StudentView({ socket, currentUser, username, assignment,
     window.addEventListener('keydown', handleGlobalKeyDown);
     return () => window.removeEventListener('keydown', handleGlobalKeyDown);
   }, [draftKey, safeUsername, studentId, assignmentId, classroom?.id, socket, isInstructionCollapsed, submitted]);
-
-  const checkLocalSubmitted = () => {
-    const keys = getSubKeys();
-    for (const k of keys) {
-      try {
-        if (localStorage.getItem(k)) return true;
-      } catch { /* ignore */ }
-    }
-    return false;
-  };
-
-  const [submitted, setSubmitted] = useState(() => checkLocalSubmitted());
 
   // Tell the server we left the workspace if we click back or navigate away,
   // and make sure current keystroke history is flushed to persistent storage.

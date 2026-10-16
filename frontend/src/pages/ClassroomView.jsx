@@ -238,6 +238,47 @@ export default function ClassroomView({
     setActiveTab(newTab);
   };
 
+  // Horizontal drag-to-scroll handler for To Do cards
+  const todoScrollRef = useRef(null);
+  const isDraggingTodoRef = useRef(false);
+  const startXRef = useRef(0);
+  const scrollLeftRef = useRef(0);
+  const hasDraggedTodoRef = useRef(false);
+  const [isTodoDragging, setIsTodoDragging] = useState(false);
+
+  const handleTodoMouseDown = (e) => {
+    if (e.button !== 0 || !todoScrollRef.current) return;
+    isDraggingTodoRef.current = true;
+    hasDraggedTodoRef.current = false;
+    startXRef.current = e.pageX - todoScrollRef.current.offsetLeft;
+    scrollLeftRef.current = todoScrollRef.current.scrollLeft;
+    setIsTodoDragging(true);
+
+    const onMouseMove = (moveEvent) => {
+      if (!isDraggingTodoRef.current || !todoScrollRef.current) return;
+      moveEvent.preventDefault();
+      const x = moveEvent.pageX - todoScrollRef.current.offsetLeft;
+      const walk = (x - startXRef.current);
+      if (Math.abs(walk) > 5) {
+        hasDraggedTodoRef.current = true;
+      }
+      todoScrollRef.current.scrollLeft = scrollLeftRef.current - walk;
+    };
+
+    const onMouseUp = () => {
+      isDraggingTodoRef.current = false;
+      setIsTodoDragging(false);
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+      setTimeout(() => {
+        hasDraggedTodoRef.current = false;
+      }, 50);
+    };
+
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+  };
+
   // Banner Theme synced with instructor setting
   const [bannerTheme, setBannerTheme] = useState(() => getClassroomTheme(classroom));
 
@@ -905,9 +946,21 @@ export default function ClassroomView({
             style={{ width: '100%' }}
           >
         {activeTab === 'stream' && (
-        <div style={{ display: 'flex', gap: '32px', flexWrap: 'wrap' }}>
+        <div style={{
+          display: 'flex',
+          flexDirection: isMobile ? 'column' : 'row',
+          gap: isMobile ? '24px' : '32px',
+          alignItems: 'flex-start',
+          width: '100%'
+        }}>
            {/* LEFT COLUMN */}
-           <div style={{ flex: '1 1 65%', display: 'flex', flexDirection: 'column', gap: '32px' }}>
+           <div style={{
+             flex: 1,
+             minWidth: 0,
+             display: 'flex',
+             flexDirection: 'column',
+             gap: '28px'
+           }}>
              
              {/* Announcements removed */}
 
@@ -924,15 +977,19 @@ export default function ClassroomView({
                </div>
                
                <div 
+                 ref={todoScrollRef}
+                 onMouseDown={handleTodoMouseDown}
                  className="hide-scroll"
                  style={{ 
                    display: 'flex', 
-                   gap: '16px', 
+                   gap: '14px', 
                    overflowX: 'auto', 
                    paddingBottom: '12px',
-                   scrollSnapType: 'x mandatory',
+                   scrollSnapType: isTodoDragging ? 'none' : 'x proximity',
                    scrollbarWidth: 'none',
-                   msOverflowStyle: 'none'
+                   msOverflowStyle: 'none',
+                   cursor: isTodoDragging ? 'grabbing' : 'grab',
+                   userSelect: 'none'
                  }}>
                  <style dangerouslySetInnerHTML={{__html: `
                    .hide-scroll::-webkit-scrollbar { display: none; }
@@ -943,29 +1000,45 @@ export default function ClassroomView({
                    </div>
                  ) : (
                    upcomingItems.map(item => (
-                     <div key={item.id} onClick={() => { setExpandedId(item.id); handleTabChange('classwork'); }} style={{ 
-                       flex: '0 0 calc(33.333% - 11px)', 
-                       minWidth: '220px',
-                       scrollSnapAlign: 'start',
-                       backgroundColor: cardBg, 
-                       borderRadius: '16px', 
-                       padding: '20px', 
-                       border: isDark ? '1px solid #333' : '1px solid #e5e7eb', 
-                       cursor: 'pointer', 
-                       transition: 'all 0.2s', 
-                       ...isDark ? {} : { boxShadow: '0 2px 8px rgba(0,0,0,0.04)' } 
-                     }}>
-                       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '16px' }}>
-                         <div style={{ width: '32px', height: '32px', borderRadius: '50%', backgroundColor: '#10b981', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white' }}>
-                           <ClipboardList size={16} />
+                     <div
+                       key={item.id}
+                       onClick={() => {
+                         if (hasDraggedTodoRef.current) return;
+                         setExpandedId(item.id);
+                         handleTabChange('classwork');
+                       }}
+                       onDragStart={(e) => e.preventDefault()}
+                       style={{ 
+                         flex: isMobile ? '0 0 260px' : '0 0 320px', 
+                         width: isMobile ? '260px' : '320px',
+                         maxWidth: '340px',
+                         scrollSnapAlign: 'start',
+                         backgroundColor: cardBg, 
+                         borderRadius: '16px', 
+                         padding: '18px', 
+                         border: isDark ? '1px solid #333' : '1px solid #e5e7eb', 
+                         cursor: isTodoDragging ? 'grabbing' : 'pointer', 
+                         transition: isTodoDragging ? 'none' : 'all 0.2s', 
+                         display: 'flex',
+                         flexDirection: 'column',
+                         justifyContent: 'space-between',
+                         minHeight: '140px',
+                         userSelect: 'none',
+                         ...isDark ? {} : { boxShadow: '0 2px 8px rgba(0,0,0,0.04)' } 
+                       }}>
+                       <div>
+                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                           <div style={{ width: '32px', height: '32px', borderRadius: '50%', backgroundColor: '#10b981', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', flexShrink: 0 }}>
+                             <ClipboardList size={16} />
+                           </div>
+                           <span style={{ fontSize: '0.74rem', fontWeight: 'bold', color: textMuted }}>
+                             {item.dueDate ? formatShortDate(item.dueDate) : 'No due date'}
+                           </span>
                          </div>
-                         <span style={{ fontSize: '0.75rem', fontWeight: 'bold', color: textMuted }}>
-                           {item.dueDate ? formatShortDate(item.dueDate) : 'No due date'}
-                         </span>
+                         <div style={{ fontSize: '0.68rem', fontWeight: 'bold', color: '#10b981', letterSpacing: '0.05em', marginBottom: '4px' }}>ACTIVITY</div>
+                         <div style={{ fontSize: '0.98rem', fontWeight: 'bold', marginBottom: '5px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.title}</div>
                        </div>
-                       <div style={{ fontSize: '0.7rem', fontWeight: 'bold', color: '#10b981', letterSpacing: '0.05em', marginBottom: '4px' }}>ASSIGNMENT</div>
-                       <div style={{ fontSize: '1rem', fontWeight: 'bold', marginBottom: '6px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.title}</div>
-                       <div style={{ fontSize: '0.8rem', color: textMuted, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+                       <div style={{ fontSize: '0.78rem', color: textMuted, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', lineHeight: '1.45', marginTop: '4px' }}>
                          {item.details ? item.details.replace(/<[^>]*>?/gm, '').replace(/&nbsp;/g, ' ') : 'No instructions provided.'}
                        </div>
                      </div>
@@ -979,59 +1052,127 @@ export default function ClassroomView({
                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '16px' }}>
                  <div style={{ display: 'flex', alignItems: 'baseline', gap: '12px' }}>
                    <h2 style={{ fontSize: '1.25rem', fontWeight: 'bold', margin: 0 }}>Learning materials</h2>
-                   <span style={{ fontSize: '0.85rem', color: textMuted }}>Module 4</span>
+                   <span style={{ fontSize: '0.85rem', color: textMuted }}>
+                     {visibleMaterials.length} item{visibleMaterials.length !== 1 ? 's' : ''}
+                   </span>
                  </div>
-                 <button style={{ background: 'none', border: 'none', color: '#10b981', fontWeight: 'bold', fontSize: '0.9rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                 <button 
+                   onClick={handleOpenMaterials}
+                   style={{ background: 'none', border: 'none', color: '#10b981', fontWeight: 'bold', fontSize: '0.9rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
+                 >
                    Open library <ChevronRight size={16} />
                  </button>
                </div>
                
-               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '16px' }}>
-                 {/* Mat 1 */}
-                 <div style={{ backgroundColor: cardBg, borderRadius: '16px', padding: '16px 20px', border: isDark ? '1px solid #333' : '1px solid #e5e7eb', display: 'flex', alignItems: 'center', gap: '16px' }}>
-                   <div style={{ width: '40px', height: '40px', borderRadius: '10px', backgroundColor: '#dcfce7', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#059669', flexShrink: 0 }}>
-                     <FileText size={20} />
+               <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fill, minmax(220px, 1fr))', gap: '14px' }}>
+                 {visibleMaterials.length === 0 ? (
+                   <div style={{ 
+                     gridColumn: '1 / -1', 
+                     backgroundColor: cardBg, 
+                     borderRadius: '16px', 
+                     padding: '24px 20px', 
+                     border: isDark ? '1px solid #333' : '1px solid #e5e7eb', 
+                     display: 'flex', 
+                     alignItems: 'center', 
+                     gap: '14px', 
+                     color: textMuted, 
+                     fontSize: '0.88rem', 
+                     fontStyle: 'italic' 
+                   }}>
+                     <FileText size={20} color={textMuted} />
+                     <span>No learning materials uploaded yet for this class.</span>
                    </div>
-                   <div style={{ flex: 1 }}>
-                     <div style={{ fontSize: '0.9rem', fontWeight: 'bold', marginBottom: '2px' }}>Methods quick guide</div>
-                     <div style={{ fontSize: '0.75rem', color: textMuted }}>PDF · 6 pages</div>
-                   </div>
-                   <ChevronRight size={18} color={textMuted} />
-                 </div>
-                 
-                 {/* Mat 2 */}
-                 <div style={{ backgroundColor: cardBg, borderRadius: '16px', padding: '16px 20px', border: isDark ? '1px solid #333' : '1px solid #e5e7eb', display: 'flex', alignItems: 'center', gap: '16px' }}>
-                   <div style={{ width: '40px', height: '40px', borderRadius: '10px', backgroundColor: '#e0f2fe', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#0284c7', flexShrink: 0 }}>
-                     <TerminalSquare size={20} />
-                   </div>
-                   <div style={{ flex: 1 }}>
-                     <div style={{ fontSize: '0.9rem', fontWeight: 'bold', marginBottom: '2px' }}>Practice sandbox</div>
-                     <div style={{ fontSize: '0.75rem', color: textMuted }}>Interactive editor</div>
-                   </div>
-                   <ChevronRight size={18} color={textMuted} />
-                 </div>
+                 ) : (
+                   visibleMaterials.slice(0, 6).map((item) => {
+                     const hasVideo = item.attachments?.some(a => a?.type?.toLowerCase()?.includes('video') || a?.type === 'youtube');
+                     const hasCode = item.attachments?.some(a => a?.type?.toLowerCase()?.includes('code') || a?.type?.toLowerCase()?.includes('terminal'));
+                     const hasLink = item.attachments?.some(a => a?.type?.toLowerCase()?.includes('link') || a?.type === 'url');
 
-                 {/* Mat 3 */}
-                 <div style={{ backgroundColor: cardBg, borderRadius: '16px', padding: '16px 20px', border: isDark ? '1px solid #333' : '1px solid #e5e7eb', display: 'flex', alignItems: 'center', gap: '16px' }}>
-                   <div style={{ width: '40px', height: '40px', borderRadius: '10px', backgroundColor: '#fef3c7', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#d97706', flexShrink: 0 }}>
-                     <PlayCircle size={20} />
-                   </div>
-                   <div style={{ flex: 1 }}>
-                     <div style={{ fontSize: '0.9rem', fontWeight: 'bold', marginBottom: '2px' }}>Parameter patterns</div>
-                     <div style={{ fontSize: '0.75rem', color: textMuted }}>Video · 12 min</div>
-                   </div>
-                   <ChevronRight size={18} color={textMuted} />
-                 </div>
+                     let iconNode = <FileText size={20} />;
+                     let iconBg = '#dcfce7';
+                     let iconColor = '#059669';
+
+                     if (hasVideo) {
+                       iconNode = <PlayCircle size={20} />;
+                       iconBg = '#fef3c7';
+                       iconColor = '#d97706';
+                     } else if (hasCode) {
+                       iconNode = <TerminalSquare size={20} />;
+                       iconBg = '#e0f2fe';
+                       iconColor = '#0284c7';
+                     } else if (hasLink) {
+                       iconNode = <Link2 size={20} />;
+                       iconBg = '#e0f2fe';
+                       iconColor = '#0284c7';
+                     }
+
+                     const attCount = item.attachments?.length || 0;
+                     const subtitle = attCount > 0 
+                       ? `${attCount} resource${attCount > 1 ? 's' : ''}` 
+                       : (item.topic || 'Course material');
+
+                     return (
+                       <div 
+                         key={item.id}
+                         onClick={() => {
+                           setExpandedId(item.id);
+                           handleOpenMaterials();
+                         }}
+                         style={{ 
+                           backgroundColor: cardBg, 
+                           borderRadius: '16px', 
+                           padding: '16px 18px', 
+                           border: isDark ? '1px solid #333' : '1px solid #e5e7eb', 
+                           display: 'flex', 
+                           alignItems: 'center', 
+                           gap: '14px',
+                           cursor: 'pointer',
+                           transition: 'all 0.2s ease',
+                           userSelect: 'none',
+                           ...isDark ? {} : { boxShadow: '0 2px 8px rgba(0,0,0,0.03)' }
+                         }}
+                       >
+                         <div style={{ width: '40px', height: '40px', borderRadius: '10px', backgroundColor: iconBg, display: 'flex', alignItems: 'center', justifyContent: 'center', color: iconColor, flexShrink: 0 }}>
+                           {iconNode}
+                         </div>
+                         <div style={{ flex: 1, minWidth: 0 }}>
+                           <div style={{ fontSize: '0.9rem', fontWeight: 'bold', marginBottom: '2px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                             {item.title}
+                           </div>
+                           <div style={{ fontSize: '0.75rem', color: textMuted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                             {subtitle}
+                           </div>
+                         </div>
+                         <ChevronRight size={18} color={textMuted} style={{ flexShrink: 0 }} />
+                       </div>
+                     );
+                   })
+                 )}
                </div>
              </div>
              
            </div>
 
            {/* RIGHT COLUMN */}
-           <div style={{ flex: '0 0 320px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+           <div style={{
+             width: isMobile ? '100%' : '300px',
+             flexShrink: 0,
+             display: 'flex',
+             flexDirection: 'column',
+             gap: '20px'
+           }}>
              
              {/* Main Right Card */}
-             <div style={{ backgroundColor: cardBg, borderRadius: '24px', padding: '24px', border: isDark ? '1px solid #333' : '1px solid #e5e7eb', display: 'flex', flexDirection: 'column', gap: '24px' }}>
+             <div style={{
+               backgroundColor: cardBg,
+               borderRadius: '20px',
+               padding: '20px',
+               border: isDark ? '1px solid #333' : '1px solid #e5e7eb',
+               display: 'flex',
+               flexDirection: 'column',
+               gap: '20px',
+               boxShadow: isDark ? 'none' : '0 2px 8px rgba(0,0,0,0.04)'
+             }}>
                
                {/* Teacher Info */}
                <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>

@@ -23,10 +23,18 @@ import { saveClassroomTheme } from './utils/classroomUtils';
 import { notifyUserListeners } from './hooks/useCurrentUser';
 
 // Connect to Backend (Cloud-first with local offline fallback)
-const CLOUD_SOCKET = (import.meta.env.VITE_SOCKET_URL || '').replace(/\/$/, '');
-const LOCAL_SOCKET = (import.meta.env.VITE_SOCKET_URL || import.meta.env.VITE_API_URL || 'http://localhost:3001').replace(/\/$/, '');
+const isWebHosted = typeof window !== 'undefined' &&
+                    window.location &&
+                    window.location.hostname !== 'localhost' &&
+                    window.location.hostname !== '127.0.0.1' &&
+                    !window.electronAPI;
 
-const socket = io(CLOUD_SOCKET || LOCAL_SOCKET, {
+const CLOUD_SOCKET = (import.meta.env.VITE_SOCKET_URL || (isWebHosted ? 'https://verity-2z4v.onrender.com' : '')).replace(/\/$/, '');
+const LOCAL_SOCKET = 'http://localhost:3001';
+
+const socketTarget = isWebHosted ? (CLOUD_SOCKET || 'https://verity-2z4v.onrender.com') : (CLOUD_SOCKET || LOCAL_SOCKET);
+
+const socket = io(socketTarget, {
   reconnectionAttempts: 10,
   reconnectionDelay: 2000,
   timeout: 5000,
@@ -36,7 +44,7 @@ const socket = io(CLOUD_SOCKET || LOCAL_SOCKET, {
   }
 });
 
-if (CLOUD_SOCKET && CLOUD_SOCKET !== LOCAL_SOCKET) {
+if (!isWebHosted && CLOUD_SOCKET && CLOUD_SOCKET !== LOCAL_SOCKET) {
   socket.on('connect_error', () => {
     if (socket.io.uri !== LOCAL_SOCKET) {
       console.warn('[Socket.IO] Cloud socket unreachable. Switching to local offline socket...');
@@ -829,7 +837,7 @@ export default function App() {
         </motion.div>
       </AnimatePresence>
 
-      {/* --- OFFLINE LOCAL FALLBACK BANNER --- */}
+      {/* --- OFFLINE LOCAL FALLBACK BANNER (Electron / Desktop) --- */}
       {connStatus?.activeMode === 'local' && Boolean(getCloudUrl()) && (
         <div style={{
           position: 'fixed',
@@ -860,6 +868,40 @@ export default function App() {
             display: 'inline-block'
           }}></span>
           <span>Offline Mode &bull; Working locally &bull; Changes will sync when reconnected</span>
+        </div>
+      )}
+
+      {/* --- OFFLINE NO CONNECTION BANNER (Hosted Web / Vercel) --- */}
+      {connStatus?.activeMode === 'offline' && (
+        <div style={{
+          position: 'fixed',
+          bottom: '16px',
+          left: '50%',
+          transform: 'translateX(-50%)',
+          zIndex: 999999,
+          backgroundColor: '#0f172a',
+          color: '#f8fafc',
+          padding: '8px 18px',
+          borderRadius: '9999px',
+          fontSize: '0.8rem',
+          fontWeight: '600',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '10px',
+          boxShadow: '0 8px 24px rgba(0,0,0,0.35)',
+          border: '1px solid rgba(255,255,255,0.12)',
+          pointerEvents: 'none',
+          backdropFilter: 'blur(8px)',
+        }}>
+          <span style={{
+            width: '9px',
+            height: '9px',
+            borderRadius: '50%',
+            backgroundColor: '#ef4444',
+            boxShadow: '0 0 8px #ef4444',
+            display: 'inline-block'
+          }}></span>
+          <span>Offline &bull; Could not connect to backend server</span>
         </div>
       )}
     </div>

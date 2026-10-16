@@ -7,8 +7,10 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, __dirname, '');
-  const apiUrl = env.VITE_API_URL || process.env.VITE_API_URL || 'http://localhost:3001';
-  const socketUrl = env.VITE_SOCKET_URL || process.env.VITE_SOCKET_URL || apiUrl;
+  const isProd = mode === 'production' || process.env.NODE_ENV === 'production';
+  const defaultApi = isProd ? 'https://verity-2z4v.onrender.com' : 'http://localhost:3001';
+  const apiUrl = (env.VITE_API_URL || process.env.VITE_API_URL || defaultApi).replace(/\/$/, '');
+  const socketUrl = (env.VITE_SOCKET_URL || process.env.VITE_SOCKET_URL || apiUrl).replace(/\/$/, '');
 
   return {
     base: './', // relative asset paths so the build works from file:// in Electron
@@ -39,22 +41,9 @@ export default defineConfig(({ mode }) => {
       }
     },
     define: {
-      'import.meta.env.VITE_API_URL': `((typeof window !== "undefined") ? ((() => {
-        const custom = localStorage.getItem("verity_server_url") || localStorage.getItem("verity_cloud_url");
-        if (custom && custom.trim()) return custom.trim().replace(/\\/$/, "");
-        if (window.location && window.location.hostname && window.location.hostname !== "localhost" && window.location.hostname !== "127.0.0.1" && window.location.protocol.startsWith("http")) {
-          return window.location.protocol + "//" + window.location.hostname + ":3001";
-        }
-        return "${apiUrl}";
-      })()) : "${apiUrl}")`,
-      'import.meta.env.VITE_SOCKET_URL': `((typeof window !== "undefined") ? ((() => {
-        const custom = localStorage.getItem("verity_server_url") || localStorage.getItem("verity_cloud_url");
-        if (custom && custom.trim()) return custom.trim().replace(/\\/$/, "");
-        if (window.location && window.location.hostname && window.location.hostname !== "localhost" && window.location.hostname !== "127.0.0.1" && window.location.protocol.startsWith("http")) {
-          return window.location.protocol + "//" + window.location.hostname + ":3001";
-        }
-        return "${socketUrl}";
-      })()) : "${socketUrl}")`
+      'import.meta.env.VITE_API_URL': JSON.stringify(apiUrl),
+      'import.meta.env.VITE_SOCKET_URL': JSON.stringify(socketUrl),
+      'import.meta.env.VITE_GOOGLE_CLIENT_ID': JSON.stringify(env.VITE_GOOGLE_CLIENT_ID || process.env.VITE_GOOGLE_CLIENT_ID || '6514928694-2rd8cu7b67o4f2jqtuv5hk1d51s97lcc.apps.googleusercontent.com')
     }
   };
 })
