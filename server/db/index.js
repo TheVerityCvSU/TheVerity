@@ -32,9 +32,13 @@ function convertPlaceholders(sql) {
     let index = 1;
     // Replace ? with $1, $2, etc.
     let converted = sql.replace(/\?/g, () => `$${index++}`);
+    // Strip SQLite-specific COLLATE NOCASE which does not exist in standard PostgreSQL
+    converted = converted.replace(/\s+COLLATE\s+NOCASE\b/gi, '');
     // Replace reserved words as column identifiers in audit_logs
-    converted = converted.replace(/\baudit_logs\s*\(\s*timestamp,\s*user,/i, 'audit_logs (timestamp, "user",');
+    converted = converted.replace(/\baudit_logs\s*\(\s*(?:timestamp,\s*)?user,/i, (m) => m.replace(/\buser\b/, '"user"'));
     converted = converted.replace(/,\s*severity,\s*desc\s*\)/i, ', severity, "desc")');
+    converted = converted.replace(/\ba\.(user|desc)\b/g, 'a."$1"');
+    converted = converted.replace(/\baudit_logs\.(user|desc)\b/g, 'audit_logs."$1"');
     return converted;
 }
 

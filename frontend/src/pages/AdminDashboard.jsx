@@ -108,9 +108,15 @@ export default function AdminDashboard({ currentUser, onLogout, socket }) {
     if (showLoading) setLoading(true);
     try {
       const r = await apiFetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/users`);
+      if (!r.ok) {
+        console.warn(`[AdminDashboard] Failed to fetch users: HTTP ${r.status}`);
+        if (showLoading) setUsers([]);
+        return;
+      }
       const d = await r.json();
       setUsers(d.users || []);
-    } catch {
+    } catch (err) {
+      console.warn('[AdminDashboard] Error loading users:', err);
       if (showLoading) setUsers([]);
     } finally {
       if (showLoading) setLoading(false);
@@ -134,16 +140,18 @@ export default function AdminDashboard({ currentUser, onLogout, socket }) {
     if (!socket) return;
     const handleLiveSecurityAlert = () => {
       loadStats();
-      loadUsers();
+      loadUsers(false);
       loadNotifications();
     };
     socket.on('admin_security_alert', handleLiveSecurityAlert);
     socket.on('admin_stats_update', handleLiveSecurityAlert);
     socket.on('proctor_alert_broadcast', handleLiveSecurityAlert);
+    socket.on('users_updated', handleLiveSecurityAlert);
     return () => {
       socket.off('admin_security_alert', handleLiveSecurityAlert);
       socket.off('admin_stats_update', handleLiveSecurityAlert);
       socket.off('proctor_alert_broadcast', handleLiveSecurityAlert);
+      socket.off('users_updated', handleLiveSecurityAlert);
     };
   }, [socket]);
 

@@ -498,6 +498,30 @@ app.post('/auth/verify-otp', async (req, res) => {
         const user = { id: info.lastInsertRowid, name, email: cleanEmail, password, role: userRole, status };
         const userToken = jwt.sign({ id: user.id, email: user.email, role: user.role, name: user.name }, JWT_SECRET);
 
+        // Emit real-time socket events so admin sees new user/instructor immediately
+        try {
+            io.emit('users_updated');
+            io.emit('admin_security_alert');
+            io.emit('admin_stats_update');
+        } catch (_) {}
+
+        // Log audit log event
+        try {
+            const nowIso = new Date().toISOString();
+            if (userRole === 'Teacher') {
+                await db.run(
+                    'INSERT INTO audit_logs (timestamp, "user", type, severity, "desc") VALUES (?, ?, ?, ?, ?)',
+                    nowIso, name, 'Teacher Registration', status === 'Pending' ? 'Warning' : 'Normal',
+                    status === 'Pending' ? `New instructor account registered and pending admin approval (${cleanEmail})` : `New instructor account registered (${cleanEmail})`
+                ).catch(() => {});
+            } else {
+                await db.run(
+                    'INSERT INTO audit_logs (timestamp, "user", type, severity, "desc") VALUES (?, ?, ?, ?, ?)',
+                    nowIso, name, 'User Registration', 'Normal', `New student account registered (${cleanEmail})`
+                ).catch(() => {});
+            }
+        } catch (_) {}
+
         res.status(201).json({
             message: status === 'Pending' ? 'Account created and pending admin approval.' : 'Account registered and verified successfully.',
             user,
@@ -645,6 +669,31 @@ app.post('/register', async (req, res) => {
         );
         const user = { id: info.lastInsertRowid, name, email, password, role: userRole, status };
         const userToken = jwt.sign({ id: user.id, email: user.email, role: user.role, name: user.name }, JWT_SECRET);
+
+        // Emit real-time socket events so admin sees new user/instructor immediately
+        try {
+            io.emit('users_updated');
+            io.emit('admin_security_alert');
+            io.emit('admin_stats_update');
+        } catch (_) {}
+
+        // Log audit log event
+        try {
+            const nowIso = new Date().toISOString();
+            if (userRole === 'Teacher') {
+                await db.run(
+                    'INSERT INTO audit_logs (timestamp, "user", type, severity, "desc") VALUES (?, ?, ?, ?, ?)',
+                    nowIso, name, 'Teacher Registration', status === 'Pending' ? 'Warning' : 'Normal',
+                    status === 'Pending' ? `New instructor account registered and pending admin approval (${email})` : `New instructor account registered (${email})`
+                ).catch(() => {});
+            } else if (userRole === 'Student') {
+                await db.run(
+                    'INSERT INTO audit_logs (timestamp, "user", type, severity, "desc") VALUES (?, ?, ?, ?, ?)',
+                    nowIso, name, 'User Registration', 'Normal', `New student account registered (${email})`
+                ).catch(() => {});
+            }
+        } catch (_) {}
+
         res.status(201).json({ message: 'User registered successfully', user, token: userToken });
     } catch (e) {
         res.status(500).json({ message: e.message });
@@ -979,28 +1028,28 @@ app.get('/users', authenticateToken, requireRole('Admin'), async (req, res) => {
                 (
                     SELECT a.timestamp 
                     FROM audit_logs a 
-                    WHERE (LOWER(a.user) = LOWER(u.name) OR LOWER(a.user) = LOWER(u.email))
+                    WHERE (LOWER(a."user") = LOWER(u.name) OR LOWER(a."user") = LOWER(u.email))
                     ORDER BY a.id DESC 
                     LIMIT 1
                 ) as last_flag_time,
                 (
-                    SELECT a.desc 
+                    SELECT a."desc" 
                     FROM audit_logs a 
-                    WHERE (LOWER(a.user) = LOWER(u.name) OR LOWER(a.user) = LOWER(u.email))
+                    WHERE (LOWER(a."user") = LOWER(u.name) OR LOWER(a."user") = LOWER(u.email))
                     ORDER BY a.id DESC 
                     LIMIT 1
                 ) as last_flag_desc,
                 (
                     SELECT COUNT(a.id) 
                     FROM audit_logs a 
-                    WHERE (LOWER(a.user) = LOWER(u.name) OR LOWER(a.user) = LOWER(u.email))
+                    WHERE (LOWER(a."user") = LOWER(u.name) OR LOWER(a."user") = LOWER(u.email))
                 ) as flag_count
             FROM users u
         `);
         const users = rows.map(u => ({
             ...u,
             status: u.status || 'Active',
-            lastLogin: u.lastLogin || null,
+            lastLogin: u.lastLogin || u.lastlogin || null,
             lastFlagTime: u.last_flag_time || null,
             lastFlagDesc: u.last_flag_desc || null,
             flagCount: Number(u.flag_count || 0)
@@ -1015,7 +1064,10 @@ app.get('/users', authenticateToken, requireRole('Admin'), async (req, res) => {
 app.get('/users/profile', authenticateToken, async (req, res) => {
     try {
         const userId = req.user.id;
-        const user = await db.get('SELECT id, name, email, role, avatar, status FROM users WHERE id = ?', userId);
+        let user = await db.get('SELECT id, name, email, role, avatar, status FROM users WHERE id = ?', userId);
+        if (!user && req.user.role === 'Admin') {
+            user = await db.get('SELECT id, name, email, role, avatar, status, lastLogin FROM admin_users WHERE id = ?', userId);
+        }
         if (!user) return res.status(404).json({ message: 'User not found' });
         res.status(200).json({ user });
     } catch (e) {
@@ -1094,6 +1146,10 @@ app.delete('/users/:email', authenticateToken, requireRole('Admin'), async (req,
         const email = decodeURIComponent(req.params.email);
         const info = await db.run('DELETE FROM users WHERE LOWER(email) = LOWER(?)', email);
         if (info.changes === 0) return res.status(404).json({ message: 'User not found' });
+        try {
+            io.emit('users_updated');
+            io.emit('admin_stats_update');
+        } catch (_) {}
         res.status(200).json({ message: 'User deleted' });
     } catch (e) {
         res.status(500).json({ message: e.message });
@@ -1107,6 +1163,10 @@ app.put('/users/:email/status', authenticateToken, requireRole('Admin'), async (
         const { status } = req.body;
         const info = await db.run('UPDATE users SET status = ? WHERE LOWER(email) = LOWER(?)', status, email);
         if (info.changes === 0) return res.status(404).json({ message: 'User not found' });
+        try {
+            io.emit('users_updated');
+            io.emit('admin_stats_update');
+        } catch (_) {}
         res.status(200).json({ message: 'User status updated' });
     } catch (e) {
         res.status(500).json({ message: e.message });
@@ -1723,7 +1783,7 @@ app.get('/classrooms', authenticateToken, async (req, res) => {
                 INNER JOIN enrollments e ON e.classroom_id = c.id
                 WHERE (e.student_email IS NOT NULL AND LOWER(e.student_email) = ?)
                    OR (e.student_id IS NOT NULL AND (e.student_id = ? OR CAST(e.student_id AS TEXT) = CAST(? AS TEXT)))
-                ORDER BY c.name COLLATE NOCASE ASC, c.id ASC
+                ORDER BY LOWER(c.name) ASC, c.id ASC
             `, studentEmail, studentId, String(studentId));
 
             // Self-heal enrollments: if any enrollment has student_id matching this user, sync student_email
@@ -1740,7 +1800,7 @@ app.get('/classrooms', authenticateToken, async (req, res) => {
                 SELECT * FROM classrooms
                 WHERE (instructor_email IS NOT NULL AND instructor_email != '' AND LOWER(instructor_email) = ?)
                    OR (instructor IS NOT NULL AND instructor != '' AND TRIM(LOWER(instructor)) = ?)
-                ORDER BY name COLLATE NOCASE ASC, id ASC
+                ORDER BY LOWER(name) ASC, id ASC
             `, teacherEmail, teacherName);
 
             // Self-heal classrooms: if matched by teacher name but instructor_email is missing or outdated, update it
@@ -1752,7 +1812,7 @@ app.get('/classrooms', authenticateToken, async (req, res) => {
             }
         } else {
             // Admin can view all classrooms
-            rawClassrooms = await db.all('SELECT * FROM classrooms ORDER BY name COLLATE NOCASE ASC, id ASC');
+            rawClassrooms = await db.all('SELECT * FROM classrooms ORDER BY LOWER(name) ASC, id ASC');
         }
 
         // Filter out phantom/dummy classrooms with no valid section/subject
