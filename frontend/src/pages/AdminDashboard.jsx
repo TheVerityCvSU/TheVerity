@@ -21,11 +21,8 @@ const sh = {
     maxHeight: '90vh',
     overflowY: 'auto',
     // Hide scrollbars but preserve scrolling
-    MsOverflowStyle: 'none', /* IE and Edge */
+    msOverflowStyle: 'none', /* IE and Edge */
     scrollbarWidth: 'none', /* Firefox */
-    '&::-webkit-scrollbar': {
-      display: 'none' /* Safari and Chrome */
-    }
   },
   modalHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' },
   closeBtn: { background: 'none', border: 'none', cursor: 'pointer', color: '#64748b', display: 'flex', alignItems: 'center', padding: '4px', borderRadius: '50%' },

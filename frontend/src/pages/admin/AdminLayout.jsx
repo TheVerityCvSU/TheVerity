@@ -73,11 +73,8 @@ const getLayoutStyles = (isDark) => ({
     flexDirection: 'column',
     minHeight: 0,
     overflowY: 'auto',
-    MsOverflowStyle: 'none',
+    msOverflowStyle: 'none',
     scrollbarWidth: 'none',
-    '&::-webkit-scrollbar': {
-      display: 'none'
-    }
   }
 });
 

@@ -1017,44 +1017,40 @@ app.post('/auth/google', async (req, res) => {
 // --- ADMIN: USER MANAGEMENT ---
 app.get('/users', authenticateToken, requireRole('Admin'), async (req, res) => {
     try {
-        const rows = await db.all(`
-            SELECT 
-                u.id, 
-                u.name, 
-                u.email, 
-                u.role, 
-                u.lastLogin, 
-                u.status,
-                (
-                    SELECT a.timestamp 
-                    FROM audit_logs a 
-                    WHERE (LOWER(a."user") = LOWER(u.name) OR LOWER(a."user") = LOWER(u.email))
-                    ORDER BY a.id DESC 
-                    LIMIT 1
-                ) as last_flag_time,
-                (
-                    SELECT a."desc" 
-                    FROM audit_logs a 
-                    WHERE (LOWER(a."user") = LOWER(u.name) OR LOWER(a."user") = LOWER(u.email))
-                    ORDER BY a.id DESC 
-                    LIMIT 1
-                ) as last_flag_desc,
-                (
-                    SELECT COUNT(a.id) 
-                    FROM audit_logs a 
-                    WHERE (LOWER(a."user") = LOWER(u.name) OR LOWER(a."user") = LOWER(u.email))
-                ) as flag_count
-            FROM users u
-        `);
-        const users = rows.map(u => ({
-            ...u,
-            status: u.status || 'Active',
-            lastLogin: u.lastLogin || u.lastlogin || null,
-            lastFlagTime: u.last_flag_time || null,
-            lastFlagDesc: u.last_flag_desc || null,
-            flagCount: Number(u.flag_count || 0)
-        }));
-        res.status(200).json({ users });
+        const users = await db.all('SELECT id, name, email, role, lastLogin, status FROM users ORDER BY id ASC');
+
+        let recentLogs = [];
+        try {
+            recentLogs = await db.all('SELECT id, "user", timestamp, "desc" FROM audit_logs ORDER BY id DESC LIMIT 500');
+        } catch (_) {}
+
+        const userFlagsMap = new Map();
+        for (const log of recentLogs) {
+            const rawUser = String(log.user || log['user'] || '').trim().toLowerCase();
+            if (!rawUser) continue;
+            let entry = userFlagsMap.get(rawUser);
+            if (!entry) {
+                entry = { lastFlagTime: log.timestamp, lastFlagDesc: log.desc, count: 0 };
+                userFlagsMap.set(rawUser, entry);
+            }
+            entry.count++;
+        }
+
+        const formattedUsers = users.map(u => {
+            const nameLower = (u.name || '').trim().toLowerCase();
+            const emailLower = (u.email || '').trim().toLowerCase();
+            const flagInfo = userFlagsMap.get(nameLower) || userFlagsMap.get(emailLower) || null;
+            return {
+                ...u,
+                status: u.status || 'Active',
+                lastLogin: u.lastLogin || u.lastlogin || null,
+                lastFlagTime: flagInfo?.lastFlagTime || null,
+                lastFlagDesc: flagInfo?.lastFlagDesc || null,
+                flagCount: Number(flagInfo?.count || 0)
+            };
+        });
+
+        res.status(200).json({ users: formattedUsers });
     } catch (e) {
         res.status(500).json({ message: e.message });
     }
@@ -4192,3 +4188,4 @@ if (require.main === module) {
 }
 
 module.exports = { start, stop, app };
+// Watch reload trigger: 2026-10-17T09:38:00Z

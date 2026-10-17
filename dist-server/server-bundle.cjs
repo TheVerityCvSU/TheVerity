@@ -96236,21 +96236,23 @@ var require_db4 = __commonJS({
       const client = await pgPool.connect();
       try {
         console.log("[Database] Successfully connected to PostgreSQL / Supabase!");
-        const schemaPath = path2.join(__dirname, "schema.sql");
-        if (fs3.existsSync(schemaPath)) {
-          const schemaSql = fs3.readFileSync(schemaPath, "utf8");
-          await client.query(schemaSql);
-        }
         try {
-          await client.query("ALTER TABLE classrooms ADD COLUMN IF NOT EXISTS instructor_email VARCHAR(255);");
-          await client.query("ALTER TABLE classrooms ADD COLUMN IF NOT EXISTS instructor VARCHAR(255);");
-          await client.query("ALTER TABLE classrooms ADD COLUMN IF NOT EXISTS theme TEXT;");
-          await client.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar TEXT;");
-          await client.query("ALTER TABLE security_flags ADD COLUMN IF NOT EXISTS alt_tab_copy_paste_count INTEGER DEFAULT 0;");
-        } catch (colErr) {
-          console.warn("[Database] Note on column migration:", colErr.message);
+          await client.query("SET lock_timeout = '2000ms';");
+          await client.query("SET statement_timeout = '5000ms';");
+        } catch (_) {
+        }
+        const tableCheck = await client.query("SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'users' LIMIT 1;").catch(() => ({ rows: [] }));
+        if (!tableCheck.rows || tableCheck.rows.length === 0) {
+          const schemaPath = path2.join(__dirname, "schema.sql");
+          if (fs3.existsSync(schemaPath)) {
+            const schemaSql = fs3.readFileSync(schemaPath, "utf8");
+            await client.query(schemaSql).catch((err) => console.warn("[Database] Initial schema note:", err.message));
+          }
         }
         console.log("[Database] PostgreSQL schema verified/initialized.");
+        provider = "postgres";
+      } catch (err) {
+        console.warn("[Database] Schema verification notice:", err.message);
         provider = "postgres";
       } finally {
         client.release();
@@ -97459,44 +97461,37 @@ app.post("/auth/google", async (req, res) => {
 });
 app.get("/users", authenticateToken, requireRole("Admin"), async (req, res) => {
   try {
-    const rows = await db.all(`
-            SELECT 
-                u.id, 
-                u.name, 
-                u.email, 
-                u.role, 
-                u.lastLogin, 
-                u.status,
-                (
-                    SELECT a.timestamp 
-                    FROM audit_logs a 
-                    WHERE (LOWER(a."user") = LOWER(u.name) OR LOWER(a."user") = LOWER(u.email))
-                    ORDER BY a.id DESC 
-                    LIMIT 1
-                ) as last_flag_time,
-                (
-                    SELECT a."desc" 
-                    FROM audit_logs a 
-                    WHERE (LOWER(a."user") = LOWER(u.name) OR LOWER(a."user") = LOWER(u.email))
-                    ORDER BY a.id DESC 
-                    LIMIT 1
-                ) as last_flag_desc,
-                (
-                    SELECT COUNT(a.id) 
-                    FROM audit_logs a 
-                    WHERE (LOWER(a."user") = LOWER(u.name) OR LOWER(a."user") = LOWER(u.email))
-                ) as flag_count
-            FROM users u
-        `);
-    const users = rows.map((u) => ({
-      ...u,
-      status: u.status || "Active",
-      lastLogin: u.lastLogin || u.lastlogin || null,
-      lastFlagTime: u.last_flag_time || null,
-      lastFlagDesc: u.last_flag_desc || null,
-      flagCount: Number(u.flag_count || 0)
-    }));
-    res.status(200).json({ users });
+    const users = await db.all("SELECT id, name, email, role, lastLogin, status FROM users ORDER BY id ASC");
+    let recentLogs = [];
+    try {
+      recentLogs = await db.all('SELECT id, "user", timestamp, "desc" FROM audit_logs ORDER BY id DESC LIMIT 500');
+    } catch (_) {
+    }
+    const userFlagsMap = /* @__PURE__ */ new Map();
+    for (const log of recentLogs) {
+      const rawUser = String(log.user || log["user"] || "").trim().toLowerCase();
+      if (!rawUser) continue;
+      let entry = userFlagsMap.get(rawUser);
+      if (!entry) {
+        entry = { lastFlagTime: log.timestamp, lastFlagDesc: log.desc, count: 0 };
+        userFlagsMap.set(rawUser, entry);
+      }
+      entry.count++;
+    }
+    const formattedUsers = users.map((u) => {
+      const nameLower = (u.name || "").trim().toLowerCase();
+      const emailLower = (u.email || "").trim().toLowerCase();
+      const flagInfo = userFlagsMap.get(nameLower) || userFlagsMap.get(emailLower) || null;
+      return {
+        ...u,
+        status: u.status || "Active",
+        lastLogin: u.lastLogin || u.lastlogin || null,
+        lastFlagTime: flagInfo?.lastFlagTime || null,
+        lastFlagDesc: flagInfo?.lastFlagDesc || null,
+        flagCount: Number(flagInfo?.count || 0)
+      };
+    });
+    res.status(200).json({ users: formattedUsers });
   } catch (e2) {
     res.status(500).json({ message: e2.message });
   }

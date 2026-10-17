@@ -410,22 +410,27 @@ async function initPostgres(connStr = cleanedUrl) {
     const client = await pgPool.connect();
     try {
         console.log('[Database] Successfully connected to PostgreSQL / Supabase!');
-        // Initialize schema
-        const schemaPath = path.join(__dirname, 'schema.sql');
-        if (fs.existsSync(schemaPath)) {
-            const schemaSql = fs.readFileSync(schemaPath, 'utf8');
-            await client.query(schemaSql);
-        }
+        
+        // Prevent long lock acquisitions from hanging the server and deadlocking incoming queries
         try {
-            await client.query('ALTER TABLE classrooms ADD COLUMN IF NOT EXISTS instructor_email VARCHAR(255);');
-            await client.query('ALTER TABLE classrooms ADD COLUMN IF NOT EXISTS instructor VARCHAR(255);');
-            await client.query('ALTER TABLE classrooms ADD COLUMN IF NOT EXISTS theme TEXT;');
-            await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar TEXT;');
-            await client.query('ALTER TABLE security_flags ADD COLUMN IF NOT EXISTS alt_tab_copy_paste_count INTEGER DEFAULT 0;');
-        } catch (colErr) {
-            console.warn('[Database] Note on column migration:', colErr.message);
+            await client.query("SET lock_timeout = '2000ms';");
+            await client.query("SET statement_timeout = '5000ms';");
+        } catch (_) {}
+
+        // Check if schema already exists
+        const tableCheck = await client.query("SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'users' LIMIT 1;").catch(() => ({ rows: [] }));
+        if (!tableCheck.rows || tableCheck.rows.length === 0) {
+            const schemaPath = path.join(__dirname, 'schema.sql');
+            if (fs.existsSync(schemaPath)) {
+                const schemaSql = fs.readFileSync(schemaPath, 'utf8');
+                await client.query(schemaSql).catch(err => console.warn('[Database] Initial schema note:', err.message));
+            }
         }
+
         console.log('[Database] PostgreSQL schema verified/initialized.');
+        provider = 'postgres';
+    } catch (err) {
+        console.warn('[Database] Schema verification notice:', err.message);
         provider = 'postgres';
     } finally {
         client.release();
