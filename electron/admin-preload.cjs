@@ -1,5 +1,6 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
+contextBridge.exposeInMainWorld('IS_ADMIN_APP', true);
 contextBridge.exposeInMainWorld('electronAPI', {
   isAdminApp: true,
   closeApp: () => ipcRenderer.send('close-app'),

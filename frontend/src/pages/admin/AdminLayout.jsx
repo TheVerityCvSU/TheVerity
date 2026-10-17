@@ -49,15 +49,18 @@ const getLayoutStyles = (isDark) => ({
     zIndex: 1
   }),
   badge: {
-    fontSize: '0.7rem',
-    backgroundColor: isDark ? '#2c2f38' : '#EEF0F3',
-    color: isDark ? '#f5f5f5' : '#475569',
-    padding: '3px 8px',
+    fontSize: '0.72rem',
+    fontWeight: '800',
+    backgroundColor: isDark ? 'rgba(59, 130, 246, 0.2)' : 'rgba(59, 130, 246, 0.12)',
+    color: isDark ? '#93c5fd' : '#2563eb',
+    padding: '3px 9px',
     borderRadius: '10px',
-    marginLeft: '6px',
+    marginLeft: '8px',
     fontStyle: 'normal',
     transform: 'translateY(-5px)',
-    border: isDark ? '1px solid #3d424f' : '1px solid #cbd5e1'
+    border: isDark ? '1px solid rgba(59, 130, 246, 0.4)' : '1px solid rgba(59, 130, 246, 0.25)',
+    letterSpacing: '0.04em',
+    textTransform: 'uppercase'
   },
   mainContent: {
     flex: 1,
@@ -264,7 +267,7 @@ export default function AdminLayout({
             }}
             onClick={() => finalSetActiveTab('dashboard')}
           >
-            <span style={{ color: '#10b981' }}>V</span>
+            <span style={{ color: '#3b82f6', textShadow: '0 0 15px rgba(59, 130, 246, 0.5)' }}>V</span>
             <span style={{ color: isDark ? '#f5f5f5' : '#1e293b' }}>erity</span>
             <span style={layoutStyles.badge}>Admin</span>
           </div>
@@ -427,7 +430,7 @@ export default function AdminLayout({
               borderRadius: '14px',
               boxShadow: isDark
                 ? '0 4px 16px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.08)'
-                : '0 4px 16px rgba(16,185,129,0.15), inset 0 1px 0 rgba(255,255,255,0.5)',
+                : '0 4px 16px rgba(59,130,246,0.18), inset 0 1px 0 rgba(255,255,255,0.5)',
               border: isDark ? '1px solid rgba(255,255,255,0.1)' : '1px solid rgba(255,255,255,0.35)',
               transition: indicatorStyle.transition || 'none',
               opacity: indicatorStyle.opacity,
@@ -445,9 +448,9 @@ export default function AdminLayout({
                   style={layoutStyles.sidebarBtn(effectiveSidebarCollapsed)}
                   title={effectiveSidebarCollapsed ? label : ''}
                 >
-                  <Icon size={20} color={active ? '#10b981' : (isDark ? '#a3a3a3' : '#475569')} style={{ flexShrink: 0 }} />
+                  <Icon size={20} color={active ? '#3b82f6' : (isDark ? '#a3a3a3' : '#475569')} style={{ flexShrink: 0 }} />
                   {!effectiveSidebarCollapsed && (
-                    <span style={{ fontSize: '0.85rem', fontWeight: active ? '700' : '600', color: active ? '#10b981' : (isDark ? '#e5e5e5' : '#334155'), overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    <span style={{ fontSize: '0.85rem', fontWeight: active ? '700' : '600', color: active ? '#3b82f6' : (isDark ? '#e5e5e5' : '#334155'), overflow: 'hidden', textOverflow: 'ellipsis' }}>
                       {label}
                     </span>
                   )}

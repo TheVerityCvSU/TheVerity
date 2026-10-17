@@ -1,13 +1,35 @@
 import { useEffect } from 'react';
 
-export default function ProtectedRoute({ children, currentUser, setCurrentScreen }) {
+export default function ProtectedRoute({ children, currentUser, setCurrentScreen, requiredRole }) {
+  const isAdminApp = typeof window !== 'undefined' && Boolean(
+    window.IS_ADMIN_APP ||
+    window.electronAPI?.isAdminApp ||
+    window.location.pathname.startsWith('/admin') ||
+    window.location.hash.startsWith('#/admin') ||
+    new URLSearchParams(window.location.search).get('admin') === 'true'
+  );
+
   useEffect(() => {
     if (!currentUser) {
-      setCurrentScreen('login');
+      setCurrentScreen(isAdminApp ? 'admin_login' : 'login');
+      return;
     }
-  }, [currentUser, setCurrentScreen]);
+    if (isAdminApp && currentUser.role !== 'Admin') {
+      setCurrentScreen('admin_login');
+      return;
+    }
+    if (requiredRole && currentUser.role !== requiredRole) {
+      if (currentUser.role === 'Admin') setCurrentScreen('admin_dashboard');
+      else if (currentUser.role === 'Teacher') setCurrentScreen('teacher_dashboard');
+      else setCurrentScreen('student_dashboard');
+    }
+  }, [currentUser, setCurrentScreen, isAdminApp, requiredRole]);
 
   if (!currentUser) {
+    return null;
+  }
+
+  if (isAdminApp && currentUser.role !== 'Admin') {
     return null;
   }
 

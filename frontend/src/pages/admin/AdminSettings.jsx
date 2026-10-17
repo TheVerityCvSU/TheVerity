@@ -5,7 +5,8 @@ import {
   AlertOctagon, Database, Clock, KeyRound, Sparkles,
   Bell, Monitor, Code2, Download, Moon, Sun,
   LayoutList, Volume2, VolumeX, Timer, Check,
-  AlertTriangle, Clipboard, Sliders
+  AlertTriangle, Clipboard, Sliders, RefreshCw,
+  CheckCircle2, AlertCircle
 } from 'lucide-react';
 import { logSecurityEvent } from '../../utils/securityLogger';
 import { apiFetch } from '../../utils/api';
@@ -236,6 +237,229 @@ const tabVariants = {
   exit: (direction) => ({ opacity: 0, x: direction > 0 ? -30 : 30, transition: { duration: 0.2, ease: 'easeIn' } })
 };
 
+/**
+ * Admin Software Update Checker Component
+ * Clean, lightweight update checker with brief explanation and direct update flow.
+ */
+function AdminCheckUpdateCard() {
+  const { isDark } = useDarkMode();
+  const [status, setStatus] = useState('idle'); // 'idle' | 'checking' | 'latest' | 'available' | 'error'
+  const [updateInfo, setUpdateInfo] = useState(null);
+  const [isDownloading, setIsDownloading] = useState(false);
+  const [downloadStarted, setDownloadStarted] = useState(false);
+
+  const handleCheckUpdate = async (e) => {
+    const force = e?.altKey || e?.shiftKey;
+    setStatus('checking');
+    setDownloadStarted(false);
+    try {
+      const query = new URLSearchParams();
+      query.append('role', 'Administrator');
+      query.append('app', 'admin');
+      if (force) query.append('force', 'true');
+      const res = await apiFetch(`/api/check-update?${query.toString()}`);
+      if (res && res.ok) {
+        const data = await res.json();
+        setUpdateInfo(data);
+        if (data.updateAvailable) {
+          setStatus('available');
+        } else {
+          setStatus('latest');
+        }
+      } else {
+        setStatus('error');
+      }
+    } catch (err) {
+      console.error('Failed to check for updates:', err);
+      setStatus('error');
+    }
+  };
+
+  const handleUpdateNow = () => {
+    if (!updateInfo?.downloadUrl) return;
+    setIsDownloading(true);
+    setDownloadStarted(true);
+
+    try {
+      const a = document.createElement('a');
+      a.href = updateInfo.downloadUrl;
+      a.setAttribute('download', '');
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    } catch (err) {
+      console.error('Download error:', err);
+      window.open(updateInfo.downloadUrl, '_blank');
+    }
+
+    setTimeout(() => {
+      setIsDownloading(false);
+    }, 2500);
+  };
+
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '12px' }}>
+        <div>
+          <h3 style={styles.sectionTitle}>
+            <RefreshCw size={18} color={T.blue} />
+            <span>Check for Updates</span>
+          </h3>
+          <p style={styles.sectionSub}>
+            Check if a newer version of The Verity is available. Keep your administrative software up to date with the latest security fixes and features.
+          </p>
+        </div>
+        <div style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: '8px',
+          padding: '6px 14px',
+          borderRadius: '9999px',
+          backgroundColor: isDark ? '#3a3a3a' : '#f1f5f9',
+          color: isDark ? '#e2e8f0' : '#475569',
+          fontSize: '0.82rem',
+          fontWeight: '700',
+        }}>
+          <span>Current Version:</span>
+          <span style={{ color: T.blue }}>v{updateInfo?.currentVersion || '1.0.0'}</span>
+        </div>
+      </div>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap', marginTop: '4px' }}>
+        <motion.button
+          whileHover={{ scale: 1.02 }}
+          whileTap={{ scale: 0.98 }}
+          onClick={handleCheckUpdate}
+          disabled={status === 'checking'}
+          style={{
+            ...styles.secBtn,
+            backgroundColor: T.blue,
+            color: '#ffffff',
+            border: 'none',
+            boxShadow: '0 4px 12px rgba(0, 123, 255, 0.25)',
+            cursor: status === 'checking' ? 'not-allowed' : 'pointer'
+          }}
+          title="Click to check for updates"
+        >
+          <RefreshCw
+            size={15}
+            style={{
+              animation: status === 'checking' ? 'spin 1s linear infinite' : 'none',
+            }}
+          />
+          <span>{status === 'checking' ? 'Checking for updates...' : status === 'latest' ? 'Check Again' : 'Check for Updates'}</span>
+        </motion.button>
+
+        {status === 'available' && (
+          <motion.button
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
+            onClick={handleUpdateNow}
+            disabled={isDownloading}
+            style={{
+              ...styles.secBtn,
+              backgroundColor: '#16a34a',
+              color: '#ffffff',
+              border: 'none',
+              boxShadow: '0 4px 12px rgba(22, 163, 74, 0.3)',
+              cursor: isDownloading ? 'wait' : 'pointer'
+            }}
+            title="Download and install update"
+          >
+            <Download size={15} />
+            <span>{isDownloading ? 'Starting Download...' : 'Update Now'}</span>
+          </motion.button>
+        )}
+      </div>
+
+      <AnimatePresence>
+        {status === 'latest' && (
+          <motion.div
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0 }}
+            style={{
+              marginTop: '16px',
+              padding: '12px 16px',
+              borderRadius: '12px',
+              backgroundColor: isDark ? 'rgba(34, 197, 94, 0.12)' : '#dcfce7',
+              border: '1px solid #22c55e',
+              color: isDark ? '#4ade80' : '#15803d',
+              fontSize: '0.85rem',
+              fontWeight: '600',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px'
+            }}
+          >
+            <CheckCircle2 size={16} />
+            <span>You're up to date! The Verity Admin is running the latest version (v{updateInfo?.currentVersion || '1.0.0'}).</span>
+          </motion.div>
+        )}
+
+        {status === 'available' && (
+          <motion.div
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0 }}
+            style={{
+              marginTop: '16px',
+              padding: '14px 18px',
+              borderRadius: '12px',
+              backgroundColor: isDark ? 'rgba(0, 123, 255, 0.12)' : '#eff6ff',
+              border: `1px solid ${T.blue}`,
+              color: isDark ? '#93c5fd' : '#1d4ed8',
+              fontSize: '0.85rem',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '6px'
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: '700' }}>
+              <Sparkles size={16} color={T.blue} />
+              <span>Update Available: Version {updateInfo?.latestVersion}</span>
+            </div>
+            {updateInfo?.releaseNotes && (
+              <div style={{ fontSize: '0.8rem', opacity: 0.9 }}>
+                {updateInfo.releaseNotes}
+              </div>
+            )}
+            {downloadStarted && (
+              <div style={{ marginTop: '4px', fontSize: '0.8rem', color: isDark ? '#4ade80' : '#15803d', fontWeight: '600' }}>
+                ✓ Download initiated! Once the installer finishes downloading, run it to complete the update.
+              </div>
+            )}
+          </motion.div>
+        )}
+
+        {status === 'error' && (
+          <motion.div
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0 }}
+            style={{
+              marginTop: '16px',
+              padding: '12px 16px',
+              borderRadius: '12px',
+              backgroundColor: isDark ? 'rgba(239, 68, 68, 0.12)' : '#fee2e2',
+              border: '1px solid #ef4444',
+              color: isDark ? '#f87171' : '#b91c1c',
+              fontSize: '0.85rem',
+              fontWeight: '600',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px'
+            }}
+          >
+            <AlertCircle size={16} />
+            <span>Unable to check for updates right now. Please check your network connection and try again.</span>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
 function GeneralPreferencesTab({ data, onChange, direction }) {
   const [dragActive, setDragActive] = useState(false);
   const update = (key, val) => onChange({ ...data, [key]: val });
@@ -311,6 +535,11 @@ function GeneralPreferencesTab({ data, onChange, direction }) {
             )}
           </AnimatePresence>
         </div>
+
+        <div style={styles.divider} />
+
+        {/* Software Updates */}
+        <AdminCheckUpdateCard />
       </div>
     </motion.div>
   );

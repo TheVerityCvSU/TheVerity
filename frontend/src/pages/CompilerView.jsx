@@ -3,25 +3,11 @@ import Editor from '@monaco-editor/react';
 import {
   Play, Square, TerminalSquare, Trash2,
   Copy, Check, ZoomIn, ZoomOut, Settings,
-  CheckSquare, Plus, PlayCircle
+  CheckSquare, Plus, PlayCircle, X
 } from 'lucide-react';
 import { useDarkMode } from '../hooks/useDarkMode';
 
-const TEMPLATES = {
-  csharp: 'using System;\n\nclass Program {\n    static void Main(string[] args) {\n        Console.WriteLine("Hello, World!");\n    }\n}',
-  python: 'print("Hello, World!")',
-  javascript: 'console.log("Hello, World!");',
-  cpp: '#include <iostream>\n\nint main() {\n    std::cout << "Hello, World!" << std::endl;\n    return 0;\n}',
-  java: 'public class Main {\n    public static void main(String[] args) {\n        System.out.println("Hello, World!");\n    }\n}'
-};
-
-const LANGUAGES = [
-  { id: 'csharp', label: 'C#' },
-  { id: 'python', label: 'Python' },
-  { id: 'javascript', label: 'JavaScript' },
-  { id: 'cpp', label: 'C++' },
-  { id: 'java', label: 'Java' },
-];
+const DEFAULT_CSHARP = 'using System;\n\nclass Program {\n    static void Main(string[] args) {\n        Console.WriteLine("Hello, World!");\n    }\n}';
 
 const MIN_TERMINAL_H = 38;
 const DEFAULT_TERMINAL_H = 240;
@@ -31,8 +17,25 @@ const MAX_FONT = 24;
 export default function CompilerView() {
   const { isDark } = useDarkMode();
 
-  const [language, setLanguage] = useState('csharp');
-  const [code, setCode]         = useState(TEMPLATES['csharp']);
+  const [code, setCode] = useState(() => {
+    try {
+      const saved = localStorage.getItem('verity_compiler_code');
+      if (saved) return saved;
+    } catch (_) {}
+    return DEFAULT_CSHARP;
+  });
+
+  const [extraFiles, setExtraFiles] = useState(() => {
+    try {
+      const saved = localStorage.getItem('verity_compiler_extrafiles');
+      if (saved) return JSON.parse(saved);
+    } catch (_) {}
+    return [];
+  });
+
+  const [activeFileId, setActiveFileId] = useState('main'); // 'main' = Program.cs
+  const [renamingFileId, setRenamingFileId] = useState(null);
+  const [renameValue, setRenameValue] = useState('');
   const [output, setOutput]     = useState([]);
   const [isRunning, setIsRunning] = useState(false);
   const [programStarted, setProgramStarted] = useState(false);
@@ -93,6 +96,58 @@ export default function CompilerView() {
     editorRef.current?.updateOptions({ fontSize });
   }, [fontSize]);
 
+  const persistExtraFiles = (files) => {
+    try {
+      localStorage.setItem('verity_compiler_extrafiles', JSON.stringify(files));
+    } catch (_) {}
+  };
+
+  const handleAddFile = () => {
+    const num = extraFiles.length + 2;
+    const newFile = {
+      id: `file_${Date.now()}`,
+      name: `File${num}`,
+      code: `using System;\n\npublic class File${num}\n{\n    // Add your code or helper methods here\n}\n`
+    };
+    const updated = [...extraFiles, newFile];
+    setExtraFiles(updated);
+    persistExtraFiles(updated);
+    setActiveFileId(newFile.id);
+  };
+
+  const handleDeleteFile = (id) => {
+    const updated = extraFiles.filter(f => f.id !== id);
+    setExtraFiles(updated);
+    persistExtraFiles(updated);
+    if (activeFileId === id) {
+      setActiveFileId('main');
+    }
+  };
+
+  const handleRenameFile = (id, newName) => {
+    const cleaned = (newName || '').replace(/\.[a-zA-Z0-9]+$/i, '').trim();
+    const safeName = cleaned.replace(/[^a-zA-Z0-9_\-]/g, '').slice(0, 40) || 'File';
+    const updated = extraFiles.map(f => (f.id === id ? { ...f, name: safeName } : f));
+    setExtraFiles(updated);
+    persistExtraFiles(updated);
+    setRenamingFileId(null);
+  };
+
+  const handleCodeChange = (newCode) => {
+    if (activeFileId === 'main') {
+      setCode(newCode);
+      try {
+        localStorage.setItem('verity_compiler_code', newCode);
+      } catch (_) {}
+    } else {
+      const updated = extraFiles.map(f => (f.id === activeFileId ? { ...f, code: newCode } : f));
+      setExtraFiles(updated);
+      persistExtraFiles(updated);
+    }
+  };
+
+  const activeCode = activeFileId === 'main' ? code : (extraFiles.find(f => f.id === activeFileId)?.code ?? '');
+
   const addLine = (text, type = 'out') =>
     setOutput(prev => [...prev, { text, type }]);
 
@@ -118,8 +173,7 @@ export default function CompilerView() {
     setTermCollapsed(false);
     setBottomTab('terminal');
 
-    const langLabel = LANGUAGES.find(l => l.id === language)?.label || language;
-    setOutput([{ text: `▶ Compiling ${langLabel} (Local)…`, type: 'info' }]);
+    setOutput([{ text: '▶ Compiling C# (Local)…', type: 'info' }]);
 
     // Watchdog failsafe timeout so the Run button is guaranteed to re-enable
     failsafeRef.current = setTimeout(() => {
@@ -152,8 +206,12 @@ export default function CompilerView() {
 
       socket.on('connect', () => {
         socket.emit('compile_code', {
-          language: language,
+          language: 'csharp',
           code: code,
+          extraFiles: extraFiles.map(f => ({
+            name: (f.name.endsWith('.cs') ? f.name : `${f.name}.cs`),
+            code: f.code
+          })),
           username: storedUser?.name || 'CompilerView',
           room: 'sandbox',
           token: token,
@@ -255,7 +313,12 @@ export default function CompilerView() {
 
       socket.on('connect', () => {
         socket.emit('run_test_cases', {
+          language: 'csharp',
           code: code,
+          extraFiles: extraFiles.map(f => ({
+            name: (f.name.endsWith('.cs') ? f.name : `${f.name}.cs`),
+            code: f.code
+          })),
           testCases: testCases,
           username: storedUser?.name || 'CompilerView',
           room: 'sandbox',
@@ -297,7 +360,7 @@ export default function CompilerView() {
   const passedTestsCount = testCases.filter(t => t.status === 'passed').length;
 
   const handleCopy = () => {
-    navigator.clipboard.writeText(code);
+    navigator.clipboard.writeText(activeCode);
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
   };
@@ -400,33 +463,54 @@ export default function CompilerView() {
           >
             <Square size={14} fill="currentColor" /> Stop
           </button>
-        </div>
 
-        {/* Right group: Language + Font adjuster + Copy */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <select
-            value={language}
-            onChange={(e) => {
-              const newLang = e.target.value;
-              setLanguage(newLang);
-              setCode(TEMPLATES[newLang]);
-            }}
+          {/* Dedicated Language Badge (Exclusively C# .NET SDK) */}
+          <div
+            title="Verity Compiler strictly executes C# via local .NET SDK"
             style={{
-              padding: '6px 10px',
+              display: 'inline-flex', alignItems: 'center', gap: '6px',
+              padding: '6px 12px',
+              marginLeft: '4px',
               borderRadius: '6px',
-              border: `1px solid ${border}`,
-              backgroundColor: isDark ? '#1e1e1e' : '#ffffff',
-              color: textMain,
-              fontSize: '0.82rem',
-              fontWeight: '600',
-              outline: 'none',
-              cursor: 'pointer'
+              backgroundColor: isDark ? 'rgba(16, 185, 129, 0.1)' : 'rgba(16, 185, 129, 0.08)',
+              border: isDark ? '1px solid rgba(16, 185, 129, 0.25)' : '1px solid rgba(16, 185, 129, 0.2)',
+              fontSize: '0.78rem',
+              fontWeight: '700',
+              color: isDark ? '#6ee7b7' : '#059669',
+              letterSpacing: '0.02em',
+              userSelect: 'none'
             }}
           >
-            {LANGUAGES.map(l => (
-              <option key={l.id} value={l.id}>{l.label}</option>
-            ))}
-          </select>
+            <span style={{
+              width: '6px', height: '6px', borderRadius: '50%',
+              backgroundColor: '#10b981',
+              boxShadow: '0 0 6px #10b981'
+            }} />
+            <span>C# (.NET SDK)</span>
+          </div>
+        </div>
+
+        {/* Right group: Copy + Font adjuster */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <button
+            onClick={handleCopy}
+            title="Copy current file code"
+            style={{
+              padding: '6px 12px',
+              backgroundColor: isDark ? '#1e1e1e' : '#ffffff',
+              color: textMain,
+              border: `1px solid ${border}`,
+              borderRadius: '6px',
+              cursor: 'pointer',
+              fontWeight: '600',
+              fontSize: '0.82rem',
+              display: 'flex', alignItems: 'center', gap: '6px',
+              transition: 'all 0.15s ease'
+            }}
+          >
+            {copied ? <Check size={14} color="#10b981" /> : <Copy size={14} />}
+            <span>{copied ? 'Copied' : 'Copy'}</span>
+          </button>
 
           {/* Font size control */}
           <div style={{
@@ -481,27 +565,144 @@ export default function CompilerView() {
         display: 'flex', flexDirection: 'column',
         overflow: 'hidden',
       }}>
-        {/* File Tabs (matches StudentView) */}
+        {/* File Tabs with Multi-File & Add File Support */}
         <div style={{
           display: 'flex', alignItems: 'center',
-          height: '28px', flexShrink: 0,
+          height: '32px', flexShrink: 0,
           backgroundColor: tabsBg,
           borderBottom: tabsBdr,
           userSelect: 'none', overflowX: 'auto',
         }}>
-          <div style={{
-            display: 'flex', alignItems: 'center', gap: '5px',
-            padding: '0 12px', height: '100%',
-            borderRight: tabsBdr,
-            backgroundColor: isDark ? '#1e1e1e' : '#ffffff',
-            borderBottom: '2px solid #10b981',
-            color: isDark ? '#e8eaed' : '#111827',
-            fontSize: '0.75rem', fontWeight: '600',
-            whiteSpace: 'nowrap', flexShrink: 0,
-          }}>
-            <span style={{ fontSize: '0.65rem', opacity: 0.55 }}>{'{ }'}</span>
-            Program.cs
+          {/* Main Program.cs Tab */}
+          <div
+            onClick={() => setActiveFileId('main')}
+            style={{
+              display: 'flex', alignItems: 'center', gap: '6px',
+              padding: '0 14px', height: '100%',
+              borderRight: tabsBdr,
+              backgroundColor: activeFileId === 'main'
+                ? (isDark ? '#1e1e1e' : '#ffffff')
+                : 'transparent',
+              color: activeFileId === 'main'
+                ? (isDark ? '#e8eaed' : '#111827')
+                : (isDark ? '#9ca3af' : '#6b7280'),
+              fontSize: '0.75rem',
+              fontWeight: activeFileId === 'main' ? '700' : '500',
+              borderBottom: activeFileId === 'main' ? '2px solid #10b981' : '2px solid transparent',
+              whiteSpace: 'nowrap', flexShrink: 0,
+              cursor: 'pointer',
+              transition: 'all 0.15s ease',
+            }}
+          >
+            <span style={{ fontSize: '0.65rem', color: '#10b981', fontWeight: 'bold' }}>{'{ }'}</span>
+            <span>Program.cs</span>
           </div>
+
+          {/* Extra Files Tabs */}
+          {extraFiles.map(f => (
+            <div
+              key={f.id}
+              onClick={() => setActiveFileId(f.id)}
+              onDoubleClick={(e) => {
+                e.stopPropagation();
+                setRenamingFileId(f.id);
+                setRenameValue(f.name);
+              }}
+              style={{
+                display: 'flex', alignItems: 'center', gap: '6px',
+                padding: '0 8px 0 12px', height: '100%',
+                borderRight: tabsBdr,
+                backgroundColor: activeFileId === f.id
+                  ? (isDark ? '#1e1e1e' : '#ffffff')
+                  : 'transparent',
+                color: activeFileId === f.id
+                  ? (isDark ? '#e8eaed' : '#111827')
+                  : (isDark ? '#9ca3af' : '#6b7280'),
+                fontSize: '0.75rem',
+                fontWeight: activeFileId === f.id ? '700' : '500',
+                borderBottom: activeFileId === f.id ? '2px solid #10b981' : '2px solid transparent',
+                whiteSpace: 'nowrap', flexShrink: 0,
+                cursor: 'pointer',
+                transition: 'all 0.15s ease',
+              }}
+            >
+              {renamingFileId === f.id ? (
+                <input
+                  autoFocus
+                  value={renameValue}
+                  onChange={e => setRenameValue(e.target.value)}
+                  onBlur={() => handleRenameFile(f.id, renameValue)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') handleRenameFile(f.id, renameValue);
+                    if (e.key === 'Escape') setRenamingFileId(null);
+                  }}
+                  onClick={e => e.stopPropagation()}
+                  style={{
+                    width: '90px', fontSize: '0.75rem', padding: '2px 5px',
+                    border: '1px solid #10b981', borderRadius: '4px', outline: 'none',
+                    backgroundColor: isDark ? '#333333' : '#ffffff',
+                    color: isDark ? '#e8eaed' : '#111827',
+                  }}
+                />
+              ) : (
+                <span title="Double-click to rename file" style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                  <span style={{ fontSize: '0.65rem', color: isDark ? '#9ca3af' : '#6b7280' }}>{'{ }'}</span>
+                  <span>{f.name}.cs</span>
+                </span>
+              )}
+
+              {renamingFileId !== f.id && (
+                <button
+                  type="button"
+                  onClick={e => {
+                    e.stopPropagation();
+                    handleDeleteFile(f.id);
+                  }}
+                  title={`Delete ${f.name}.cs`}
+                  style={{
+                    background: 'none', border: 'none', cursor: 'pointer',
+                    padding: '2px', display: 'flex', alignItems: 'center',
+                    color: isDark ? '#6b7280' : '#9ca3af',
+                    borderRadius: '3px',
+                    marginLeft: '2px',
+                    transition: 'color 0.15s ease',
+                  }}
+                  onMouseEnter={e => e.currentTarget.style.color = '#ef4444'}
+                  onMouseLeave={e => e.currentTarget.style.color = isDark ? '#6b7280' : '#9ca3af'}
+                >
+                  <X size={12} />
+                </button>
+              )}
+            </div>
+          ))}
+
+          {/* Add Another File Button */}
+          <button
+            type="button"
+            onClick={handleAddFile}
+            title="Add another C# file"
+            style={{
+              background: 'none', border: 'none', cursor: 'pointer',
+              padding: '0 12px', height: '100%',
+              display: 'flex', alignItems: 'center', gap: '4px',
+              color: isDark ? '#9ca3af' : '#6b7280',
+              fontSize: '0.75rem',
+              fontWeight: '600',
+              flexShrink: 0,
+              transition: 'all 0.15s ease',
+            }}
+            onMouseEnter={e => {
+              e.currentTarget.style.color = '#10b981';
+              e.currentTarget.style.backgroundColor = isDark ? 'rgba(16,185,129,0.1)' : 'rgba(16,185,129,0.08)';
+            }}
+            onMouseLeave={e => {
+              e.currentTarget.style.color = isDark ? '#9ca3af' : '#6b7280';
+              e.currentTarget.style.backgroundColor = 'transparent';
+            }}
+          >
+            <Plus size={14} />
+            <span>New File</span>
+          </button>
         </div>
 
         {/* Monaco Editor */}
@@ -510,9 +711,9 @@ export default function CompilerView() {
             <Editor
               height="100%"
               width="100%"
-              language={language === 'cpp' ? 'cpp' : language}
-              value={code}
-              onChange={v => setCode(v ?? '')}
+              language="csharp"
+              value={activeCode}
+              onChange={v => handleCodeChange(v ?? '')}
               theme={isDark ? 'vs-dark' : 'light'}
             onMount={(editor, monaco) => {
               editorRef.current = editor;

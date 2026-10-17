@@ -4,7 +4,7 @@ import ProfileMenu from './ProfileMenu';
 import { 
   Calendar, ClipboardList, Settings, User, MoreVertical, ArrowLeft, X, Link2, 
   Image, Video, Monitor, Menu, Home, Archive, Edit3, Maximize2, Copy, Check, 
-  Info, Users, BookOpen, Sparkles, Plus, Send, ChevronRight, CheckCircle2, 
+  Info, Users, BookOpen, Sparkles, Plus, Send, ChevronRight, ChevronDown, CheckCircle2, 
   MessageSquare, PlayCircle, Eye, RefreshCw, Palette, ExternalLink, FileText,
   Paperclip, MoreHorizontal, Code2, Trash2
 } from 'lucide-react';
@@ -144,7 +144,13 @@ export default function TeacherClasswork({
   const navRefs = useRef({});
 
   // Active classroom tab
-  const [activeTab, setActiveTab] = useState('stream'); // 'stream' | 'classwork' | 'people' | 'grades'
+  const [activeTab, setActiveTab] = useState(() => {
+    try {
+      return sessionStorage.getItem(`verity_teacher_classwork_tab_${classroom?.id || 'default'}`) || 'stream';
+    } catch {
+      return 'stream';
+    }
+  });
   const [tabDirection, setTabDirection] = useState(1);
   const [transitionMode, setTransitionMode] = useState('tab'); // 'classroom' | 'tab'
   const [classroomDirection, setClassroomDirection] = useState(1);
@@ -164,6 +170,9 @@ export default function TeacherClasswork({
     setTabDirection(newIdx >= currentIdx ? 1 : -1);
     setTransitionMode('tab');
     setActiveTab(newTab);
+    try {
+      sessionStorage.setItem(`verity_teacher_classwork_tab_${classroom?.id || 'default'}`, newTab);
+    } catch {}
   };
 
   const handleSelectClassroom = (cls, idx) => {
@@ -451,11 +460,27 @@ export default function TeacherClasswork({
   // GRADES TAB STATE (Scoped to this classroom only)
   const visibleClasswork = classwork.filter(item => !item.archived && item.activityType !== 'Material');
   const visibleMaterials = classwork.filter(item => !item.archived && item.activityType === 'Material');
-  const [selectedGradingActivityId, setSelectedGradingActivityId] = useState(null);
+  const [selectedGradingActivityId, setSelectedGradingActivityId] = useState(() => {
+    try {
+      return sessionStorage.getItem(`verity_grading_activity_${classroom?.id || 'default'}`) || null;
+    } catch {
+      return null;
+    }
+  });
 
   useEffect(() => {
-    if (visibleClasswork.length > 0 && !selectedGradingActivityId) {
-      setSelectedGradingActivityId(visibleClasswork[0].id);
+    if (selectedGradingActivityId) {
+      try {
+        sessionStorage.setItem(`verity_grading_activity_${classroom?.id || 'default'}`, selectedGradingActivityId);
+      } catch {}
+    }
+  }, [selectedGradingActivityId, classroom?.id]);
+
+  useEffect(() => {
+    if (visibleClasswork.length > 0) {
+      if (!selectedGradingActivityId || !visibleClasswork.some(a => a.id === selectedGradingActivityId)) {
+        setSelectedGradingActivityId(visibleClasswork[0].id);
+      }
     }
   }, [visibleClasswork, selectedGradingActivityId]);
 
@@ -464,7 +489,21 @@ export default function TeacherClasswork({
   const maxPoints = parseInt(activeGradingActivity?.points, 10) || 100;
 
   const [gradingStudents, setGradingStudents] = useState([]);
-  const [selectedStudentId, setSelectedStudentId] = useState(null);
+  const [selectedStudentId, setSelectedStudentId] = useState(() => {
+    try {
+      return sessionStorage.getItem(`verity_grading_student_${classroom?.id || 'default'}`) || null;
+    } catch {
+      return null;
+    }
+  });
+
+  useEffect(() => {
+    if (selectedStudentId) {
+      try {
+        sessionStorage.setItem(`verity_grading_student_${classroom?.id || 'default'}`, selectedStudentId);
+      } catch {}
+    }
+  }, [selectedStudentId, classroom?.id]);
   const [gradingGrades, setGradingGrades] = useState(() => {
     try {
       return JSON.parse(localStorage.getItem(gradesKey)) || {};
@@ -508,12 +547,52 @@ export default function TeacherClasswork({
           const map = {};
           subs.forEach(s => {
             const sName = s.student_name || s.studentName || 'Unknown';
-            map[sName] = { id: sName, name: sName, submittedAt: s.submittedAt, finalCode: s.finalCode, history: s.history || [] };
+            const sId = s.student_id || s.studentId || sName;
+            map[sName] = {
+              id: sId,
+              name: sName,
+              submittedAt: s.submittedAt,
+              finalCode: s.finalCode,
+              code: s.finalCode,
+              status: 'Submitted',
+              history: Array.isArray(s.history) ? s.history : Array.isArray(s.codeHistory) ? s.codeHistory : []
+            };
           });
           localSubs.forEach(s => {
             const sName = s.studentName || s.studentId || 'Unknown';
+            const sId = s.studentId || s.student_id || sName;
             if (!map[sName]) {
-              map[sName] = { id: sName, name: sName, submittedAt: s.submittedAt, finalCode: s.finalCode, history: s.codeHistory || [] };
+              map[sName] = {
+                id: sId,
+                name: sName,
+                submittedAt: s.submittedAt,
+                finalCode: s.finalCode,
+                code: s.finalCode,
+                status: 'Submitted',
+                history: Array.isArray(s.codeHistory) ? s.codeHistory : Array.isArray(s.history) ? s.history : []
+              };
+            }
+          });
+
+          // Check persistent playback history
+          Object.keys(map).forEach(key => {
+            const s = map[key];
+            const hKeys = [
+              `verity_history_${cId}_${aId}_${s.id}`,
+              `verity_history_${aId}_${s.id}`,
+              `verity_history_${cId}_${aId}_${s.name}`,
+              `verity_history_${aId}_${s.name}`
+            ];
+            for (const hk of hKeys) {
+              try {
+                const raw = localStorage.getItem(hk);
+                if (raw) {
+                  const parsed = JSON.parse(raw);
+                  if (Array.isArray(parsed) && parsed.length > (s.history?.length || 0)) {
+                    s.history = parsed;
+                  }
+                }
+              } catch {}
             }
           });
 
@@ -521,7 +600,7 @@ export default function TeacherClasswork({
             (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base', numeric: true })
           );
           setGradingStudents(list);
-          setSelectedStudentId(prev => (prev && map[prev] ? prev : (list[0]?.id || null)));
+          setSelectedStudentId(prev => (prev && map[prev] ? prev : (list.find(s => s.id === selectedStudentId)?.id || list[0]?.id || null)));
         })
         .catch(() => {});
     };
@@ -2410,32 +2489,66 @@ export default function TeacherClasswork({
                   ) : (
                     <>
                       <div style={styles.activitySelectionRow}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0, marginRight: '4px' }}>
-                          <span style={{ fontSize: '0.85rem', fontWeight: '700', color: isDark ? '#E8EAED' : '#475569' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
+                          <span style={{ fontSize: '0.88rem', fontWeight: '700', color: isDark ? '#E8EAED' : '#334155', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <FileText size={16} color="#10b981" />
                             Activity:
                           </span>
                         </div>
-                        {visibleClasswork.map(act => {
-                          const isSelected = selectedGradingActivityId === act.id;
-                          return (
-                            <button
-                              key={act.id}
-                              onClick={() => setSelectedGradingActivityId(act.id)}
-                              style={{
-                                ...styles.activityChipBtn,
-                                backgroundColor: isSelected ? '#10b981' : (isDark ? '#2e3032' : '#f1f5f9'),
-                                color: isSelected ? 'white' : (isDark ? '#E8EAED' : '#475569'),
-                                border: isSelected ? '1px solid #10b981' : (isDark ? '1px solid #44474a' : '1px solid #e2e8f0'),
-                                fontWeight: isSelected ? '700' : '600',
-                                boxShadow: isSelected ? '0 2px 8px rgba(16, 185, 129, 0.3)' : 'none'
-                              }}
-                              className="btn-anim"
-                              title={act.title}
-                            >
-                              {act.title}
-                            </button>
-                          );
-                        })}
+                        <div style={{ position: 'relative', minWidth: '260px', maxWidth: '420px', flex: '1 1 auto' }}>
+                          <select
+                            id="grades-activity-dropdown"
+                            aria-label="Select activity"
+                            value={String(selectedGradingActivityId ?? '')}
+                            onChange={(e) => {
+                              const rawVal = e.target.value;
+                              const matched = visibleClasswork.find(a => String(a.id) === String(rawVal));
+                              setSelectedGradingActivityId(matched ? matched.id : rawVal);
+                            }}
+                            style={{
+                              width: '100%',
+                              padding: '9px 36px 9px 14px',
+                              borderRadius: '10px',
+                              border: isDark ? '1px solid #44474a' : '1px solid #cbd5e1',
+                              backgroundColor: isDark ? '#2e3032' : '#ffffff',
+                              color: isDark ? '#E8EAED' : '#1e293b',
+                              fontSize: '0.9rem',
+                              fontWeight: '600',
+                              appearance: 'none',
+                              WebkitAppearance: 'none',
+                              MozAppearance: 'none',
+                              cursor: 'pointer',
+                              outline: 'none',
+                              boxSizing: 'border-box',
+                              boxShadow: isDark ? '0 1px 3px rgba(0,0,0,0.3)' : '0 1px 2px rgba(0,0,0,0.05)',
+                              transition: 'border-color 0.15s ease, box-shadow 0.15s ease'
+                            }}
+                          >
+                            {visibleClasswork.map(act => (
+                              <option
+                                key={act.id}
+                                value={String(act.id)}
+                                style={{
+                                  backgroundColor: isDark ? '#242a2b' : '#ffffff',
+                                  color: isDark ? '#E8EAED' : '#1e293b'
+                                }}
+                              >
+                                {act.title}
+                              </option>
+                            ))}
+                          </select>
+                          <ChevronDown
+                            size={16}
+                            style={{
+                              position: 'absolute',
+                              right: '12px',
+                              top: '50%',
+                              transform: 'translateY(-50%)',
+                              pointerEvents: 'none',
+                              color: isDark ? '#a3a3a3' : '#64748b'
+                            }}
+                          />
+                        </div>
                       </div>
 
                       <div style={styles.gradingColumnsLayout}>
@@ -2444,9 +2557,6 @@ export default function TeacherClasswork({
                             <h4 style={{ margin: 0, fontSize: '0.92rem', color: isDark ? '#E8EAED' : '#1e293b', fontWeight: '700' }}>
                               Turned In ({gradingStudents.length})
                             </h4>
-                            <span style={{ fontSize: '0.75rem', color: isDark ? '#a3a3a3' : '#64748b' }}>
-                              Max: {maxPoints} pts
-                            </span>
                           </div>
 
                           <div style={styles.gradingStudentList}>

@@ -216,6 +216,8 @@ export default function StudentView({ socket, currentUser, username, assignment,
   const { isDark, toggle: toggleDarkMode } = useDarkMode();
   const isMobile = useMediaQuery('(max-width: 768px)');
   const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [showSubmitModal, setShowSubmitModal] = useState(false);
+  const [showUnsubmitModal, setShowUnsubmitModal] = useState(false);
   const [previewImage, setPreviewImage] = useState(null);
   const [previewVideo, setPreviewVideo] = useState(null);
   const [editorFontSize, setEditorFontSize] = useState(() => {
@@ -1452,12 +1454,12 @@ export default function StudentView({ socket, currentUser, username, assignment,
     setProgramStarted(false);
   };  const handleSubmit = () => {
     if (submitted) return;
-    if (strictCompiler && diagnosticsRef.current?.length > 0) {
-      const msg = "Notice: Strict compiler mode is active and your code currently has compiler errors/warnings. Are you sure you want to submit anyway?";
-      if (!window.confirm(msg)) return;
-    } else {
-      if (!window.confirm("Submit your work? You won't be able to make changes after submitting.")) return;
-    }
+    setShowSubmitModal(true);
+  };
+
+  const handleConfirmSubmit = () => {
+    if (submitted) return;
+    setShowSubmitModal(false);
 
     if (isRunning) {
       handleStopCode();
@@ -1519,7 +1521,11 @@ export default function StudentView({ socket, currentUser, username, assignment,
   };
 
   const handleUnsubmit = () => {
-    if (!window.confirm("Are you sure you want to unsubmit? You will be able to edit and re-submit your code.")) return;
+    setShowUnsubmitModal(true);
+  };
+
+  const handleConfirmUnsubmit = () => {
+    setShowUnsubmitModal(false);
 
     // CRITICAL: Ensure codeHistory is preserved and NOT reset when unsubmitting!
     const curHist = codeHistoryRef.current?.length > 0 ? codeHistoryRef.current : codeHistory;
@@ -2077,39 +2083,6 @@ export default function StudentView({ socket, currentUser, username, assignment,
         </div>
 
         <div style={styles.editorWrapper}>
-          {/* Locked Workspace Banner */}
-          {submitted && (
-            <div style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              padding: '7px 16px',
-              backgroundColor: isDark ? 'rgba(16, 185, 129, 0.12)' : '#ecfdf5',
-              borderBottom: isDark ? '1px solid rgba(16, 185, 129, 0.25)' : '1px solid #a7f3d0',
-              color: isDark ? '#34d399' : '#065f46',
-              fontSize: '0.85rem',
-              fontWeight: '600',
-              flexShrink: 0
-            }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <CheckCircle2 size={16} color="#10b981" />
-                <span>Work Submitted — Workspace is locked in read-only mode. Editing, saving, and executing code are disabled.</span>
-              </div>
-              <div style={{
-                fontSize: '0.72rem',
-                padding: '2px 8px',
-                borderRadius: '4px',
-                backgroundColor: isDark ? 'rgba(16, 185, 129, 0.2)' : 'rgba(16, 185, 129, 0.15)',
-                border: '1px solid #10b981',
-                textTransform: 'uppercase',
-                letterSpacing: '0.05em',
-                fontWeight: '700'
-              }}>
-                Read Only
-              </div>
-            </div>
-          )}
-
           {/* ── File Tabs ────────────────────────────────────── */}
           <div style={{
             display: 'flex',
@@ -2892,6 +2865,294 @@ export default function StudentView({ socket, currentUser, username, assignment,
           name={previewVideo.name}
           onClose={() => setPreviewVideo(null)}
         />
+      )}
+
+      {/* SUBMIT CONFIRMATION MODAL */}
+      {showSubmitModal && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            backgroundColor: 'rgba(0, 0, 0, 0.65)',
+            backdropFilter: 'blur(5px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 9999,
+          }}
+          onClick={() => setShowSubmitModal(false)}
+        >
+          <div
+            style={{
+              backgroundColor: isDark ? '#242424' : '#ffffff',
+              color: isDark ? '#E8EAED' : '#1e293b',
+              borderRadius: '18px',
+              padding: '24px 28px',
+              width: '90%',
+              maxWidth: '460px',
+              boxShadow: isDark ? '0 25px 50px -12px rgba(0, 0, 0, 0.7)' : '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
+              border: isDark ? '1px solid #3d3d3d' : '1px solid #e2e8f0',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '18px',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '12px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <div
+                  style={{
+                    width: '42px',
+                    height: '42px',
+                    borderRadius: '12px',
+                    backgroundColor: strictCompiler && diagnosticsRef.current?.length > 0
+                      ? 'rgba(245, 158, 11, 0.15)'
+                      : 'rgba(16, 185, 129, 0.15)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    flexShrink: 0,
+                  }}
+                >
+                  {strictCompiler && diagnosticsRef.current?.length > 0 ? (
+                    <AlertTriangle size={22} color="#f59e0b" />
+                  ) : (
+                    <CheckCircle2 size={22} color="#10b981" />
+                  )}
+                </div>
+                <div>
+                  <h3 style={{ margin: 0, fontSize: '1.15rem', fontWeight: '700', color: isDark ? '#f3f4f6' : '#0f172a' }}>
+                    Submit Activity
+                  </h3>
+                  <div style={{ fontSize: '0.8rem', color: isDark ? '#9ca3af' : '#64748b', marginTop: '2px' }}>
+                    {assignment?.title || 'Classroom Activity'}
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowSubmitModal(false)}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: isDark ? '#9ca3af' : '#64748b',
+                  cursor: 'pointer',
+                  padding: '4px',
+                  borderRadius: '6px',
+                  display: 'flex',
+                  alignItems: 'center',
+                }}
+                title="Close"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {strictCompiler && diagnosticsRef.current?.length > 0 ? (
+              <div
+                style={{
+                  backgroundColor: isDark ? 'rgba(245, 158, 11, 0.1)' : '#fffbeb',
+                  border: isDark ? '1px solid rgba(245, 158, 11, 0.3)' : '1px solid #fde68a',
+                  borderRadius: '10px',
+                  padding: '12px 14px',
+                  fontSize: '0.85rem',
+                  lineHeight: 1.5,
+                  color: isDark ? '#fcd34d' : '#92400e',
+                }}
+              >
+                <strong>Notice:</strong> Strict compiler mode is active and your code currently has compiler errors/warnings. Are you sure you want to submit anyway?
+              </div>
+            ) : (
+              <p style={{ margin: 0, fontSize: '0.9rem', lineHeight: 1.55, color: isDark ? '#d1d5db' : '#334155' }}>
+                Are you ready to submit your work? Once submitted, your workspace will be locked and handed in to your instructor for evaluation.
+              </p>
+            )}
+
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                padding: '10px 14px',
+                backgroundColor: isDark ? '#1a1a1a' : '#f8fafc',
+                borderRadius: '10px',
+                border: isDark ? '1px solid #333' : '1px solid #e2e8f0',
+                fontSize: '0.82rem',
+                color: isDark ? '#9ca3af' : '#64748b',
+              }}
+            >
+              <span>Code Buffer:</span>
+              <span style={{ fontWeight: '600', color: isDark ? '#e5e7eb' : '#1f2937' }}>
+                {(code || '').split('\n').length} lines (C#)
+              </span>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '6px' }}>
+              <button
+                type="button"
+                onClick={() => setShowSubmitModal(false)}
+                style={{
+                  padding: '9px 18px',
+                  borderRadius: '8px',
+                  border: isDark ? '1px solid #4b5563' : '1px solid #cbd5e1',
+                  backgroundColor: 'transparent',
+                  color: isDark ? '#d1d5db' : '#475569',
+                  fontWeight: '600',
+                  fontSize: '0.88rem',
+                  cursor: 'pointer',
+                  transition: 'all 0.15s ease',
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmSubmit}
+                style={{
+                  padding: '9px 20px',
+                  borderRadius: '8px',
+                  border: 'none',
+                  backgroundColor: '#10b981',
+                  color: '#ffffff',
+                  fontWeight: '600',
+                  fontSize: '0.88rem',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  boxShadow: '0 4px 12px rgba(16, 185, 129, 0.25)',
+                  transition: 'all 0.15s ease',
+                }}
+              >
+                <Check size={16} />
+                Submit Activity
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* UNSUBMIT CONFIRMATION MODAL */}
+      {showUnsubmitModal && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            backgroundColor: 'rgba(0, 0, 0, 0.65)',
+            backdropFilter: 'blur(5px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 9999,
+          }}
+          onClick={() => setShowUnsubmitModal(false)}
+        >
+          <div
+            style={{
+              backgroundColor: isDark ? '#242424' : '#ffffff',
+              color: isDark ? '#E8EAED' : '#1e293b',
+              borderRadius: '18px',
+              padding: '24px 28px',
+              width: '90%',
+              maxWidth: '460px',
+              boxShadow: isDark ? '0 25px 50px -12px rgba(0, 0, 0, 0.7)' : '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
+              border: isDark ? '1px solid #3d3d3d' : '1px solid #e2e8f0',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '18px',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '12px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <div
+                  style={{
+                    width: '42px',
+                    height: '42px',
+                    borderRadius: '12px',
+                    backgroundColor: 'rgba(59, 130, 246, 0.15)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    flexShrink: 0,
+                  }}
+                >
+                  <ArrowLeft size={20} color="#3b82f6" />
+                </div>
+                <div>
+                  <h3 style={{ margin: 0, fontSize: '1.15rem', fontWeight: '700', color: isDark ? '#f3f4f6' : '#0f172a' }}>
+                    Unsubmit Activity
+                  </h3>
+                  <div style={{ fontSize: '0.8rem', color: isDark ? '#9ca3af' : '#64748b', marginTop: '2px' }}>
+                    {assignment?.title || 'Classroom Activity'}
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowUnsubmitModal(false)}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: isDark ? '#9ca3af' : '#64748b',
+                  cursor: 'pointer',
+                  padding: '4px',
+                  borderRadius: '6px',
+                  display: 'flex',
+                  alignItems: 'center',
+                }}
+                title="Close"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <p style={{ margin: 0, fontSize: '0.9rem', lineHeight: 1.55, color: isDark ? '#d1d5db' : '#334155' }}>
+              Are you sure you want to unsubmit? This will unlock your workspace so you can continue editing, compiling, and re-submitting your code.
+            </p>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '6px' }}>
+              <button
+                type="button"
+                onClick={() => setShowUnsubmitModal(false)}
+                style={{
+                  padding: '9px 18px',
+                  borderRadius: '8px',
+                  border: isDark ? '1px solid #4b5563' : '1px solid #cbd5e1',
+                  backgroundColor: 'transparent',
+                  color: isDark ? '#d1d5db' : '#475569',
+                  fontWeight: '600',
+                  fontSize: '0.88rem',
+                  cursor: 'pointer',
+                  transition: 'all 0.15s ease',
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmUnsubmit}
+                style={{
+                  padding: '9px 20px',
+                  borderRadius: '8px',
+                  border: 'none',
+                  backgroundColor: '#3b82f6',
+                  color: '#ffffff',
+                  fontWeight: '600',
+                  fontSize: '0.88rem',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  boxShadow: '0 4px 12px rgba(59, 130, 246, 0.25)',
+                  transition: 'all 0.15s ease',
+                }}
+              >
+                Confirm Unsubmit
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* MULTIPLE MONITORS MODAL */}

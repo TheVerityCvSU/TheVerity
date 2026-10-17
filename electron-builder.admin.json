@@ -32,7 +32,7 @@
   ],
   "win": {
     "target": "nsis",
-    "icon": "electron/assets/icon.ico"
+    "icon": "electron/assets/icon-admin.ico"
   },
   "nsis": {
     "oneClick": false,
@@ -42,8 +42,8 @@
     "createStartMenuShortcut": true,
     "shortcutName": "The Verity Admin Portal",
     "artifactName": "The Verity Admin Setup.${ext}",
-    "installerIcon": "electron/assets/icon.ico",
-    "uninstallerIcon": "electron/assets/icon.ico",
+    "installerIcon": "electron/assets/icon-admin.ico",
+    "uninstallerIcon": "electron/assets/icon-admin.ico",
     "runAfterFinish": true
   }
 }

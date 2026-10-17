@@ -96764,6 +96764,34 @@ app.post("/upload", (req, res, next) => {
   const protocol = req.headers["x-forwarded-proto"] || req.protocol;
   res.status(201).json({ url: `${protocol}://${host}/uploads/${unique}` });
 });
+app.get("/api/check-update", (req, res) => {
+  const currentVersion = "1.0.0";
+  const forceUpdate = req.query.force === "true" || req.query.force === "1";
+  const latestVersion = forceUpdate ? "1.0.1" : process.env.LATEST_APP_VERSION || currentVersion;
+  const updateAvailable = latestVersion !== currentVersion;
+  const protocol = req.headers["x-forwarded-proto"] || req.protocol;
+  const host = req.get("host");
+  const baseUrl = `${protocol}://${host}`;
+  const isAdmin = req.query.role === "admin" || req.query.app === "admin" || req.query.role === "Administrator";
+  const downloadQuery = isAdmin ? "?app=admin" : "";
+  res.json({
+    currentVersion,
+    latestVersion,
+    updateAvailable,
+    downloadUrl: process.env.UPDATE_DOWNLOAD_URL || `${baseUrl}/api/download-update${downloadQuery}`,
+    releaseNotes: "Version " + latestVersion + ": Enhanced proctoring stability, UI performance optimizations, and security patches."
+  });
+});
+app.get("/api/download-update", (req, res) => {
+  const isAdmin = req.query.role === "admin" || req.query.app === "admin" || req.query.role === "Administrator";
+  const installerName = isAdmin ? "The Verity Admin Setup.exe" : "The Verity Setup 1.0.0.exe";
+  const installerPath = path.resolve(__dirname, "../dist", installerName);
+  if (fs2.existsSync(installerPath)) {
+    res.download(installerPath, installerName);
+  } else {
+    res.redirect("https://github.com/belheroth/Verity/releases/latest");
+  }
+});
 app.get("/health", async (req, res) => {
   try {
     await db.get("SELECT 1");
@@ -98957,7 +98985,6 @@ var OFFLINE_DOTNET_ENV = {
   DOTNET_NOLOGO: "1",
   DOTNET_SKIP_FIRST_TIME_EXPERIENCE: "1",
   DOTNET_CLI_UI_LANGUAGE: "en-US",
-  MSBUILDDISABLENODEREUSE: "1",
   NUGET_CERTREVOCATIONMODE: "offline",
   DOTNET_MULTILEVEL_LOOKUP: "0",
   DOTNET_GENERATE_ASPNET_CERTIFICATE: "0",
@@ -98987,6 +99014,52 @@ function getDotnetTargetFramework() {
   cachedDotnetTargetFramework = "net8.0";
   return cachedDotnetTargetFramework;
 }
+var cachedRoslynConfig = null;
+function getRoslynConfig() {
+  if (cachedRoslynConfig !== null) return cachedRoslynConfig;
+  try {
+    const info = execSync("dotnet --info", { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], env: OFFLINE_DOTNET_ENV });
+    let basePath = "";
+    const match = info.match(/Base Path:\s*([^\r\n]+)/i);
+    if (match && match[1]) basePath = match[1].trim();
+    let cscPath = null;
+    if (basePath) {
+      const candidate1 = path.join(basePath, "Roslyn", "bincore", "csc.dll");
+      const candidate2 = path.join(basePath, "Roslyn", "bcl", "csc.dll");
+      const candidate3 = path.join(basePath, "Roslyn", "csc.dll");
+      if (fs2.existsSync(candidate1)) cscPath = candidate1;
+      else if (fs2.existsSync(candidate2)) cscPath = candidate2;
+      else if (fs2.existsSync(candidate3)) cscPath = candidate3;
+    }
+    let refDir = null;
+    let packVersion = null;
+    if (basePath) {
+      const dotnetRoot = path.resolve(basePath, "..", "..");
+      const packsRefDir = path.join(dotnetRoot, "packs", "Microsoft.NETCore.App.Ref");
+      if (fs2.existsSync(packsRefDir)) {
+        const versions = fs2.readdirSync(packsRefDir).filter((v) => fs2.existsSync(path.join(packsRefDir, v, "ref")));
+        if (versions.length > 0) {
+          versions.sort((a, b) => b.localeCompare(a, void 0, { numeric: true }));
+          packVersion = versions[0];
+          const major = packVersion.split(".")[0];
+          const targetSub = path.join(packsRefDir, packVersion, "ref", `net${major}.0`);
+          if (fs2.existsSync(targetSub)) refDir = targetSub;
+        }
+      }
+    }
+    if (cscPath && refDir) {
+      cachedRoslynConfig = { cscPath, refDir, packVersion };
+      console.log(`\u26A1 Verity Fast Compiler: Discovered local .NET SDK Roslyn C# engine:
+  Compiler: ${cscPath}
+  Reference Assemblies: ${refDir}`);
+      return cachedRoslynConfig;
+    }
+  } catch (e2) {
+    console.warn("\u26A0\uFE0F Could not locate direct Roslyn csc in local .NET SDK, will use optimized dotnet build:", e2.message);
+  }
+  cachedRoslynConfig = false;
+  return false;
+}
 function ensureBaseTemplate() {
   if (baseTemplatePromise) return baseTemplatePromise;
   baseTemplatePromise = (async () => {
@@ -98995,6 +99068,7 @@ function ensureBaseTemplate() {
       const projectFile = path.join(COMPILER_BASE_DIR, "verity_base.csproj");
       const nugetFile = path.join(COMPILER_BASE_DIR, "nuget.config");
       const assetsFile = path.join(COMPILER_BASE_DIR, "obj", "project.assets.json");
+      const rspFile = path.join(COMPILER_BASE_DIR, "framework_refs.rsp");
       if (fs2.existsSync(projectFile) && fs2.existsSync(assetsFile) && fs2.existsSync(nugetFile)) {
         try {
           const existingContent = fs2.readFileSync(projectFile, "utf8");
@@ -99023,6 +99097,15 @@ function ensureBaseTemplate() {
     <TargetFramework>${targetFramework}</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <UseAppHost>false</UseAppHost>
+    <UseSharedCompilation>true</UseSharedCompilation>
+    <ProduceReferenceAssembly>false</ProduceReferenceAssembly>
+    <EnableSourceLink>false</EnableSourceLink>
+    <EnableSourceControlManagerQueries>false</EnableSourceControlManagerQueries>
+    <RunAnalyzers>false</RunAnalyzers>
+    <EnableNETAnalyzers>false</EnableNETAnalyzers>
+    <SatelliteResourceLanguages>none</SatelliteResourceLanguages>
+    <AcceleratedBuildsInVisualStudio>true</AcceleratedBuildsInVisualStudio>
     <NoWarn>$(NoWarn);NU1503;CS7022</NoWarn>
   </PropertyGroup>
 </Project>
@@ -99031,16 +99114,44 @@ function ensureBaseTemplate() {
       fs2.writeFileSync(projectFile, csprojContent, "utf8");
       fs2.writeFileSync(nugetFile, nugetContent, "utf8");
       fs2.writeFileSync(path.join(COMPILER_BASE_DIR, "Program.cs"), "using System; class Program { static void Main() {} }\n", "utf8");
+      const roslyn = getRoslynConfig();
+      if (roslyn && roslyn.refDir) {
+        try {
+          const dlls = fs2.readdirSync(roslyn.refDir).filter((f3) => f3.endsWith(".dll"));
+          const rspLines = [
+            "-nologo",
+            "-target:exe",
+            "-nullable:enable",
+            "-parallel+",
+            ...dlls.map((d) => `"-r:${path.join(roslyn.refDir, d)}"`)
+          ];
+          fs2.writeFileSync(rspFile, rspLines.join("\r\n"), "utf8");
+          const binDir = path.join(COMPILER_BASE_DIR, "bin", "Debug", targetFramework);
+          fs2.mkdirSync(binDir, { recursive: true });
+          const runtimeConfig = {
+            runtimeOptions: {
+              tfm: targetFramework,
+              framework: {
+                name: "Microsoft.NETCore.App",
+                version: roslyn.packVersion || "8.0.0"
+              }
+            }
+          };
+          fs2.writeFileSync(path.join(binDir, "verity_base.runtimeconfig.json"), JSON.stringify(runtimeConfig, null, 2), "utf8");
+        } catch (rspErr) {
+          console.warn("\u26A0\uFE0F Could not generate framework_refs.rsp:", rspErr.message);
+        }
+      }
       console.log(`\u26A1 Verity Compiler: Pre-warming base .NET template (${targetFramework}) in offline mode...`);
       await new Promise((resolve) => {
         exec(`dotnet restore "${projectFile}" --ignore-failed-sources -v q`, { cwd: COMPILER_BASE_DIR, env: OFFLINE_DOTNET_ENV }, (restoreErr) => {
           if (restoreErr) {
             console.warn("\u26A0\uFE0F Base template restore warning:", restoreErr.message);
           }
-          exec(`dotnet build --no-restore -v q -p:WarningLevel=0 "${projectFile}"`, { cwd: COMPILER_BASE_DIR, env: OFFLINE_DOTNET_ENV }, (buildErr) => {
+          exec(`dotnet build --no-restore -v q -m -p:WarningLevel=0 -p:UseAppHost=false "${projectFile}"`, { cwd: COMPILER_BASE_DIR, env: OFFLINE_DOTNET_ENV }, (buildErr) => {
             if (buildErr) {
               console.warn("\u26A0\uFE0F Base template build warning (falling back to standard build):", buildErr.message);
-              exec(`dotnet build -v q -p:WarningLevel=0 "${projectFile}"`, { cwd: COMPILER_BASE_DIR, env: OFFLINE_DOTNET_ENV }, () => resolve(COMPILER_BASE_DIR));
+              exec(`dotnet build -v q -m -p:WarningLevel=0 "${projectFile}"`, { cwd: COMPILER_BASE_DIR, env: OFFLINE_DOTNET_ENV }, () => resolve(COMPILER_BASE_DIR));
             } else {
               console.log(`\u26A1 Verity Compiler: Base .NET template pre-warmed for ${targetFramework} with warm obj/bin cache (offline ready).`);
               resolve(COMPILER_BASE_DIR);
@@ -99082,18 +99193,20 @@ setInterval(() => {
 function parseCompilerDiagnostics(output) {
   if (!output) return [];
   const diagnostics = [];
-  const regex = /(?:^|\r?\n)(?:.*?[/\\])?Program\.cs\((\d+)(?:,(\d+))?(?:,(\d+),(\d+))?\):\s*(error|warning)\s+([A-Za-z0-9]+):\s*([^\r\n]+)/gi;
+  const regex = /(?:^|\r?\n)(?:.*?[/\\])?([a-zA-Z0-9_\-\.]+?\.cs)\((\d+)(?:,(\d+))?(?:,(\d+),(\d+))?\):\s*(error|warning)\s+([A-Za-z0-9]+):\s*([^\r\n]+)/gi;
   let match;
   while ((match = regex.exec(output)) !== null) {
-    const startLine = parseInt(match[1], 10);
-    const startCol = match[2] ? parseInt(match[2], 10) : 1;
-    const endLine = match[3] ? parseInt(match[3], 10) : startLine;
-    const endCol = match[4] ? parseInt(match[4], 10) : null;
-    const severity = match[5].toLowerCase();
-    const code = match[6];
-    let rawMsg = match[7].trim();
+    const fileName = match[1];
+    const startLine = parseInt(match[2], 10);
+    const startCol = match[3] ? parseInt(match[3], 10) : 1;
+    const endLine = match[4] ? parseInt(match[4], 10) : startLine;
+    const endCol = match[5] ? parseInt(match[5], 10) : null;
+    const severity = match[6].toLowerCase();
+    const code = match[7];
+    let rawMsg = match[8].trim();
     rawMsg = rawMsg.replace(/\s*\[.*?\.csproj\]$/, "").trim();
     diagnostics.push({
+      file: fileName,
       severity,
       // 'error' or 'warning'
       code,
@@ -99105,6 +99218,75 @@ function parseCompilerDiagnostics(output) {
     });
   }
   return diagnostics;
+}
+function getCompilerSpawnConfig(projectDir, treatWarningsAsErrors, extraFiles = []) {
+  const targetFramework = getDotnetTargetFramework();
+  const binDir = path.join(projectDir, "bin", "Debug", targetFramework);
+  const dllPath = path.join(binDir, "verity_base.dll");
+  const roslyn = getRoslynConfig();
+  if (roslyn && roslyn.cscPath && roslyn.refDir) {
+    if (!fs2.existsSync(binDir)) {
+      fs2.mkdirSync(binDir, { recursive: true });
+    }
+    const runtimeConfigFile = path.join(binDir, "verity_base.runtimeconfig.json");
+    if (!fs2.existsSync(runtimeConfigFile)) {
+      const runtimeConfig = {
+        runtimeOptions: {
+          tfm: targetFramework,
+          framework: {
+            name: "Microsoft.NETCore.App",
+            version: roslyn.packVersion || "8.0.0"
+          }
+        }
+      };
+      fs2.writeFileSync(runtimeConfigFile, JSON.stringify(runtimeConfig, null, 2), "utf8");
+    }
+    const rspFile = path.join(projectDir, "framework_refs.rsp");
+    if (!fs2.existsSync(rspFile)) {
+      const dlls = fs2.readdirSync(roslyn.refDir).filter((f3) => f3.endsWith(".dll"));
+      const rspLines = [
+        "-nologo",
+        "-target:exe",
+        "-nullable:enable",
+        "-parallel+",
+        ...dlls.map((d) => `"-r:${path.join(roslyn.refDir, d)}"`)
+      ];
+      fs2.writeFileSync(rspFile, rspLines.join("\r\n"), "utf8");
+    }
+    const sourceFiles = [
+      path.join(projectDir, "Program.cs"),
+      ...extraFiles.map((ef) => {
+        const safeName = ef.name.replace(/[^a-zA-Z0-9_\-\.]/g, "_").replace(/\.cs$/i, "") + ".cs";
+        return path.join(projectDir, safeName);
+      }).filter((p) => fs2.existsSync(p) && path.basename(p).toLowerCase() !== "program.cs")
+    ];
+    const args2 = [
+      "exec",
+      roslyn.cscPath,
+      `@${rspFile}`,
+      `-out:${dllPath}`,
+      treatWarningsAsErrors ? "-warnaserror+" : "-warnaserror-",
+      treatWarningsAsErrors ? "-warn:4" : "-warn:0",
+      ...sourceFiles
+    ];
+    return { command: "dotnet", args: args2, dllPath, mode: "roslyn-direct" };
+  }
+  const projectFile = path.join(projectDir, "verity_base.csproj");
+  const args = [
+    "build",
+    "--no-restore",
+    "-v",
+    "q",
+    "-clp:NoSummary",
+    "-m",
+    "-p:UseAppHost=false",
+    "-p:ProduceReferenceAssembly=false",
+    "-p:RunAnalyzers=false",
+    treatWarningsAsErrors ? "-p:WarningLevel=4" : "-p:WarningLevel=0",
+    ...treatWarningsAsErrors ? ["-p:TreatWarningsAsErrors=true"] : [],
+    projectFile
+  ];
+  return { command: "dotnet", args, dllPath, mode: "dotnet-build" };
 }
 async function getTreatWarningsAsErrors() {
   try {
@@ -99366,7 +99548,13 @@ io.on("connection", (socket) => {
         socket.emit("terminal_output", "Error: Authentication required to execute code. Please log in.\n");
         return socket.emit("process_exit", { code: 1 });
       }
-      const { code, extraFiles = [] } = data || {};
+      const { code, extraFiles = [], language } = data || {};
+      if (language && !["csharp", "cs", "c#"].includes(String(language).toLowerCase())) {
+        socket.emit("terminal_output", `
+[Compiler Error: Unsupported language "${language}". Verity Compiler strictly compiles C# (.NET SDK) only.]
+`);
+        return socket.emit("process_exit", { code: 1 });
+      }
       const studentKey = socket.user?.id ? `u_${socket.user.id}` : socket.user?.email ? `e_${socket.user.email.replace(/[^a-zA-Z0-9]/g, "_")}` : `s_${socket.id.replace(/[^a-zA-Z0-9]/g, "")}`;
       let projectDir = sessionWorkspaces.get(studentKey)?.projectDir;
       if (!projectDir) {
@@ -99459,35 +99647,26 @@ io.on("connection", (socket) => {
     socket2.emit("compiler_diagnostics", []);
     const projectFile = path.join(projectDir, "verity_base.csproj");
     const nugetFile = path.join(projectDir, "nuget.config");
-    const targetFramework = getDotnetTargetFramework();
-    const dllPath = path.join(projectDir, "bin", "Debug", targetFramework, "verity_base.dll");
     const treatWarningsAsErrors = await getTreatWarningsAsErrors();
+    const compilerConfig = getCompilerSpawnConfig(projectDir, treatWarningsAsErrors, extraFiles);
+    const dllPath = compilerConfig.dllPath;
     try {
       if (!fs2.existsSync(nugetFile) || fs2.readFileSync(nugetFile, "utf8").includes("api.nuget.org")) {
         fs2.writeFileSync(nugetFile, OFFLINE_NUGET_CONFIG, "utf8");
       }
     } catch (_) {
     }
-    const assetsFile = path.join(projectDir, "obj", "project.assets.json");
-    if (!fs2.existsSync(assetsFile)) {
-      try {
-        execSync(`dotnet restore "${projectFile}" --ignore-failed-sources -v q`, { cwd: projectDir, env: OFFLINE_DOTNET_ENV });
-      } catch (_) {
+    if (compilerConfig.mode === "dotnet-build") {
+      const assetsFile = path.join(projectDir, "obj", "project.assets.json");
+      if (!fs2.existsSync(assetsFile)) {
+        try {
+          execSync(`dotnet restore "${projectFile}" --ignore-failed-sources -v q`, { cwd: projectDir, env: OFFLINE_DOTNET_ENV });
+        } catch (_) {
+        }
       }
     }
-    const buildArgs = [
-      "build",
-      "--no-restore",
-      "-v",
-      "q",
-      "-clp:NoSummary",
-      "--disable-build-servers",
-      treatWarningsAsErrors ? "-p:WarningLevel=4" : "-p:WarningLevel=0",
-      ...treatWarningsAsErrors ? ["-p:TreatWarningsAsErrors=true"] : [],
-      projectFile
-    ];
     const env2 = OFFLINE_DOTNET_ENV;
-    const buildProcess = spawn("dotnet", buildArgs, { cwd: projectDir, env: env2 });
+    const buildProcess = spawn(compilerConfig.command, compilerConfig.args, { cwd: projectDir, env: env2 });
     activeProcess = buildProcess;
     let rawCompilerOutput = "";
     buildProcess.stdout.on("data", (d) => {
@@ -99586,7 +99765,18 @@ io.on("connection", (socket) => {
       if (!socket.user && (data?.username === "CompilerView" || data?.room === "sandbox")) {
         socket.user = { id: 9999, name: "CompilerView", role: "Student" };
       }
-      const { code, testCases = [] } = data || {};
+      const { code, extraFiles = [], testCases = [], language } = data || {};
+      if (language && !["csharp", "cs", "c#"].includes(String(language).toLowerCase())) {
+        const results2 = (testCases || []).map((tc) => ({
+          id: tc.id,
+          status: "error",
+          passed: false,
+          actualOutput: "",
+          expectedOutput: tc.expectedOutput || "",
+          error: `Compiler Error: Unsupported language "${language}". Verity Compiler strictly compiles C# (.NET SDK) only.`
+        }));
+        return socket.emit("test_cases_results", { results: results2 });
+      }
       if (!Array.isArray(testCases) || testCases.length === 0) {
         return socket.emit("test_cases_results", { results: [] });
       }
@@ -99621,6 +99811,25 @@ io.on("connection", (socket) => {
           console.warn("Workspace prep failed for test cases:", e2.message);
         }
         fs2.writeFileSync(path.join(projectDir, "Program.cs"), code || "", "utf8");
+        const extraNames = /* @__PURE__ */ new Set();
+        for (const ef of extraFiles) {
+          if (!ef || !ef.name || !ef.code) continue;
+          const safeName = ef.name.replace(/[^a-zA-Z0-9_\-\.]/g, "_").replace(/\.cs$/i, "") + ".cs";
+          if (safeName.toLowerCase() === "program.cs") continue;
+          fs2.writeFileSync(path.join(projectDir, safeName), ef.code || "", "utf8");
+          extraNames.add(safeName);
+        }
+        try {
+          for (const f3 of fs2.readdirSync(projectDir)) {
+            if (f3.endsWith(".cs") && f3 !== "Program.cs" && !extraNames.has(f3)) {
+              try {
+                fs2.unlinkSync(path.join(projectDir, f3));
+              } catch (_) {
+              }
+            }
+          }
+        } catch (_) {
+        }
         const nugetFile = path.join(projectDir, "nuget.config");
         try {
           if (!fs2.existsSync(nugetFile) || fs2.readFileSync(nugetFile, "utf8").includes("api.nuget.org")) {
@@ -99628,27 +99837,19 @@ io.on("connection", (socket) => {
           }
         } catch (_) {
         }
-        const assetsFile = path.join(projectDir, "obj", "project.assets.json");
-        if (!fs2.existsSync(assetsFile)) {
-          try {
-            execSync(`dotnet restore "${projectFile}" --ignore-failed-sources -v q`, { cwd: projectDir, env: OFFLINE_DOTNET_ENV });
-          } catch (_) {
+        const treatWarningsAsErrors = await getTreatWarningsAsErrors();
+        const compilerConfig = getCompilerSpawnConfig(projectDir, treatWarningsAsErrors, extraFiles);
+        if (compilerConfig.mode === "dotnet-build") {
+          const assetsFile = path.join(projectDir, "obj", "project.assets.json");
+          if (!fs2.existsSync(assetsFile)) {
+            try {
+              execSync(`dotnet restore "${projectFile}" --ignore-failed-sources -v q`, { cwd: projectDir, env: OFFLINE_DOTNET_ENV });
+            } catch (_) {
+            }
           }
         }
-        const treatWarningsAsErrors = await getTreatWarningsAsErrors();
-        const buildArgs = [
-          "build",
-          "--no-restore",
-          "-v",
-          "q",
-          "-clp:NoSummary",
-          "--disable-build-servers",
-          treatWarningsAsErrors ? "-p:WarningLevel=4" : "-p:WarningLevel=0",
-          ...treatWarningsAsErrors ? ["-p:TreatWarningsAsErrors=true"] : [],
-          projectFile
-        ];
         compileSuccess = await new Promise((resolve) => {
-          const bp = spawn("dotnet", buildArgs, { cwd: projectDir, env: env2 });
+          const bp = spawn(compilerConfig.command, compilerConfig.args, { cwd: projectDir, env: env2 });
           bp.stdout.on("data", (d) => {
             buildOutput += d.toString();
           });

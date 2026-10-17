@@ -1,7 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
 import {
   User, BookOpen, ShieldCheck, SlidersHorizontal, Bell,
-  GraduationCap, Moon, Sun, Camera, Upload, Trash2, CheckCircle2, Sparkles
+  GraduationCap, Moon, Sun, Camera, Upload, Trash2, CheckCircle2, Sparkles,
+  RefreshCw, Download, AlertCircle
 } from 'lucide-react';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { useCurrentUser } from '../hooks/useCurrentUser';
@@ -9,6 +10,7 @@ import Skeleton from '../components/Skeleton';
 import ChangeEmailModal from '../components/ChangeEmailModal';
 import ChangePasswordModal from '../components/ChangePasswordModal';
 import { migrateUserClassroomsOnEmailChange } from '../utils/classroomUtils';
+import { apiFetch } from '../utils/api';
 
 const PRESET_AVATARS = [
   {
@@ -65,6 +67,15 @@ const PROFILE_PICTURE_SECTION = {
   fields: [],
 };
 
+const SOFTWARE_UPDATE_SECTION = {
+  icon: RefreshCw,
+  title: 'Check for Updates',
+  blurb: 'Keep The Verity up to date with the latest features, security patches, and improvements.',
+  fields: [
+    { label: 'Check for Updates', type: 'check_update' },
+  ],
+};
+
 const SECTIONS = {
   Student: [
     APPEARANCE_SECTION,
@@ -101,6 +112,7 @@ const SECTIONS = {
         { label: 'Reminder Lead Time', placeholder: 'e.g. 24 hours before' },
       ],
     },
+    SOFTWARE_UPDATE_SECTION,
   ],
   Instructor: [
     APPEARANCE_SECTION,
@@ -139,6 +151,7 @@ const SECTIONS = {
         { label: 'Release Schedule', placeholder: 'e.g. Release on Mondays 8:00 AM' },
       ],
     },
+    SOFTWARE_UPDATE_SECTION,
   ],
   Administrator: [
     APPEARANCE_SECTION,
@@ -177,6 +190,7 @@ const SECTIONS = {
         { label: 'Holidays / Non-working Days', placeholder: 'e.g. Dec 25, Jan 1' },
       ],
     },
+    SOFTWARE_UPDATE_SECTION,
   ],
 };
 
@@ -521,6 +535,250 @@ function ProfilePictureChanger({ isDark, avatar, onAvatarChange }) {
   );
 }
 
+/**
+ * CheckUpdateField Component
+ * Features brief explanation, current version, check for update button, and update flow.
+ */
+function CheckUpdateField({ isDark, role }) {
+  const [status, setStatus] = useState('idle'); // 'idle' | 'checking' | 'latest' | 'available' | 'error'
+  const [updateInfo, setUpdateInfo] = useState(null);
+  const [isDownloading, setIsDownloading] = useState(false);
+  const [downloadStarted, setDownloadStarted] = useState(false);
+
+  const handleCheckUpdate = async (e) => {
+    // Allows Shift or Alt click to test the update available flow
+    const force = e?.altKey || e?.shiftKey;
+    setStatus('checking');
+    setDownloadStarted(false);
+    try {
+      const query = new URLSearchParams();
+      if (role) query.append('role', role);
+      if (force) query.append('force', 'true');
+      const res = await apiFetch(`/api/check-update?${query.toString()}`);
+      if (res && res.ok) {
+        const data = await res.json();
+        setUpdateInfo(data);
+        if (data.updateAvailable) {
+          setStatus('available');
+        } else {
+          setStatus('latest');
+        }
+      } else {
+        setStatus('error');
+      }
+    } catch (err) {
+      console.error('Failed to check for updates:', err);
+      setStatus('error');
+    }
+  };
+
+  const handleUpdateNow = () => {
+    if (!updateInfo?.downloadUrl) return;
+    setIsDownloading(true);
+    setDownloadStarted(true);
+
+    try {
+      const a = document.createElement('a');
+      a.href = updateInfo.downloadUrl;
+      a.setAttribute('download', '');
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    } catch (err) {
+      console.error('Download error:', err);
+      window.open(updateInfo.downloadUrl, '_blank');
+    }
+
+    setTimeout(() => {
+      setIsDownloading(false);
+    }, 2500);
+  };
+
+  return (
+    <div style={{
+      gridColumn: '1 / -1',
+      display: 'flex',
+      flexDirection: 'column',
+      gap: '16px',
+      padding: '22px',
+      borderRadius: '16px',
+      backgroundColor: isDark ? '#2D2D2D' : '#f8fafc',
+      border: `1px solid ${isDark ? '#404040' : '#e2e8f0'}`,
+      transition: 'all 0.25s ease'
+    }}>
+      {/* Brief explanation & current version */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '16px', flexWrap: 'wrap' }}>
+        <div style={{ maxWidth: '640px' }}>
+          <div style={{
+            fontSize: '0.95rem',
+            fontWeight: '700',
+            color: isDark ? '#E8EAED' : '#1f2937',
+            marginBottom: '4px'
+          }}>
+            Software Updates
+          </div>
+          <p style={{
+            margin: 0,
+            fontSize: '0.85rem',
+            lineHeight: 1.5,
+            color: isDark ? '#9AA0A6' : '#64748b'
+          }}>
+            Check if a newer version of The Verity is available. Updating ensures your system is equipped with the latest features, security patches, and performance fixes.
+          </p>
+        </div>
+
+        <div style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: '8px',
+          padding: '6px 14px',
+          borderRadius: '20px',
+          backgroundColor: isDark ? '#3A3A3A' : '#e2e8f0',
+          color: isDark ? '#E8EAED' : '#475569',
+          fontSize: '0.82rem',
+          fontWeight: '600',
+          flexShrink: 0
+        }}>
+          <span>Current Version:</span>
+          <span style={{ color: '#10b981', fontWeight: '700' }}>v{updateInfo?.currentVersion || '1.0.0'}</span>
+        </div>
+      </div>
+
+      {/* Action buttons */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+        <button
+          type="button"
+          onClick={handleCheckUpdate}
+          disabled={status === 'checking'}
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '8px',
+            padding: '10px 24px',
+            borderRadius: '50px',
+            backgroundColor: status === 'checking' ? (isDark ? '#4b5563' : '#9ca3af') : '#10b981',
+            color: '#ffffff',
+            border: 'none',
+            fontWeight: '700',
+            fontSize: '0.9rem',
+            cursor: status === 'checking' ? 'not-allowed' : 'pointer',
+            boxShadow: '0 2px 8px rgba(16, 185, 129, 0.25)',
+            transition: 'all 0.2s ease',
+          }}
+          title="Click to check for updates"
+        >
+          <RefreshCw
+            size={16}
+            style={{
+              animation: status === 'checking' ? 'spin 1s linear infinite' : 'none',
+            }}
+          />
+          {status === 'checking' ? 'Checking for updates...' : status === 'latest' ? 'Check Again' : 'Check for Updates'}
+        </button>
+
+        {status === 'available' && (
+          <button
+            type="button"
+            onClick={handleUpdateNow}
+            disabled={isDownloading}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '8px',
+              padding: '10px 24px',
+              borderRadius: '50px',
+              backgroundColor: '#059669',
+              color: '#ffffff',
+              border: 'none',
+              fontWeight: '700',
+              fontSize: '0.9rem',
+              cursor: isDownloading ? 'wait' : 'pointer',
+              boxShadow: '0 2px 10px rgba(5, 150, 105, 0.35)',
+              transition: 'all 0.2s ease',
+            }}
+            title="Download and install update"
+          >
+            <Download size={16} />
+            {isDownloading ? 'Starting Download...' : 'Update Now'}
+          </button>
+        )}
+      </div>
+
+      {/* Up to date status */}
+      {status === 'latest' && (
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: '10px',
+          padding: '12px 16px',
+          borderRadius: '12px',
+          backgroundColor: isDark ? 'rgba(16, 185, 129, 0.12)' : '#ecfdf5',
+          border: '1px solid #10b981',
+          color: isDark ? '#34d399' : '#047857',
+          fontSize: '0.88rem',
+          fontWeight: '500',
+        }}>
+          <CheckCircle2 size={18} color="#10b981" style={{ flexShrink: 0 }} />
+          <span>You're up to date! The Verity is running the latest version (v{updateInfo?.currentVersion || '1.0.0'}).</span>
+        </div>
+      )}
+
+      {/* Update available status */}
+      {status === 'available' && (
+        <div style={{
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '8px',
+          padding: '14px 18px',
+          borderRadius: '12px',
+          backgroundColor: isDark ? 'rgba(59, 130, 246, 0.12)' : '#eff6ff',
+          border: '1px solid #3b82f6',
+          color: isDark ? '#93c5fd' : '#1d4ed8',
+          fontSize: '0.88rem',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: '700', fontSize: '0.92rem' }}>
+            <Sparkles size={18} color="#3b82f6" style={{ flexShrink: 0 }} />
+            <span>Update Available: Version {updateInfo?.latestVersion}</span>
+          </div>
+          {updateInfo?.releaseNotes && (
+            <div style={{ fontSize: '0.83rem', opacity: 0.9, lineHeight: 1.4 }}>
+              {updateInfo.releaseNotes}
+            </div>
+          )}
+          {downloadStarted && (
+            <div style={{
+              marginTop: '4px',
+              fontSize: '0.82rem',
+              color: isDark ? '#34d399' : '#059669',
+              fontWeight: '600'
+            }}>
+              ✓ Download initiated! Once the installer finishes downloading, run it to complete the update.
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Error status */}
+      {status === 'error' && (
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: '10px',
+          padding: '12px 16px',
+          borderRadius: '12px',
+          backgroundColor: isDark ? 'rgba(239, 68, 68, 0.12)' : '#fef2f2',
+          border: '1px solid #ef4444',
+          color: isDark ? '#f87171' : '#b91c1c',
+          fontSize: '0.88rem',
+        }}>
+          <AlertCircle size={18} color="#ef4444" style={{ flexShrink: 0 }} />
+          <span>Unable to check for updates right now. Please check your connection and try again.</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function SettingsPanel({ role = 'Student', onBack, loading = false }) {
   const sections = SECTIONS[role] || SECTIONS.Student;
   const STORAGE_KEY = `verity:settings:${role}`;
@@ -644,6 +902,7 @@ export default function SettingsPanel({ role = 'Student', onBack, loading = fals
           const SectionIcon = section.icon;
           const isAppearance = section.title === 'Appearance & Display';
           const isProfile = section.title === 'Profile Picture';
+          const isUpdate = section.title === 'Check for Updates';
 
         return (
           <div
@@ -688,6 +947,16 @@ export default function SettingsPanel({ role = 'Student', onBack, loading = fals
 
               {section.fields.map((f) => {
                 const key = `${section.title}:${f.label}`;
+
+                if (f.type === 'check_update') {
+                  return (
+                    <CheckUpdateField
+                      key={f.label}
+                      isDark={isDark}
+                      role={role}
+                    />
+                  );
+                }
 
                 if (f.type === 'dark_toggle') {
                   return (
@@ -853,27 +1122,21 @@ export default function SettingsPanel({ role = 'Student', onBack, loading = fals
               })}
             </div>
 
-            <div style={styles.actions}>
-              {isAppearance ? (
-                <span style={{ fontSize: '0.85rem', color: isDark ? '#9AA0A6' : '#64748b', fontStyle: 'italic' }}>
-                  ✓ Theme preference is automatically applied and saved
-                </span>
-              ) : (
-                <>
-                  <button
-                    type="button"
-                    style={styles.saveBtn}
-                    onClick={() => handleSave(section.title)}
-                    title="Save Changes"
-                  >
-                    Save Changes
-                  </button>
-                  {savedSection === section.title && (
-                    <span style={styles.savedNote}>✓ Saved</span>
-                  )}
-                </>
-              )}
-            </div>
+            {!isAppearance && !isUpdate && (
+              <div style={styles.actions}>
+                <button
+                  type="button"
+                  style={styles.saveBtn}
+                  onClick={() => handleSave(section.title)}
+                  title="Save Changes"
+                >
+                  Save Changes
+                </button>
+                {savedSection === section.title && (
+                  <span style={styles.savedNote}>✓ Saved</span>
+                )}
+              </div>
+            )}
           </div>
         );
       })

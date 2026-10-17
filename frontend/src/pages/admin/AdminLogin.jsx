@@ -54,7 +54,7 @@ export default function AdminLogin({ onLogin }) {
         </div>
         <div>
           <div style={{ display: 'flex', alignItems: 'baseline', fontSize: '1.8rem', fontWeight: '900', fontStyle: 'italic' }}>
-            <span style={{ color: '#10b981' }}>V</span>
+            <span style={{ color: '#3b82f6', textShadow: '0 0 14px rgba(59, 130, 246, 0.6)' }}>V</span>
             <span style={{ color: 'white' }}>erity</span>
           </div>
           <div style={styles.adminPortalTag}>SECURE ADMIN PORTAL</div>

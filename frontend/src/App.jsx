@@ -64,20 +64,29 @@ if (!isWebHosted && CLOUD_SOCKET && CLOUD_SOCKET !== LOCAL_SOCKET) {
   }
 }
 
+export const isRunningInAdminMode = () => {
+  if (typeof window === 'undefined') return false;
+  return Boolean(
+    window.IS_ADMIN_APP ||
+    window.electronAPI?.isAdminApp ||
+    window.location.pathname.startsWith('/admin') ||
+    window.location.hash.startsWith('#/admin') ||
+    new URLSearchParams(window.location.search).get('admin') === 'true'
+  );
+};
+
 export default function App() {
+  const isAdminApp = isRunningInAdminMode();
 
   // 1. INITIALIZE STATE FROM LOCAL STORAGE
   const [currentScreen, setCurrentScreen] = useState(() => {
-    const path = typeof window !== 'undefined' ? window.location.pathname : '';
-    const isAdminPath = path.startsWith('/admin') || (typeof window !== 'undefined' && Boolean(window.IS_ADMIN_APP));
-    
     let savedUser = null;
     try {
       const savedUserStr = localStorage.getItem('currentUser');
       savedUser = savedUserStr ? JSON.parse(savedUserStr) : null;
     } catch (_) {}
 
-    if (isAdminPath) {
+    if (isAdminApp) {
       if (savedUser && savedUser.role === 'Admin') return 'admin_dashboard';
       return 'admin_login';
     }
@@ -98,14 +107,33 @@ export default function App() {
   });
 
   const [currentUser, setCurrentUser] = useState(() => {
-      try {
-        const savedUser = localStorage.getItem('currentUser');
-        return savedUser ? JSON.parse(savedUser) : null;
-      } catch (e) {
-        console.warn('Failed to parse currentUser from localStorage', e);
+    try {
+      const savedUserStr = localStorage.getItem('currentUser');
+      const savedUser = savedUserStr ? JSON.parse(savedUserStr) : null;
+      if (isAdminApp && savedUser && savedUser.role !== 'Admin') {
         return null;
       }
-    });
+      return savedUser;
+    } catch (e) {
+      console.warn('Failed to parse currentUser from localStorage', e);
+      return null;
+    }
+  });
+
+  // Strict screen guard: If in Admin App, enforce that only admin screens can ever be shown
+  useEffect(() => {
+    if (isAdminApp) {
+      if (currentUser?.role === 'Admin') {
+        if (currentScreen !== 'admin_dashboard') {
+          setCurrentScreen('admin_dashboard');
+        }
+      } else {
+        if (currentScreen !== 'admin_login') {
+          setCurrentScreen('admin_login');
+        }
+      }
+    }
+  }, [isAdminApp, currentUser, currentScreen]);
 
     const [activeClassroom, setActiveClassroom] = useState(() => {
       try {
@@ -141,6 +169,10 @@ export default function App() {
     return sessionStorage.getItem('verity_proctoring_return') || 'teacher_classwork';
   });
 
+  const [proctoringMode, setProctoringMode] = useState(() => {
+    return sessionStorage.getItem('verity_proctoring_mode') || 'live';
+  });
+
   const [workspaceReturnScreen, setWorkspaceReturnScreen] = useState(() => {
     return sessionStorage.getItem('verity_workspace_return') || 'classroom_view';
   });
@@ -158,6 +190,12 @@ export default function App() {
       sessionStorage.setItem('verity_proctoring_return', proctoringReturnScreen);
     }
   }, [proctoringReturnScreen]);
+
+  useEffect(() => {
+    if (proctoringMode) {
+      sessionStorage.setItem('verity_proctoring_mode', proctoringMode);
+    }
+  }, [proctoringMode]);
 
   useEffect(() => {
     if (workspaceReturnScreen) {
@@ -507,7 +545,7 @@ export default function App() {
     }
 
     releaseLockdown();
-    const wasAdmin = currentUser?.role === 'Admin' || (typeof window !== 'undefined' && (window.location.pathname.startsWith('/admin') || Boolean(window.IS_ADMIN_APP)));
+    const wasAdmin = isAdminApp || currentUser?.role === 'Admin';
     setCurrentUser(null);
     notifyUserListeners(null);
     if (typeof window !== 'undefined') {
@@ -547,6 +585,31 @@ export default function App() {
           transition={{ duration: 0.4 }}
           style={{ flex: 1, display: 'flex', flexDirection: 'column', width: '100%' }}
         >
+          {/* --- ADMIN APP EXCLUSIVE ROUTES --- */}
+          {isAdminApp ? (
+            <>
+              {currentScreen === 'admin_dashboard' && currentUser?.role === 'Admin' ? (
+                <ProtectedRoute currentUser={currentUser} setCurrentScreen={setCurrentScreen} requiredRole="Admin">
+                  <AdminDashboard currentUser={currentUser} onLogout={handleLogout} socket={socket} />
+                </ProtectedRoute>
+              ) : (
+                <AdminLogin
+                  onLogin={(user, token) => {
+                    localStorage.removeItem('verity_teacher_classrooms');
+                    localStorage.removeItem('verity_classrooms');
+                    setCurrentUser(user);
+                    notifyUserListeners(user);
+                    if (typeof window !== 'undefined') {
+                      window.dispatchEvent(new CustomEvent('verity:user-updated', { detail: user }));
+                    }
+                    if (token) localStorage.setItem('verity_token', token);
+                    setCurrentScreen('admin_dashboard');
+                  }}
+                />
+              )}
+            </>
+          ) : (
+            <>
           {/* --- AUTH ROUTES --- */}
           {currentScreen === 'admin_login' && (
             <AdminLogin
@@ -734,6 +797,7 @@ export default function App() {
                 onStartMonitoring={(assignment) => {
                   setActiveAssignment(assignment);
                   setSelectedStudentForPlayback(null);
+                  setProctoringMode('live');
                   setProctoringReturnScreen('teacher_classwork');
                   setCurrentScreen('teacher_proctoring');
                 }}
@@ -745,6 +809,7 @@ export default function App() {
                 onOpenPlayback={(assignment, student) => {
                   setActiveAssignment(assignment);
                   setSelectedStudentForPlayback(student);
+                  setProctoringMode('playback');
                   setProctoringReturnScreen('teacher_classwork');
                   setCurrentScreen('teacher_proctoring');
                 }}
@@ -771,12 +836,14 @@ export default function App() {
                 onOpenPlayback={(assignment, student) => {
                   setActiveAssignment(assignment);
                   setSelectedStudentForPlayback(student);
+                  setProctoringMode('playback');
                   setProctoringReturnScreen('teacher_grading');
                   setCurrentScreen('teacher_proctoring');
                 }}
                 onStartMonitoring={(assignment, student) => {
                   setActiveAssignment(assignment);
                   setSelectedStudentForPlayback(student || null);
+                  setProctoringMode('live');
                   setProctoringReturnScreen('teacher_grading');
                   setCurrentScreen('teacher_proctoring');
                 }}
@@ -792,9 +859,17 @@ export default function App() {
                 assignment={activeAssignment}
                 classroom={activeClassroom}
                 initialStudent={selectedStudentForPlayback}
-                mode={proctoringReturnScreen === 'teacher_grading' ? 'playback' : 'live'}
-                onBack={() => setCurrentScreen(proctoringReturnScreen || 'teacher_grading')}
-                onLogout={() => setCurrentScreen(proctoringReturnScreen || 'teacher_classwork')}
+                mode={proctoringMode}
+                onBack={() => {
+                  if (proctoringMode === 'playback') {
+                    setSelectedStudentForPlayback(null);
+                  }
+                  setCurrentScreen(proctoringReturnScreen || 'teacher_grading');
+                }}
+                onLogout={() => {
+                  setSelectedStudentForPlayback(null);
+                  setCurrentScreen(proctoringReturnScreen || 'teacher_classwork');
+                }}
               />
             </ProtectedRoute>
           )}
@@ -833,6 +908,8 @@ export default function App() {
                 onGoToRegister={() => setCurrentScreen('register')}
               />
             )
+          )}
+            </>
           )}
         </motion.div>
       </AnimatePresence>

@@ -131,7 +131,6 @@ export default function TeacherView({
     assignment?.points ? String(assignment.points) : '100'
   );
   const [feedbackInput, setFeedbackInput] = useState('');
-  const [displayProgress, setDisplayProgress] = useState(0);
 
   const playTimerRef = useRef(null);
   const animFrameRef = useRef(null);
@@ -717,7 +716,10 @@ export default function TeacherView({
   }, [socket]);
 
   const activeStudent =
-    students[selectedStudentId] || {
+    students[selectedStudentId] ||
+    Object.values(students).find(
+      (s) => s.id === selectedStudentId || s.name === selectedStudentId
+    ) || {
       name: 'Waiting for students...',
       code: '// No student selected',
       logs: []
@@ -742,7 +744,7 @@ export default function TeacherView({
     };
 
     Object.values(students).forEach((student) => {
-      if (mode === 'playback' && student.id !== selectedStudentId) return;
+      if (mode === 'playback' && student.id !== selectedStudentId && student.name !== selectedStudentId) return;
 
       if (Array.isArray(student.logs)) {
         student.logs.forEach((log) => {
@@ -789,19 +791,24 @@ export default function TeacherView({
     return logs.sort((a, b) => b.id - a.id);
   }, [students, mode, selectedStudentId]);
 
-  const history = activeStudent.codeHistory || activeStudent.history || [];
+  const rawHistory = activeStudent.codeHistory || activeStudent.history || [];
+  const history =
+    Array.isArray(rawHistory) && rawHistory.length > 0
+      ? rawHistory
+      : (activeStudent.code || activeStudent.finalCode)
+      ? [{ time: Date.now(), code: activeStudent.code || activeStudent.finalCode }]
+      : [];
+
   const hasPlayback =
     mode === 'playback' &&
-    (activeStudent.status === 'Submitted' || history.length > 0) &&
-    Array.isArray(history) &&
-    history.length > 0;
+    (activeStudent.status === 'Submitted' || history.length > 0 || Boolean(activeStudent.code || activeStudent.finalCode));
 
-  let displayCode = activeStudent.code || '';
+  let displayCode = activeStudent.code || activeStudent.finalCode || '';
   if (hasPlayback) {
     if (playbackIndex >= 0 && history[playbackIndex]) {
       displayCode = history[playbackIndex].code;
-    } else if (!displayCode && history.length > 0) {
-      displayCode = history[history.length - 1]?.code || '';
+    } else if (history.length > 0) {
+      displayCode = history[history.length - 1]?.code || displayCode;
     }
   }
 
@@ -816,44 +823,20 @@ export default function TeacherView({
     const startI =
       playbackIndex < 0 || playbackIndex >= history.length - 1 ? 0 : playbackIndex;
     setPlaybackIndex(startI);
-    setDisplayProgress(startI);
-
-    let totalDuration = 0;
-    const delays = [];
-    for (let k = startI; k < history.length - 1; k++) {
-      const gap = (history[k + 1].time || 0) - (history[k].time || 0);
-      const d = Math.min(Math.max(gap, 50), 1500);
-      delays.push(d);
-      totalDuration += d;
-    }
-    if (totalDuration === 0) totalDuration = (history.length - 1 - startI) * 200;
 
     const step = (idx) => {
       if (idx >= history.length - 1) {
-        setDisplayProgress(history.length - 1);
         setIsPlaying(false);
         return;
       }
-      const delay = delays[idx - startI] ?? 200;
+      const gap = (history[idx + 1].time || 0) - (history[idx].time || 0);
+      const delay = Math.min(Math.max(gap, 40), 800);
       playTimerRef.current = setTimeout(() => {
         setPlaybackIndex(idx + 1);
         step(idx + 1);
       }, delay);
     };
     step(startI);
-
-    const rafStart = performance.now();
-    const totalSteps = history.length - 1 - startI;
-
-    const tick = () => {
-      const elapsed = performance.now() - rafStart;
-      const fraction = Math.min(elapsed / totalDuration, 1);
-      setDisplayProgress(startI + fraction * totalSteps);
-      if (fraction < 1) {
-        animFrameRef.current = requestAnimationFrame(tick);
-      }
-    };
-    animFrameRef.current = requestAnimationFrame(tick);
 
     return () => {
       if (playTimerRef.current) clearTimeout(playTimerRef.current);
@@ -863,13 +846,12 @@ export default function TeacherView({
 
   const togglePlay = () => {
     if (!isPlaying) {
-      if (playbackIndex >= history.length - 1) {
+      if (playbackIndex >= history.length - 1 || playbackIndex < 0) {
         setPlaybackIndex(0);
-        setDisplayProgress(0);
-        stepTimingRef.current = null;
       }
       setIsPlaying(true);
     } else {
+      if (playTimerRef.current) clearTimeout(playTimerRef.current);
       if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
       setIsPlaying(false);
     }
@@ -1068,7 +1050,7 @@ export default function TeacherView({
               </span>
 
               {/* Status Indicator */}
-              {mode === 'live' ? (
+              {mode === 'live' && (
                 <span
                   style={{
                     display: 'inline-flex',
@@ -1094,23 +1076,6 @@ export default function TeacherView({
                     }}
                   />
                   LIVE
-                </span>
-              ) : (
-                <span
-                  style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: '4px',
-                    padding: '2px 8px',
-                    borderRadius: '9999px',
-                    backgroundColor: 'rgba(16, 185, 129, 0.12)',
-                    color: '#10b981',
-                    fontSize: '0.72rem',
-                    fontWeight: '700',
-                    flexShrink: 0
-                  }}
-                >
-                  <CheckCircle2 size={11} /> PLAYBACK
                 </span>
               )}
             </div>
@@ -1174,28 +1139,6 @@ export default function TeacherView({
               }}
             >
               {activeStudent.name}
-            </span>
-            <span
-              style={{
-                fontSize: '0.7rem',
-                padding: '1px 6px',
-                borderRadius: '6px',
-                fontWeight: '600',
-                backgroundColor:
-                  activeStudent.status === 'Graded'
-                    ? 'rgba(59, 130, 246, 0.15)'
-                    : activeStudent.status === 'Submitted'
-                    ? 'rgba(16, 185, 129, 0.15)'
-                    : 'rgba(234, 179, 8, 0.15)',
-                color:
-                  activeStudent.status === 'Graded'
-                    ? '#3b82f6'
-                    : activeStudent.status === 'Submitted'
-                    ? '#10b981'
-                    : '#eab308'
-              }}
-            >
-              {activeStudent.status || 'Live'}
             </span>
           </div>
         )}
@@ -1590,13 +1533,13 @@ export default function TeacherView({
                 </div>
               ) : (
                 visibleStudents.map((student) => {
-                  const isActive = student.id === selectedStudentId;
+                  const isActive = student.id === selectedStudentId || student.name === selectedStudentId || activeStudent?.id === student.id || activeStudent?.name === student.name;
                   const logCount = Array.isArray(student.logs) ? student.logs.length : 0;
                   return (
                     <div
                       key={student.id}
                       onClick={() => {
-                        setSelectedStudentId(student.id);
+                        setSelectedStudentId(student.id || student.name);
                         if (isCompact) setSidebarOpen(false);
                       }}
                       style={{
@@ -1824,116 +1767,149 @@ export default function TeacherView({
             </div>
           )}
 
-          {/* 2. VCR SCRUBBER (FOR PLAYBACK REVIEW) */}
-          {hasPlayback && terminalMode !== 'maximized' && (
-            <div
-              style={{
-                backgroundColor: theme.headerBg,
-                borderTop: `1px solid ${theme.border}`,
-                borderBottom: `1px solid ${theme.border}`,
-                padding: isMobile ? '8px 12px' : '10px 20px',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '6px',
-                flexShrink: 0
-              }}
-            >
-              <style>{`
-                .vcr-scrubber {
-                  -webkit-appearance: none;
-                  appearance: none;
-                  width: 100%;
-                  height: 5px;
-                  border-radius: 9999px;
-                  background: linear-gradient(
-                    to right,
-                    #ef4444 var(--progress, 0%),
-                    ${isDark ? '#4b5563' : '#d1d5db'} var(--progress, 0%)
-                  );
-                  outline: none;
-                  cursor: pointer;
-                }
-                .vcr-scrubber::-webkit-slider-thumb {
-                  -webkit-appearance: none;
-                  appearance: none;
-                  width: 12px;
-                  height: 12px;
-                  border-radius: 50%;
-                  background: #ef4444;
-                  cursor: pointer;
-                  box-shadow: 0 0 4px rgba(0,0,0,0.3);
-                }
-                .vcr-scrubber::-moz-range-thumb {
-                  width: 12px;
-                  height: 12px;
-                  border-radius: 50%;
-                  background: #ef4444;
-                  border: none;
-                  cursor: pointer;
-                }
-              `}</style>
+          {/* 2. TIMELINE SCRUBBER (FOR PLAYBACK REVIEW) */}
+          {hasPlayback && terminalMode !== 'maximized' && (() => {
+            const maxIndex = Math.max(history.length - 1, 1);
+            const currIndex = playbackIndex < 0 ? history.length - 1 : playbackIndex;
+            const progressPercent = Math.min(Math.max((currIndex / maxIndex) * 100, 0), 100);
+
+            return (
               <div
                 style={{
+                  backgroundColor: theme.headerBg,
+                  borderTop: `1px solid ${theme.border}`,
+                  borderBottom: `1px solid ${theme.border}`,
+                  padding: isMobile ? '8px 12px' : '10px 20px',
                   display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  fontSize: '0.78rem'
+                  flexDirection: 'column',
+                  gap: '6px',
+                  flexShrink: 0
                 }}
               >
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <button
-                    onClick={togglePlay}
-                    style={{
-                      background: isPlaying ? 'rgba(239, 68, 68, 0.15)' : 'rgba(16, 185, 129, 0.15)',
-                      border: 'none',
-                      borderRadius: '6px',
-                      padding: '4px 8px',
-                      cursor: 'pointer',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '5px',
-                      color: isPlaying ? '#ef4444' : '#10b981',
-                      fontWeight: '700',
-                      fontSize: '0.78rem'
-                    }}
-                    title={isPlaying ? 'Pause replay' : 'Play replay'}
-                  >
-                    {isPlaying ? <Pause size={14} fill="currentColor" /> : <Play size={14} fill="currentColor" />}
-                    <span>{isPlaying ? 'PAUSE' : 'PLAY'}</span>
-                  </button>
-                  <span style={{ fontWeight: '600', color: theme.textSecondary }}>
-                    VCR REPLAY
+                <div
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    fontSize: '0.78rem'
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <button
+                      onClick={togglePlay}
+                      style={{
+                        background: isPlaying ? 'rgba(239, 68, 68, 0.15)' : 'rgba(16, 185, 129, 0.15)',
+                        border: 'none',
+                        borderRadius: '6px',
+                        padding: '4px 8px',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '5px',
+                        color: isPlaying ? '#ef4444' : '#10b981',
+                        fontWeight: '700',
+                        fontSize: '0.78rem'
+                      }}
+                      title={isPlaying ? 'Pause replay' : 'Play replay'}
+                    >
+                      {isPlaying ? <Pause size={14} fill="currentColor" /> : <Play size={14} fill="currentColor" />}
+                      <span>{isPlaying ? 'PAUSE' : 'PLAY'}</span>
+                    </button>
+                  </div>
+
+                  <span style={{ color: theme.textMuted, fontWeight: '600' }}>
+                    Keystroke {currIndex + 1} / {history.length}
                   </span>
                 </div>
 
-                <span style={{ color: theme.textMuted, fontWeight: '600' }}>
-                  Keystroke {playbackIndex < 0 ? history.length : playbackIndex + 1} / {history.length}
-                </span>
-              </div>
+                <div
+                  style={{
+                    position: 'relative',
+                    width: '100%',
+                    height: '20px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    cursor: 'pointer',
+                    userSelect: 'none'
+                  }}
+                >
+                  {/* Base Track Line */}
+                  <div
+                    style={{
+                      position: 'relative',
+                      width: '100%',
+                      height: '5px',
+                      borderRadius: '9999px',
+                      backgroundColor: isDark ? '#4b5563' : '#d1d5db',
+                      overflow: 'visible'
+                    }}
+                  >
+                    {/* Active Progress Line */}
+                    <div
+                      style={{
+                        position: 'absolute',
+                        left: 0,
+                        top: 0,
+                        bottom: 0,
+                        width: `${progressPercent}%`,
+                        backgroundColor: '#ef4444',
+                        borderRadius: '9999px',
+                        transition: isPlaying ? 'width 60ms linear' : 'none'
+                      }}
+                    />
 
-              <input
-                type="range"
-                className="vcr-scrubber"
-                min="0"
-                max={Math.max(history.length - 1, 1)}
-                value={isPlaying ? displayProgress : playbackIndex < 0 ? history.length - 1 : playbackIndex}
-                onChange={(e) => {
-                  if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
-                  setIsPlaying(false);
-                  const v = parseInt(e.target.value, 10);
-                  setPlaybackIndex(v);
-                  setDisplayProgress(v);
-                }}
-                style={{
-                  '--progress': `${
-                    ((isPlaying ? displayProgress : playbackIndex < 0 ? history.length - 1 : playbackIndex) /
-                      Math.max(history.length - 1, 1)) *
-                    100
-                  }%`
-                }}
-              />
-            </div>
-          )}
+                    {/* Circle Thumb: precisely anchored at progressPercent */}
+                    <div
+                      style={{
+                        position: 'absolute',
+                        left: `${progressPercent}%`,
+                        top: '50%',
+                        transform: 'translate(-50%, -50%)',
+                        width: '13px',
+                        height: '13px',
+                        borderRadius: '50%',
+                        backgroundColor: '#ef4444',
+                        boxShadow: '0 0 5px rgba(0,0,0,0.35)',
+                        pointerEvents: 'none',
+                        zIndex: 2,
+                        transition: isPlaying ? 'left 60ms linear' : 'none'
+                      }}
+                    />
+                  </div>
+
+                  {/* Accessible overlay slider for native dragging / clicks */}
+                  <input
+                    type="range"
+                    min="0"
+                    max={maxIndex}
+                    step="1"
+                    value={currIndex}
+                    onChange={(e) => {
+                      if (playTimerRef.current) clearTimeout(playTimerRef.current);
+                      if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
+                      setIsPlaying(false);
+                      const v = parseInt(e.target.value, 10);
+                      setPlaybackIndex(v);
+                    }}
+                    style={{
+                      position: 'absolute',
+                      left: 0,
+                      right: 0,
+                      top: 0,
+                      bottom: 0,
+                      width: '100%',
+                      height: '100%',
+                      opacity: 0,
+                      cursor: 'pointer',
+                      margin: 0,
+                      padding: 0,
+                      zIndex: 3
+                    }}
+                  />
+                </div>
+              </div>
+            );
+          })()}
 
           {/* 3. TERMINAL CONSOLE WRAPPER */}
           {terminalMode !== 'collapsed' ? (

@@ -5,6 +5,10 @@ const { fork } = require('child_process');
 const { initLocalDb, localDbAPI } = require('./local-db.cjs');
 
 const CHROME_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36';
+app.name = 'The Verity Admin';
+if (process.platform === 'win32') {
+  app.setAppUserModelId('com.verity.admin.app');
+}
 app.userAgentFallback = CHROME_USER_AGENT;
 
 let mainWindow;
@@ -112,7 +116,7 @@ function createSplashWindow() {
     },
   });
 
-  splashWindow.loadFile(path.join(__dirname, 'splash.html'));
+  splashWindow.loadFile(path.join(__dirname, 'admin-splash.html'));
   splashWindow.on('closed', () => {
     splashWindow = null;
   });
@@ -124,7 +128,7 @@ function createWindow() {
     width: 1280,
     height: 850,
     show: false,
-    icon: path.join(__dirname, 'assets', 'icon.png'),
+    icon: path.join(__dirname, 'assets', 'icon-admin.png'),
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, 'admin-preload.cjs'),
@@ -174,10 +178,11 @@ function createWindow() {
     } catch (_) {}
   });
 
+  const adminUrl = 'http://localhost:5173/?admin=true#/admin';
   if (app.isPackaged) {
-    mainWindow.loadURL('http://localhost:5173');
+    mainWindow.loadURL(adminUrl);
   } else {
-    mainWindow.loadURL('http://localhost:5173');
+    mainWindow.loadURL(adminUrl);
   }
 
   const launchMainWindow = () => {
