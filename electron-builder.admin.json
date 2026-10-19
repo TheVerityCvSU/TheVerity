@@ -1,17 +1,15 @@
 {
   "appId": "com.verity.admin.app",
   "productName": "The Verity Admin",
+  "directories": {
+    "output": "release/Admin"
+  },
   "extraMetadata": {
     "main": "electron/admin-main.cjs"
   },
   "files": [
     "electron/**/*",
-    "dist/**/*",
-    "!dist/win-unpacked/**/*",
-    "!dist/*.exe",
-    "!dist/*.blockmap",
-    "!dist/*.yml",
-    "!dist/*.yaml"
+    "dist/**/*"
   ],
   "extraResources": [
     {
@@ -30,9 +28,20 @@
       ]
     }
   ],
+  "electronLanguages": [
+    "en-US",
+    "en"
+  ],
   "win": {
-    "target": "nsis",
+    "target": [
+      "nsis",
+      "portable"
+    ],
     "icon": "electron/assets/icon-admin.ico"
+  },
+  "portable": {
+    "artifactName": "${productName} Portable.${ext}",
+    "unpackDirName": "TheVerityAdminApp"
   },
   "nsis": {
     "oneClick": false,
@@ -44,6 +53,8 @@
     "artifactName": "The Verity Admin Setup.${ext}",
     "installerIcon": "electron/assets/icon-admin.ico",
     "uninstallerIcon": "electron/assets/icon-admin.ico",
-    "runAfterFinish": true
+    "runAfterFinish": true,
+    "include": "build/installer.nsh",
+    "warningsAsErrors": false
   }
 }

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useLayoutEffect, useMemo } from 'react';
-import { Home, Calendar, ClipboardList, Settings, Plus, X, Archive, TerminalSquare, Play, MoreHorizontal, Calendar as CalendarIcon, CheckCircle2, Code2 } from 'lucide-react';
+import { Home, Calendar, ClipboardList, Settings, Plus, X, Archive, TerminalSquare, Play, MoreHorizontal, Calendar as CalendarIcon, CheckCircle2, Code2, MoreVertical, RefreshCw } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import SettingsPanel from './SettingsPanel';
 import ProfileMenu from './ProfileMenu';
@@ -17,66 +17,112 @@ import {
   getCachedClassrooms,
   saveCachedClassrooms,
   isPhantomClassroom,
-  sortClassroomsAlphabetically
+  sortClassroomsAlphabetically,
+  getClassroomTheme,
+  THEME_PRESETS
 } from '../utils/classroomUtils';
 
 // Storage key uniquely scoped per student account
 const getStorageKey = (user) => getClassroomStorageKey(user, 'student');
 
 const cardThemes = [
-  { // 0: C# Programming
-    image: 'https://images.unsplash.com/photo-1498050108023-c5249f4df085?auto=format&fit=crop&w=600&q=80',
-    gradient: 'linear-gradient(to right, rgba(15, 23, 42, 1) 0%, rgba(15, 23, 42, 0.85) 30%, rgba(15, 23, 42, 0.3) 60%, transparent 100%)',
+  { // 0: Emerald Books
+    id: 'emerald_books',
+    name: 'Emerald Books',
+    primary: '#137333',
+    secondary: '#1e8e3e',
+    gradient: 'linear-gradient(135deg, #137333 0%, #1e8e3e 100%)',
     textColor: 'white',
-    pillBg: '#dcfce7',
-    pillText: '#065f46',
-    status: 'DUE SOON',
+    pillBg: 'rgba(255, 255, 255, 0.22)',
+    pillText: '#ffffff',
+    status: 'ACTIVE',
+    statusColor: '#dcfce7',
+    colSpan: 7
+  },
+  { // 1: Ocean Academia
+    id: 'ocean_academia',
+    name: 'Ocean Academia',
+    primary: '#1a73e8',
+    secondary: '#0d47a1',
+    gradient: 'linear-gradient(135deg, #1a73e8 0%, #0d47a1 100%)',
+    textColor: 'white',
+    pillBg: 'rgba(255, 255, 255, 0.22)',
+    pillText: '#ffffff',
+    status: 'ACTIVE',
+    statusColor: '#93c5fd',
+    colSpan: 5
+  },
+  { // 2: Royal Violet
+    id: 'royal_violet',
+    name: 'Royal Violet',
+    primary: '#7c3aed',
+    secondary: '#581c87',
+    gradient: 'linear-gradient(135deg, #7c3aed 0%, #581c87 100%)',
+    textColor: 'white',
+    pillBg: 'rgba(255, 255, 255, 0.22)',
+    pillText: '#ffffff',
+    status: 'ACTIVE',
+    statusColor: '#f3e8ff',
+    colSpan: 5
+  },
+  { // 3: Warm Amber
+    id: 'warm_amber',
+    name: 'Warm Amber',
+    primary: '#ea580c',
+    secondary: '#9a3412',
+    gradient: 'linear-gradient(135deg, #ea580c 0%, #9a3412 100%)',
+    textColor: 'white',
+    pillBg: 'rgba(255, 255, 255, 0.22)',
+    pillText: '#ffffff',
+    status: 'ACTIVE',
+    statusColor: '#ffedd5',
+    colSpan: 7
+  },
+  { // 4: Midnight Tech
+    id: 'midnight_slate',
+    name: 'Midnight Tech',
+    primary: '#0f172a',
+    secondary: '#1e293b',
+    gradient: 'linear-gradient(135deg, #0f172a 0%, #1e293b 100%)',
+    textColor: 'white',
+    pillBg: 'rgba(255, 255, 255, 0.22)',
+    pillText: '#ffffff',
+    status: 'ACTIVE',
     statusColor: '#cbd5e1',
-    colSpan: 7
-  },
-  { // 1: Data Structures
-    image: 'https://images.unsplash.com/photo-1451187580459-43490279c0fa?auto=format&fit=crop&w=600&q=80',
-    gradient: 'linear-gradient(to right, rgba(30, 27, 75, 1) 0%, rgba(30, 27, 75, 0.85) 30%, rgba(30, 27, 75, 0.3) 60%, transparent 100%)',
-    textColor: 'white',
-    pillBg: '#f3e8ff',
-    pillText: '#6b21a8',
-    status: 'MISS',
-    statusColor: '#e9d5ff',
-    colSpan: 5
-  },
-  { // 2: NICE
-    image: 'https://images.unsplash.com/photo-1517842645767-c639042777db?auto=format&fit=crop&w=600&q=80',
-    gradient: 'linear-gradient(to right, rgba(255, 255, 255, 1) 0%, rgba(255, 255, 255, 0.9) 30%, rgba(255, 255, 255, 0.4) 60%, transparent 100%)',
-    textColor: '#0f172a',
-    pillBg: '#e0e7ff',
-    pillText: '#4338ca',
-    status: 'DUE SOON',
-    statusColor: '#64748b',
-    colSpan: 5
-  },
-  { // 3: Verity
-    image: 'https://images.unsplash.com/photo-1522202176988-66273c2fd55f?auto=format&fit=crop&w=600&q=80',
-    gradient: 'linear-gradient(to right, rgba(15, 23, 42, 1) 0%, rgba(15, 23, 42, 0.85) 30%, rgba(15, 23, 42, 0.3) 60%, transparent 100%)',
-    textColor: 'white',
-    pillBg: '#dcfce7',
-    pillText: '#065f46',
-    status: 'DONE',
-    statusColor: '#a7f3d0',
-    colSpan: 7
+    colSpan: 12
   }
 ];
 
-const StudentCourseCard = ({ classroom, onClick, index, colSpan, isArchived = false }) => {
-  const theme = cardThemes[index % cardThemes.length];
-  const imageUrl = classroom.theme?.customImageUrl || theme.image;
+const StudentCourseCard = ({ classroom, onClick, index, colSpan, isArchived = false, onArchive, onUnarchive }) => {
+  const { isDark } = useDarkMode();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef(null);
+  const classTheme = (classroom.theme && (classroom.theme.primary || classroom.theme.id)) ? classroom.theme : getClassroomTheme(classroom);
+  const theme = cardThemes.find(t => t.id === classTheme?.id) || cardThemes[index % cardThemes.length];
   const isMobile = typeof window !== 'undefined' && window.innerWidth <= 768;
   const finalSpan = isMobile ? 12 : (colSpan || theme.colSpan);
 
-  let bgStyle = {
-    background: `${theme.gradient}, url(${imageUrl})`,
-    backgroundSize: 'cover',
-    backgroundPosition: 'center',
-  };
+  // Close menu when clicking outside
+  useEffect(() => {
+    if (!menuOpen) return;
+    const handleDocClick = (e) => {
+      if (menuRef.current && !menuRef.current.contains(e.target)) {
+        setMenuOpen(false);
+      }
+    };
+    document.addEventListener('click', handleDocClick);
+    return () => document.removeEventListener('click', handleDocClick);
+  }, [menuOpen]);
+
+  let bgStyle = classTheme?.customImageUrl
+    ? {
+        background: `linear-gradient(to right, rgba(15, 23, 42, 0.85) 0%, rgba(15, 23, 42, 0.4) 100%), url(${classTheme.customImageUrl})`,
+        backgroundSize: 'cover',
+        backgroundPosition: 'center',
+      }
+    : {
+        background: `linear-gradient(135deg, ${classTheme?.primary || theme.primary}, ${classTheme?.secondary || theme.secondary})`,
+      };
   
   return (
     <motion.div
@@ -95,7 +141,7 @@ const StudentCourseCard = ({ classroom, onClick, index, colSpan, isArchived = fa
         justifyContent: 'space-between',
         cursor: 'pointer',
         position: 'relative',
-        overflow: 'hidden',
+        overflow: 'visible',
         boxShadow: '0 8px 20px rgba(0,0,0,0.08)',
         color: theme.textColor,
         gridColumn: `span ${finalSpan}`,
@@ -109,6 +155,7 @@ const StudentCourseCard = ({ classroom, onClick, index, colSpan, isArchived = fa
         <div style={{
           position: 'absolute',
           inset: 0,
+          borderRadius: '20px',
           backgroundColor: 'rgba(15, 23, 42, 0.35)',
           pointerEvents: 'none',
           zIndex: 1
@@ -116,40 +163,158 @@ const StudentCourseCard = ({ classroom, onClick, index, colSpan, isArchived = fa
       )}
 
       <div style={{ position: 'relative', zIndex: 10 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px', flexWrap: 'wrap' }}>
-          <span style={{ 
-            backgroundColor: isArchived ? 'rgba(255, 255, 255, 0.2)' : theme.pillBg, 
-            color: isArchived ? '#ffffff' : theme.pillText,
-            padding: '4px 10px', 
-            borderRadius: '20px', 
-            fontSize: '0.75rem',
-            fontWeight: 'bold',
-            backdropFilter: isArchived ? 'blur(6px)' : 'none'
-          }}>
-            {classroom.code || `C${classroom.id}`}
-          </span>
-          {isArchived && (
-            <span style={{
-              backgroundColor: 'rgba(0, 0, 0, 0.5)',
-              color: '#f8fafc',
-              border: '1px solid rgba(255, 255, 255, 0.25)',
-              backdropFilter: 'blur(8px)',
-              padding: '3px 8px',
-              borderRadius: '20px',
-              fontSize: '0.7rem',
-              fontWeight: '700',
-              letterSpacing: '0.04em',
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '4px'
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', minWidth: 0, flex: 1, marginRight: '8px' }}>
+            <span style={{ 
+              backgroundColor: isArchived ? 'rgba(255, 255, 255, 0.2)' : theme.pillBg, 
+              color: isArchived ? '#ffffff' : theme.pillText,
+              padding: '4px 10px', 
+              borderRadius: '20px', 
+              fontSize: '0.75rem',
+              fontWeight: 'bold',
+              backdropFilter: isArchived ? 'blur(6px)' : 'none'
             }}>
-              <Archive size={11} />
-              ARCHIVED
+              {classroom.code || `C${classroom.id}`}
             </span>
+            {isArchived && (
+              <span style={{
+                backgroundColor: 'rgba(0, 0, 0, 0.5)',
+                color: '#f8fafc',
+                border: '1px solid rgba(255, 255, 255, 0.25)',
+                backdropFilter: 'blur(8px)',
+                padding: '3px 8px',
+                borderRadius: '20px',
+                fontSize: '0.7rem',
+                fontWeight: '700',
+                letterSpacing: '0.04em',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '4px'
+              }}>
+                <Archive size={11} />
+                ARCHIVED
+              </span>
+            )}
+            <span style={{ fontSize: '0.85rem', color: theme.textColor, fontWeight: '500', opacity: 0.9, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              {classroom.instructor || 'Instructor'}
+            </span>
+          </div>
+
+          {/* 3-dot Menu */}
+          {(onArchive || onUnarchive) && (
+            <div ref={menuRef} style={{ position: 'relative', flexShrink: 0 }}>
+              <button
+                type="button"
+                aria-label="Classroom options"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setMenuOpen(p => !p);
+                }}
+                style={{
+                  background: 'rgba(0, 0, 0, 0.22)',
+                  border: '1px solid rgba(255, 255, 255, 0.15)',
+                  color: 'white',
+                  cursor: 'pointer',
+                  padding: '6px',
+                  borderRadius: '50%',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  backdropFilter: 'blur(6px)',
+                  transition: 'background 0.2s, transform 0.15s'
+                }}
+                onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(0, 0, 0, 0.4)'}
+                onMouseLeave={(e) => e.currentTarget.style.background = 'rgba(0, 0, 0, 0.22)'}
+              >
+                <MoreVertical size={16} />
+              </button>
+
+              {menuOpen && (
+                <div
+                  style={{
+                    position: 'absolute',
+                    top: 'calc(100% + 6px)',
+                    right: 0,
+                    backgroundColor: isDark ? '#262626' : '#ffffff',
+                    border: isDark ? '1px solid #404040' : '1px solid #e5e7eb',
+                    borderRadius: '14px',
+                    boxShadow: isDark
+                      ? '0 12px 28px rgba(0,0,0,0.5), 0 4px 10px rgba(0,0,0,0.3)'
+                      : '0 12px 28px rgba(0,0,0,0.15), 0 4px 10px rgba(0,0,0,0.06)',
+                    zIndex: 100,
+                    width: '160px',
+                    overflow: 'hidden',
+                    padding: '4px'
+                  }}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  {!isArchived && onArchive && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setMenuOpen(false);
+                        onArchive(classroom);
+                      }}
+                      style={{
+                        width: '100%',
+                        padding: '10px 14px',
+                        textAlign: 'left',
+                        background: 'transparent',
+                        border: 'none',
+                        borderRadius: '10px',
+                        color: isDark ? '#f3f4f6' : '#1f2937',
+                        cursor: 'pointer',
+                        fontSize: '0.88rem',
+                        fontWeight: '600',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '10px',
+                        transition: 'background 0.15s'
+                      }}
+                      onMouseEnter={(e) => e.currentTarget.style.background = isDark ? '#333333' : '#f1f5f9'}
+                      onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                    >
+                      <Archive size={16} color={isDark ? '#9ca3af' : '#64748b'} />
+                      Archive
+                    </button>
+                  )}
+
+                  {isArchived && onUnarchive && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setMenuOpen(false);
+                        onUnarchive(classroom);
+                      }}
+                      style={{
+                        width: '100%',
+                        padding: '10px 14px',
+                        textAlign: 'left',
+                        background: 'transparent',
+                        border: 'none',
+                        borderRadius: '10px',
+                        color: isDark ? '#f3f4f6' : '#1f2937',
+                        cursor: 'pointer',
+                        fontSize: '0.88rem',
+                        fontWeight: '600',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '10px',
+                        transition: 'background 0.15s'
+                      }}
+                      onMouseEnter={(e) => e.currentTarget.style.background = isDark ? '#333333' : '#f1f5f9'}
+                      onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                    >
+                      <RefreshCw size={16} color={isDark ? '#9ca3af' : '#64748b'} />
+                      Unarchive
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
           )}
-          <span style={{ fontSize: '0.85rem', color: theme.textColor, fontWeight: '500', opacity: 0.9, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-            {classroom.instructor || 'Instructor'}
-          </span>
         </div>
         <h3 style={{ margin: 0, fontSize: '1.75rem', fontWeight: 'bold', lineHeight: 1.2, textShadow: theme.textColor === 'white' ? '0 2px 4px rgba(0,0,0,0.5)' : 'none', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
           {classroom.name}
@@ -247,6 +412,24 @@ export default function StudentDashboard({ currentUser, onLogout, onEnterClassro
     return sortClassroomsAlphabetically(classrooms.filter(c => c.archived));
   }, [classrooms]);
 
+  const handleArchiveClass = (targetClassroom) => {
+    const targetId = typeof targetClassroom === 'object' ? targetClassroom.id : targetClassroom;
+    setClassrooms(prev => {
+      const updated = prev.map(c => (String(c.id) === String(targetId) ? { ...c, archived: true } : c));
+      saveCachedClassrooms(updated, currentUser, 'student');
+      return updated;
+    });
+  };
+
+  const handleUnarchiveClass = (targetClassroom) => {
+    const targetId = typeof targetClassroom === 'object' ? targetClassroom.id : targetClassroom;
+    setClassrooms(prev => {
+      const updated = prev.map(c => (String(c.id) === String(targetId) ? { ...c, archived: false } : c));
+      saveCachedClassrooms(updated, currentUser, 'student');
+      return updated;
+    });
+  };
+
   useEffect(() => {
     saveCachedClassrooms(classrooms, currentUser, 'student');
   }, [classrooms, currentUser]);
@@ -261,8 +444,15 @@ export default function StudentDashboard({ currentUser, onLogout, onEnterClassro
           const serverList = (Array.isArray(data) ? data : (data.classrooms || [])).filter(c => c && c.name && !isPhantomClassroom(c));
           const sortedList = sortClassroomsAlphabetically(serverList);
           if (sortedList.length > 0 || classrooms.length === 0) {
-            setClassrooms(sortedList);
-            saveCachedClassrooms(sortedList, currentUser, 'student');
+            setClassrooms(prev => {
+              const archivedMap = new Map((prev || []).map(p => [String(p.id), !!p.archived]));
+              const merged = sortedList.map(c => ({
+                ...c,
+                archived: archivedMap.has(String(c.id)) ? archivedMap.get(String(c.id)) : !!c.archived
+              }));
+              saveCachedClassrooms(merged, currentUser, 'student');
+              return merged;
+            });
           }
         }
       } catch {} finally {
@@ -769,7 +959,7 @@ export default function StudentDashboard({ currentUser, onLogout, onEnterClassro
                         transition={{ duration: 0.4, delay: idx * 0.05, ease: [0.16, 1, 0.3, 1] }}
                         style={{ gridColumn: `span ${isMobile ? 12 : cardThemes[idx % cardThemes.length].colSpan}` }}
                       >
-                        <StudentCourseCard key={cls.id} classroom={cls} index={idx} colSpan={cardThemes[idx % cardThemes.length].colSpan} onClick={handleEnterClassroom} />
+                        <StudentCourseCard key={cls.id} classroom={cls} index={idx} colSpan={cardThemes[idx % cardThemes.length].colSpan} onClick={handleEnterClassroom} onArchive={handleArchiveClass} />
                       </motion.div>
                     ))
                   )}
@@ -1004,6 +1194,7 @@ export default function StudentDashboard({ currentUser, onLogout, onEnterClassro
                         colSpan={cardThemes[idx % cardThemes.length].colSpan}
                         onClick={handleEnterClassroom}
                         isArchived={true}
+                        onUnarchive={handleUnarchiveClass}
                       />
                     </motion.div>
                   ))}

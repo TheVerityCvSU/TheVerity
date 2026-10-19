@@ -10,13 +10,16 @@
     "frontend"
   ],
   "scripts": {
+    "clean": "node clean.js",
+    "clean:users": "node clean.js users",
+    "clean:admin": "node clean.js admin",
     "dev": "concurrently \"cd frontend && vite\" \"node --watch server/server.js\"",
     "build": "npm --prefix frontend run build",
     "build:server": "esbuild server/server.js --bundle --platform=node --outfile=dist-server/server-bundle.cjs --external:better-sqlite3 --external:node:sqlite",
     "electron": "electron .",
     "electron:admin": "electron electron/admin-main.cjs",
-    "package": "npm run build && npm run build:server && electron-builder",
-    "package:admin": "npm run build && npm run build:server && electron-builder --config electron-builder.admin.json"
+    "package": "npm run clean:users && npm run build && npm run build:server && electron-builder",
+    "package:admin": "npm run clean:admin && npm run build && npm run build:server && electron-builder --config electron-builder.admin.json"
   },
   "devDependencies": {
     "concurrently": "^10.0.3",
@@ -29,14 +32,12 @@
   "build": {
     "appId": "com.verity.app",
     "productName": "The Verity",
+    "directories": {
+      "output": "release/Users"
+    },
     "files": [
       "electron/**/*",
-      "dist/**/*",
-      "!dist/win-unpacked/**/*",
-      "!dist/*.exe",
-      "!dist/*.blockmap",
-      "!dist/*.yml",
-      "!dist/*.yaml"
+      "dist/**/*"
     ],
     "extraResources": [
       {
@@ -62,9 +63,20 @@
         ]
       }
     ],
+    "electronLanguages": [
+      "en-US",
+      "en"
+    ],
     "win": {
-      "target": "nsis",
+      "target": [
+        "nsis",
+        "portable"
+      ],
       "icon": "electron/assets/icon.ico"
+    },
+    "portable": {
+      "artifactName": "${productName} ${version} Portable.${ext}",
+      "unpackDirName": "TheVerityApp"
     },
     "nsis": {
       "oneClick": false,
@@ -75,7 +87,9 @@
       "shortcutName": "The Verity",
       "installerIcon": "electron/assets/icon.ico",
       "uninstallerIcon": "electron/assets/icon.ico",
-      "runAfterFinish": true
+      "runAfterFinish": true,
+      "include": "build/installer.nsh",
+      "warningsAsErrors": false
     }
   },
   "dependencies": {

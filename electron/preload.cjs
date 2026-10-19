@@ -1,6 +1,15 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
+const isAdminApp = process.env.IS_VERITY_ADMIN === 'true' || process.argv.includes('--admin-app');
+
+if (isAdminApp) {
+  try {
+    contextBridge.exposeInMainWorld('IS_ADMIN_APP', true);
+  } catch (_) {}
+}
+
 contextBridge.exposeInMainWorld('electronAPI', {
+  isAdminApp,
   closeApp: () => ipcRenderer.send('close-app'),
   enableLockdown: (options) => ipcRenderer.send('enable-lockdown', options),
   disableLockdown: () => ipcRenderer.send('disable-lockdown'),

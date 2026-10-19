@@ -421,6 +421,16 @@ export default function StudentActivityDetail({
         codeHistory: resolvedHistory
       });
     }
+
+    try {
+      window.dispatchEvent(new CustomEvent('verity:submission-updated', {
+        detail: {
+          assignmentId: assignmentId,
+          classroomId: classroomId,
+          submitted: true
+        }
+      }));
+    } catch {}
   };
 
   // Handle Unsubmit action
@@ -461,7 +471,8 @@ export default function StudentActivityDetail({
       `verity_sub_${classroomId}_${assignmentId}_${studentId}`,
       `verity_sub_${classroomId}_${assignmentId}_${safeUsername}`,
       currentUser?.name ? `verity_sub_${classroomId}_${assignmentId}_${currentUser.name}` : null,
-      currentUser?.email ? `verity_sub_${classroomId}_${assignmentId}_${currentUser.email}` : null
+      currentUser?.email ? `verity_sub_${classroomId}_${assignmentId}_${currentUser.email}` : null,
+      currentUser?.id ? `verity_sub_${classroomId}_${assignmentId}_id_${currentUser.id}` : null
     ].filter(Boolean);
 
     keysToRemove.forEach(k => {
@@ -487,6 +498,16 @@ export default function StudentActivityDetail({
         classroomId: classroomId
       });
     }
+
+    try {
+      window.dispatchEvent(new CustomEvent('verity:submission-updated', {
+        detail: {
+          assignmentId: assignmentId,
+          classroomId: classroomId,
+          submitted: false
+        }
+      }));
+    } catch {}
   };
 
   const pointsText = assignment?.points ? `${assignment.points} points` : '100 points';

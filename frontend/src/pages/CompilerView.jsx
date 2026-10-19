@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import Editor from '@monaco-editor/react';
 import {
   Play, Square, TerminalSquare, Trash2,
-  Copy, Check, ZoomIn, ZoomOut, Settings,
+  ZoomIn, ZoomOut, Settings,
   CheckSquare, Plus, PlayCircle, X
 } from 'lucide-react';
 import { useDarkMode } from '../hooks/useDarkMode';
@@ -40,7 +40,6 @@ export default function CompilerView() {
   const [isRunning, setIsRunning] = useState(false);
   const [programStarted, setProgramStarted] = useState(false);
   const [inputValue, setInputValue] = useState('');
-  const [copied, setCopied]     = useState(false);
   const [fontSize, setFontSize] = useState(14);
   
   // Test Cases State
@@ -359,12 +358,6 @@ export default function CompilerView() {
 
   const passedTestsCount = testCases.filter(t => t.status === 'passed').length;
 
-  const handleCopy = () => {
-    navigator.clipboard.writeText(activeCode);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
-  };
-
   // Drag-to-resize terminal
   const onDividerDown = (e) => {
     if (termCollapsed) return;
@@ -463,54 +456,10 @@ export default function CompilerView() {
           >
             <Square size={14} fill="currentColor" /> Stop
           </button>
-
-          {/* Dedicated Language Badge (Exclusively C# .NET SDK) */}
-          <div
-            title="Verity Compiler strictly executes C# via local .NET SDK"
-            style={{
-              display: 'inline-flex', alignItems: 'center', gap: '6px',
-              padding: '6px 12px',
-              marginLeft: '4px',
-              borderRadius: '6px',
-              backgroundColor: isDark ? 'rgba(16, 185, 129, 0.1)' : 'rgba(16, 185, 129, 0.08)',
-              border: isDark ? '1px solid rgba(16, 185, 129, 0.25)' : '1px solid rgba(16, 185, 129, 0.2)',
-              fontSize: '0.78rem',
-              fontWeight: '700',
-              color: isDark ? '#6ee7b7' : '#059669',
-              letterSpacing: '0.02em',
-              userSelect: 'none'
-            }}
-          >
-            <span style={{
-              width: '6px', height: '6px', borderRadius: '50%',
-              backgroundColor: '#10b981',
-              boxShadow: '0 0 6px #10b981'
-            }} />
-            <span>C# (.NET SDK)</span>
-          </div>
         </div>
 
-        {/* Right group: Copy + Font adjuster */}
+        {/* Right group: Font adjuster */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <button
-            onClick={handleCopy}
-            title="Copy current file code"
-            style={{
-              padding: '6px 12px',
-              backgroundColor: isDark ? '#1e1e1e' : '#ffffff',
-              color: textMain,
-              border: `1px solid ${border}`,
-              borderRadius: '6px',
-              cursor: 'pointer',
-              fontWeight: '600',
-              fontSize: '0.82rem',
-              display: 'flex', alignItems: 'center', gap: '6px',
-              transition: 'all 0.15s ease'
-            }}
-          >
-            {copied ? <Check size={14} color="#10b981" /> : <Copy size={14} />}
-            <span>{copied ? 'Copied' : 'Copy'}</span>
-          </button>
 
           {/* Font size control */}
           <div style={{

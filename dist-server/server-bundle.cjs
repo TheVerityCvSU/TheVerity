@@ -99396,9 +99396,17 @@ io.on("connection", (socket) => {
   if (currentInstruction) {
     socket.emit("instruction_update", currentInstruction);
   }
-  socket.on("teacher_join", async ({ classroomId, assignmentId }) => {
+  socket.on("teacher_join", async (data) => {
+    const { classroomId, assignmentId } = data || {};
+    if (!socket.user) {
+      authenticateSocket(socket, data?.token || socket.handshake.auth?.token, data?.user);
+    }
     if (!socket.user || !["Teacher", "Admin"].includes(socket.user.role)) {
-      return socket.emit("error", { message: "Access denied: Teacher role required." });
+      if (data?.user && ["Teacher", "Admin"].includes(data.user.role)) {
+        socket.user = data.user;
+      } else {
+        return socket.emit("error", { message: "Access denied: Teacher role required." });
+      }
     }
     const roomName = `classroom:${classroomId || "none"}:assignment:${assignmentId || "none"}`;
     if (socket.data.teacherRoom) {
@@ -99452,6 +99460,19 @@ io.on("connection", (socket) => {
         }
       }
     }
+    for (const [key, student] of Object.entries(activeStudents)) {
+      if (key.startsWith(filterKey + ":")) {
+        socket.emit("teacher_update_code", {
+          ...student,
+          logs: student.logs || []
+        });
+      }
+    }
+  });
+  socket.on("teacher_request_sync", ({ classroomId, assignmentId }) => {
+    const cIdStr = String(classroomId || "none");
+    const aIdStr = String(assignmentId || "none");
+    const filterKey = `${cIdStr}:${aIdStr}`;
     for (const [key, student] of Object.entries(activeStudents)) {
       if (key.startsWith(filterKey + ":")) {
         socket.emit("teacher_update_code", {
@@ -99966,48 +99987,58 @@ io.on("connection", (socket) => {
       socket.emit("test_cases_results", { results: [] });
     }
   });
-  socket.on("student_typing", (data) => {
-    if (data && data.studentId) {
-      const classroomId = data.classroomId != null ? String(data.classroomId) : "none";
-      const assignmentId = data.assignmentId != null ? String(data.assignmentId) : "none";
-      const studentKey = `${classroomId}:${assignmentId}:${data.studentId}`;
-      const existing = activeStudents[studentKey] || {};
-      const existingLogs = Array.isArray(existing.logs) ? existing.logs : [];
-      let mergedLogs = existingLogs;
-      if (Array.isArray(data.logs) && data.logs.length > 0) {
-        const map = /* @__PURE__ */ new Map();
-        [...existingLogs, ...data.logs].forEach((l) => {
-          if (!l) return;
-          const k = `${l.id || ""}-${l.action || l.message || ""}-${l.time || ""}`;
-          if (!map.has(k)) {
-            map.set(k, {
-              id: l.id || Date.now(),
-              action: l.action || l.message || "Violation",
-              message: l.message || l.action || "Violation",
-              time: l.time || "",
-              color: l.color || "#ef4444",
-              studentId: data.studentId,
-              studentName: data.name || data.studentId
-            });
-          }
-        });
-        mergedLogs = Array.from(map.values()).sort((a, b) => (b.id || 0) - (a.id || 0));
-      }
-      const updated = {
-        ...existing,
-        ...data,
-        classroomId,
-        assignmentId,
-        logs: mergedLogs,
-        status: existing.status === "Submitted" || existing.status === "Graded" ? existing.status : "Live"
-      };
-      activeStudents[studentKey] = updated;
-      socket.data.studentKey = studentKey;
-      socket.data.studentId = data.studentId;
-      const roomName = `classroom:${classroomId}:assignment:${assignmentId}`;
-      socket.to(roomName).emit("teacher_update_code", updated);
+  const handleStudentActivity = (data) => {
+    if (!data || !data.studentId && !data.name) return;
+    const studentId = String(data.studentId || data.name);
+    const studentName = String(data.name || data.studentName || studentId).trim();
+    const classroomId = data.classroomId != null ? String(data.classroomId) : "none";
+    const assignmentId = data.assignmentId != null ? String(data.assignmentId) : "none";
+    const studentKey = `${classroomId}:${assignmentId}:${studentId}`;
+    const existing = activeStudents[studentKey] || {};
+    const existingLogs = Array.isArray(existing.logs) ? existing.logs : [];
+    let mergedLogs = existingLogs;
+    if (Array.isArray(data.logs) && data.logs.length > 0) {
+      const map = /* @__PURE__ */ new Map();
+      [...existingLogs, ...data.logs].forEach((l) => {
+        if (!l) return;
+        const k = `${l.id || ""}-${l.action || l.message || ""}-${l.time || ""}`;
+        if (!map.has(k)) {
+          map.set(k, {
+            id: l.id || Date.now(),
+            action: l.action || l.message || "Violation",
+            message: l.message || l.action || "Violation",
+            time: l.time || "",
+            color: l.color || "#ef4444",
+            studentId,
+            studentName
+          });
+        }
+      });
+      mergedLogs = Array.from(map.values()).sort((a, b) => (b.id || 0) - (a.id || 0));
     }
-  });
+    const updated = {
+      ...existing,
+      ...data,
+      studentId,
+      id: studentId,
+      name: studentName,
+      studentName,
+      classroomId,
+      assignmentId,
+      logs: mergedLogs,
+      status: "Live",
+      lastActive: Date.now()
+    };
+    activeStudents[studentKey] = updated;
+    socket.data.studentKey = studentKey;
+    socket.data.studentId = studentId;
+    const roomName = `classroom:${classroomId}:assignment:${assignmentId}`;
+    socket.join(roomName);
+    io.to(roomName).emit("teacher_update_code", updated);
+    socket.broadcast.emit("teacher_update_code", updated);
+  };
+  socket.on("student_enter_activity", handleStudentActivity);
+  socket.on("student_typing", handleStudentActivity);
   socket.on("proctor_alert", async (data) => {
     if (data && data.studentId) {
       const studentId = data.studentId;

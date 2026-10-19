@@ -371,6 +371,18 @@ export default function ClassroomView({
     } catch {}
   };
 
+  const markSingleMaterialAsSeen = (id) => {
+    if (!id) return;
+    try {
+      setSeenMaterialIds(prev => {
+        if (prev.includes(id)) return prev;
+        const updated = [...prev, id];
+        localStorage.setItem(seenMaterialsKey, JSON.stringify(updated));
+        return updated;
+      });
+    } catch {}
+  };
+
   const handleOpenMaterials = () => {
     markMaterialsAsSeen();
     handleTabChange('materials');
@@ -442,53 +454,137 @@ export default function ClassroomView({
 
   useEffect(() => {
     const safeUsername = currentUser?.name || currentUser?.email || 'Student';
-    const studentId = currentUser?.email || currentUser?.name || 'student';
+    const studentActualId = currentUser?.id != null ? String(currentUser.id) : (currentUser?.email || safeUsername);
+    const studentId = studentActualId;
     const classroomId = classroom?.id ?? 'default';
 
     const checkAllSubs = () => {
       const map = {};
+      const targetEmail = (currentUser?.email || '').toLowerCase();
+      const targetName = (currentUser?.name || safeUsername || '').toLowerCase();
+      const targetId = (currentUser?.id != null ? String(currentUser.id) : studentId).toLowerCase();
+
       assignments.forEach(task => {
-        const keys = [
-          `verity_sub_${classroomId}_${task.id}_${studentId}`,
-          `verity_sub_${classroomId}_${task.id}_${safeUsername}`,
-          currentUser?.name ? `verity_sub_${classroomId}_${task.id}_${currentUser.name}` : null,
-          currentUser?.email ? `verity_sub_${classroomId}_${task.id}_${currentUser.email}` : null,
-          currentUser?.id ? `verity_sub_${classroomId}_${task.id}_id_${currentUser.id}` : null
+        if (task.activityType === 'Material') return;
+        const aId = String(task.id);
+        const cId = String(classroomId);
+
+        const specificKeys = [
+          `verity_sub_${cId}_${aId}`,
+          `verity_sub_default_${aId}`,
+          `verity_sub_${aId}`,
+          `verity_sub_${cId}_${aId}_${studentId}`,
+          `verity_sub_${cId}_${aId}_${safeUsername}`,
+          currentUser?.name ? `verity_sub_${cId}_${aId}_${currentUser.name}` : null,
+          currentUser?.email ? `verity_sub_${cId}_${aId}_${currentUser.email}` : null,
+          currentUser?.id ? `verity_sub_${cId}_${aId}_id_${currentUser.id}` : null,
+          `verity_sub_default_${aId}_${studentId}`,
+          `verity_sub_default_${aId}_${safeUsername}`,
+          currentUser?.id ? `verity_sub_default_${aId}_id_${currentUser.id}` : null
         ].filter(Boolean);
 
-        if (keys.some(k => { try { return !!localStorage.getItem(k); } catch { return false; } })) {
+        if (specificKeys.some(k => { try { return !!localStorage.getItem(k); } catch { return false; } })) {
           map[task.id] = true;
+          return;
         }
+
+        // Broad scan in localStorage for any matching submission key for this task
+        try {
+          for (let i = 0; i < localStorage.length; i++) {
+            const key = localStorage.key(i);
+            if (!key || !key.startsWith('verity_sub_')) continue;
+            if (
+              key.includes(`_${aId}_`) ||
+              key.endsWith(`_${aId}`) ||
+              key.includes(`_${aId}_id_`)
+            ) {
+              const kLower = key.toLowerCase();
+              if (
+                (targetId && (kLower.endsWith(`_${targetId}`) || kLower.includes(`_id_${targetId}`))) ||
+                (targetEmail && kLower.includes(targetEmail)) ||
+                (targetName && kLower.includes(targetName)) ||
+                key === `verity_sub_${cId}_${aId}` ||
+                key === `verity_sub_default_${aId}` ||
+                key === `verity_sub_${aId}`
+              ) {
+                map[task.id] = true;
+                break;
+              }
+            }
+          }
+        } catch {}
       });
       setSubmittedTasks(map);
     };
 
     checkAllSubs();
 
+    // Fetch batch student submissions from backend
+    apiFetch(`${import.meta.env.VITE_API_URL}/student/submissions`)
+      .then(res => res.json())
+      .then(data => {
+        if (Array.isArray(data?.submissions) && data.submissions.length > 0) {
+          setSubmittedTasks(prev => {
+            const next = { ...prev };
+            let changed = false;
+            data.submissions.forEach(s => {
+              if (s.assignment_id != null && !next[s.assignment_id]) {
+                next[s.assignment_id] = true;
+                changed = true;
+              }
+            });
+            return changed ? next : prev;
+          });
+        }
+      })
+      .catch(() => {});
+
+    // Fetch individual task submissions from backend
     assignments.forEach(task => {
+      if (task.activityType === 'Material') return;
       apiFetch(`${import.meta.env.VITE_API_URL}/submissions/${task.id}`)
         .then(res => res.json())
         .then(data => {
           if (Array.isArray(data?.submissions)) {
             const targetEmail = (currentUser?.email || '').toLowerCase();
+            const targetName = (currentUser?.name || safeUsername || '').toLowerCase();
+            const targetId = (currentUser?.id != null ? String(currentUser.id) : studentId).toLowerCase();
             const hasSub = data.submissions.some(s => {
               const sName = (s.student_name || s.studentName || '').toLowerCase();
               const sId = (s.student_id || s.studentId || '').toLowerCase();
-              const targetName = safeUsername.toLowerCase();
-              const targetId = studentId.toLowerCase();
-              return sName === targetName || sName === targetId || sName === targetEmail ||
-                     (sId && (sId === targetName || sId === targetId || sId === targetEmail));
+              return (targetName && sName === targetName) ||
+                     (targetEmail && sName === targetEmail) ||
+                     (targetId && sId === targetId) ||
+                     (targetName && sId === targetName) ||
+                     (targetEmail && sId === targetEmail);
             });
             if (hasSub) {
-              setSubmittedTasks(prev => ({ ...prev, [task.id]: true }));
+              setSubmittedTasks(prev => prev[task.id] ? prev : ({ ...prev, [task.id]: true }));
             }
           }
         })
         .catch(() => {});
     });
 
+    const handleSubEvent = (e) => {
+      if (e.detail?.assignmentId != null) {
+        setSubmittedTasks(prev => ({
+          ...prev,
+          [e.detail.assignmentId]: !!e.detail.submitted
+        }));
+      }
+      checkAllSubs();
+    };
+
     const onStorage = () => checkAllSubs();
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') checkAllSubs();
+    };
+
+    window.addEventListener('verity:submission-updated', handleSubEvent);
     window.addEventListener('storage', onStorage);
+    window.addEventListener('focus', onStorage);
+    document.addEventListener('visibilitychange', onVisibility);
 
     const onSubChange = () => checkAllSubs();
     if (socket) {
@@ -497,7 +593,10 @@ export default function ClassroomView({
     }
 
     return () => {
+      window.removeEventListener('verity:submission-updated', handleSubEvent);
       window.removeEventListener('storage', onStorage);
+      window.removeEventListener('focus', onStorage);
+      document.removeEventListener('visibilitychange', onVisibility);
       if (socket) {
         socket.off('student_unsubmitted', onSubChange);
         socket.off('teacher_receive_submission', onSubChange);
@@ -644,9 +743,9 @@ export default function ClassroomView({
     };
   }, [classroom?.id, classroom?.section, classroom?.instructor, classroom?.instructorEmail, currentUser, socket, refreshStudentsKey]);
 
-  // To Do items for left column in Stream (unsubmitted classwork)
+  // To Do items for left column in Stream (unsubmitted classwork, excluding materials)
   const upcomingItems = assignments
-    .filter(item => !submittedTasks[item.id])
+    .filter(item => item.activityType !== 'Material' && !submittedTasks[item.id])
     .sort((a, b) => {
       if (a.dueDate && b.dueDate) return new Date(a.dueDate) - new Date(b.dueDate);
       if (a.dueDate) return -1;
@@ -893,9 +992,22 @@ export default function ClassroomView({
         }}>
           <div style={{
             position: 'absolute', inset: 0,
-            background: `linear-gradient(to right, rgba(15, 23, 42, 1) 0%, rgba(15, 23, 42, 0.85) 30%, rgba(15, 23, 42, 0.3) 60%, transparent 100%), url(${bannerTheme.customImageUrl || bannerTheme.image || 'https://images.unsplash.com/photo-1498050108023-c5249f4df085?auto=format&fit=crop&w=1200&q=80'}) center/cover no-repeat`,
+            background: bannerTheme.customImageUrl
+              ? `linear-gradient(to right, rgba(15, 23, 42, 1) 0%, rgba(15, 23, 42, 0.85) 30%, rgba(15, 23, 42, 0.3) 60%, transparent 100%), url(${bannerTheme.customImageUrl}) center/cover no-repeat`
+              : `linear-gradient(150deg, ${bannerTheme.primary || '#137333'}, ${bannerTheme.secondary || '#1e8e3e'})`,
             zIndex: 0
           }} />
+
+          {/* Decorative subtle ambient rings */}
+          <div style={{ position: 'absolute', top: '-70px', right: '-70px', width: '220px', height: '220px', borderRadius: '50%', border: '1px solid rgba(255,255,255,0.14)', pointerEvents: 'none', zIndex: 0 }} />
+          <div style={{ position: 'absolute', top: '-20px', right: '-20px', width: '130px', height: '130px', borderRadius: '50%', border: '1px solid rgba(255,255,255,0.12)', pointerEvents: 'none', zIndex: 0 }} />
+
+          {/* Generic Banner SVG Artwork */}
+          {!bannerTheme.customImageUrl && (
+            <div style={{ position: 'absolute', right: 0, top: 0, height: '100%', pointerEvents: 'none', zIndex: 0 }}>
+              {renderBannerIllustration()}
+            </div>
+          )}
           
           {/* Top row */}
           <div style={{ position: 'relative', zIndex: 1, display: 'flex', justifyContent: 'space-between', padding: '24px 32px' }}>
@@ -991,11 +1103,55 @@ export default function ClassroomView({
                  <style dangerouslySetInnerHTML={{__html: `
                    .hide-scroll::-webkit-scrollbar { display: none; }
                  `}} />
-                 {upcomingItems.length === 0 ? (
-                   <div style={{ padding: '20px', color: textMuted, fontSize: '0.9rem', fontStyle: 'italic', width: '100%' }}>
-                     No pending work at this time.
-                   </div>
-                 ) : (
+                  {upcomingItems.length === 0 ? (
+                    <div style={{ 
+                      width: '100%',
+                      backgroundColor: cardBg, 
+                      borderRadius: '16px', 
+                      padding: '20px 24px', 
+                      border: isDark ? '1px solid #333' : '1px solid #e5e7eb', 
+                      display: 'flex', 
+                      alignItems: 'center', 
+                      justifyContent: 'space-between',
+                      gap: '16px',
+                      ...isDark ? {} : { boxShadow: '0 2px 8px rgba(0,0,0,0.03)' }
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+                        <div style={{ width: '38px', height: '38px', borderRadius: '10px', backgroundColor: isDark ? 'rgba(16, 185, 129, 0.15)' : '#dcfce7', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#10b981', flexShrink: 0 }}>
+                          <CheckCircle2 size={20} />
+                        </div>
+                        <div>
+                          <div style={{ fontWeight: '600', color: isDark ? '#f5f5f5' : '#1e293b', fontSize: '0.95rem' }}>
+                            {visibleClasswork.length > 0 ? "All activities completed!" : "No pending work"}
+                          </div>
+                          <div style={{ fontSize: '0.8rem', color: textMuted, marginTop: '2px' }}>
+                            {visibleClasswork.length > 0 ? "You've submitted all assigned activities for this class." : "No activities assigned yet for this class."}
+                          </div>
+                        </div>
+                      </div>
+                      {visibleClasswork.length > 0 && (
+                        <button
+                          onClick={() => handleTabChange('classwork')}
+                          style={{
+                            background: isDark ? '#242a2b' : '#f1f5f9',
+                            border: isDark ? '1px solid #383e40' : '1px solid #cbd5e1',
+                            color: isDark ? '#e5e5e5' : '#334155',
+                            padding: '7px 14px',
+                            borderRadius: '8px',
+                            fontSize: '0.8rem',
+                            fontWeight: '600',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '6px',
+                            flexShrink: 0
+                          }}
+                        >
+                          View work <ChevronRight size={14} />
+                        </button>
+                      )}
+                    </div>
+                  ) : (
                    upcomingItems.map(item => (
                      <div
                        key={item.id}
@@ -1049,8 +1205,8 @@ export default function ClassroomView({
                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '16px' }}>
                  <div style={{ display: 'flex', alignItems: 'baseline', gap: '12px' }}>
                    <h2 style={{ fontSize: '1.25rem', fontWeight: 'bold', margin: 0 }}>Learning materials</h2>
-                   <span style={{ fontSize: '0.85rem', color: textMuted }}>
-                     {visibleMaterials.length} item{visibleMaterials.length !== 1 ? 's' : ''}
+                   <span style={{ fontSize: '0.85rem', color: unseenMaterials.length > 0 ? textMuted : '#10b981', fontWeight: unseenMaterials.length > 0 ? 'normal' : '600' }}>
+                     {unseenMaterials.length > 0 ? `${unseenMaterials.length} new` : (visibleMaterials.length > 0 ? 'All viewed' : '0 items')}
                    </span>
                  </div>
                  <button 
@@ -1079,8 +1235,52 @@ export default function ClassroomView({
                      <FileText size={20} color={textMuted} />
                      <span>No learning materials uploaded yet for this class.</span>
                    </div>
+                 ) : unseenMaterials.length === 0 ? (
+                   <div style={{ 
+                     gridColumn: '1 / -1', 
+                     backgroundColor: cardBg, 
+                     borderRadius: '16px', 
+                     padding: '20px 24px', 
+                     border: isDark ? '1px solid #333' : '1px solid #e5e7eb', 
+                     display: 'flex', 
+                     alignItems: 'center', 
+                     justifyContent: 'space-between',
+                     gap: '14px', 
+                     color: textMuted, 
+                     fontSize: '0.88rem',
+                     ...isDark ? {} : { boxShadow: '0 2px 8px rgba(0,0,0,0.03)' }
+                   }}>
+                     <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+                       <div style={{ width: '38px', height: '38px', borderRadius: '10px', backgroundColor: isDark ? 'rgba(16, 185, 129, 0.15)' : '#dcfce7', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#10b981', flexShrink: 0 }}>
+                         <CheckCircle2 size={20} />
+                       </div>
+                       <div>
+                         <div style={{ fontWeight: '600', color: isDark ? '#f5f5f5' : '#1e293b', fontSize: '0.95rem' }}>You're all caught up!</div>
+                         <div style={{ fontSize: '0.8rem', color: textMuted, marginTop: '2px' }}>All learning materials have been viewed. You can review them anytime in the library.</div>
+                       </div>
+                     </div>
+                     <button
+                       onClick={() => handleTabChange('materials')}
+                       style={{
+                         background: isDark ? '#242a2b' : '#f1f5f9',
+                         border: isDark ? '1px solid #383e40' : '1px solid #cbd5e1',
+                         color: isDark ? '#e5e5e5' : '#334155',
+                         padding: '7px 14px',
+                         borderRadius: '8px',
+                         fontSize: '0.8rem',
+                         fontWeight: '600',
+                         cursor: 'pointer',
+                         display: 'flex',
+                         alignItems: 'center',
+                         gap: '6px',
+                         flexShrink: 0
+                       }}
+                     >
+                       View in library <ChevronRight size={14} />
+                     </button>
+                   </div>
                  ) : (
-                   visibleMaterials.slice(0, 6).map((item) => {
+                   unseenMaterials.slice(0, 6).map((item) => {
                      const hasVideo = item.attachments?.some(a => a?.type?.toLowerCase()?.includes('video') || a?.type === 'youtube');
                      const hasCode = item.attachments?.some(a => a?.type?.toLowerCase()?.includes('code') || a?.type?.toLowerCase()?.includes('terminal'));
                      const hasLink = item.attachments?.some(a => a?.type?.toLowerCase()?.includes('link') || a?.type === 'url');
@@ -1112,8 +1312,9 @@ export default function ClassroomView({
                        <div 
                          key={item.id}
                          onClick={() => {
+                           markSingleMaterialAsSeen(item.id);
                            setExpandedId(item.id);
-                           handleOpenMaterials();
+                           handleTabChange('materials');
                          }}
                          style={{ 
                            backgroundColor: cardBg, 
@@ -1197,7 +1398,7 @@ export default function ClassroomView({
                        {hasUnseenMaterials 
                          ? `${unseenMaterials.length} new material${unseenMaterials.length > 1 ? 's' : ''} uploaded` 
                          : visibleMaterials.length > 0
-                           ? `${visibleMaterials.length} resource${visibleMaterials.length > 1 ? 's' : ''} available`
+                           ? `All materials viewed (${visibleMaterials.length} in library)`
                            : 'No new materials uploaded'}
                      </div>
                    </div>
@@ -1537,7 +1738,7 @@ export default function ClassroomView({
                                   position: 'relative',
                                   overflow: 'hidden'
                                 }}
-                                onClick={() => setExpandedId(prev => (prev === item.id ? null : item.id))}
+                                onClick={() => { markSingleMaterialAsSeen(item.id); setExpandedId(prev => (prev === item.id ? null : item.id)); }}
                                 onMouseOver={(e) => {
                                   if (isDark && !isOpen) {
                                     e.currentTarget.style.backgroundColor = '#242a2b';
@@ -1648,6 +1849,7 @@ export default function ClassroomView({
                                                 att={att}
                                                 isDark={isDark}
                                                 onClick={(clickedAtt) => {
+                                                  markSingleMaterialAsSeen(item.id);
                                                   if (clickedAtt.type === 'image') setPreviewImage(clickedAtt);
                                                   else if (clickedAtt.type === 'video') setPreviewVideo(clickedAtt);
                                                   else if (clickedAtt.type === 'document') setPreviewIframe(clickedAtt);

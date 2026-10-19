@@ -460,6 +460,19 @@ export default function TeacherClasswork({
   // GRADES TAB STATE (Scoped to this classroom only)
   const visibleClasswork = classwork.filter(item => !item.archived && item.activityType !== 'Material');
   const visibleMaterials = classwork.filter(item => !item.archived && item.activityType === 'Material');
+
+  // STREAM FEED STATE: includes all active classwork and learning materials sorted newest first
+  const visibleStreamItems = useMemo(() => {
+    return classwork
+      .filter(item => !item.archived)
+      .sort((a, b) => {
+        const timeA = new Date(a.posted || a.createdAt || (typeof a.id === 'number' && a.id > 1e12 ? a.id : 0)).getTime() || 0;
+        const timeB = new Date(b.posted || b.createdAt || (typeof b.id === 'number' && b.id > 1e12 ? b.id : 0)).getTime() || 0;
+        return timeB - timeA;
+      });
+  }, [classwork]);
+
+  const filteredStreamItems = visibleStreamItems;
   const [selectedGradingActivityId, setSelectedGradingActivityId] = useState(() => {
     try {
       return sessionStorage.getItem(`verity_grading_activity_${classroom?.id || 'default'}`) || null;
@@ -1723,15 +1736,17 @@ export default function TeacherClasswork({
                       >
                   <div style={{ marginBottom: '18px' }}>
                     <h2 style={{ fontSize: '1.6rem', fontWeight: 500, letterSpacing: '-0.01em', margin: '0 0 6px', color: ui.text }}>Classroom stream</h2>
-                    <p style={{ margin: 0, fontSize: '0.82rem', color: ui.muted }}>Assignments and learning activities in one place.</p>
+                    <p style={{ margin: 0, fontSize: '0.82rem', color: ui.muted }}>Assignments, learning materials, and activities in one place.</p>
                   </div>
 
                   {/* Latest activity header */}
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
-                    <span style={sectionLabelStyle}>Latest activity</span>
-                    <span style={{ fontSize: '0.7rem', color: ui.faint }}>
-                      {formatShortDate(visibleClasswork[0]?.posted || Date.now())}
-                    </span>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', flexWrap: 'wrap', gap: '10px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <span style={sectionLabelStyle}>Latest activity</span>
+                      <span style={{ fontSize: '0.7rem', color: ui.faint }}>
+                        {formatShortDate(visibleStreamItems[0]?.posted || visibleStreamItems[0]?.createdAt || Date.now())}
+                      </span>
+                    </div>
                   </div>
 
                   {/* Feed */}
@@ -1742,16 +1757,33 @@ export default function TeacherClasswork({
                         <Skeleton.StreamCard />
                         <Skeleton.StreamCard />
                       </>
-                    ) : visibleClasswork.length === 0 ? (
+                    ) : filteredStreamItems.length === 0 ? (
                       <div style={{ padding: '36px 20px', borderRadius: '14px', border: `1px dashed ${ui.border}`, textAlign: 'center', color: ui.muted, fontSize: '0.84rem' }}>
-                        This is where you'll see classwork and activities posted for your students.
+                        This is where you'll see classwork, learning materials, and activities posted for your students.
                       </div>
                     ) : (
-                      visibleClasswork.map((item, index) => {
+                      filteredStreamItems.map((item, index) => {
+                        const isMaterial = item.activityType === 'Material';
                         const plain = (item.details || '').replace(/<[^>]*>?/gm, '').replace(/&nbsp;/g, ' ').trim();
                         const postedLabel = formatShortDate(item.posted || item.createdAt || (typeof item.id === 'number' && item.id > 1e12 ? item.id : null));
-                        const typeLabel = item.activityType || 'Assignment';
-                        const openItem = () => { handleTabChange('classwork'); setExpandedId(item.id); };
+                        const openItem = () => {
+                          if (isMaterial) {
+                            handleTabChange('materials');
+                          } else {
+                            handleTabChange('classwork');
+                          }
+                          setExpandedId(item.id);
+                        };
+
+                        const badgeText = isMaterial ? 'Material' : (item.activityType || 'Classwork');
+                        const badgeColor = isMaterial ? (isDark ? '#38bdf8' : '#0284c7') : ui.accentText;
+                        const iconBg = isMaterial
+                          ? (isDark ? 'rgba(56, 189, 248, 0.12)' : '#e0f2fe')
+                          : (isDark ? 'rgba(52, 211, 153, 0.12)' : '#ecfdf5');
+                        const iconColor = isMaterial
+                          ? (isDark ? '#38bdf8' : '#0284c7')
+                          : ui.accentText;
+
                         return (
                           <motion.div 
                             key={item.id} 
@@ -1766,7 +1798,7 @@ export default function TeacherClasswork({
                                   {postedLabel || 'Recently'}
                                 </div>
                               </div>
-                              <button className="vt-icon-btn" onClick={openItem} title="Open in Classwork" style={smallIconBtnStyle}>
+                              <button className="vt-icon-btn" onClick={openItem} title={isMaterial ? "Open in Materials" : "Open in Classwork"} style={smallIconBtnStyle}>
                                 <MoreHorizontal size={18} />
                               </button>
                             </div>
@@ -1779,19 +1811,33 @@ export default function TeacherClasswork({
                               padding: '16px'
                             }}>
                               <div style={{ display: 'flex', alignItems: 'center', gap: '16px', width: isMobile ? '100%' : 'auto', flex: isMobile ? 'none' : 1, minWidth: 0 }}>
-                                <div style={{ width: '72px', height: '72px', borderRadius: '10px', background: isDark ? 'rgba(52, 211, 153, 0.12)' : '#ecfdf5', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                                <div style={{ width: '72px', height: '72px', borderRadius: '10px', background: iconBg, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                                   {(() => {
                                     const IconComp = getMaterialIcon(item);
-                                    return <IconComp size={28} color={ui.accentText} strokeWidth={1.6} />;
+                                    return <IconComp size={28} color={iconColor} strokeWidth={1.6} />;
                                   })()}
                                 </div>
                                 <div style={{ flex: 1, minWidth: 0 }}>
-                                  <div style={{ fontSize: '0.62rem', fontWeight: 700, letterSpacing: '0.07em', textTransform: 'uppercase', color: ui.accentText }}>Classwork</div>
-                                  <div style={{ fontSize: '1.3rem', fontWeight: 500, color: ui.text, margin: '4px 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                                    <div style={{ fontSize: '0.62rem', fontWeight: 700, letterSpacing: '0.07em', textTransform: 'uppercase', color: badgeColor }}>
+                                      {badgeText}
+                                    </div>
+                                    {item.dueDate && !isMaterial && (
+                                      <span style={{ fontSize: '0.68rem', color: isDark ? '#fbbf24' : '#d97706', fontWeight: 600 }}>
+                                        • Due {formatShortDate(item.dueDate)}
+                                      </span>
+                                    )}
+                                    {item.attachments && item.attachments.length > 0 && (
+                                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', fontSize: '0.68rem', color: ui.faint }}>
+                                        • <Paperclip size={10} /> {item.attachments.length} {item.attachments.length === 1 ? 'file' : 'files'}
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div style={{ fontSize: '1.25rem', fontWeight: 500, color: ui.text, margin: '4px 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                                     {item.title}
                                   </div>
                                   <div style={{ fontSize: '0.76rem', color: ui.muted, lineHeight: 1.5, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
-                                    {plain || "View assignment instructions and manage your students' work."}
+                                    {plain || (isMaterial ? "View learning materials, syllabus, and study references." : "View assignment instructions and manage your students' work.")}
                                   </div>
                                 </div>
                               </div>
@@ -1814,7 +1860,7 @@ export default function TeacherClasswork({
                                   textAlign: 'center'
                                 }}
                               >
-                                View assignment
+                                {isMaterial ? 'View material' : 'View assignment'}
                               </button>
                             </div>
                           </motion.div>

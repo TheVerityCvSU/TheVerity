@@ -19,60 +19,87 @@ import {
   getClassroomStorageKey,
   getCachedClassrooms,
   saveCachedClassrooms,
-  sortClassroomsAlphabetically
+  sortClassroomsAlphabetically,
+  getClassroomTheme,
+  THEME_PRESETS
 } from '../utils/classroomUtils';
 export { isPhantomClassroom, mergeClassroomsPreservingOrder, generateClassCode };
 
 const getStorageKey = (user) => getClassroomStorageKey(user, 'teacher');
 
 const cardThemes = [
-  { // 0: C# Programming
-    image: 'https://images.unsplash.com/photo-1498050108023-c5249f4df085?auto=format&fit=crop&w=600&q=80',
-    gradient: 'linear-gradient(to right, rgba(15, 23, 42, 1) 0%, rgba(15, 23, 42, 0.85) 30%, rgba(15, 23, 42, 0.3) 60%, transparent 100%)',
+  { // 0: Emerald Books
+    id: 'emerald_books',
+    name: 'Emerald Books',
+    primary: '#137333',
+    secondary: '#1e8e3e',
+    gradient: 'linear-gradient(135deg, #137333 0%, #1e8e3e 100%)',
     textColor: 'white',
-    pillBg: '#dcfce7',
-    pillText: '#065f46',
+    pillBg: 'rgba(255, 255, 255, 0.22)',
+    pillText: '#ffffff',
+    status: 'ACTIVE',
+    statusColor: '#dcfce7',
+    colSpan: 7
+  },
+  { // 1: Ocean Academia
+    id: 'ocean_academia',
+    name: 'Ocean Academia',
+    primary: '#1a73e8',
+    secondary: '#0d47a1',
+    gradient: 'linear-gradient(135deg, #1a73e8 0%, #0d47a1 100%)',
+    textColor: 'white',
+    pillBg: 'rgba(255, 255, 255, 0.22)',
+    pillText: '#ffffff',
+    status: 'ACTIVE',
+    statusColor: '#93c5fd',
+    colSpan: 5
+  },
+  { // 2: Royal Violet
+    id: 'royal_violet',
+    name: 'Royal Violet',
+    primary: '#7c3aed',
+    secondary: '#581c87',
+    gradient: 'linear-gradient(135deg, #7c3aed 0%, #581c87 100%)',
+    textColor: 'white',
+    pillBg: 'rgba(255, 255, 255, 0.22)',
+    pillText: '#ffffff',
+    status: 'ACTIVE',
+    statusColor: '#f3e8ff',
+    colSpan: 5
+  },
+  { // 3: Warm Amber
+    id: 'warm_amber',
+    name: 'Warm Amber',
+    primary: '#ea580c',
+    secondary: '#9a3412',
+    gradient: 'linear-gradient(135deg, #ea580c 0%, #9a3412 100%)',
+    textColor: 'white',
+    pillBg: 'rgba(255, 255, 255, 0.22)',
+    pillText: '#ffffff',
+    status: 'ACTIVE',
+    statusColor: '#ffedd5',
+    colSpan: 7
+  },
+  { // 4: Midnight Tech
+    id: 'midnight_slate',
+    name: 'Midnight Tech',
+    primary: '#0f172a',
+    secondary: '#1e293b',
+    gradient: 'linear-gradient(135deg, #0f172a 0%, #1e293b 100%)',
+    textColor: 'white',
+    pillBg: 'rgba(255, 255, 255, 0.22)',
+    pillText: '#ffffff',
     status: 'ACTIVE',
     statusColor: '#cbd5e1',
-    colSpan: 7
-  },
-  { // 1: Data Structures
-    image: 'https://images.unsplash.com/photo-1451187580459-43490279c0fa?auto=format&fit=crop&w=600&q=80',
-    gradient: 'linear-gradient(to right, rgba(30, 27, 75, 1) 0%, rgba(30, 27, 75, 0.85) 30%, rgba(30, 27, 75, 0.3) 60%, transparent 100%)',
-    textColor: 'white',
-    pillBg: '#f3e8ff',
-    pillText: '#6b21a8',
-    status: 'ACTIVE',
-    statusColor: '#e9d5ff',
-    colSpan: 5
-  },
-  { // 2: NICE
-    image: 'https://images.unsplash.com/photo-1517842645767-c639042777db?auto=format&fit=crop&w=600&q=80',
-    gradient: 'linear-gradient(to right, rgba(255, 255, 255, 1) 0%, rgba(255, 255, 255, 0.9) 30%, rgba(255, 255, 255, 0.4) 60%, transparent 100%)',
-    textColor: '#0f172a',
-    pillBg: '#e0e7ff',
-    pillText: '#4338ca',
-    status: 'ACTIVE',
-    statusColor: '#64748b',
-    colSpan: 5
-  },
-  { // 3: Verity
-    image: 'https://images.unsplash.com/photo-1522202176988-66273c2fd55f?auto=format&fit=crop&w=600&q=80',
-    gradient: 'linear-gradient(to right, rgba(15, 23, 42, 1) 0%, rgba(15, 23, 42, 0.85) 30%, rgba(15, 23, 42, 0.3) 60%, transparent 100%)',
-    textColor: 'white',
-    pillBg: '#dcfce7',
-    pillText: '#065f46',
-    status: 'ACTIVE',
-    statusColor: '#a7f3d0',
-    colSpan: 7
+    colSpan: 12
   }
 ];
 
 const TeacherCourseCard = ({ classroom, onClick, onSettings, onArchive, onUnarchive, onDelete, isArchived, index, initial, animate, transition }) => {
   const { isDark } = useDarkMode();
   const [menuOpen, setMenuOpen] = useState(false);
-  const theme = cardThemes[index % cardThemes.length];
-  const imageUrl = classroom.theme?.customImageUrl || theme.image;
+  const classTheme = (classroom.theme && (classroom.theme.primary || classroom.theme.id)) ? classroom.theme : getClassroomTheme(classroom);
+  const theme = cardThemes.find(t => t.id === classTheme?.id) || cardThemes[index % cardThemes.length];
   const isMobile = typeof window !== 'undefined' && window.innerWidth <= 768;
   const finalSpan = isMobile ? 12 : theme.colSpan;
   
@@ -83,11 +110,15 @@ const TeacherCourseCard = ({ classroom, onClick, onSettings, onArchive, onUnarch
     return () => document.removeEventListener('click', handleDocClick);
   }, [menuOpen]);
 
-  let bgStyle = {
-    background: `${theme.gradient}, url(${imageUrl})`,
-    backgroundSize: 'cover',
-    backgroundPosition: 'center',
-  };
+  let bgStyle = classTheme?.customImageUrl
+    ? {
+        background: `linear-gradient(to right, rgba(15, 23, 42, 0.85) 0%, rgba(15, 23, 42, 0.4) 100%), url(${classTheme.customImageUrl})`,
+        backgroundSize: 'cover',
+        backgroundPosition: 'center',
+      }
+    : {
+        background: `linear-gradient(135deg, ${classTheme?.primary || theme.primary}, ${classTheme?.secondary || theme.secondary})`,
+      };
   
   return (
     <motion.div
@@ -128,9 +159,6 @@ const TeacherCourseCard = ({ classroom, onClick, onSettings, onArchive, onUnarch
               fontWeight: 'bold',
             }}>
               {classroom.code || `C${classroom.id}`}
-            </span>
-            <span style={{ fontSize: '0.85rem', color: theme.textColor, fontWeight: '500', opacity: 0.9 }}>
-              {classroom.studentsCount || 0} Students
             </span>
           </div>
           
@@ -590,13 +618,15 @@ export default function TeacherDashboard({ currentUser, onLogout, onEnterClassro
     setActiveMenu(activeMenu === id ? null : id);
   };
   const handleArchiveClass = (e, id) => {
-    if (e) e.stopPropagation();
-    setClassrooms(classrooms.map(c => c.id === id ? { ...c, archived: true } : c));
+    if (e && e.stopPropagation) e.stopPropagation();
+    const targetId = id != null ? id : (e && typeof e === 'object' && e.id != null ? e.id : e);
+    setClassrooms(classrooms.map(c => String(c.id) === String(targetId) ? { ...c, archived: true } : c));
     setActiveMenu(null);
   };
   const handleUnarchiveClass = (e, id) => {
-    if (e) e.stopPropagation();
-    setClassrooms(classrooms.map(c => c.id === id ? { ...c, archived: false } : c));
+    if (e && e.stopPropagation) e.stopPropagation();
+    const targetId = id != null ? id : (e && typeof e === 'object' && e.id != null ? e.id : e);
+    setClassrooms(classrooms.map(c => String(c.id) === String(targetId) ? { ...c, archived: false } : c));
     setActiveMenu(null);
   };
   const handleDeleteClass = (e, id) => {

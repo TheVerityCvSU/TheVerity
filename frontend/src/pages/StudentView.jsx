@@ -16,9 +16,21 @@ import AttachmentCard from '../components/AttachmentCard';
 const normalize = (text) => (text || "").replace(/\s+/g, '');
 
 export default function StudentView({ socket, currentUser, username, assignment, classroom, onBack, isSandbox = false }) {
-  // SAFETY NET: If username is empty/broken, force a name so it doesn't crash the socket
-  const safeUsername = currentUser?.name || username || currentUser?.email || `Student_${Math.floor(Math.random() * 1000)}`;
-  const studentId = currentUser?.email || currentUser?.name || username || safeUsername;
+  // SAFETY NET: Robust student display name and persistent ID
+  const studentDisplayName =
+    (currentUser?.name && currentUser.name.trim()) ||
+    (typeof username === 'string' && username.trim()) ||
+    (currentUser?.displayName && currentUser.displayName.trim()) ||
+    (currentUser?.fullName && currentUser.fullName.trim()) ||
+    (currentUser?.full_name && currentUser.full_name.trim()) ||
+    (currentUser?.email ? currentUser.email.split('@')[0] : '') ||
+    `Student_${Math.floor(Math.random() * 1000)}`;
+  const safeUsername = studentDisplayName;
+  const studentActualId =
+    currentUser?.id != null
+      ? String(currentUser.id)
+      : (currentUser?.email || studentDisplayName);
+  const studentId = studentActualId;
   const assignmentId = assignment?.id ?? 'default';
   const classroomId = classroom?.id ?? 'default';
 
@@ -887,11 +899,15 @@ export default function StudentView({ socket, currentUser, username, assignment,
 
     if (socket) {
       socket.emit('student_typing', {
-        studentId: safeUsername,
-        name: safeUsername,
+        studentId: studentActualId,
+        id: studentActualId,
+        name: studentDisplayName,
+        studentName: studentDisplayName,
+        email: currentUser?.email || '',
+        avatar: currentUser?.avatar || '',
         code: currentCode,
-        classroomId: classroom?.id,
-        assignmentId: assignment?.id,
+        classroomId: classroom?.id || classroomId,
+        assignmentId: assignment?.id || assignmentId,
         logs: proctorLogsRef.current || proctorLogs
       });
     }
@@ -935,7 +951,28 @@ export default function StudentView({ socket, currentUser, username, assignment,
   // so pasting that same text back into the editor doesn't get flagged.
   const copiedInternallyRef = useRef(new Set());
 
-  // 1. INSTANTLY ANNOUNCE PRESENCE TO TEACHER ON LOAD WITHOUT OVERWRITING PLAYBACK
+  // 1. INSTANTLY ANNOUNCE PRESENCE TO TEACHER ON LOAD AND MAINTAIN REAL-TIME HEARTBEAT
+  const emitPresence = useCallback(() => {
+    if (!socket) return;
+    const currentCodeVal = codeRef.current || code;
+    const payload = {
+      studentId: studentActualId,
+      id: studentActualId,
+      name: studentDisplayName,
+      studentName: studentDisplayName,
+      email: currentUser?.email || '',
+      avatar: currentUser?.avatar || '',
+      code: currentCodeVal,
+      classroomId: classroom?.id || classroomId,
+      assignmentId: assignment?.id || assignmentId,
+      logs: proctorLogsRef.current || proctorLogs,
+      timestamp: Date.now()
+    };
+
+    socket.emit('student_enter_activity', payload);
+    socket.emit('student_typing', payload);
+  }, [socket, studentActualId, studentDisplayName, currentUser, classroom?.id, classroomId, assignment?.id, assignmentId, code]);
+
   useEffect(() => {
     const currentCodeVal = codeRef.current || code;
     setCodeHistory(prev => {
@@ -954,15 +991,24 @@ export default function StudentView({ socket, currentUser, username, assignment,
       return initial;
     });
 
-    socket.emit('student_typing', {
-      studentId: safeUsername,
-      name: safeUsername,
-      code: currentCodeVal,
-      classroomId: classroom?.id,
-      assignmentId: assignment?.id,
-      logs: proctorLogsRef.current || proctorLogs
-    });
-  }, [socket, safeUsername, classroom?.id, assignment?.id]);
+    // Immediate presence broadcast
+    emitPresence();
+
+    // Re-announce presence on socket connect / reconnect
+    if (socket) {
+      socket.on('connect', emitPresence);
+    }
+
+    // Keep live monitoring warm with periodic heartbeat
+    const heartbeatTimer = setInterval(emitPresence, 8000);
+
+    return () => {
+      if (socket) {
+        socket.off('connect', emitPresence);
+      }
+      clearInterval(heartbeatTimer);
+    };
+  }, [socket, emitPresence]);
 
   // 2. PROCTORING ALERTS
   const lastTabExitLogRef = useRef(0);
@@ -987,15 +1033,16 @@ export default function StudentView({ socket, currentUser, username, assignment,
     });
     const payload = {
       id: newLogItem.id,
-      studentId: studentId || safeUsername,
-      name: currentUser?.name || safeUsername,
+      studentId: studentActualId,
+      name: studentDisplayName,
+      studentName: studentDisplayName,
       email: currentUser?.email || '',
       action: message,
       message: message,
       time: timeString,
       color: color,
-      classroomId: classroom?.id,
-      assignmentId: assignment?.id
+      classroomId: classroom?.id || classroomId,
+      assignmentId: assignment?.id || assignmentId
     };
     if (socket && typeof socket.emit === 'function') {
       socket.emit('proctor_alert', payload);
@@ -1197,10 +1244,13 @@ export default function StudentView({ socket, currentUser, username, assignment,
         // Broadcast to teacher via cloud socket
         if (socket && socket.connected) {
           socket.emit('student_terminal_update', {
-            studentId: safeUsername,
+            studentId: studentActualId,
+            id: studentActualId,
+            name: studentDisplayName,
+            studentName: studentDisplayName,
             output: newOutput,
-            classroomId: classroom?.id,
-            assignmentId: assignment?.id
+            classroomId: classroom?.id || classroomId,
+            assignmentId: assignment?.id || assignmentId
           });
         }
         return newOutput;
@@ -1518,6 +1568,16 @@ export default function StudentView({ socket, currentUser, username, assignment,
       codeHistory: subHistory,
       classroomId: classroom?.id,
     });
+
+    try {
+      window.dispatchEvent(new CustomEvent('verity:submission-updated', {
+        detail: {
+          assignmentId: assignment?.id ?? aId,
+          classroomId: classroom?.id ?? 'default',
+          submitted: true
+        }
+      }));
+    } catch {}
   };
 
   const handleUnsubmit = () => {
@@ -1562,6 +1622,16 @@ export default function StudentView({ socket, currentUser, username, assignment,
         classroomId: classroom?.id ?? 'default'
       });
     }
+
+    try {
+      window.dispatchEvent(new CustomEvent('verity:submission-updated', {
+        detail: {
+          assignmentId: aId,
+          classroomId: classroom?.id ?? 'default',
+          submitted: false
+        }
+      }));
+    } catch {}
   };
 
   const handleTerminalInput = (e) => {
@@ -2024,35 +2094,16 @@ export default function StudentView({ socket, currentUser, username, assignment,
           <div style={styles.toolGroupRight}>
             {!isSandbox && (
               submitted ? (
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <div
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '5px',
-                      padding: '6px 12px',
-                      borderRadius: '5px',
-                      backgroundColor: isDark ? 'rgba(16, 185, 129, 0.15)' : '#ecfdf5',
-                      border: '1px solid #10b981',
-                      color: isDark ? '#34d399' : '#065f46',
-                      fontWeight: '700',
-                      fontSize: '0.82rem'
-                    }}
-                  >
-                    <CheckCircle2 size={14} color="#10b981" />
-                    <span>Submitted</span>
-                  </div>
-                  <button
-                    onClick={handleUnsubmit}
-                    style={{
-                      ...styles.unsubmitBtn,
-                      ...(isDark ? { backgroundColor: '#333333', borderColor: '#484848', color: '#E8EAED' } : {})
-                    }}
-                    title="Unsubmit to edit and re-submit your code"
-                  >
-                    Unsubmit
-                  </button>
-                </div>
+                <button
+                  onClick={handleUnsubmit}
+                  style={{
+                    ...styles.unsubmitBtn,
+                    ...(isDark ? { backgroundColor: '#333333', borderColor: '#484848', color: '#E8EAED' } : {})
+                  }}
+                  title="Unsubmit to edit and re-submit your code"
+                >
+                  Unsubmit
+                </button>
               ) : (
                 <button
                   onClick={handleSubmit}
@@ -2234,11 +2285,15 @@ export default function StudentView({ socket, currentUser, username, assignment,
                   return nextHist;
                 });
                 socket.emit('student_typing', {
-                  studentId: safeUsername,
-                  name: safeUsername,
+                  studentId: studentActualId,
+                  id: studentActualId,
+                  name: studentDisplayName,
+                  studentName: studentDisplayName,
+                  email: currentUser?.email || '',
+                  avatar: currentUser?.avatar || '',
                   code: newCode,
-                  classroomId: classroom?.id,
-                  assignmentId: assignment?.id,
+                  classroomId: classroom?.id || classroomId,
+                  assignmentId: assignment?.id || assignmentId,
                   logs: proctorLogsRef.current || proctorLogs
                 });
               } else {

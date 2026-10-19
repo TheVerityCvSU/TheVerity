@@ -6,7 +6,8 @@ export default function ProtectedRoute({ children, currentUser, setCurrentScreen
     window.electronAPI?.isAdminApp ||
     window.location.pathname.startsWith('/admin') ||
     window.location.hash.startsWith('#/admin') ||
-    new URLSearchParams(window.location.search).get('admin') === 'true'
+    new URLSearchParams(window.location.search).get('admin') === 'true' ||
+    window.location.href.includes('admin')
   );
 
   useEffect(() => {

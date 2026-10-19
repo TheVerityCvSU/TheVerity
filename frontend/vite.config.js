@@ -30,7 +30,7 @@ export default defineConfig(({ mode }) => {
     },
     build: {
       outDir: path.resolve(__dirname, '../dist'),
-      emptyOutDir: false,
+      emptyOutDir: true,
       minify: 'esbuild',
       cssMinify: true,
       chunkSizeWarningLimit: 1000,

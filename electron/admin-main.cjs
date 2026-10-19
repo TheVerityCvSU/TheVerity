@@ -1,8 +1,75 @@
-const { app, BrowserWindow, ipcMain, shell, session, protocol, net } = require('electron');
+process.env.IS_VERITY_ADMIN = 'true';
+const { app, BrowserWindow, ipcMain, shell, session, protocol, net, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
+const { pathToFileURL } = require('url');
 const { fork } = require('child_process');
 const { initLocalDb, localDbAPI } = require('./local-db.cjs');
+
+// Persistent diagnostic and startup logging
+const logFile = path.join(os.tmpdir(), 'the-verity-admin-startup.log');
+function logStartup(msg) {
+  const line = `[${new Date().toISOString()}] ${msg}\n`;
+  try {
+    fs.appendFileSync(logFile, line);
+  } catch (_) {}
+  console.log(msg);
+}
+
+logStartup('========================================================');
+logStartup(`[admin-main] The Verity Admin Starting: PID ${process.pid}`);
+logStartup(`[admin-main] Executable: ${process.execPath}`);
+logStartup(`[admin-main] isPackaged: ${app.isPackaged}, Platform: ${process.platform}, Arch: ${process.arch}`);
+logStartup(`[admin-main] Argv: ${JSON.stringify(process.argv)}`);
+logStartup('========================================================');
+
+// Immediate process-level crash guards
+process.on('uncaughtException', (err) => {
+  logStartup(`[admin-main] FATAL uncaughtException: ${err?.stack || err?.message || err}`);
+  try {
+    dialog.showErrorBox(
+      'The Verity Admin - Startup Error',
+      `A fatal error occurred:\n\n${err?.message || err}\n\nDiagnostic log written to:\n${logFile}`
+    );
+  } catch (_) {}
+});
+
+process.on('unhandledRejection', (reason) => {
+  logStartup(`[admin-main] Unhandled Promise Rejection: ${reason?.stack || reason?.message || reason}`);
+});
+
+// Single Instance Lock
+const gotTheLock = app.requestSingleInstanceLock();
+if (!gotTheLock) {
+  logStartup('[admin-main] Single instance lock failed. Another instance of The Verity Admin is already running.');
+  try {
+    dialog.showErrorBox(
+      'The Verity Admin is Already Running',
+      'Another instance of The Verity Admin is already running on this computer.\n\n' +
+      'Please open Windows Task Manager (Ctrl + Shift + Esc), close any existing "The Verity Admin" processes, and try launching again.'
+    );
+  } catch (_) {}
+  app.quit();
+  process.exit(0);
+}
+
+app.on('second-instance', () => {
+  logStartup('[admin-main] Second instance launched; focusing active window');
+  if (mainWindow) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+  } else if (splashWindow) {
+    if (splashWindow.isMinimized()) splashWindow.restore();
+    splashWindow.show();
+    splashWindow.focus();
+  }
+});
+
+// Hardware acceleration and GPU compatibility switches for Windows 11 and diverse laptop GPUs
+app.commandLine.appendSwitch('disable-gpu-sandbox');
+app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion');
 
 const CHROME_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36';
 app.name = 'The Verity Admin';
@@ -41,53 +108,75 @@ function seedDatabase(dataDir) {
   if (added > 0) {
     try {
       fs.writeFileSync(dbPath, JSON.stringify(current, null, 2));
-      console.log(`[admin-main] Seeded ${added} admin accounts into:`, dbPath);
+      logStartup(`[admin-main] Seeded ${added} admin accounts into: ${dbPath}`);
     } catch (err) {
-      console.error('[admin-main] Could not seed database:', err.message);
+      logStartup(`[admin-main] Could not seed database: ${err.message}`);
     }
   }
 }
 
 function startServer() {
-  const serverPath = app.isPackaged
-    ? path.join(process.resourcesPath, 'dist-server', 'server-bundle.cjs')
-    : path.join(__dirname, '..', 'dist-server', 'server-bundle.cjs');
-  const dataDir = app.isPackaged
-    ? app.getPath('userData')
-    : path.join(__dirname, '..', 'server');
+  try {
+    const serverPath = app.isPackaged
+      ? path.join(process.resourcesPath, 'dist-server', 'server-bundle.cjs')
+      : path.join(__dirname, '..', 'dist-server', 'server-bundle.cjs');
+    const dataDir = app.isPackaged
+      ? app.getPath('userData')
+      : path.join(__dirname, '..', 'server');
 
-  if (app.isPackaged) seedDatabase(dataDir);
+    if (!fs.existsSync(serverPath)) {
+      logStartup(`[admin-main] server-bundle.cjs not found at ${serverPath}`);
+      return;
+    }
 
-  const envFile = app.isPackaged
-    ? path.join(process.resourcesPath, '.env')
-    : path.join(__dirname, '..', 'server', '.env');
-
-  const parsedEnv = {};
-  if (fs.existsSync(envFile)) {
-    try {
-      const raw = fs.readFileSync(envFile, 'utf8');
-      for (const line of raw.split(/\r?\n/)) {
-        const trimmed = line.trim();
-        if (trimmed && !trimmed.startsWith('#') && trimmed.includes('=')) {
-          const idx = trimmed.indexOf('=');
-          const key = trimmed.slice(0, idx).trim();
-          const val = trimmed.slice(idx + 1).trim().replace(/^["']|["']$/g, '');
-          if (key) parsedEnv[key] = val;
-        }
+    if (app.isPackaged) {
+      try {
+        seedDatabase(dataDir);
+      } catch (seedErr) {
+        logStartup(`[admin-main] seedDatabase notice: ${seedErr.message}`);
       }
-    } catch (_) {}
-  }
+    }
 
-  serverProcess = fork(serverPath, [], {
-    env: { ...process.env, ...parsedEnv, DATA_DIR: dataDir, NODE_ENV: 'production', IS_ADMIN_APP: 'true' },
-    silent: true,
-  });
-  serverProcess.stdout.on('data', (d) => process.stdout.write(`[admin-server] ${d}`));
-  serverProcess.stderr.on('data', (d) => process.stderr.write(`[admin-server] ${d}`));
-  serverProcess.on('exit', (code) => {
-    console.log(`[admin-server] exited with code ${code}`);
-    serverProcess = null;
-  });
+    const envFile = app.isPackaged
+      ? path.join(process.resourcesPath, '.env')
+      : path.join(__dirname, '..', 'server', '.env');
+
+    const parsedEnv = {};
+    if (fs.existsSync(envFile)) {
+      try {
+        const raw = fs.readFileSync(envFile, 'utf8');
+        for (const line of raw.split(/\r?\n/)) {
+          const trimmed = line.trim();
+          if (trimmed && !trimmed.startsWith('#') && trimmed.includes('=')) {
+            const idx = trimmed.indexOf('=');
+            const key = trimmed.slice(0, idx).trim();
+            const val = trimmed.slice(idx + 1).trim().replace(/^["']|["']$/g, '');
+            if (key) parsedEnv[key] = val;
+          }
+        }
+      } catch (_) {}
+    }
+
+    logStartup(`[admin-main] Forking server process: ${serverPath}`);
+    serverProcess = fork(serverPath, [], {
+      env: { ...process.env, ...parsedEnv, DATA_DIR: dataDir, NODE_ENV: 'production', IS_ADMIN_APP: 'true' },
+      silent: true,
+    });
+    serverProcess.stdout.on('data', (d) => {
+      const s = d.toString().trim();
+      if (s) logStartup(`[admin-server] ${s}`);
+    });
+    serverProcess.stderr.on('data', (d) => {
+      const s = d.toString().trim();
+      if (s) logStartup(`[admin-server-err] ${s}`);
+    });
+    serverProcess.on('exit', (code, signal) => {
+      logStartup(`[admin-server] exited with code ${code}, signal ${signal}`);
+      serverProcess = null;
+    });
+  } catch (err) {
+    logStartup(`[admin-main] startServer error (non-fatal): ${err.message}`);
+  }
 }
 
 function stopServer() {
@@ -98,12 +187,12 @@ function stopServer() {
 }
 
 function createSplashWindow() {
+  logStartup('[admin-main] Creating splash window...');
   splashWindow = new BrowserWindow({
-    width: 500,
-    height: 200,
+    width: 480,
+    height: 240,
     frame: false,
     transparent: true,
-    backgroundColor: '#00000000',
     hasShadow: false,
     alwaysOnTop: true,
     resizable: false,
@@ -116,33 +205,32 @@ function createSplashWindow() {
     },
   });
 
-  splashWindow.loadFile(path.join(__dirname, 'admin-splash.html'));
+  splashWindow.loadFile(path.join(__dirname, 'splash.html')).catch((err) => {
+    logStartup(`[admin-main] splashWindow.loadFile error: ${err.message}`);
+  });
   splashWindow.on('closed', () => {
     splashWindow = null;
   });
 }
 
 function createWindow() {
+  logStartup('[admin-main] Creating main window...');
   mainWindow = new BrowserWindow({
-    title: 'The Verity - Admin Control Center',
-    width: 1280,
-    height: 850,
+    width: 1400,
+    height: 900,
     show: false,
     icon: path.join(__dirname, 'assets', 'icon-admin.png'),
     autoHideMenuBar: true,
     webPreferences: {
-      preload: path.join(__dirname, 'admin-preload.cjs'),
+      preload: path.join(__dirname, 'preload.cjs'),
+      additionalArguments: ['--admin-app'],
       nodeIntegration: false,
       contextIsolation: true,
       devTools: !app.isPackaged,
     },
   });
 
-  mainWindow.setMenu(null);
-  mainWindow.setMenuBarVisibility(false);
-
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    // Allow Google OAuth popup window to open in Electron for seamless postMessage exchange
     if (url.includes('accounts.google.com') || url.includes('google.com/gsi/') || url.includes('oauth2.googleapis.com')) {
       return {
         action: 'allow',
@@ -178,15 +266,22 @@ function createWindow() {
     } catch (_) {}
   });
 
-  const adminUrl = 'http://localhost:5173/?admin=true#/admin';
-  if (app.isPackaged) {
-    mainWindow.loadURL(adminUrl);
-  } else {
-    mainWindow.loadURL(adminUrl);
-  }
+  mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL) => {
+    logStartup(`[admin-main] mainWindow did-fail-load: code ${errorCode}, ${errorDescription}, url: ${validatedURL}`);
+    launchMainWindow();
+    dialog.showErrorBox(
+      'The Verity Admin - Loading Error',
+      `Could not load user interface from ${validatedURL}.\n\nError: ${errorDescription} (${errorCode})\n\nLog saved to:\n${logFile}`
+    );
+  });
+
+  mainWindow.webContents.on('render-process-gone', (event, details) => {
+    logStartup(`[admin-main] mainWindow render-process-gone: ${JSON.stringify(details)}`);
+  });
 
   const launchMainWindow = () => {
     if (!mainWindow) return;
+    logStartup('[admin-main] Revealing mainWindow and closing splashWindow');
     if (splashWindow && !splashWindow.isDestroyed()) {
       splashWindow.close();
       splashWindow = null;
@@ -195,8 +290,16 @@ function createWindow() {
     mainWindow.focus();
   };
 
+  const targetUrl = 'http://localhost:5173/?admin=true#/admin';
+  logStartup(`[admin-main] mainWindow loading ${targetUrl}...`);
+  mainWindow.loadURL(targetUrl).catch((err) => {
+    logStartup(`[admin-main] mainWindow.loadURL failed: ${err.message}`);
+    launchMainWindow();
+  });
+
   const splashStartTime = Date.now();
   mainWindow.once('ready-to-show', () => {
+    logStartup('[admin-main] mainWindow ready-to-show event fired');
     const elapsed = Date.now() - splashStartTime;
     const remainingDelay = Math.max(0, 1500 - elapsed);
     setTimeout(launchMainWindow, remainingDelay);
@@ -204,75 +307,70 @@ function createWindow() {
 
   setTimeout(() => {
     if (splashWindow && !splashWindow.isDestroyed()) {
+      logStartup('[admin-main] Splash fallback timeout (3500ms) triggered - forcing mainWindow reveal');
       launchMainWindow();
     }
-  }, 4000);
+  }, 3500);
 }
 
-// Single Instance Lock
-const gotTheLock = app.requestSingleInstanceLock();
-if (!gotTheLock) {
-  app.quit();
-} else {
-  app.on('second-instance', () => {
-    if (mainWindow) {
-      if (mainWindow.isMinimized()) mainWindow.restore();
-      mainWindow.focus();
-    }
-  });
+// App lifecycle
+app.whenReady().then(() => {
+  logStartup('[admin-main] app.whenReady fired');
 
-  app.whenReady().then(() => {
-    // Intercept Google OAuth and Google API requests to prevent disallowed_useragent blocks
-    session.defaultSession.webRequest.onBeforeSendHeaders(
-      { urls: ['https://accounts.google.com/*', 'https://*.google.com/*', 'https://oauth2.googleapis.com/*'] },
-      (details, callback) => {
-        const { requestHeaders } = details;
-        requestHeaders['User-Agent'] = CHROME_USER_AGENT;
-        if (!requestHeaders['Origin'] || requestHeaders['Origin'] === 'file://' || requestHeaders['Origin'] === 'null') {
-          requestHeaders['Origin'] = 'http://localhost:5173';
-          requestHeaders['Referer'] = 'http://localhost:5173/';
-        }
-        callback({ requestHeaders });
+  session.defaultSession.webRequest.onBeforeSendHeaders(
+    { urls: ['https://accounts.google.com/*', 'https://*.google.com/*', 'https://oauth2.googleapis.com/*'] },
+    (details, callback) => {
+      const { requestHeaders } = details;
+      requestHeaders['User-Agent'] = CHROME_USER_AGENT;
+      if (!requestHeaders['Origin'] || requestHeaders['Origin'] === 'file://' || requestHeaders['Origin'] === 'null') {
+        requestHeaders['Origin'] = 'http://localhost:5173';
+        requestHeaders['Referer'] = 'http://localhost:5173/';
       }
-    );
+      callback({ requestHeaders });
+    }
+  );
 
-    if (app.isPackaged) {
-      protocol.handle('http', (request) => {
+  if (app.isPackaged) {
+    protocol.handle('http', (request) => {
+      try {
         const url = new URL(request.url);
         if (url.hostname === 'localhost' && url.port === '5173') {
-          let reqPath = url.pathname;
-          if (reqPath === '/' || reqPath === '') reqPath = '/index.html';
+          let reqPath = decodeURIComponent(url.pathname);
+          if (reqPath === '/' || reqPath === '' || reqPath.startsWith('/admin')) reqPath = '/index.html';
           
           let file = path.join(__dirname, '../dist', reqPath);
-          if (!fs.existsSync(file)) {
+          if (!fs.existsSync(file) || fs.statSync(file).isDirectory()) {
             file = path.join(__dirname, '../dist/index.html');
           }
           
-          return net.fetch('file://' + file);
+          return net.fetch(pathToFileURL(file).href);
         }
-        return net.fetch(request, { bypassCustomProtocolHandlers: true });
-      });
-    }
-
-    const dataDir = app.isPackaged
-      ? app.getPath('userData')
-      : path.join(__dirname, '..', 'server');
-
-    try {
-      initLocalDb(dataDir);
-    } catch (err) {
-      console.error('[admin-main] Local SQLite database initialization failed:', err);
-    }
-
-    startServer();
-    createSplashWindow();
-    createWindow();
-
-    app.on('activate', () => {
-      if (BrowserWindow.getAllWindows().length === 0) createWindow();
+      } catch (e) {
+        logStartup(`[admin-main] protocol handle error: ${e.message}`);
+      }
+      return net.fetch(request, { bypassCustomProtocolHandlers: true });
     });
+  }
+
+  const dataDir = app.isPackaged
+    ? app.getPath('userData')
+    : path.join(__dirname, '..', 'server');
+
+  try {
+    initLocalDb(dataDir);
+    logStartup('[admin-main] Local SQLite database initialized successfully');
+  } catch (err) {
+    logStartup(`[admin-main] Local SQLite database initialization failed: ${err.message}`);
+  }
+
+  startServer();
+  createSplashWindow();
+  createWindow();
+
+  app.on('activate', () => {
+    if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
-}
+});
 
 // IPC Handlers
 ipcMain.on('close-app', () => {

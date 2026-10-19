@@ -29,6 +29,7 @@ import { getStudentGrade, isStudentGraded } from '../utils/gradeUtils';
 
 export default function TeacherView({
   socket,
+  currentUser,
   assignment,
   classroom,
   initialStudent,
@@ -191,7 +192,7 @@ export default function TeacherView({
               ...existing,
               id: sName,
               name: sName,
-              status: 'Submitted',
+              status: (mode === 'live' && existing.status === 'Live') ? 'Live' : 'Submitted',
               code: finalCode || existing.code || '',
               codeHistory: combinedHist,
               logs: existing.logs || []
@@ -232,7 +233,7 @@ export default function TeacherView({
                   ...existing,
                   id: sName,
                   name: sName,
-                  status: 'Submitted',
+                  status: (mode === 'live' && existing.status === 'Live') ? 'Live' : 'Submitted',
                   code:
                     val.finalCode ||
                     existing.code ||
@@ -433,40 +434,74 @@ export default function TeacherView({
   useEffect(() => {
     if (!socket) return;
 
+    const joinRoom = () => {
+      if (mode === 'live') {
+        const token = localStorage.getItem('verity_token') || localStorage.getItem('token');
+        socket.emit('teacher_join', {
+          classroomId: classroom?.id,
+          assignmentId: assignment?.id,
+          token,
+          user: currentUser
+        });
+      }
+    };
+
+    joinRoom();
+    socket.on('connect', joinRoom);
+
+    let syncInterval = null;
     if (mode === 'live') {
-      socket.emit('teacher_join', {
-        classroomId: classroom?.id,
-        assignmentId: assignment?.id
-      });
+      syncInterval = setInterval(() => {
+        if (socket.connected) {
+          socket.emit('teacher_request_sync', {
+            classroomId: classroom?.id,
+            assignmentId: assignment?.id
+          });
+        }
+      }, 4000);
     }
 
     const checkSelection = (id) => {
+      if (!id) return;
       setSelectedStudentId((prev) => (prev ? prev : id));
     };
 
     if (mode === 'live') {
       socket.on('teacher_update_code', (data) => {
+        if (!data) return;
+        const studentId = String(data.studentId || data.id || data.name || '');
+        const studentName = String(data.name || data.studentName || studentId || 'Student').trim();
+
         setStudents((prev) => {
           const sKey =
             Object.keys(prev).find(
               (k) =>
-                prev[k].id === data.studentId ||
-                prev[k].name === data.name ||
-                prev[k].name === data.studentId
-            ) || data.studentId;
+                prev[k].id === studentId ||
+                prev[k].studentId === studentId ||
+                prev[k].name === studentName ||
+                prev[k].name === studentId ||
+                (data.email && prev[k].email === data.email)
+            ) || studentId || studentName;
+
           const existing = prev[sKey] || {
-            id: data.studentId,
-            name: data.name,
+            id: studentId || studentName,
+            studentId: studentId || studentName,
+            name: studentName,
             code: '',
             logs: [],
             status: 'Live'
           };
           const next = { ...prev };
-          if (sKey !== data.studentId && next[data.studentId]) delete next[data.studentId];
+          if (sKey !== studentId && sKey !== studentName && next[studentId]) {
+            delete next[studentId];
+          }
+
           const newHist =
             Array.isArray(existing.codeHistory) && existing.codeHistory.length > 0
-              ? [...existing.codeHistory, { time: Date.now(), code: data.code }]
-              : [{ time: Date.now(), code: data.code }];
+              ? (data.code !== undefined && existing.code !== data.code
+                  ? [...existing.codeHistory, { time: Date.now(), code: data.code }]
+                  : existing.codeHistory)
+              : [{ time: Date.now(), code: data.code || '' }];
 
           const incomingLogs = Array.isArray(data.logs) ? data.logs : [];
           const existingLogs = Array.isArray(existing.logs) ? existing.logs : [];
@@ -481,8 +516,8 @@ export default function TeacherView({
                 message: l.message || l.action || 'Violation',
                 time: l.time || '',
                 color: l.color || '#ef4444',
-                studentName: l.studentName || data.name || existing.name || data.studentId,
-                studentId: l.studentId || data.studentId || existing.id
+                studentName: l.studentName || studentName,
+                studentId: l.studentId || studentId
               });
             }
           });
@@ -490,32 +525,43 @@ export default function TeacherView({
 
           next[sKey] = {
             ...existing,
-            name: data.name || existing.name || data.studentId,
+            id: studentId || existing.id || studentName,
+            studentId: studentId || existing.studentId || studentName,
+            name: studentName,
+            studentName: studentName,
+            email: data.email || existing.email || '',
+            avatar: data.avatar || existing.avatar || '',
             code: data.code !== undefined ? data.code : existing.code || '',
             codeHistory: newHist,
             logs: mergedLogs,
-            status:
-              existing.status === 'Submitted' || existing.status === 'Graded'
-                ? existing.status
-                : 'Live'
+            status: mode === 'live' ? 'Live' : (existing.status || 'Live'),
+            lastActive: Date.now()
           };
           return next;
         });
-        checkSelection(data.studentId);
+        checkSelection(studentId || studentName);
       });
 
       socket.on('teacher_receive_alert', (data) => {
+        if (!data) return;
+        const studentId = String(data.studentId || data.id || data.name || '');
+        const studentName = String(data.name || data.studentName || studentId || 'Student').trim();
+
         setStudents((prev) => {
           const sKey =
             Object.keys(prev).find(
               (k) =>
-                prev[k].id === data.studentId ||
-                prev[k].name === data.name ||
-                prev[k].name === data.studentId
-            ) || data.studentId;
+                prev[k].id === studentId ||
+                prev[k].studentId === studentId ||
+                prev[k].name === studentName ||
+                prev[k].name === studentId ||
+                (data.email && prev[k].email === data.email)
+            ) || studentId || studentName;
+
           const existing = prev[sKey] || {
-            id: data.studentId,
-            name: data.name || data.studentId,
+            id: studentId || studentName,
+            studentId: studentId || studentName,
+            name: studentName,
             code: '',
             logs: [],
             status: 'Live'
@@ -533,11 +579,13 @@ export default function TeacherView({
                 hour12: true
               }).toLowerCase(),
             color: data.color || '#ef4444',
-            studentName: data.name || existing.name || data.studentId,
-            studentId: data.studentId || existing.id
+            studentName: studentName,
+            studentId: studentId
           };
           const next = { ...prev };
-          if (sKey !== data.studentId && next[data.studentId]) delete next[data.studentId];
+          if (sKey !== studentId && sKey !== studentName && next[studentId]) {
+            delete next[studentId];
+          }
 
           const existingLogs = Array.isArray(existing.logs) ? existing.logs : [];
           const isDup = existingLogs.some(
@@ -549,15 +597,17 @@ export default function TeacherView({
 
           next[sKey] = {
             ...existing,
+            id: studentId || existing.id || studentName,
+            studentId: studentId || existing.studentId || studentName,
+            name: studentName,
+            studentName: studentName,
             logs: updatedLogs,
-            status:
-              existing.status === 'Submitted' || existing.status === 'Graded'
-                ? existing.status
-                : 'Live'
+            status: mode === 'live' ? 'Live' : (existing.status || 'Live'),
+            lastActive: Date.now()
           };
           return next;
         });
-        checkSelection(data.studentId);
+        checkSelection(studentId || studentName);
 
         if (notifSettingsRef.current.soundAlerts) {
           try {
@@ -571,24 +621,41 @@ export default function TeacherView({
       });
 
       socket.on('teacher_terminal_update', (data) => {
+        if (!data) return;
+        const studentId = String(data.studentId || data.name || '');
+        const studentName = String(data.name || data.studentName || studentId || 'Student').trim();
         setStudents((prev) => {
           const sKey =
             Object.keys(prev).find(
-              (k) => prev[k].id === data.studentId || prev[k].name === data.studentId
-            ) || data.studentId;
+              (k) =>
+                prev[k].id === studentId ||
+                prev[k].studentId === studentId ||
+                prev[k].name === studentName ||
+                prev[k].name === studentId
+            ) || studentId || studentName;
           const existing = prev[sKey] || {
-            id: data.studentId,
-            name: data.studentId,
+            id: studentId || studentName,
+            studentId: studentId || studentName,
+            name: studentName,
             code: '',
             logs: [],
             status: 'Live'
           };
           const next = { ...prev };
-          if (sKey !== data.studentId && next[data.studentId]) delete next[data.studentId];
-          next[sKey] = { ...existing, terminal: data.output };
+          if (sKey !== studentId && sKey !== studentName && next[studentId]) {
+            delete next[studentId];
+          }
+          next[sKey] = {
+            ...existing,
+            id: studentId || existing.id || studentName,
+            studentId: studentId || existing.studentId || studentName,
+            name: studentName,
+            studentName: studentName,
+            terminal: data.output
+          };
           return next;
         });
-        checkSelection(data.studentId);
+        checkSelection(studentId || studentName);
       });
 
       socket.on('teacher_student_left', ({ studentId }) => {
@@ -690,6 +757,8 @@ export default function TeacherView({
     socket.on('grade_updated', handleLiveGradeUpdate);
 
     return () => {
+      socket.off('connect', joinRoom);
+      if (syncInterval) clearInterval(syncInterval);
       if (mode === 'live') {
         socket.off('teacher_update_code');
         socket.off('teacher_receive_alert');
@@ -701,7 +770,7 @@ export default function TeacherView({
       socket.off('student_unsubmitted', handleUnsubmitted);
       socket.off('grade_updated', handleLiveGradeUpdate);
     };
-  }, [socket, mode, classroom?.id, assignment?.id]);
+  }, [socket, mode, classroom?.id, assignment?.id, currentUser]);
 
   useEffect(() => {
     if (!socket) return;
@@ -718,7 +787,10 @@ export default function TeacherView({
   const activeStudent =
     students[selectedStudentId] ||
     Object.values(students).find(
-      (s) => s.id === selectedStudentId || s.name === selectedStudentId
+      (s) =>
+        s.id === selectedStudentId ||
+        s.studentId === selectedStudentId ||
+        s.name === selectedStudentId
     ) || {
       name: 'Waiting for students...',
       code: '// No student selected',
@@ -925,7 +997,7 @@ export default function TeacherView({
     );
     if (!studentSearch.trim()) return list;
     const q = studentSearch.toLowerCase();
-    return list.filter((s) => (s.name || s.id || '').toLowerCase().includes(q));
+    return list.filter((s) => (s.name || s.studentName || s.id || '').toLowerCase().includes(q));
   }, [students, mode, studentSearch]);
 
   const activeStudentCount = useMemo(() => {
@@ -1097,7 +1169,7 @@ export default function TeacherView({
         </div>
 
         {/* Center Section: Active Student Name Badge */}
-        {!isMobile && activeStudent?.name && (
+        {!isMobile && activeStudent && activeStudent.name !== 'Waiting for students...' && (
           <div
             style={{
               display: 'flex',
@@ -1126,7 +1198,7 @@ export default function TeacherView({
                 flexShrink: 0
               }}
             >
-              {(activeStudent.name || '?')[0].toUpperCase()}
+              {((activeStudent.name || activeStudent.studentName || activeStudent.id || 'S')[0] || 'S').toUpperCase()}
             </div>
             <span
               style={{
@@ -1138,7 +1210,7 @@ export default function TeacherView({
                 color: theme.textPrimary
               }}
             >
-              {activeStudent.name}
+              {activeStudent.name || activeStudent.studentName || activeStudent.id || 'Student'}
             </span>
           </div>
         )}
@@ -1578,7 +1650,7 @@ export default function TeacherView({
                             flexShrink: 0
                           }}
                         >
-                          {(student.name || '?')[0].toUpperCase()}
+                          {((student.name || student.studentName || student.id || 'S')[0] || 'S').toUpperCase()}
                         </div>
                         <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
                           <span
@@ -1591,7 +1663,7 @@ export default function TeacherView({
                               whiteSpace: 'nowrap'
                             }}
                           >
-                            {student.name}
+                            {student.name || student.studentName || student.id || 'Student'}
                           </span>
                           <span
                             style={{

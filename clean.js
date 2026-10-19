@@ -1,12 +1,17 @@
-import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
+const fs = require('fs');
+const path = require('path');
 
-// Setup __dirname for ES Modules
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const target = process.argv[2] ? process.argv[2].toLowerCase() : 'all';
 
-const folders = ['dist', 'release', 'temp_submissions'];
+const folders = ['dist', 'temp_submissions'];
+
+if (target === 'users' || target === 'user') {
+    folders.push(path.join('release', 'Users'));
+} else if (target === 'admin') {
+    folders.push(path.join('release', 'Admin'));
+} else {
+    folders.push('release');
+}
 
 folders.forEach(folder => {
     const dir = path.join(__dirname, folder);

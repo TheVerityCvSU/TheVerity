@@ -71,7 +71,8 @@ export const isRunningInAdminMode = () => {
     window.electronAPI?.isAdminApp ||
     window.location.pathname.startsWith('/admin') ||
     window.location.hash.startsWith('#/admin') ||
-    new URLSearchParams(window.location.search).get('admin') === 'true'
+    new URLSearchParams(window.location.search).get('admin') === 'true' ||
+    window.location.href.includes('admin')
   );
 };
 
@@ -856,6 +857,7 @@ export default function App() {
             <ProtectedRoute currentUser={currentUser} setCurrentScreen={setCurrentScreen}>
               <TeacherView
                 socket={socket}
+                currentUser={currentUser}
                 assignment={activeAssignment}
                 classroom={activeClassroom}
                 initialStudent={selectedStudentForPlayback}
