@@ -1662,7 +1662,21 @@ async function checkAssignmentAccess(req, assignmentId) {
     if (!cw) {
         cw = await db.get('SELECT classroom_id FROM classwork WHERE CAST(id AS TEXT) = ?', String(assignmentId));
     }
-    if (!cw) return false;
+    if (!cw) {
+        if (roleLower === 'student') {
+            const studentEmail = (req.user.email || '').trim().toLowerCase();
+            const studentName = (req.user.name || '').trim().toLowerCase();
+            const studentId = String(req.user.id || '');
+            const hasSub = await db.get(
+                `SELECT 1 FROM submissions 
+                 WHERE (assignment_id = ? OR CAST(assignment_id AS TEXT) = ?)
+                   AND (student_name = ? OR LOWER(student_name) = ? OR LOWER(student_name) = ? OR student_name = ?)`,
+                assignmentId, String(assignmentId), req.user.name || '', studentName, studentEmail, studentId
+            ).catch(() => null);
+            if (hasSub) return true;
+        }
+        return false;
+    }
     return checkClassroomAccess(req, cw.classroom_id);
 }
 
@@ -2136,18 +2150,57 @@ app.delete('/submissions/:assignmentId/:studentName', authenticateToken, require
         }
         const studentName = decodeURIComponent(req.params.studentName);
         if (req.user.role === 'Student') {
-            // Students may only delete their own submission
-            const isSelf = (studentName === req.user.name || studentName === req.user.email ||
-                            studentName.toLowerCase() === (req.user.name || '').toLowerCase() ||
-                            studentName.toLowerCase() === (req.user.email || '').toLowerCase());
+            const sLower = (studentName || '').trim().toLowerCase();
+            const uNameLower = (req.user.name || '').trim().toLowerCase();
+            const uEmailLower = (req.user.email || '').trim().toLowerCase();
+            const uId = String(req.user.id || '');
+
+            let isSelf = (
+                sLower === uNameLower ||
+                sLower === uEmailLower ||
+                studentName === uId ||
+                sLower === uId
+            );
+
+            // Also check if the student was enrolled under this name or ID
+            if (!isSelf && (req.user.id || req.user.email)) {
+                const enr = await db.get(
+                    `SELECT 1 FROM enrollments 
+                     WHERE (student_id = ? OR CAST(student_id AS TEXT) = ? OR LOWER(student_email) = ?)
+                       AND (LOWER(student_name) = ? OR student_id = ? OR CAST(student_id AS TEXT) = ?)`,
+                    req.user.id, uId, uEmailLower, sLower, studentName, studentName
+                ).catch(() => null);
+                if (enr) isSelf = true;
+            }
+
+            // Also check if there is an existing submission for this student matching this identifier
+            if (!isSelf && (req.user.name || req.user.email || req.user.id)) {
+                const sub = await db.get(
+                    `SELECT 1 FROM submissions 
+                     WHERE (assignment_id = ? OR CAST(assignment_id AS TEXT) = ?)
+                       AND (LOWER(student_name) = ? OR student_name = ? OR LOWER(student_name) = ? OR LOWER(student_name) = ?)`,
+                    req.params.assignmentId, String(req.params.assignmentId),
+                    sLower, studentName, uNameLower, uEmailLower
+                ).catch(() => null);
+                if (sub) isSelf = true;
+            }
+
             if (!isSelf) {
                 return res.status(403).json({ message: 'Access denied: You can only delete your own submission.' });
             }
         }
 
+        const sLower = (studentName || '').trim().toLowerCase();
+        const uNameLower = (req.user?.name || '').trim().toLowerCase();
+        const uEmailLower = (req.user?.email || '').trim().toLowerCase();
+        const uId = String(req.user?.id || '');
+
         await db.run(
-            'DELETE FROM submissions WHERE assignment_id = ? AND (student_name = ? OR LOWER(student_name) = LOWER(?))',
-            req.params.assignmentId, studentName, studentName
+            `DELETE FROM submissions 
+             WHERE (assignment_id = ? OR CAST(assignment_id AS TEXT) = ?)
+               AND (student_name = ? OR LOWER(student_name) = ? OR LOWER(student_name) = ? OR LOWER(student_name) = ? OR student_name = ? OR student_name = ?)`,
+            req.params.assignmentId, String(req.params.assignmentId),
+            studentName, sLower, uNameLower, uEmailLower, req.user?.name || '', uId
         );
         res.status(200).json({ message: 'Submission deleted' });
     } catch (e) {
@@ -4038,16 +4091,26 @@ io.on('connection', (socket) => {
         }
 
         try {
+            const sLower = String(studentName || '').trim().toLowerCase();
+            const uNameLower = String(socket.user?.name || '').trim().toLowerCase();
+            const uEmailLower = String(socket.user?.email || '').trim().toLowerCase();
+            const uId = String(socket.user?.id || '');
+            const passedId = data.studentId != null ? String(data.studentId) : '';
+
             await db.run(
-                'DELETE FROM submissions WHERE assignment_id = ? AND (student_name = ? OR student_name = ? OR LOWER(student_name) = LOWER(?) OR LOWER(student_name) = LOWER(?))',
-                assignmentId, studentName, studentName, studentName, studentName
+                `DELETE FROM submissions 
+                 WHERE (assignment_id = ? OR CAST(assignment_id AS TEXT) = ?)
+                   AND (student_name = ? OR LOWER(student_name) = ? OR LOWER(student_name) = ? OR LOWER(student_name) = ? OR student_name = ? OR student_name = ? OR student_name = ?)`,
+                assignmentId, String(assignmentId),
+                studentName, sLower, uNameLower, uEmailLower, socket.user?.name || '', uId, passedId
             );
         } catch (e) { console.error(e); }
 
+        const safeStudentId = String(studentId || '');
         const roomName = `classroom:${classroomId}:assignment:${assignmentId}`;
-        socket.to(roomName).emit('teacher_student_unsubmitted', { studentName, assignmentId, studentId });
-        socket.emit('student_unsubmitted', { studentName, assignmentId, studentId });
-        socket.broadcast.emit('student_unsubmitted', { studentName, assignmentId, studentId });
+        socket.to(roomName).emit('teacher_student_unsubmitted', { studentName, assignmentId, studentId: safeStudentId });
+        socket.emit('student_unsubmitted', { studentName, assignmentId, studentId: safeStudentId });
+        socket.broadcast.emit('student_unsubmitted', { studentName, assignmentId, studentId: safeStudentId });
     });
 
     socket.on('student_terminal_update', (data) => {

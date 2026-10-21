@@ -267,10 +267,10 @@ export default function TeacherGrading({
 
     const onUnsubmit = (data) => {
       if (data?.studentName || data?.studentId) {
-        const removedName = (data.studentName || data.studentId || '').toLowerCase();
-        setStudents(prev => prev.filter(s => s.name.toLowerCase() !== removedName && s.id.toLowerCase() !== removedName));
+        const removedName = String(data.studentName || data.studentId || '').toLowerCase();
+        setStudents(prev => prev.filter(s => String(s.name || '').toLowerCase() !== removedName && String(s.id || '').toLowerCase() !== removedName));
         setSelectedId(prev => {
-          if (prev && prev.toLowerCase() === removedName) return null;
+          if (prev && String(prev).toLowerCase() === removedName) return null;
           return prev;
         });
 

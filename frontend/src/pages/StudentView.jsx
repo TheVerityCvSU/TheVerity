@@ -1344,11 +1344,11 @@ export default function StudentView({ socket, currentUser, username, assignment,
         if (cancelled) return;
         const subs = data?.submissions || [];
         const mySub = subs.find(s => {
-          const sName = (s.student_name || s.studentName || '').toLowerCase();
-          const sId = (s.student_id || s.studentId || '').toLowerCase();
-          const targetName = safeUsername.toLowerCase();
-          const targetId = studentId.toLowerCase();
-          const targetEmail = (currentUser?.email || '').toLowerCase();
+          const sName = String(s.student_name || s.studentName || '').toLowerCase();
+          const sId = String(s.student_id || s.studentId || '').toLowerCase();
+          const targetName = String(safeUsername || '').toLowerCase();
+          const targetId = String(studentId || '').toLowerCase();
+          const targetEmail = String(currentUser?.email || '').toLowerCase();
           return sName === targetName || sName === targetId || sName === targetEmail ||
                  (sId && (sId === targetName || sId === targetId || sId === targetEmail));
         });
@@ -1414,10 +1414,10 @@ export default function StudentView({ socket, currentUser, username, assignment,
     if (!socket) return;
     const handleSocketUnsubmit = (data) => {
       if (!data) return;
-      const targetName = (safeUsername || '').toLowerCase();
-      const targetId = (studentId || '').toLowerCase();
-      const eventName = (data.studentName || '').toLowerCase();
-      const eventId = (data.studentId || '').toLowerCase();
+      const targetName = String(safeUsername || '').toLowerCase();
+      const targetId = String(studentId || '').toLowerCase();
+      const eventName = String(data.studentName || '').toLowerCase();
+      const eventId = String(data.studentId || '').toLowerCase();
 
       if (eventName === targetName || eventName === targetId || eventId === targetName || eventId === targetId) {
         // Retain codeHistory in state and persistent storage

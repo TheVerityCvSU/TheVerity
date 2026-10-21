@@ -562,8 +562,8 @@ export default function ClassroomView({
             const targetName = (currentUser?.name || safeUsername || '').toLowerCase();
             const targetId = (currentUser?.id != null ? String(currentUser.id) : studentId).toLowerCase();
             const hasSub = data.submissions.some(s => {
-              const sName = (s.student_name || s.studentName || '').toLowerCase();
-              const sId = (s.student_id || s.studentId || '').toLowerCase();
+              const sName = String(s.student_name || s.studentName || '').toLowerCase();
+              const sId = String(s.student_id || s.studentId || '').toLowerCase();
               return (targetName && sName === targetName) ||
                      (targetEmail && sName === targetEmail) ||
                      (targetId && sId === targetId) ||

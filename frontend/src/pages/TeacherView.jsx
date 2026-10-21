@@ -997,7 +997,7 @@ export default function TeacherView({
     );
     if (!studentSearch.trim()) return list;
     const q = studentSearch.toLowerCase();
-    return list.filter((s) => (s.name || s.studentName || s.id || '').toLowerCase().includes(q));
+    return list.filter((s) => String(s.name || s.studentName || s.id || '').toLowerCase().includes(q));
   }, [students, mode, studentSearch]);
 
   const activeStudentCount = useMemo(() => {
