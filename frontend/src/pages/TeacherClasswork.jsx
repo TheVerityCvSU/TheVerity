@@ -146,7 +146,11 @@ export default function TeacherClasswork({
   // Active classroom tab
   const [activeTab, setActiveTab] = useState(() => {
     try {
-      return sessionStorage.getItem(`verity_teacher_classwork_tab_${classroom?.id || 'default'}`) || 'stream';
+      const perClassTab = sessionStorage.getItem(`verity_teacher_classwork_tab_${classroom?.id || 'default'}`);
+      if (perClassTab && TAB_ORDER[perClassTab] !== undefined) return perClassTab;
+      const activeTabGlobal = sessionStorage.getItem('verity_teacher_classwork_tab_active');
+      if (activeTabGlobal && TAB_ORDER[activeTabGlobal] !== undefined) return activeTabGlobal;
+      return 'stream';
     } catch {
       return 'stream';
     }
@@ -160,8 +164,24 @@ export default function TeacherClasswork({
     if (classroom?.id && prevClassroomIdRef.current !== classroom?.id) {
       prevClassroomIdRef.current = classroom?.id;
       setTransitionMode('classroom');
+      try {
+        const savedTab = sessionStorage.getItem(`verity_teacher_classwork_tab_${classroom.id}`) ||
+                         sessionStorage.getItem('verity_teacher_classwork_tab_active');
+        if (savedTab && TAB_ORDER[savedTab] !== undefined) {
+          setActiveTab(savedTab);
+        }
+      } catch {}
     }
   }, [classroom?.id]);
+
+  useEffect(() => {
+    try {
+      if (activeTab) {
+        sessionStorage.setItem(`verity_teacher_classwork_tab_${classroom?.id || 'default'}`, activeTab);
+        sessionStorage.setItem('verity_teacher_classwork_tab_active', activeTab);
+      }
+    } catch {}
+  }, [activeTab, classroom?.id]);
 
   const handleTabChange = (newTab) => {
     if (newTab === activeTab) return;
@@ -172,6 +192,7 @@ export default function TeacherClasswork({
     setActiveTab(newTab);
     try {
       sessionStorage.setItem(`verity_teacher_classwork_tab_${classroom?.id || 'default'}`, newTab);
+      sessionStorage.setItem('verity_teacher_classwork_tab_active', newTab);
     } catch {}
   };
 
@@ -2117,6 +2138,10 @@ export default function TeacherClasswork({
                                     }}
                                     className="btn-anim"
                                     onClick={() => {
+                                      try {
+                                        sessionStorage.setItem(`verity_teacher_classwork_tab_${classroom?.id || 'default'}`, activeTab);
+                                        sessionStorage.setItem('verity_teacher_classwork_tab_active', activeTab);
+                                      } catch {}
                                       if (onOpenGrading) onOpenGrading(item);
                                       else {
                                         setSelectedGradingActivityId(item.id);
@@ -2134,7 +2159,14 @@ export default function TeacherClasswork({
                                       justifyContent: 'center'
                                     }}
                                     className="btn-anim"
-                                    onClick={(e) => { e.stopPropagation(); onStartMonitoring && onStartMonitoring(item); }}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      try {
+                                        sessionStorage.setItem(`verity_teacher_classwork_tab_${classroom?.id || 'default'}`, activeTab);
+                                        sessionStorage.setItem('verity_teacher_classwork_tab_active', activeTab);
+                                      } catch {}
+                                      onStartMonitoring && onStartMonitoring(item);
+                                    }}
                                     title="Open live proctoring & monitoring"
                                   >
                                     <Monitor size={16} /> Live Monitoring
@@ -2682,7 +2714,13 @@ export default function TeacherClasswork({
 
                                     <div style={{ display: 'flex', gap: '8px' }}>
                                       <button
-                                        onClick={() => onOpenPlayback && onOpenPlayback(activeGradingActivity, curStudent)}
+                                        onClick={() => {
+                                          try {
+                                            sessionStorage.setItem(`verity_teacher_classwork_tab_${classroom?.id || 'default'}`, activeTab);
+                                            sessionStorage.setItem('verity_teacher_classwork_tab_active', activeTab);
+                                          } catch {}
+                                          onOpenPlayback && onOpenPlayback(activeGradingActivity, curStudent);
+                                        }}
                                         style={styles.playbackActionBtn}
                                         title="Open recording playback"
                                       >

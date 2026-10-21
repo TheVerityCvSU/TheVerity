@@ -559,8 +559,8 @@ export default function TeacherGrading({
         <div
           style={{ display: 'flex', alignItems: 'baseline', cursor: 'pointer', flex: 1, justifyContent: 'flex-start' }}
           onClick={() => {
-            if (onNavigateView) onNavigateView('classrooms');
-            else onBack();
+            if (onBack) onBack();
+            else if (onNavigateView) onNavigateView('classrooms');
           }}
         >
           <span style={{ color: '#10b981', fontSize: '1.75rem', fontWeight: '900', fontStyle: 'italic' }}>V</span>

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useLayoutEffect, useRef, useMemo } from 'react';
-import { Home, Calendar, ClipboardList, Settings, MoreVertical, Plus, LogOut, User, X, Menu, Archive, RefreshCw, Trash2 } from 'lucide-react';
+import { Home, Calendar, ClipboardList, Settings, MoreVertical, Plus, LogOut, User, X, Menu, Archive, RefreshCw, Trash2, Copy, Check } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import SettingsPanel from './SettingsPanel';
 import ProfileMenu from './ProfileMenu';
@@ -98,10 +98,20 @@ const cardThemes = [
 const TeacherCourseCard = ({ classroom, onClick, onSettings, onArchive, onUnarchive, onDelete, isArchived, index, initial, animate, transition }) => {
   const { isDark } = useDarkMode();
   const [menuOpen, setMenuOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
   const classTheme = (classroom.theme && (classroom.theme.primary || classroom.theme.id)) ? classroom.theme : getClassroomTheme(classroom);
   const theme = cardThemes.find(t => t.id === classTheme?.id) || cardThemes[index % cardThemes.length];
-  const isMobile = typeof window !== 'undefined' && window.innerWidth <= 768;
-  const finalSpan = isMobile ? 12 : theme.colSpan;
+
+  const handleCopyCode = (e) => {
+    if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
+    const code = classroom.code || `C${classroom.id}`;
+    if (navigator?.clipboard?.writeText) {
+      navigator.clipboard.writeText(code).then(() => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      }).catch(() => {});
+    }
+  };
   
   // Close menu when clicking outside
   useEffect(() => {
@@ -125,7 +135,7 @@ const TeacherCourseCard = ({ classroom, onClick, onSettings, onArchive, onUnarch
       initial={initial}
       animate={animate}
       transition={transition || { type: 'spring', stiffness: 300, damping: 22 }}
-      whileHover={{ y: -4, scale: 1.01, boxShadow: '0 15px 30px rgba(0,0,0,0.15)' }}
+      whileHover={{ y: -5, scale: 1.015, boxShadow: '0 20px 35px rgba(0,0,0,0.22)' }}
       whileTap={{ scale: 0.98 }}
       onClick={() => onClick(classroom)}
       style={{
@@ -139,9 +149,8 @@ const TeacherCourseCard = ({ classroom, onClick, onSettings, onArchive, onUnarch
         cursor: 'pointer',
         position: 'relative',
         overflow: 'visible',
-        boxShadow: '0 8px 20px rgba(0,0,0,0.08)',
+        boxShadow: '0 8px 24px rgba(0,0,0,0.1)',
         color: theme.textColor,
-        gridColumn: `span ${finalSpan}`,
         width: '100%',
         boxSizing: 'border-box',
         opacity: isArchived ? 0.75 : 1
@@ -150,24 +159,41 @@ const TeacherCourseCard = ({ classroom, onClick, onSettings, onArchive, onUnarch
       <div style={{ position: 'relative', zIndex: 10 }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <span style={{ 
-              backgroundColor: theme.pillBg, 
-              color: theme.pillText,
-              padding: '4px 10px', 
-              borderRadius: '20px', 
-              fontSize: '0.75rem',
-              fontWeight: 'bold',
-            }}>
-              {classroom.code || `C${classroom.id}`}
-            </span>
+            <button
+              type="button"
+              onClick={handleCopyCode}
+              title="Click to copy class code"
+              style={{ 
+                backgroundColor: theme.pillBg, 
+                color: theme.pillText,
+                padding: '4px 10px', 
+                borderRadius: '20px', 
+                fontSize: '0.75rem',
+                fontWeight: 'bold',
+                border: 'none',
+                cursor: 'pointer',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '5px',
+                backdropFilter: 'blur(6px)',
+                transition: 'transform 0.15s ease, background 0.2s ease',
+              }}
+              onMouseEnter={(e) => e.currentTarget.style.transform = 'scale(1.05)'}
+              onMouseLeave={(e) => e.currentTarget.style.transform = 'scale(1)'}
+            >
+              <span>{classroom.code || `C${classroom.id}`}</span>
+              {copied ? <Check size={12} strokeWidth={2.8} /> : <Copy size={11} strokeWidth={2} />}
+            </button>
           </div>
           
           <div style={{ position: 'relative' }}>
             <button
+              type="button"
+              aria-label="Classroom options"
               onClick={(e) => { e.stopPropagation(); setMenuOpen(p => !p); }}
               style={{
-                background: 'rgba(0,0,0,0.2)',
-                border: 'none',
+                background: 'rgba(0,0,0,0.22)',
+                border: '1px solid rgba(255,255,255,0.15)',
                 color: 'white',
                 cursor: 'pointer',
                 padding: '6px',
@@ -175,8 +201,11 @@ const TeacherCourseCard = ({ classroom, onClick, onSettings, onArchive, onUnarch
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
-                backdropFilter: 'blur(4px)'
+                backdropFilter: 'blur(6px)',
+                transition: 'background 0.2s ease, transform 0.15s ease'
               }}
+              onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(0,0,0,0.38)'}
+              onMouseLeave={(e) => e.currentTarget.style.background = 'rgba(0,0,0,0.22)'}
             >
               <MoreVertical size={16} />
             </button>
@@ -187,33 +216,70 @@ const TeacherCourseCard = ({ classroom, onClick, onSettings, onArchive, onUnarch
                   top: '100%',
                   right: 0,
                   marginTop: '8px',
-                  backgroundColor: isDark ? '#333' : '#fff',
-                  border: isDark ? '1px solid #444' : '1px solid #e5e7eb',
-                  borderRadius: '12px',
-                  boxShadow: '0 10px 25px rgba(0,0,0,0.2)',
+                  backgroundColor: isDark ? '#262626' : '#ffffff',
+                  border: isDark ? '1px solid #404040' : '1px solid #e5e7eb',
+                  borderRadius: '14px',
+                  boxShadow: isDark
+                    ? '0 12px 28px rgba(0,0,0,0.5), 0 4px 10px rgba(0,0,0,0.3)'
+                    : '0 12px 28px rgba(0,0,0,0.15), 0 4px 10px rgba(0,0,0,0.06)',
                   zIndex: 100,
                   width: '180px',
-                  overflow: 'hidden'
+                  overflow: 'hidden',
+                  padding: '4px'
                 }}
                 onClick={(e) => e.stopPropagation()}
               >
                 {!isArchived && onSettings && (
-                  <button onClick={(e) => { e.stopPropagation(); setMenuOpen(false); onSettings(classroom); }} style={{ width: '100%', padding: '12px 16px', textAlign: 'left', background: 'transparent', border: 'none', borderBottom: isDark ? '1px solid #444' : '1px solid #e5e7eb', color: isDark ? '#eee' : '#333', cursor: 'pointer', fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <Settings size={16} /> Settings
+                  <button 
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); setMenuOpen(false); onSettings(classroom); }} 
+                    style={{ width: '100%', padding: '10px 14px', textAlign: 'left', background: 'transparent', border: 'none', borderRadius: '10px', color: isDark ? '#f3f4f6' : '#1f2937', cursor: 'pointer', fontSize: '0.88rem', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '10px', transition: 'background 0.15s' }}
+                    onMouseEnter={(e) => e.currentTarget.style.background = isDark ? '#333333' : '#f1f5f9'}
+                    onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                  >
+                    <Settings size={16} color={isDark ? '#9ca3af' : '#64748b'} /> Settings
                   </button>
                 )}
+                <button 
+                  type="button"
+                  onClick={(e) => { handleCopyCode(e); setMenuOpen(false); }} 
+                  style={{ width: '100%', padding: '10px 14px', textAlign: 'left', background: 'transparent', border: 'none', borderRadius: '10px', color: isDark ? '#f3f4f6' : '#1f2937', cursor: 'pointer', fontSize: '0.88rem', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '10px', transition: 'background 0.15s' }}
+                  onMouseEnter={(e) => e.currentTarget.style.background = isDark ? '#333333' : '#f1f5f9'}
+                  onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                >
+                  {copied ? <Check size={16} color="#10b981" /> : <Copy size={16} color={isDark ? '#9ca3af' : '#64748b'} />}
+                  {copied ? 'Code Copied!' : 'Copy Code'}
+                </button>
                 {!isArchived && onArchive && (
-                  <button onClick={(e) => { e.stopPropagation(); setMenuOpen(false); onArchive(classroom); }} style={{ width: '100%', padding: '12px 16px', textAlign: 'left', background: 'transparent', border: 'none', borderBottom: isDark ? '1px solid #444' : '1px solid #e5e7eb', color: isDark ? '#eee' : '#333', cursor: 'pointer', fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <Archive size={16} /> Archive
+                  <button 
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); setMenuOpen(false); onArchive(classroom); }} 
+                    style={{ width: '100%', padding: '10px 14px', textAlign: 'left', background: 'transparent', border: 'none', borderRadius: '10px', color: isDark ? '#f3f4f6' : '#1f2937', cursor: 'pointer', fontSize: '0.88rem', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '10px', transition: 'background 0.15s' }}
+                    onMouseEnter={(e) => e.currentTarget.style.background = isDark ? '#333333' : '#f1f5f9'}
+                    onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                  >
+                    <Archive size={16} color={isDark ? '#9ca3af' : '#64748b'} /> Archive
                   </button>
                 )}
                 {isArchived && onUnarchive && (
-                  <button onClick={(e) => { e.stopPropagation(); setMenuOpen(false); onUnarchive(classroom); }} style={{ width: '100%', padding: '12px 16px', textAlign: 'left', background: 'transparent', border: 'none', borderBottom: isDark ? '1px solid #444' : '1px solid #e5e7eb', color: isDark ? '#eee' : '#333', cursor: 'pointer', fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <RefreshCw size={16} /> Unarchive
+                  <button 
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); setMenuOpen(false); onUnarchive(classroom); }} 
+                    style={{ width: '100%', padding: '10px 14px', textAlign: 'left', background: 'transparent', border: 'none', borderRadius: '10px', color: isDark ? '#f3f4f6' : '#1f2937', cursor: 'pointer', fontSize: '0.88rem', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '10px', transition: 'background 0.15s' }}
+                    onMouseEnter={(e) => e.currentTarget.style.background = isDark ? '#333333' : '#f1f5f9'}
+                    onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                  >
+                    <RefreshCw size={16} color={isDark ? '#9ca3af' : '#64748b'} /> Unarchive
                   </button>
                 )}
                 {onDelete && (
-                  <button onClick={(e) => { e.stopPropagation(); setMenuOpen(false); onDelete(classroom); }} style={{ width: '100%', padding: '12px 16px', textAlign: 'left', background: 'transparent', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <button 
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); setMenuOpen(false); onDelete(classroom); }} 
+                    style={{ width: '100%', padding: '10px 14px', textAlign: 'left', background: 'transparent', border: 'none', borderRadius: '10px', color: '#ef4444', cursor: 'pointer', fontSize: '0.88rem', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '10px', transition: 'background 0.15s' }}
+                    onMouseEnter={(e) => e.currentTarget.style.background = isDark ? 'rgba(239,68,68,0.15)' : '#fee2e2'}
+                    onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                  >
                     <Trash2 size={16} /> Delete
                   </button>
                 )}
@@ -221,18 +287,50 @@ const TeacherCourseCard = ({ classroom, onClick, onSettings, onArchive, onUnarch
             )}
           </div>
         </div>
-        <h3 style={{ margin: 0, fontSize: '1.85rem', fontWeight: 'bold', lineHeight: 1.2, textShadow: theme.textColor === 'white' ? '0 2px 4px rgba(0,0,0,0.5)' : 'none' }}>
+        <h3 
+          title={classroom.name}
+          style={{ 
+            margin: '12px 0 0', 
+            fontSize: '1.75rem', 
+            fontWeight: 'bold', 
+            lineHeight: 1.2, 
+            textShadow: theme.textColor === 'white' ? '0 2px 4px rgba(0,0,0,0.5)' : 'none',
+            display: '-webkit-box',
+            WebkitLineClamp: 2,
+            WebkitBoxOrient: 'vertical',
+            overflow: 'hidden',
+            wordBreak: 'break-word'
+          }}
+        >
           {classroom.name}
         </h3>
       </div>
       
-      <div style={{ position: 'relative', zIndex: 10 }}>
-        <p style={{ margin: 0, fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: theme.statusColor, marginBottom: '4px' }}>
-          {isArchived ? 'ARCHIVED' : 'ACTIVE'}
-        </p>
-        <p style={{ margin: 0, fontSize: '0.95rem', fontWeight: '600', color: theme.textColor }}>
-          {classroom.section || 'General Section'}
-        </p>
+      <div style={{ position: 'relative', zIndex: 10, display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between' }}>
+        <div>
+          <p style={{ margin: 0, fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: theme.statusColor, marginBottom: '4px', fontWeight: '700' }}>
+            {isArchived ? 'ARCHIVED' : 'ACTIVE'}
+          </p>
+          <p style={{ margin: 0, fontSize: '0.95rem', fontWeight: '600', color: theme.textColor }}>
+            {classroom.section || 'General Section'}
+          </p>
+        </div>
+        {classroom.subject && (
+          <span style={{
+            fontSize: '0.78rem',
+            color: theme.textColor,
+            opacity: 0.9,
+            backgroundColor: 'rgba(0, 0, 0, 0.22)',
+            padding: '3px 8px',
+            borderRadius: '8px',
+            maxWidth: '140px',
+            whiteSpace: 'nowrap',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis'
+          }}>
+            {classroom.subject}
+          </span>
+        )}
       </div>
     </motion.div>
   );
@@ -630,10 +728,12 @@ export default function TeacherDashboard({ currentUser, onLogout, onEnterClassro
     setActiveMenu(null);
   };
   const handleDeleteClass = (e, id) => {
-    e.stopPropagation();
+    if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
+    const targetId = id != null ? id : (e && typeof e === 'object' && e.id != null ? e.id : e);
+    if (!targetId) return;
     if (window.confirm("Are you sure you want to delete this classroom?")) {
-      setClassrooms(classrooms.filter(c => c.id !== id));
-      apiFetch(`${import.meta.env.VITE_API_URL}/classrooms/${id}`, {
+      setClassrooms(prev => prev.filter(c => String(c.id) !== String(targetId)));
+      apiFetch(`${import.meta.env.VITE_API_URL}/classrooms/${targetId}`, {
         method: 'DELETE'
       }).catch(() => {});
     }
@@ -823,8 +923,22 @@ export default function TeacherDashboard({ currentUser, onLogout, onEnterClassro
 
           {activeView === 'archived' && (
             <motion.div key="archived" custom={slideDirection} variants={drillVariants} initial="initial" animate="animate" exit="exit" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '30px', padding: '0 10px' }}>
-                <h2 style={{ color: isDark ? '#E8EAED' : '#4b5563', margin: 0 }}>Archived Classrooms</h2>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px', padding: '0 4px', flexWrap: 'wrap', gap: '12px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  <h2 style={{ fontSize: '1.4rem', fontWeight: '800', margin: 0, color: isDark ? '#f5f5f5' : '#111827' }}>
+                    Archived Classrooms
+                  </h2>
+                  <span style={{
+                    fontSize: '0.8rem',
+                    fontWeight: '700',
+                    padding: '3px 10px',
+                    borderRadius: '9999px',
+                    backgroundColor: isDark ? 'rgba(156, 163, 175, 0.15)' : '#f3f4f6',
+                    color: isDark ? '#9ca3af' : '#4b5563'
+                  }}>
+                    {archivedClassrooms.length} Archived
+                  </span>
+                </div>
               </div>
 
               {archivedClassrooms.length === 0 ? (
@@ -833,7 +947,7 @@ export default function TeacherDashboard({ currentUser, onLogout, onEnterClassro
                   <p style={{ marginTop: '10px', color: isDark ? '#6b7280' : '#9ca3af' }}>Classrooms you archive will appear here.</p>
                 </div>
               ) : (
-                <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(12, 1fr)', gap: '24px' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fill, minmax(320px, 1fr))', gap: '24px' }}>
                   {archivedClassrooms.map((cls, idx) => (
                     <TeacherCourseCard
                       key={cls.id}
@@ -871,25 +985,53 @@ export default function TeacherDashboard({ currentUser, onLogout, onEnterClassro
 
           {activeView === 'classrooms' && (
             <motion.div key="classrooms" custom={slideDirection} variants={drillVariants} initial="initial" animate="animate" exit="exit">
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '30px', padding: '0 10px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px', padding: '0 4px', flexWrap: 'wrap', gap: '12px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  <h2 style={{ fontSize: '1.4rem', fontWeight: '800', margin: 0, color: isDark ? '#f5f5f5' : '#111827' }}>
+                    Active Classrooms
+                  </h2>
+                  <span style={{
+                    fontSize: '0.8rem',
+                    fontWeight: '700',
+                    padding: '3px 10px',
+                    borderRadius: '9999px',
+                    backgroundColor: isDark ? 'rgba(16, 185, 129, 0.16)' : '#dcfce7',
+                    color: isDark ? '#34d399' : '#065f46',
+                    border: isDark ? '1px solid rgba(16, 185, 129, 0.25)' : '1px solid rgba(16, 185, 129, 0.2)'
+                  }}>
+                    {activeClassrooms.length} Active
+                  </span>
+                </div>
+
                 <motion.button
-                  whileHover={{ scale: 1.05 }}
-                  whileTap={{ scale: 0.95 }}
+                  whileHover={{ scale: 1.04, boxShadow: '0 10px 25px rgba(16,185,129,0.4)' }}
+                  whileTap={{ scale: 0.96 }}
                   onClick={handleOpenCreateModal}
                   style={{
-                    padding: '12px 24px', backgroundColor: '#10b981', color: '#ffffff',
-                    border: 'none', borderRadius: '12px', fontSize: '1rem', fontWeight: 'bold',
-                    cursor: 'pointer', boxShadow: '0 8px 20px rgba(16,185,129,0.3)'
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    padding: '10px 20px',
+                    backgroundColor: '#10b981',
+                    color: '#ffffff',
+                    border: 'none',
+                    borderRadius: '12px',
+                    fontSize: '0.95rem',
+                    fontWeight: '700',
+                    cursor: 'pointer',
+                    boxShadow: '0 6px 18px rgba(16,185,129,0.3)',
+                    transition: 'all 0.2s ease'
                   }}
                 >
-                  Create
+                  <Plus size={18} strokeWidth={2.5} />
+                  Create Class
                 </motion.button>
               </div>
 
               {/* Classroom Grid */}
               <div style={{
                 display: 'grid',
-                gridTemplateColumns: isMobile ? '1fr' : 'repeat(12, 1fr)',
+                gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fill, minmax(320px, 1fr))',
                 gap: '24px'
               }}>
                 {loadingClassrooms
@@ -923,7 +1065,7 @@ export default function TeacherDashboard({ currentUser, onLogout, onEnterClassro
                         No Classrooms Yet
                       </h3>
                       <p style={{ margin: '0 0 16px', maxWidth: '380px', fontSize: '0.88rem', color: isDark ? '#a3a3a3' : '#64748b' }}>
-                        Click <strong>Create</strong> above to create your first classroom.
+                        Click <strong>Create Class</strong> above to create your first classroom.
                       </p>
                     </div>
                   ) : activeClassrooms.map((cls, idx) => (

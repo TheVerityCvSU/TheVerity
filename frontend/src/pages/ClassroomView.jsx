@@ -199,8 +199,16 @@ export default function ClassroomView({
     return () => clearTimeout(timer);
   }, [classroom, collapsed]);
 
-  // Active Tab: strictly 'stream' | 'classwork' | 'people' (no 'grades' for students)
-  const [activeTab, setActiveTab] = useState('stream');
+  // Active Tab: strictly 'stream' | 'classwork' | 'people' | 'materials' (no 'grades' for students)
+  const [activeTab, setActiveTab] = useState(() => {
+    try {
+      const specific = classroom?.id ? sessionStorage.getItem(`verity_student_classroom_tab_${classroom.id}`) : null;
+      if (specific && ['stream', 'classwork', 'materials', 'people'].includes(specific)) return specific;
+      const generic = sessionStorage.getItem('verity_student_classroom_tab_active');
+      if (generic && ['stream', 'classwork', 'materials', 'people'].includes(generic)) return generic;
+    } catch {}
+    return 'stream';
+  });
   const [isHeaderHovered, setIsHeaderHovered] = useState(false);
   const [tabDirection, setTabDirection] = useState(1);
   const [transitionMode, setTransitionMode] = useState('tab');
@@ -236,6 +244,10 @@ export default function ClassroomView({
     setTabDirection(newIdx >= currentIdx ? 1 : -1);
     setTransitionMode('tab');
     setActiveTab(newTab);
+    try {
+      if (classroom?.id) sessionStorage.setItem(`verity_student_classroom_tab_${classroom.id}`, newTab);
+      sessionStorage.setItem('verity_student_classroom_tab_active', newTab);
+    } catch {}
   };
 
   // Horizontal drag-to-scroll handler for To Do cards

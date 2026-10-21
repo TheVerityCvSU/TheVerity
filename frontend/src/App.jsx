@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { io } from 'socket.io-client';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -203,6 +203,166 @@ export default function App() {
       sessionStorage.setItem('verity_workspace_return', workspaceReturnScreen);
     }
   }, [workspaceReturnScreen]);
+
+  // ── Intelligent Navigation History Stack (Browser Back & UI Back Sync) ──
+  const [navigationStack, setNavigationStack] = useState(() => {
+    try {
+      const raw = sessionStorage.getItem('verity_nav_stack');
+      return raw ? JSON.parse(raw) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const isProgrammaticBackRef = useRef(false);
+
+  useEffect(() => {
+    try {
+      sessionStorage.setItem('verity_nav_stack', JSON.stringify(navigationStack));
+    } catch {}
+  }, [navigationStack]);
+
+  const getDefaultFallbackScreen = (screen, role) => {
+    const isTeacher = role === 'Teacher';
+    switch (screen) {
+      case 'teacher_proctoring':
+        return proctoringReturnScreen || 'teacher_grading';
+      case 'teacher_grading':
+        return 'teacher_classwork';
+      case 'teacher_classwork':
+        return 'teacher_dashboard';
+      case 'student_workspace':
+        return workspaceReturnScreen || 'classroom_view';
+      case 'student_activity_detail':
+        return workspaceReturnScreen === 'student_dashboard' ? 'student_dashboard' : 'classroom_view';
+      case 'classroom_view':
+        return 'student_dashboard';
+      case 'sandbox_workspace':
+        return 'student_dashboard';
+      default:
+        return isTeacher ? 'teacher_dashboard' : 'student_dashboard';
+    }
+  };
+
+  const navigateTo = (targetScreen, context = {}) => {
+    if (targetScreen === currentScreen && !context.force) return;
+
+    const snapshot = {
+      screen: currentScreen,
+      classroom: activeClassroom,
+      assignment: activeAssignment,
+      selectedStudent: selectedStudentForPlayback,
+      proctoringMode,
+      proctoringReturnScreen,
+      workspaceReturnScreen,
+      teacherTab: activeClassroom?.id
+        ? (sessionStorage.getItem(`verity_teacher_classwork_tab_${activeClassroom.id}`) || sessionStorage.getItem('verity_teacher_classwork_tab_active'))
+        : null,
+      studentTab: activeClassroom?.id
+        ? (sessionStorage.getItem(`verity_student_classroom_tab_${activeClassroom.id}`) || sessionStorage.getItem('verity_student_classroom_tab_active'))
+        : null,
+      timestamp: Date.now()
+    };
+
+    setNavigationStack(prev => [...prev.slice(-30), snapshot]);
+
+    if (context.classroom !== undefined) setActiveClassroom(context.classroom);
+    if (context.assignment !== undefined) setActiveAssignment(context.assignment);
+    if (context.student !== undefined) setSelectedStudentForPlayback(context.student);
+    if (context.proctoringMode !== undefined) setProctoringMode(context.proctoringMode);
+    if (context.proctoringReturnScreen !== undefined) setProctoringReturnScreen(context.proctoringReturnScreen);
+    if (context.workspaceReturnScreen !== undefined) setWorkspaceReturnScreen(context.workspaceReturnScreen);
+    if (context.tab && (context.classroom?.id || activeClassroom?.id)) {
+      const cid = context.classroom?.id || activeClassroom?.id;
+      if (currentUser?.role === 'Teacher') {
+        try {
+          sessionStorage.setItem(`verity_teacher_classwork_tab_${cid}`, context.tab);
+          sessionStorage.setItem('verity_teacher_classwork_tab_active', context.tab);
+        } catch {}
+      } else {
+        try {
+          sessionStorage.setItem(`verity_student_classroom_tab_${cid}`, context.tab);
+          sessionStorage.setItem('verity_student_classroom_tab_active', context.tab);
+        } catch {}
+      }
+    }
+
+    if (typeof window !== 'undefined' && window.history?.pushState) {
+      try {
+        window.history.pushState({ screen: targetScreen, time: Date.now() }, '', window.location.pathname);
+      } catch {}
+    }
+
+    setCurrentScreen(targetScreen);
+    try {
+      localStorage.setItem('currentScreen', targetScreen);
+    } catch {}
+  };
+
+  const executeGoBack = (fallbackScreen) => {
+    setNavigationStack(prev => {
+      if (prev && prev.length > 0) {
+        const nextStack = [...prev];
+        const target = nextStack.pop();
+
+        if (target.classroom !== undefined) setActiveClassroom(target.classroom);
+        if (target.assignment !== undefined) setActiveAssignment(target.assignment);
+        if (target.selectedStudent !== undefined) setSelectedStudentForPlayback(target.selectedStudent);
+        if (target.proctoringMode !== undefined) setProctoringMode(target.proctoringMode);
+        if (target.proctoringReturnScreen !== undefined) setProctoringReturnScreen(target.proctoringReturnScreen);
+        if (target.workspaceReturnScreen !== undefined) setWorkspaceReturnScreen(target.workspaceReturnScreen);
+        if (target.teacherTab && target.classroom?.id) {
+          try {
+            sessionStorage.setItem(`verity_teacher_classwork_tab_${target.classroom.id}`, target.teacherTab);
+            sessionStorage.setItem('verity_teacher_classwork_tab_active', target.teacherTab);
+          } catch {}
+        }
+        if (target.studentTab && target.classroom?.id) {
+          try {
+            sessionStorage.setItem(`verity_student_classroom_tab_${target.classroom.id}`, target.studentTab);
+            sessionStorage.setItem('verity_student_classroom_tab_active', target.studentTab);
+          } catch {}
+        }
+
+        setCurrentScreen(target.screen);
+        try {
+          localStorage.setItem('currentScreen', target.screen);
+        } catch {}
+        return nextStack;
+      }
+
+      const defaultFallback = fallbackScreen || getDefaultFallbackScreen(currentScreen, currentUser?.role);
+      setCurrentScreen(defaultFallback);
+      try {
+        localStorage.setItem('currentScreen', defaultFallback);
+      } catch {}
+      return [];
+    });
+  };
+
+  const handleBack = (fallbackScreen) => {
+    if (typeof window !== 'undefined' && window.history && window.history.state && navigationStack.length > 0) {
+      isProgrammaticBackRef.current = true;
+      window.history.back();
+    } else {
+      executeGoBack(fallbackScreen);
+    }
+  };
+
+  useEffect(() => {
+    if (typeof window !== 'undefined' && window.history && !window.history.state) {
+      try {
+        window.history.replaceState({ screen: currentScreen, initial: true }, '', window.location.pathname);
+      } catch {}
+    }
+
+    const handlePopState = () => {
+      executeGoBack();
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, [currentScreen, currentUser]);
 
   const [connStatus, setConnStatus] = useState(() => getConnectionStatus());
 
@@ -667,15 +827,12 @@ export default function App() {
                 currentUser={currentUser}
                 onLogout={handleLogout}
                 onEnterClassroom={(classroom) => {
-                  setActiveClassroom(classroom);
-                  setCurrentScreen('classroom_view');
+                  navigateTo('classroom_view', { classroom });
                 }}
                 onOpenAssignment={(classroom, task) => {
-                  setActiveClassroom(classroom);
-                  setActiveAssignment(task);
-                  setCurrentScreen('student_activity_detail');
+                  navigateTo('student_activity_detail', { classroom, assignment: task, workspaceReturnScreen: 'student_dashboard' });
                 }}
-                onOpenSandbox={() => setCurrentScreen('sandbox_workspace')}
+                onOpenSandbox={() => navigateTo('sandbox_workspace')}
               />
             </ProtectedRoute>
           )}
@@ -684,26 +841,22 @@ export default function App() {
             <ProtectedRoute currentUser={currentUser} setCurrentScreen={setCurrentScreen}>
               <ClassroomView
                 onEnterClassroom={(classroom) => {
-                  setActiveClassroom(classroom);
-                  setCurrentScreen('classroom_view');
+                  navigateTo('classroom_view', { classroom });
                 }}
                 socket={socket}
                 currentUser={currentUser}
                 classroom={activeClassroom}
                 onLogout={handleLogout}
-                onBack={() => setCurrentScreen('student_dashboard')}
+                onBack={() => handleBack('student_dashboard')}
                 onNavigateView={(view) => {
                   localStorage.setItem('verity_student_view', view);
-                  setCurrentScreen('student_dashboard');
+                  navigateTo('student_dashboard');
                 }}
                 onOpenAssignment={(task) => {
-                  setActiveAssignment(task);
-                  setCurrentScreen('student_activity_detail');
+                  navigateTo('student_activity_detail', { assignment: task, workspaceReturnScreen: 'classroom_view' });
                 }}
                 onStartAssignment={(task) => {
-                  setActiveAssignment(task);
-                  setWorkspaceReturnScreen('classroom_view');
-                  setCurrentScreen('student_workspace');
+                  navigateTo('student_workspace', { assignment: task, workspaceReturnScreen: 'classroom_view' });
                 }}
               />
             </ProtectedRoute>
@@ -716,18 +869,18 @@ export default function App() {
                 currentUser={currentUser}
                 classroom={activeClassroom}
                 assignment={activeAssignment}
-                onBack={() => setCurrentScreen('classroom_view')}
+                onBack={() => handleBack(workspaceReturnScreen === 'student_dashboard' ? 'student_dashboard' : 'classroom_view')}
                 onNavigateView={(view) => {
                   localStorage.setItem('verity_student_view', view);
-                  setCurrentScreen('student_dashboard');
+                  navigateTo('student_dashboard');
                 }}
                 onStartCoding={() => {
-                  setWorkspaceReturnScreen('student_activity_detail');
-                  setCurrentScreen('student_workspace');
+                  navigateTo('student_workspace', {
+                    workspaceReturnScreen: 'student_activity_detail'
+                  });
                 }}
                 onEnterClassroom={(classroom) => {
-                  setActiveClassroom(classroom);
-                  setCurrentScreen('classroom_view');
+                  navigateTo('classroom_view', { classroom });
                 }}
                 onLogout={handleLogout}
               />
@@ -742,7 +895,7 @@ export default function App() {
                 username={currentUser?.name}
                 assignment={activeAssignment}
                 classroom={activeClassroom}
-                onBack={() => setCurrentScreen(workspaceReturnScreen || 'classroom_view')}
+                onBack={() => handleBack(workspaceReturnScreen || 'classroom_view')}
               />
             </ProtectedRoute>
           )}
@@ -754,7 +907,7 @@ export default function App() {
                 currentUser={currentUser}
                 username={currentUser?.name}
                 isSandbox={true}
-                onBack={() => setCurrentScreen('student_dashboard')}
+                onBack={() => handleBack('student_dashboard')}
               />
             </ProtectedRoute>
           )}
@@ -773,8 +926,7 @@ export default function App() {
                 currentUser={currentUser}
                 onLogout={handleLogout}
                 onEnterClassroom={(classroom) => {
-                  setActiveClassroom(classroom);
-                  setCurrentScreen('teacher_classwork');
+                  navigateTo('teacher_classwork', { classroom });
                 }}
               />
             </ProtectedRoute>
@@ -784,35 +936,38 @@ export default function App() {
             <ProtectedRoute currentUser={currentUser} setCurrentScreen={setCurrentScreen}>
               <TeacherClasswork
                 onEnterClassroom={(classroom) => {
-                  setActiveClassroom(classroom);
-                  setCurrentScreen('teacher_classwork');
+                  navigateTo('teacher_classwork', { classroom });
                 }}
                 socket={socket}
                 classroom={activeClassroom}
                 onLogout={handleLogout}
-                onBack={() => setCurrentScreen('teacher_dashboard')}
+                onBack={() => handleBack('teacher_dashboard')}
                 onNavigateView={(view) => {
                   localStorage.setItem('verity_teacher_view', view);
-                  setCurrentScreen('teacher_dashboard');
+                  navigateTo('teacher_dashboard');
                 }}
                 onStartMonitoring={(assignment) => {
-                  setActiveAssignment(assignment);
-                  setSelectedStudentForPlayback(null);
-                  setProctoringMode('live');
-                  setProctoringReturnScreen('teacher_classwork');
-                  setCurrentScreen('teacher_proctoring');
+                  navigateTo('teacher_proctoring', {
+                    assignment,
+                    student: null,
+                    proctoringMode: 'live',
+                    proctoringReturnScreen: 'teacher_classwork'
+                  });
                 }}
-                onOpenGrading={(assignment) => {
-                  setActiveAssignment(assignment);
-                  setCurrentScreen('teacher_grading');
+                onOpenGrading={(assignment, tab) => {
+                  navigateTo('teacher_grading', {
+                    assignment,
+                    tab: tab || 'classwork'
+                  });
                 }}
                 currentUser={currentUser}
                 onOpenPlayback={(assignment, student) => {
-                  setActiveAssignment(assignment);
-                  setSelectedStudentForPlayback(student);
-                  setProctoringMode('playback');
-                  setProctoringReturnScreen('teacher_classwork');
-                  setCurrentScreen('teacher_proctoring');
+                  navigateTo('teacher_proctoring', {
+                    assignment,
+                    student,
+                    proctoringMode: 'playback',
+                    proctoringReturnScreen: 'teacher_classwork'
+                  });
                 }}
               />
             </ProtectedRoute>
@@ -825,28 +980,29 @@ export default function App() {
                 classroom={activeClassroom}
                 assignment={activeAssignment}
                 onLogout={handleLogout}
-                onBack={() => setCurrentScreen('teacher_classwork')}
+                onBack={() => handleBack('teacher_classwork')}
                 onEnterClassroom={(classroom) => {
-                  setActiveClassroom(classroom);
-                  setCurrentScreen('teacher_classwork');
+                  navigateTo('teacher_classwork', { classroom });
                 }}
                 onNavigateView={(view) => {
                   localStorage.setItem('verity_teacher_view', view);
-                  setCurrentScreen('teacher_dashboard');
+                  navigateTo('teacher_dashboard');
                 }}
                 onOpenPlayback={(assignment, student) => {
-                  setActiveAssignment(assignment);
-                  setSelectedStudentForPlayback(student);
-                  setProctoringMode('playback');
-                  setProctoringReturnScreen('teacher_grading');
-                  setCurrentScreen('teacher_proctoring');
+                  navigateTo('teacher_proctoring', {
+                    assignment,
+                    student,
+                    proctoringMode: 'playback',
+                    proctoringReturnScreen: 'teacher_grading'
+                  });
                 }}
                 onStartMonitoring={(assignment, student) => {
-                  setActiveAssignment(assignment);
-                  setSelectedStudentForPlayback(student || null);
-                  setProctoringMode('live');
-                  setProctoringReturnScreen('teacher_grading');
-                  setCurrentScreen('teacher_proctoring');
+                  navigateTo('teacher_proctoring', {
+                    assignment,
+                    student: student || null,
+                    proctoringMode: 'live',
+                    proctoringReturnScreen: 'teacher_grading'
+                  });
                 }}
                 currentUser={currentUser}
               />
@@ -866,11 +1022,11 @@ export default function App() {
                   if (proctoringMode === 'playback') {
                     setSelectedStudentForPlayback(null);
                   }
-                  setCurrentScreen(proctoringReturnScreen || 'teacher_grading');
+                  handleBack(proctoringReturnScreen || 'teacher_grading');
                 }}
                 onLogout={() => {
                   setSelectedStudentForPlayback(null);
-                  setCurrentScreen(proctoringReturnScreen || 'teacher_classwork');
+                  handleBack(proctoringReturnScreen || 'teacher_classwork');
                 }}
               />
             </ProtectedRoute>
