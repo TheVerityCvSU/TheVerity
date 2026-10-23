@@ -33,8 +33,8 @@ export default function StudentView({ socket, currentUser, username, assignment,
       ? String(currentUser.id)
       : (currentUser?.email || studentDisplayName);
   const studentId = studentActualId;
-  const assignmentId = assignment?.id ?? 'default';
-  const classroomId = classroom?.id ?? 'default';
+  const assignmentId = assignment?.id != null ? String(assignment.id) : 'none';
+  const classroomId = classroom?.id != null ? String(classroom.id) : 'none';
 
   const getSubKeys = () => [
     `verity_sub_${classroomId}_${assignmentId}_${studentId}`,
@@ -441,17 +441,52 @@ export default function StudentView({ socket, currentUser, username, assignment,
   const diagnosticsRef = useRef([]);
   const [proctorLogs, setProctorLogs] = useState(() => {
     try {
-      const saved = localStorage.getItem(`verity_proctor_logs_${classroomId}_${assignmentId}_${studentId}`)
-        || localStorage.getItem(`verity_proctor_logs_${classroomId}_${assignmentId}_${safeUsername}`);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) return parsed;
+      const cId = classroom?.id != null ? String(classroom.id) : (classroomId || 'none');
+      const aId = assignment?.id != null ? String(assignment.id) : (assignmentId || 'none');
+      const sId = studentActualId || 'student';
+      const keys = [
+        `verity_proctor_logs_${cId}_${aId}_${sId}`,
+        `verity_proctor_logs_${cId}_${aId}_${safeUsername}`,
+        `verity_proctor_logs_none_${aId}_${sId}`,
+        `verity_proctor_logs_default_${aId}_${sId}`
+      ];
+      for (const k of keys) {
+        const saved = localStorage.getItem(k);
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        }
       }
     } catch {}
     return [];
   });
   const proctorLogsRef = useRef(proctorLogs);
   proctorLogsRef.current = proctorLogs;
+
+  // Sync proctorLogs when assignment / classroom finishes loading
+  useEffect(() => {
+    const cId = classroom?.id != null ? String(classroom.id) : (classroomId || 'none');
+    const aId = assignment?.id != null ? String(assignment.id) : (assignmentId || 'none');
+    const sId = studentActualId || 'student';
+    try {
+      const keys = [
+        `verity_proctor_logs_${cId}_${aId}_${sId}`,
+        `verity_proctor_logs_${cId}_${aId}_${safeUsername}`,
+        `verity_proctor_logs_none_${aId}_${sId}`,
+        `verity_proctor_logs_default_${aId}_${sId}`
+      ];
+      for (const k of keys) {
+        const saved = localStorage.getItem(k);
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            setProctorLogs(prev => prev.length > 0 ? prev : parsed);
+            break;
+          }
+        }
+      }
+    } catch {}
+  }, [classroom?.id, classroomId, assignment?.id, assignmentId, studentActualId, safeUsername]);
 
   // High-Speed Local Compiler Socket (instant execution in Electron / local machine)
   const [localSocket, setLocalSocket] = useState(null);
@@ -951,16 +986,51 @@ export default function StudentView({ socket, currentUser, username, assignment,
     return () => window.removeEventListener('keydown', handleGlobalKeyDown);
   }, [draftKey, safeUsername, studentId, assignmentId, classroom?.id, socket, isInstructionCollapsed, submitted]);
 
-  // Tell the server we left the workspace if we click back or navigate away,
+  const isExitingCleanlyRef = useRef(false);
+  const leaveInfoRef = useRef({
+    curAId: assignment?.id != null ? String(assignment.id) : assignmentId,
+    curCId: classroom?.id != null ? String(classroom.id) : classroomId,
+    curSId: studentActualId,
+    curSName: studentDisplayName
+  });
+
+  useEffect(() => {
+    leaveInfoRef.current = {
+      curAId: assignment?.id != null ? String(assignment.id) : assignmentId,
+      curCId: classroom?.id != null ? String(classroom.id) : classroomId,
+      curSId: studentActualId,
+      curSName: studentDisplayName
+    };
+  }, [assignment?.id, assignmentId, classroom?.id, classroomId, studentActualId, studentDisplayName]);
+
+  // Tell the server we left the workspace ONLY when actually unmounting,
   // and make sure current keystroke history is flushed to persistent storage.
   useEffect(() => {
+    isExitingCleanlyRef.current = false;
+
     return () => {
+      const { curAId, curCId, curSId, curSName } = leaveInfoRef.current;
       if (codeHistoryRef.current && codeHistoryRef.current.length > 0) {
         persistHistory(codeHistoryRef.current, codeRef.current);
       }
       if (socket) {
-        socket.emit('student_leave_workspace');
+        socket.emit('student_leave_workspace', {
+          assignmentId: curAId,
+          classroomId: curCId,
+          studentId: curSId,
+          name: curSName
+        });
       }
+      try {
+        const sKey = `verity_active_session_${curCId}_${curAId}_${curSId}`;
+        localStorage.setItem(sKey, JSON.stringify({
+          studentId: curSId,
+          assignmentId: curAId,
+          classroomId: curCId,
+          lastHeartbeat: Date.now(),
+          cleanExit: isExitingCleanlyRef.current
+        }));
+      } catch (_) {}
     };
   }, [socket]);
 
@@ -1027,62 +1097,194 @@ export default function StudentView({ socket, currentUser, username, assignment,
     };
   }, [socket, emitPresence]);
 
-  // 2. PROCTORING ALERTS
+  // 2. PROCTORING ALERTS & CRASH DETECTOR
   const lastTabExitLogRef = useRef(0);
 
-  const addProctorLog = (message, color) => {
+  const addProctorLog = (message, color = '#ef4444', customDesc = null, isCrash = false) => {
     const timeString = new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }).toLowerCase();
-    const newLogItem = { id: Date.now(), message, action: message, time: timeString, color };
+    const actionStr = (message || '').toLowerCase();
+    const detectedCrash = isCrash || actionStr.includes('crash');
+    const logColor = detectedCrash ? '#dc2626' : color;
+    const actionLabel = detectedCrash ? 'System Crash' : message;
+
+    const newLogItem = {
+      id: Date.now(),
+      message: actionLabel,
+      action: actionLabel,
+      time: timeString,
+      color: logColor,
+      isCrash: detectedCrash
+    };
+
+    const cId = classroom?.id != null ? String(classroom.id) : (classroomId || 'none');
+    const aId = assignment?.id != null ? String(assignment.id) : (assignmentId || 'none');
+    const sId = studentActualId || 'student';
+
     setProctorLogs(prevLogs => {
       const updated = [newLogItem, ...prevLogs];
       try {
-        localStorage.setItem(`verity_proctor_logs_${classroomId}_${assignmentId}_${studentId}`, JSON.stringify(updated));
-        if (studentId !== safeUsername) {
-          localStorage.setItem(`verity_proctor_logs_${classroomId}_${assignmentId}_${safeUsername}`, JSON.stringify(updated));
+        localStorage.setItem(`verity_proctor_logs_${cId}_${aId}_${sId}`, JSON.stringify(updated));
+        if (sId !== safeUsername) {
+          localStorage.setItem(`verity_proctor_logs_${cId}_${aId}_${safeUsername}`, JSON.stringify(updated));
         }
+        localStorage.setItem(`verity_proctor_logs_none_${aId}_${sId}`, JSON.stringify(updated));
       } catch {}
       return updated;
     });
+
     setCodeHistory(prev => {
-      const updated = [...prev, { time: Date.now(), warning: message, code: codeRef.current }];
+      const updated = [...prev, { time: Date.now(), warning: actionLabel, code: codeRef.current }];
       persistHistory(updated, codeRef.current);
       return updated;
     });
+
     const payload = {
       id: newLogItem.id,
-      studentId: studentActualId,
+      studentId: sId,
       name: studentDisplayName,
       studentName: studentDisplayName,
       email: currentUser?.email || '',
-      action: message,
-      message: message,
+      action: actionLabel,
+      message: actionLabel,
+      desc: customDesc || `${actionLabel} in ${assignment?.title || 'workspace'} (classroom ${cId})`,
       time: timeString,
-      color: color,
-      classroomId: classroom?.id || classroomId,
-      assignmentId: assignment?.id || assignmentId
+      color: logColor,
+      isCrash: detectedCrash,
+      classroomId: cId,
+      assignmentId: aId
     };
+
     if (socket && typeof socket.emit === 'function') {
       socket.emit('proctor_alert', payload);
     }
-    const actionStr = (message || '').toLowerCase();
-    const isCopyPaste = actionStr.includes('paste') || actionStr.includes('clipboard') || actionStr.includes('copy');
+    const isCopyPaste = !detectedCrash && (actionStr.includes('paste') || actionStr.includes('clipboard') || actionStr.includes('copy'));
     
     // Also post directly to /audit-logs for guaranteed persistence & instant admin dashboard update
+    let logType = 'Exit Tab Violation';
+    let logSeverity = 'Warning';
+    if (detectedCrash) {
+      logType = 'System Crash Violation';
+      logSeverity = 'High';
+    } else if (isCopyPaste) {
+      logType = 'Copy/Paste Violation';
+      logSeverity = 'High';
+    }
+
     apiFetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/audit-logs`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         user: currentUser?.name || currentUser?.email || safeUsername,
-        type: isCopyPaste ? 'Copy/Paste Violation' : 'Exit Tab Violation',
-        severity: isCopyPaste ? 'High' : 'Warning',
-        desc: `${message} in classroom ${classroom?.id || 'workspace'}`
+        type: logType,
+        severity: logSeverity,
+        desc: customDesc || `${actionLabel} in ${assignment?.title || 'workspace'} (classroom ${cId})`
       })
     }).catch(() => {});
   };
 
+  // Heartbeat session tracker and crash detector
+  useEffect(() => {
+    const cId = classroom?.id != null ? String(classroom.id) : (classroomId || 'none');
+    const aId = assignment?.id != null ? String(assignment.id) : (assignmentId || 'none');
+    const sId = studentActualId || 'student';
+    const sessionKey = `verity_active_session_${cId}_${aId}_${sId}`;
+
+    // 1. Detect if the previous session exited unexpectedly due to crash / abnormal termination
+    try {
+      const priorSessionRaw = localStorage.getItem(sessionKey);
+      if (priorSessionRaw) {
+        const prior = JSON.parse(priorSessionRaw);
+        if (prior && prior.cleanExit === false && (Date.now() - (prior.lastHeartbeat || 0) < 24 * 60 * 60 * 1000)) {
+          const lastCrashLogTime = Number(sessionStorage.getItem(`verity_last_crash_log_${aId}`) || 0);
+          if (Date.now() - lastCrashLogTime > 10000) {
+            sessionStorage.setItem(`verity_last_crash_log_${aId}`, String(Date.now()));
+            addProctorLog(
+              'System Crash',
+              '#dc2626',
+              `System Crash: Previous session terminated abnormally (unexpected crash / process kill during ${assignment?.title || 'activity'})`,
+              true
+            );
+          }
+        }
+      }
+    } catch (_) {}
+
+    // Check if React ErrorBoundary or unhandled error registered a crash
+    try {
+      const recentCrashRaw = localStorage.getItem('verity_recent_crash');
+      if (recentCrashRaw) {
+        const rc = JSON.parse(recentCrashRaw);
+        if (Date.now() - (rc.time || 0) < 60000) {
+          localStorage.removeItem('verity_recent_crash');
+          addProctorLog(
+            'System Crash',
+            '#dc2626',
+            `System Crash: Application crashed with error: ${rc.message}`,
+            true
+          );
+        }
+      }
+    } catch (_) {}
+
+    // 2. Set continuous session heartbeat
+    const recordHeartbeat = () => {
+      if (isExitingCleanlyRef.current) return;
+      try {
+        localStorage.setItem(sessionKey, JSON.stringify({
+          studentId: sId,
+          assignmentId: aId,
+          classroomId: cId,
+          lastHeartbeat: Date.now(),
+          cleanExit: false
+        }));
+      } catch (_) {}
+    };
+    recordHeartbeat();
+    const heartbeatTimer = setInterval(recordHeartbeat, 4000);
+
+    // 3. Global runtime error listeners to capture uncaught errors as crashes, not Alt Tab
+    const handleRuntimeError = (event) => {
+      if (event?.message && (event.message.includes('ResizeObserver') || event.message.includes('Script error'))) {
+        return;
+      }
+      window.verityCrashTime = Date.now();
+      const errorMsg = event?.error?.message || event?.message || 'Uncaught runtime exception';
+      addProctorLog(
+        'System Crash',
+        '#dc2626',
+        `System Crash: Fatal exception caught (${errorMsg})`,
+        true
+      );
+    };
+
+    const handleUnhandledRejection = (event) => {
+      const reason = event?.reason?.message || event?.reason || 'Unhandled Promise Rejection';
+      if (String(reason).includes('ResizeObserver')) return;
+      window.verityCrashTime = Date.now();
+      addProctorLog(
+        'System Crash',
+        '#dc2626',
+        `System Crash: ${reason}`,
+        true
+      );
+    };
+
+    window.verityCrashTime = 0;
+    window.addEventListener('error', handleRuntimeError);
+    window.addEventListener('unhandledrejection', handleUnhandledRejection);
+
+    return () => {
+      clearInterval(heartbeatTimer);
+      window.removeEventListener('error', handleRuntimeError);
+      window.removeEventListener('unhandledrejection', handleUnhandledRejection);
+    };
+  }, [classroom?.id, classroomId, assignment?.id, assignmentId, studentActualId, assignment?.title]);
+
   useEffect(() => {
     const handleTabExit = (actionLabel = "Exit tab") => {
       if (kioskRulesRef.current?.flagTabExits === false) return;
+      const isRecentCrash = window.verityCrashTime && (Date.now() - window.verityCrashTime < 2500);
+      if (isRecentCrash || isExitingCleanlyRef.current) return;
       const now = Date.now();
       // Debounce so blur and visibilitychange don't double fire within 1.5 seconds
       if (now - lastTabExitLogRef.current < 1500) return;
@@ -1097,6 +1299,9 @@ export default function StudentView({ socket, currentUser, username, assignment,
     };
 
     const handleWindowBlur = () => {
+      if (document.activeElement && document.activeElement.tagName === 'IFRAME') {
+        return;
+      }
       handleTabExit("Alt Tab");
     };
 
@@ -2012,12 +2217,28 @@ export default function StudentView({ socket, currentUser, username, assignment,
                 {proctorLogs.length === 0 ? (
                   <span style={{ color: isDark ? '#888888' : '#9ca3af', fontStyle: 'italic', fontSize: '0.85rem' }}>Monitoring active...</span>
                 ) : (
-                  proctorLogs.map(log => (
-                    <div key={log.id} style={{ ...styles.logRow, fontSize: '0.88rem', marginBottom: '8px' }}>
-                      <span style={{ color: log.color, fontWeight: 'bold', paddingRight: '12px', flex: 1, minWidth: 0, wordBreak: 'break-word' }}>{log.message}</span>
-                      <span style={{ color: isDark ? '#a3a3a3' : '#6b7280', background: 'none', backgroundColor: 'transparent', flexShrink: 0, whiteSpace: 'nowrap' }}>{log.time}</span>
-                    </div>
-                  ))
+                  proctorLogs.map(log => {
+                    const isCrash = Boolean(log.isCrash || (log.action && log.action.toLowerCase().includes('crash')) || (log.message && log.message.toLowerCase().includes('crash')));
+                    const text = isCrash ? 'System Crash' : log.message;
+                    const textColor = isCrash ? '#dc2626' : (log.color || '#ef4444');
+                    return (
+                      <div
+                        key={log.id}
+                        style={{
+                          ...styles.logRow,
+                          fontSize: '0.88rem',
+                          marginBottom: '8px'
+                        }}
+                      >
+                        <span style={{ color: textColor, fontWeight: 'bold', paddingRight: '12px', flex: 1, minWidth: 0, wordBreak: 'break-word' }}>
+                          {text}
+                        </span>
+                        <span style={{ color: isDark ? '#a3a3a3' : '#6b7280', background: 'none', backgroundColor: 'transparent', flexShrink: 0, whiteSpace: 'nowrap' }}>
+                          {log.time}
+                        </span>
+                      </div>
+                    );
+                  })
                 )}
               </div>
             )}
@@ -2063,7 +2284,31 @@ export default function StudentView({ socket, currentUser, username, assignment,
         }}>
           <div style={styles.toolGroupLeft}>
             <button
-              onClick={onBack}
+              onClick={() => {
+                isExitingCleanlyRef.current = true;
+                const cId = classroom?.id != null ? String(classroom.id) : (classroomId || 'none');
+                const aId = assignment?.id != null ? String(assignment.id) : (assignmentId || 'none');
+                const sId = studentActualId;
+                if (socket) {
+                  socket.emit('student_leave_workspace', {
+                    assignmentId: aId,
+                    classroomId: cId,
+                    studentId: sId,
+                    name: studentDisplayName
+                  });
+                }
+                try {
+                  const sKey = `verity_active_session_${cId}_${aId}_${sId}`;
+                  localStorage.setItem(sKey, JSON.stringify({
+                    studentId: sId,
+                    assignmentId: aId,
+                    classroomId: cId,
+                    lastHeartbeat: Date.now(),
+                    cleanExit: true
+                  }));
+                } catch (_) {}
+                onBack();
+              }}
               style={{
                 ...styles.backButton,
                 ...(isDark ? { backgroundColor: '#333333', borderColor: '#484848', color: '#E8EAED' } : {})

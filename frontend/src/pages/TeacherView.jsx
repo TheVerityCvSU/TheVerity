@@ -1,5 +1,5 @@
 /* eslint-disable react-hooks/set-state-in-effect, no-empty, react-hooks/exhaustive-deps */
-import { useState, useEffect, useRef, useMemo } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import Editor from '@monaco-editor/react';
 import {
   ArrowLeft,
@@ -18,6 +18,7 @@ import {
   Square,
   Users,
   AlertTriangle,
+  AlertOctagon,
   Search,
   Terminal as TerminalIcon,
   CheckCircle2
@@ -63,9 +64,56 @@ export default function TeacherView({
   const [studentSearch, setStudentSearch] = useState('');
   const [terminalMode, setTerminalMode] = useState('normal'); // 'normal' | 'collapsed' | 'maximized'
 
+  // Persistent warning logs for this activity session (cached in localStorage & synced with server)
+  const [sessionWarnings, setSessionWarnings] = useState(() => {
+    if (!assignment?.id) return [];
+    try {
+      const key = `verity_session_warnings_${classroom?.id || 'all'}_${assignment.id}`;
+      const cached = localStorage.getItem(key);
+      return cached ? JSON.parse(cached) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const mergeWarningLogs = useCallback((incomingList) => {
+    if (!Array.isArray(incomingList) || incomingList.length === 0) return;
+    setSessionWarnings((prev) => {
+      const map = new Map();
+      [...incomingList, ...prev].forEach((l) => {
+        if (!l) return;
+        const sName = String(l.studentName || l.student_name || l.studentId || l.student_id || 'Student').trim();
+        const sId = String(l.studentId || l.student_id || sName).trim();
+        const act = l.action || l.message || 'Violation';
+        const key = `${l.id || ''}-${sId}-${act}-${l.time || ''}`;
+        if (!map.has(key)) {
+          map.set(key, {
+            id: l.id || Date.now(),
+            action: act,
+            message: l.message || act,
+            time: l.time || '',
+            color: l.color || '#ef4444',
+            studentName: sName,
+            studentId: sId,
+            classroomId: l.classroomId || l.classroom_id,
+            assignmentId: l.assignmentId || l.assignment_id
+          });
+        }
+      });
+      const merged = Array.from(map.values()).sort((a, b) => (b.id || 0) - (a.id || 0));
+      try {
+        if (assignment?.id) {
+          localStorage.setItem(`verity_session_warnings_${classroom?.id || 'all'}_${assignment.id}`, JSON.stringify(merged));
+        }
+      } catch {}
+      return merged;
+    });
+  }, [assignment?.id, classroom?.id]);
+
   // Student roster state
   const [students, setStudents] = useState(() => {
-    if (initialStudent && (initialStudent.id || initialStudent.name)) {
+    const initialMap = {};
+    if (initialStudent && (initialStudent.id || initialStudent.name) && mode !== 'live') {
       const sId = initialStudent.id || initialStudent.name;
       let hist =
         Array.isArray(initialStudent.history) && initialStudent.history.length > 0
@@ -76,43 +124,20 @@ export default function TeacherView({
           ? [{ time: Date.now(), code: initialStudent.finalCode }]
           : [];
 
-      const cId = classroom?.id ?? 'default';
-      const aId = assignment?.id ?? 'default';
-      const possibleKeys = [
-        `verity_history_${cId}_${aId}_${sId}`,
-        `verity_history_${aId}_${sId}`,
-        `verity_history_${cId}_${aId}_${initialStudent.name}`,
-        `verity_history_${aId}_${initialStudent.name}`
-      ];
-      for (const pk of possibleKeys) {
-        try {
-          const raw = localStorage.getItem(pk);
-          if (raw) {
-            const parsed = JSON.parse(raw);
-            if (Array.isArray(parsed) && parsed.length > hist.length) {
-              hist = parsed;
-              break;
-            }
-          }
-        } catch {}
-      }
-
-      return {
-        [sId]: {
-          id: sId,
-          name: initialStudent.name || sId,
-          status: 'Submitted',
-          code:
-            initialStudent.finalCode ||
-            initialStudent.code ||
-            (hist.length > 0 ? hist[hist.length - 1]?.code : '') ||
-            '',
-          codeHistory: hist,
-          logs: initialStudent.logs || []
-        }
+      initialMap[sId] = {
+        id: sId,
+        name: initialStudent.name || sId,
+        status: 'Submitted',
+        code:
+          initialStudent.finalCode ||
+          initialStudent.code ||
+          (hist.length > 0 ? hist[hist.length - 1]?.code : '') ||
+          '',
+        codeHistory: hist,
+        logs: initialStudent.logs || []
       };
     }
-    return {};
+    return initialMap;
   });
 
   const [selectedStudentId, setSelectedStudentId] = useState(() => {
@@ -166,9 +191,9 @@ export default function TeacherView({
     };
   }, []);
 
-  // Load submissions from backend and localStorage
+  // Load submissions from backend and localStorage (only for playback mode)
   useEffect(() => {
-    if (!assignment?.id) return;
+    if (!assignment?.id || mode === 'live') return;
 
     apiFetch(
       `${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/submissions/${assignment.id}`
@@ -252,50 +277,18 @@ export default function TeacherView({
   // Load session proctor warning logs
   useEffect(() => {
     if (!assignment?.id) return;
-    const cId = classroom?.id ? `?classroomId=${classroom.id}` : '';
+    const cId = classroom?.id && classroom.id !== 'none' ? `?classroomId=${classroom.id}` : '';
     apiFetch(
       `${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/proctor-logs/${assignment.id}${cId}`
     )
       .then((res) => (res.ok ? res.json() : { logs: [] }))
       .then((data) => {
         if (Array.isArray(data?.logs) && data.logs.length > 0) {
-          setStudents((prev) => {
-            const next = { ...prev };
-            data.logs.forEach((log) => {
-              const sId = log.student_id;
-              const sName = log.student_name || log.student_id;
-              const sKey =
-                Object.keys(next).find(
-                  (k) => next[k].id === sId || next[k].name === sName || next[k].name === sId
-                ) || sId;
-              const existing = next[sKey] || { id: sId, name: sName, code: '', logs: [], status: 'Live' };
-              const existingLogs = Array.isArray(existing.logs) ? existing.logs : [];
-              const logItem = {
-                id: log.id,
-                action: log.action || log.message || 'Violation',
-                message: log.message || log.action || 'Violation',
-                time: log.time,
-                color: log.color,
-                studentName: sName,
-                studentId: sId
-              };
-              const exists = existingLogs.some(
-                (l) => l.id === log.id || (l.action === logItem.action && l.time === logItem.time)
-              );
-              if (!exists) {
-                existingLogs.push(logItem);
-              }
-              next[sKey] = {
-                ...existing,
-                logs: existingLogs.sort((a, b) => (b.id || 0) - (a.id || 0))
-              };
-            });
-            return next;
-          });
+          mergeWarningLogs(data.logs);
         }
       })
       .catch(() => {});
-  }, [assignment?.id, classroom?.id]);
+  }, [assignment?.id, classroom?.id, mergeWarningLogs]);
 
   // Sync initialStudent prop
   useEffect(() => {
@@ -362,8 +355,13 @@ export default function TeacherView({
   }, [initialStudent, classroom?.id, assignment?.id]);
 
   useEffect(() => {
-    if (!selectedStudentId && Object.keys(students).length > 0) {
-      setSelectedStudentId(Object.keys(students)[0]);
+    const liveKeys = Object.keys(students).filter((k) => students[k] && students[k].isLive !== false && students[k].status !== 'Offline');
+    if (liveKeys.length > 0) {
+      if (!selectedStudentId || !students[selectedStudentId] || students[selectedStudentId].status === 'Offline') {
+        setSelectedStudentId(liveKeys[0]);
+      }
+    } else if (selectedStudentId && (!students[selectedStudentId] || students[selectedStudentId].status === 'Offline')) {
+      setSelectedStudentId(null);
     }
   }, [students, selectedStudentId]);
 
@@ -446,6 +444,13 @@ export default function TeacherView({
       }
     };
 
+    const handlePastWarnings = (pastLogs) => {
+      if (Array.isArray(pastLogs) && pastLogs.length > 0) {
+        mergeWarningLogs(pastLogs);
+      }
+    };
+    socket.on('teacher_past_warnings', handlePastWarnings);
+
     joinRoom();
     socket.on('connect', joinRoom);
 
@@ -469,8 +474,20 @@ export default function TeacherView({
     if (mode === 'live') {
       socket.on('teacher_update_code', (data) => {
         if (!data) return;
+        // Isolate updates strictly to the active assignment
+        if (data.assignmentId && assignment?.id && data.assignmentId !== 'none' && String(data.assignmentId) !== String(assignment.id)) {
+          return;
+        }
+        if (data.classroomId && data.classroomId !== 'none' && classroom?.id && String(data.classroomId) !== String(classroom.id)) {
+          return;
+        }
         const studentId = String(data.studentId || data.id || data.name || '');
         const studentName = String(data.name || data.studentName || studentId || 'Student').trim();
+
+        const incomingLogs = Array.isArray(data.logs) ? data.logs : [];
+        if (incomingLogs.length > 0) {
+          mergeWarningLogs(incomingLogs);
+        }
 
         setStudents((prev) => {
           const sKey =
@@ -489,7 +506,8 @@ export default function TeacherView({
             name: studentName,
             code: '',
             logs: [],
-            status: 'Live'
+            status: 'Live',
+            isLive: true
           };
           const next = { ...prev };
           if (sKey !== studentId && sKey !== studentName && next[studentId]) {
@@ -503,7 +521,6 @@ export default function TeacherView({
                   : existing.codeHistory)
               : [{ time: Date.now(), code: data.code || '' }];
 
-          const incomingLogs = Array.isArray(data.logs) ? data.logs : [];
           const existingLogs = Array.isArray(existing.logs) ? existing.logs : [];
           const map = new Map();
           [...incomingLogs, ...existingLogs].forEach((l) => {
@@ -534,7 +551,8 @@ export default function TeacherView({
             code: data.code !== undefined ? data.code : existing.code || '',
             codeHistory: newHist,
             logs: mergedLogs,
-            status: mode === 'live' ? 'Live' : (existing.status || 'Live'),
+            status: data.status || (data.isLive === false ? 'Offline' : (mode === 'live' ? 'Live' : (existing.status || 'Live'))),
+            isLive: data.isLive !== undefined ? data.isLive : (data.status === 'Offline' ? false : true),
             lastActive: Date.now()
           };
           return next;
@@ -544,8 +562,35 @@ export default function TeacherView({
 
       socket.on('teacher_receive_alert', (data) => {
         if (!data) return;
+        // Isolate alerts strictly to the active assignment
+        if (data.assignmentId && assignment?.id && data.assignmentId !== 'none' && data.assignmentId !== 'default' && String(data.assignmentId) !== String(assignment.id)) {
+          return;
+        }
+        if (data.classroomId && data.classroomId !== 'none' && data.classroomId !== 'default' && classroom?.id && String(data.classroomId) !== String(classroom.id)) {
+          return;
+        }
         const studentId = String(data.studentId || data.id || data.name || '');
         const studentName = String(data.name || data.studentName || studentId || 'Student').trim();
+
+        const actionText = data.action || data.message || 'Violation';
+        const newLog = {
+          id: data.id || Date.now(),
+          action: actionText,
+          message: data.message || actionText,
+          time:
+            data.time ||
+            new Date().toLocaleTimeString('en-US', {
+              hour: 'numeric',
+              minute: '2-digit',
+              hour12: true
+            }).toLowerCase(),
+          color: data.color || '#ef4444',
+          studentName: studentName,
+          studentId: studentId
+        };
+
+        // Merge into persistent session warnings immediately
+        mergeWarningLogs([newLog]);
 
         setStudents((prev) => {
           const sKey =
@@ -564,23 +609,8 @@ export default function TeacherView({
             name: studentName,
             code: '',
             logs: [],
-            status: 'Live'
-          };
-          const actionText = data.action || data.message || 'Violation';
-          const newLog = {
-            id: data.id || Date.now(),
-            action: actionText,
-            message: data.message || actionText,
-            time:
-              data.time ||
-              new Date().toLocaleTimeString('en-US', {
-                hour: 'numeric',
-                minute: '2-digit',
-                hour12: true
-              }).toLowerCase(),
-            color: data.color || '#ef4444',
-            studentName: studentName,
-            studentId: studentId
+            status: 'Live',
+            isLive: true
           };
           const next = { ...prev };
           if (sKey !== studentId && sKey !== studentName && next[studentId]) {
@@ -602,12 +632,31 @@ export default function TeacherView({
             name: studentName,
             studentName: studentName,
             logs: updatedLogs,
-            status: mode === 'live' ? 'Live' : (existing.status || 'Live'),
+            status: existing.status || 'Live',
             lastActive: Date.now()
           };
           return next;
         });
         checkSelection(studentId || studentName);
+
+        const isCrash = Boolean(
+          data.isCrash ||
+          (actionText && actionText.toLowerCase().includes('crash')) ||
+          (data.message && data.message.toLowerCase().includes('crash'))
+        );
+
+        const cleanAction = isCrash
+          ? 'System Crash'
+          : (actionText.toLowerCase().includes('alt') || actionText.toLowerCase().includes('tab') || actionText.toLowerCase().includes('blur'))
+          ? 'Alt Tab'
+          : actionText;
+
+        setToast({
+          message: `alert: ${studentName} - ${cleanAction}`,
+          type: isCrash ? 'error' : 'warning',
+          isAlert: true
+        });
+        setTimeout(() => setToast(null), 5000);
 
         if (notifSettingsRef.current.soundAlerts) {
           try {
@@ -639,7 +688,8 @@ export default function TeacherView({
             name: studentName,
             code: '',
             logs: [],
-            status: 'Live'
+            status: 'Live',
+            isLive: true
           };
           const next = { ...prev };
           if (sKey !== studentId && sKey !== studentName && next[studentId]) {
@@ -658,42 +708,69 @@ export default function TeacherView({
         checkSelection(studentId || studentName);
       });
 
-      socket.on('teacher_student_left', ({ studentId }) => {
+      socket.on('teacher_student_left', ({ studentId, studentName, assignmentId: leftAssignmentId, classroomId: leftClassroomId }) => {
+        if (leftAssignmentId && assignment?.id && leftAssignmentId !== 'none' && String(leftAssignmentId) !== String(assignment.id)) {
+          return;
+        }
+        if (leftClassroomId && leftClassroomId !== 'none' && classroom?.id && String(leftClassroomId) !== String(classroom.id)) {
+          return;
+        }
+
+        // When student leaves workspace or switches activity, remove them from active live monitoring roster
+        const targetId = String(studentId || '');
+        const targetName = String(studentName || '').trim().toLowerCase();
+
         setStudents((prev) => {
-          if (!prev[studentId]) return prev;
           const next = { ...prev };
-          delete next[studentId];
+          for (const [k, s] of Object.entries(next)) {
+            const sId = String(s.id || s.studentId || '');
+            const sName = String(s.name || s.studentName || '').trim().toLowerCase();
+            const kStr = String(k).trim().toLowerCase();
+
+            if (
+              (targetId && (sId === targetId || k === targetId)) ||
+              (targetName && (sName === targetName || kStr === targetName))
+            ) {
+              delete next[k];
+            }
+          }
           return next;
         });
-        setSelectedStudentId((prev) => (prev === studentId ? null : prev));
+
+        setSelectedStudentId((prev) => {
+          const prevStr = String(prev || '').trim().toLowerCase();
+          if (prev === targetId || prevStr === targetName) {
+            return null;
+          }
+          return prev;
+        });
       });
     }
 
     socket.on('teacher_receive_submission', (data) => {
+      const sName = data.studentName || data.studentId;
+      const sId = data.studentId || data.studentName;
       setStudents((prev) => {
-        if (mode === 'live') {
-          const next = { ...prev };
-          if (data.studentName) delete next[data.studentName];
-          if (data.studentId) delete next[data.studentId];
-          return next;
-        }
-        const existing = prev[data.studentName] || prev[data.studentId];
-        if (!existing) return prev;
+        const sKey =
+          Object.keys(prev).find(
+            (k) => prev[k].id === sId || prev[k].name === sName || k === sName || k === sId
+          ) || sName;
+        const existing = prev[sKey] || { id: sId, name: sName, code: '', logs: [] };
         return {
           ...prev,
-          [data.studentName]: {
+          [sKey]: {
             ...existing,
+            id: sId,
+            studentId: sId,
+            name: sName,
+            studentName: sName,
             status: 'Submitted',
-            code: data.finalCode || data.code,
-            codeHistory: data.codeHistory
+            isLive: false,
+            code: data.finalCode || data.code || existing.code,
+            codeHistory: data.codeHistory || existing.codeHistory || []
           }
         };
       });
-      if (mode === 'live') {
-        setSelectedStudentId((prev) =>
-          prev === data.studentName || prev === data.studentId ? null : prev
-        );
-      }
 
       if (notifSettingsRef.current.notifyOnSubmission) {
         setToast({
@@ -759,6 +836,9 @@ export default function TeacherView({
     return () => {
       socket.off('connect', joinRoom);
       if (syncInterval) clearInterval(syncInterval);
+      if (socket) {
+        socket.emit('teacher_leave', { classroomId: classroom?.id, assignmentId: assignment?.id });
+      }
       if (mode === 'live') {
         socket.off('teacher_update_code');
         socket.off('teacher_receive_alert');
@@ -766,6 +846,7 @@ export default function TeacherView({
         socket.off('teacher_student_left');
       }
       socket.off('teacher_receive_submission');
+      socket.off('teacher_past_warnings', handlePastWarnings);
       socket.off('teacher_student_unsubmitted', handleUnsubmitted);
       socket.off('student_unsubmitted', handleUnsubmitted);
       socket.off('grade_updated', handleLiveGradeUpdate);
@@ -802,66 +883,104 @@ export default function TeacherView({
 
     const sanitizeAction = (actionStr) => {
       if (typeof actionStr !== 'string') return actionStr;
-      if (actionStr.includes('Exit tab') || actionStr.includes('Alt+Tab')) return 'Alt Tab';
+      const lower = actionStr.toLowerCase();
+      if (lower.includes('crash')) return 'System Crash';
+      if (actionStr.includes('Exit tab') || actionStr.includes('Alt+Tab') || lower.includes('alt tab') || lower.includes('blur') || lower.includes('exit')) return 'Alt Tab';
+      if (lower.includes('cognitive pause') || lower.includes('inactivity')) return 'Cognitive Pause';
+      if (lower.includes('paste') || lower.includes('clipboard') || lower.includes('copy')) return 'Copy/Paste';
+      if (lower.includes('system exit') || lower.includes('exited system')) return 'System Exit';
       return actionStr;
     };
 
     const getLogColor = (actionStr) => {
       const lower = String(actionStr).toLowerCase();
+      if (lower.includes('crash')) return '#dc2626';
       if (lower.includes('alt tab') || lower.includes('alt+tab') || lower.includes('exit'))
         return '#eab308';
       if (lower.includes('paste') || lower.includes('copy') || lower.includes('clipboard'))
         return '#ef4444';
+      if (lower.includes('pause') || lower.includes('inactivity'))
+        return '#f59e0b';
       return '#ef4444';
     };
 
+    const seenMap = new Map();
+
+    const addLog = (rawLog, fallbackName, fallbackId) => {
+      if (!rawLog) return;
+      const sName = String(rawLog.studentName || rawLog.student_name || fallbackName || 'Student').trim();
+      const sId = String(rawLog.studentId || rawLog.student_id || fallbackId || sName).trim();
+      const rawAction = rawLog.action || rawLog.message || 'Violation';
+      const sanitizedAction = sanitizeAction(rawAction);
+      const dedupeKey = `${rawLog.id || ''}-${sName}-${sanitizedAction}-${rawLog.time || ''}`;
+      if (seenMap.has(dedupeKey)) return;
+
+      const logItem = {
+        ...rawLog,
+        id: rawLog.id || Date.now(),
+        studentName: sName,
+        studentId: sId,
+        action: sanitizedAction,
+        message: sanitizeAction(rawLog.message || rawAction),
+        color: rawLog.color || getLogColor(sanitizedAction),
+        time: rawLog.time || ''
+      };
+      seenMap.set(dedupeKey, logItem);
+      logs.push(logItem);
+    };
+
+    // 1. Add persistent session warnings (retained even if students leave or teacher navigates)
+    if (Array.isArray(sessionWarnings)) {
+      sessionWarnings.forEach((w) => addLog(w));
+    }
+
+    // 2. Add logs from student objects
     Object.values(students).forEach((student) => {
       if (mode === 'playback' && student.id !== selectedStudentId && student.name !== selectedStudentId) return;
 
       if (Array.isArray(student.logs)) {
         student.logs.forEach((log) => {
-          const rawAction = log.action || log.message || 'Violation';
-          const sanitizedAction = sanitizeAction(rawAction);
-          logs.push({
-            ...log,
-            id: log.id || Date.now(),
-            studentName: log.studentName || student.name,
-            action: sanitizedAction,
-            message: sanitizeAction(log.message || rawAction),
-            color: log.color || getLogColor(sanitizedAction),
-            time: log.time || ''
-          });
+          addLog(log, student.name, student.id);
         });
       }
 
-      if (mode === 'playback') {
-        const hist = student.codeHistory || student.history || [];
-        if (Array.isArray(hist)) {
-          hist.forEach((h) => {
-            if (h.warning) {
-              const sanitizedWarning = sanitizeAction(h.warning);
-              logs.push({
-                id: h.time || Date.now(),
-                message: sanitizedWarning,
-                action: sanitizedWarning,
-                time: new Date(h.time)
-                  .toLocaleTimeString('en-US', {
-                    hour: 'numeric',
-                    minute: '2-digit',
-                    hour12: true
-                  })
-                  .toLowerCase(),
-                color: getLogColor(sanitizedWarning),
-                studentName: student.name
-              });
-            }
-          });
-        }
+      // Capture warnings in codeHistory across both Live and Playback modes
+      const hist = student.codeHistory || student.history || [];
+      if (Array.isArray(hist)) {
+        hist.forEach((h) => {
+          if (h && h.warning) {
+            const sanitizedWarning = sanitizeAction(h.warning);
+            addLog({
+              id: h.time || Date.now(),
+              message: sanitizedWarning,
+              action: sanitizedWarning,
+              time: new Date(h.time)
+                .toLocaleTimeString('en-US', {
+                  hour: 'numeric',
+                  minute: '2-digit',
+                  hour12: true
+                })
+                .toLowerCase(),
+              color: getLogColor(sanitizedWarning),
+              studentName: student.name,
+              studentId: student.id
+            }, student.name, student.id);
+          }
+        });
       }
     });
 
-    return logs.sort((a, b) => b.id - a.id);
-  }, [students, mode, selectedStudentId]);
+    return logs.sort((a, b) => (b.id || 0) - (a.id || 0));
+  }, [students, sessionWarnings, mode, selectedStudentId]);
+
+  const activeStudentWarnings = useMemo(() => {
+    if (!activeStudent || (!activeStudent.id && !activeStudent.name)) return [];
+    const aId = String(activeStudent.id || '');
+    const aName = String(activeStudent.name || activeStudent.studentName || '');
+    return allLogs.filter(
+      (l) => (aId && l.studentId === aId) || (aName && l.studentName === aName) || (aName && l.studentId === aName) || (aId && l.studentName === aId)
+    );
+  }, [allLogs, activeStudent]);
 
   const rawHistory = activeStudent.codeHistory || activeStudent.history || [];
   const history =
@@ -990,21 +1109,26 @@ export default function TeacherView({
     }
   };
 
-  // Filtered student list for search
+  // Filtered student list for search (in live mode, only students actively doing the activity)
   const visibleStudents = useMemo(() => {
-    const list = Object.values(students).filter(
-      (s) => mode !== 'live' || (s.status !== 'Submitted' && s.status !== 'Graded')
-    );
+    let list = Object.values(students);
+    if (mode === 'live') {
+      list = list.filter((s) => s && s.isLive !== false && s.status !== 'Offline');
+    }
     if (!studentSearch.trim()) return list;
     const q = studentSearch.toLowerCase();
     return list.filter((s) => String(s.name || s.studentName || s.id || '').toLowerCase().includes(q));
-  }, [students, mode, studentSearch]);
+  }, [students, studentSearch, mode]);
+
+  const liveStudentCount = useMemo(() => {
+    return Object.values(students).filter(
+      (s) => s && s.isLive !== false && s.status !== 'Offline'
+    ).length;
+  }, [students]);
 
   const activeStudentCount = useMemo(() => {
-    return Object.values(students).filter(
-      (s) => mode !== 'live' || (s.status !== 'Submitted' && s.status !== 'Graded')
-    ).length;
-  }, [students, mode]);
+    return liveStudentCount;
+  }, [liveStudentCount]);
 
   // Color tokens
   const theme = useMemo(() => {
@@ -1179,7 +1303,7 @@ export default function TeacherView({
               backgroundColor: isDark ? '#202023' : '#f8fafc',
               border: `1px solid ${theme.border}`,
               borderRadius: '9999px',
-              maxWidth: '240px',
+              maxWidth: '320px',
               minWidth: 0
             }}
           >
@@ -1188,7 +1312,7 @@ export default function TeacherView({
                 width: '24px',
                 height: '24px',
                 borderRadius: '50%',
-                backgroundColor: theme.accent,
+                backgroundColor: (activeStudent.isLive !== false && activeStudent.status === 'Live') ? theme.accent : isDark ? '#4b5563' : '#94a3b8',
                 color: '#ffffff',
                 display: 'flex',
                 alignItems: 'center',
@@ -1478,7 +1602,7 @@ export default function TeacherView({
                   >
                     <Users size={14} />
                     <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      Students ({activeStudentCount})
+                      Student
                     </span>
                   </button>
 
@@ -1503,7 +1627,7 @@ export default function TeacherView({
                   >
                     <AlertTriangle size={14} />
                     <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      Warnings ({allLogs.length})
+                      Warning
                     </span>
                   </button>
                 </div>
@@ -1605,13 +1729,18 @@ export default function TeacherView({
                 </div>
               ) : (
                 visibleStudents.map((student) => {
-                  const isActive = student.id === selectedStudentId || student.name === selectedStudentId || activeStudent?.id === student.id || activeStudent?.name === student.name;
-                  const logCount = Array.isArray(student.logs) ? student.logs.length : 0;
+                  const sId = String(student.id || student.studentId || '');
+                  const sName = String(student.name || student.studentName || sId || 'Student');
+                  const isActive = sId === selectedStudentId || sName === selectedStudentId || activeStudent?.id === sId || activeStudent?.name === sName;
+                  const isStudentLive = student.isLive !== false && student.status === 'Live';
+                  const studentLogCount = allLogs.filter(
+                    (l) => l.studentId === sId || l.studentName === sName || l.studentId === sName || l.studentName === sId
+                  ).length;
                   return (
                     <div
-                      key={student.id}
+                      key={sId || sName}
                       onClick={() => {
-                        setSelectedStudentId(student.id || student.name);
+                        setSelectedStudentId(sId || sName);
                         if (isCompact) setSidebarOpen(false);
                       }}
                       style={{
@@ -1650,7 +1779,7 @@ export default function TeacherView({
                             flexShrink: 0
                           }}
                         >
-                          {((student.name || student.studentName || student.id || 'S')[0] || 'S').toUpperCase()}
+                          {((sName || 'S')[0] || 'S').toUpperCase()}
                         </div>
                         <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
                           <span
@@ -1663,7 +1792,7 @@ export default function TeacherView({
                               whiteSpace: 'nowrap'
                             }}
                           >
-                            {student.name || student.studentName || student.id || 'Student'}
+                            {sName}
                           </span>
                           <span
                             style={{
@@ -1673,17 +1802,36 @@ export default function TeacherView({
                                   ? '#3b82f6'
                                   : student.status === 'Submitted'
                                   ? '#10b981'
-                                  : '#10b981',
-                              fontWeight: '600'
+                                  : isStudentLive
+                                  ? '#10b981'
+                                  : '#9ca3af',
+                              fontWeight: '600',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '4px'
                             }}
                           >
-                            {student.status || 'Active'}
+                            {isStudentLive ? (
+                              <>
+                                <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#10b981' }} />
+                                Live
+                              </>
+                            ) : student.status === 'Submitted' ? (
+                              'Submitted'
+                            ) : student.status === 'Graded' ? (
+                              'Graded'
+                            ) : (
+                              <>
+                                <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#9ca3af' }} />
+                                Offline
+                              </>
+                            )}
                           </span>
                         </div>
                       </div>
 
                       {/* Warnings badge for this specific student */}
-                      {logCount > 0 && (
+                      {studentLogCount > 0 && (
                         <div
                           style={{
                             display: 'flex',
@@ -1697,10 +1845,10 @@ export default function TeacherView({
                             borderRadius: '9999px',
                             flexShrink: 0
                           }}
-                          title={`${logCount} warnings recorded`}
+                          title={`${studentLogCount} warnings recorded`}
                         >
-                          <AlertTriangle size={11} />
-                          <span>{logCount}</span>
+                          <AlertTriangle size={11} color="#ef4444" />
+                          <span>{studentLogCount}</span>
                         </div>
                       )}
                     </div>
@@ -1749,12 +1897,12 @@ export default function TeacherView({
                       key={`${log.id || 'log'}-${idx}`}
                       onClick={() => {
                         const matched = Object.values(students).find(
-                          (s) => s.id === log.studentId || s.name === log.studentName
+                          (s) => (s.isLive !== false && s.status !== 'Offline') && (s.id === log.studentId || s.name === log.studentName || s.id === log.studentName || s.name === log.studentId)
                         );
                         if (matched) {
-                          setSelectedStudentId(matched.id);
-                          if (isCompact) setSidebarOpen(false);
+                          setSelectedStudentId(matched.id || matched.name);
                         }
+                        if (isCompact) setSidebarOpen(false);
                       }}
                       style={{
                         padding: '10px 12px',
@@ -1807,6 +1955,7 @@ export default function TeacherView({
             backgroundColor: theme.bg
           }}
         >
+
           {/* 1. CODE EDITOR WRAPPER */}
           {terminalMode !== 'maximized' && (
             <div
@@ -2504,16 +2653,28 @@ export default function TeacherView({
             initial={{ opacity: 0, y: 30, scale: 0.95 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 20, scale: 0.95 }}
-            style={{
+            style={toast.isAlert ? {
               position: 'fixed',
               bottom: '24px',
               right: '24px',
-              backgroundColor: toast.type === 'warning' ? '#fef3c7' : '#dcfce7',
-              border: `1px solid ${toast.type === 'warning' ? '#f59e0b' : '#22c55e'}`,
-              color: toast.type === 'warning' ? '#b45309' : '#15803d',
+              backgroundColor: 'transparent',
+              border: 'none',
+              boxShadow: 'none',
+              color: isDark ? '#f87171' : '#dc2626',
+              fontWeight: '700',
+              fontSize: '0.88rem',
+              zIndex: 99999,
+              pointerEvents: 'none'
+            } : {
+              position: 'fixed',
+              bottom: '24px',
+              right: '24px',
+              backgroundColor: toast.type === 'error' ? (isDark ? '#450a0a' : '#fee2e2') : toast.type === 'warning' ? (isDark ? '#451a03' : '#fef3c7') : (isDark ? '#052e16' : '#dcfce7'),
+              border: `1px solid ${toast.type === 'error' ? '#ef4444' : toast.type === 'warning' ? '#f59e0b' : '#22c55e'}`,
+              color: toast.type === 'error' ? '#ef4444' : toast.type === 'warning' ? '#b45309' : '#15803d',
               padding: '10px 18px',
               borderRadius: '10px',
-              boxShadow: '0 10px 25px rgba(0,0,0,0.18)',
+              boxShadow: '0 10px 25px rgba(0,0,0,0.22)',
               fontWeight: '600',
               fontSize: '0.85rem',
               zIndex: 99999

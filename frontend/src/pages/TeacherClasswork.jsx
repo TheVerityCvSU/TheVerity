@@ -283,6 +283,44 @@ export default function TeacherClasswork({
     return () => clearInterval(interval);
   }, [classroomId]);
 
+  // Real-time active students tracking per activity
+  const [activeActivityCounts, setActiveActivityCounts] = useState({});
+
+  useEffect(() => {
+    const handleActiveUpdate = (data) => {
+      if (data && data.counts) {
+        setActiveActivityCounts(data.counts);
+      }
+    };
+
+    if (socket) {
+      socket.on('active_activities_update', handleActiveUpdate);
+      socket.emit('get_active_activities', { classroomId: classroom?.id });
+    }
+
+    const fetchActive = () => {
+      const url = `${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/active-activities${classroom?.id ? `?classroomId=${classroom.id}` : ''}`;
+      apiFetch(url)
+        .then(res => res.ok ? res.json() : null)
+        .then(data => {
+          if (data && data.counts) {
+            setActiveActivityCounts(data.counts);
+          }
+        })
+        .catch(() => {});
+    };
+
+    fetchActive();
+    const activeInterval = setInterval(fetchActive, 5000);
+
+    return () => {
+      if (socket) {
+        socket.off('active_activities_update', handleActiveUpdate);
+      }
+      clearInterval(activeInterval);
+    };
+  }, [classroom?.id, socket]);
+
   // Class code & theme
   const classCode = classroom?.code || classroom?.section || (classroom?.id ? `vji${classroom.id}ku4` : 'vji3bku4');
   const [bannerTheme, setBannerTheme] = useState(() => getClassroomTheme(classroom));
@@ -1766,7 +1804,25 @@ export default function TeacherClasswork({
                             initial={{ opacity: 0, y: 15 }}
                             animate={{ opacity: 1, y: 0 }}
                             transition={{ duration: 0.3, delay: index * 0.05 }}
-                            className="vt-card" style={{ background: ui.surface, border: `1px solid ${ui.border}`, borderRadius: '14px', overflow: 'hidden' }}>
+                            className="vt-card" style={{ background: ui.surface, border: `1px solid ${ui.border}`, borderRadius: '14px', overflow: 'hidden', position: 'relative' }}>
+                            {Number(activeActivityCounts[String(item.id)]) > 0 && !isMaterial && (
+                              <span
+                                title={`${activeActivityCounts[String(item.id)]} student${Number(activeActivityCounts[String(item.id)]) > 1 ? 's' : ''} currently working on this activity`}
+                                style={{
+                                  position: 'absolute',
+                                  top: '8px',
+                                  left: '8px',
+                                  width: '8px',
+                                  height: '8px',
+                                  borderRadius: '50%',
+                                  backgroundColor: '#10b981',
+                                  boxShadow: '0 0 6px #10b981',
+                                  animation: 'live-pulse 2s infinite',
+                                  zIndex: 3,
+                                  pointerEvents: 'auto'
+                                }}
+                              />
+                            )}
                             <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '16px 16px 0' }}>
                               {renderTeacherAvatar()}
                               <div style={{ flex: 1, minWidth: 0 }}>
@@ -1921,6 +1977,24 @@ export default function TeacherClasswork({
                                   }
                                 }}
                               >
+                                {Number(activeActivityCounts[String(item.id)]) > 0 && (
+                                  <span
+                                    title={`${activeActivityCounts[String(item.id)]} student${Number(activeActivityCounts[String(item.id)]) > 1 ? 's' : ''} currently working on this activity`}
+                                    style={{
+                                      position: 'absolute',
+                                      top: '8px',
+                                      left: '8px',
+                                      width: '8px',
+                                      height: '8px',
+                                      borderRadius: '50%',
+                                      backgroundColor: '#10b981',
+                                      boxShadow: '0 0 6px #10b981',
+                                      animation: 'live-pulse 2s infinite',
+                                      zIndex: 3,
+                                      pointerEvents: 'auto'
+                                    }}
+                                  />
+                                )}
                                 <div style={{ display: 'flex', alignItems: 'center', minWidth: 0 }}>
                                   {/* Icon Container */}
                                   <div style={{ width: '36px', height: '36px', borderRadius: '10px', backgroundColor: isDark ? 'rgba(16, 185, 129, 0.12)' : '#dcfce7', border: isDark ? '1px solid rgba(16, 185, 129, 0.25)' : 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#10b981', marginRight: '16px', flexShrink: 0 }}>
@@ -2122,7 +2196,19 @@ export default function TeacherClasswork({
                                     }}
                                     title="Open live proctoring & monitoring"
                                   >
-                                    <Monitor size={16} /> Live Monitoring
+                                    <Monitor size={16} /> Live Monitoring {Number(activeActivityCounts[String(item.id)]) > 0 ? `(${activeActivityCounts[String(item.id)]} Active)` : ''}
+                                    {Number(activeActivityCounts[String(item.id)]) > 0 && (
+                                      <span
+                                        style={{
+                                          width: '8px',
+                                          height: '8px',
+                                          borderRadius: '50%',
+                                          backgroundColor: '#ffffff',
+                                          boxShadow: '0 0 6px #ffffff',
+                                          marginLeft: '4px'
+                                        }}
+                                      />
+                                    )}
                                   </button>
                                 </div>
                                   </div>

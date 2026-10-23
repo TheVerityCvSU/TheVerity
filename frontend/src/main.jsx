@@ -18,6 +18,30 @@ class ErrorBoundary extends React.Component {
 
   componentDidCatch(error, errorInfo) {
     console.error("ErrorBoundary caught an error", error, errorInfo);
+    try {
+      localStorage.setItem('verity_recent_crash', JSON.stringify({
+        time: Date.now(),
+        message: error?.message || 'Component Render Crash'
+      }));
+    } catch (_) {}
+    try {
+      const userStr = localStorage.getItem('user');
+      const userObj = userStr ? JSON.parse(userStr) : null;
+      const token = localStorage.getItem('verity_token') || localStorage.getItem('token');
+      fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/audit-logs`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+        },
+        body: JSON.stringify({
+          user: userObj?.name || userObj?.email || 'Student',
+          type: 'System Crash Violation',
+          severity: 'High',
+          desc: `System Crash: ${error?.message || 'Component Render Crash'}`
+        })
+      }).catch(() => {});
+    } catch (_) {}
     this.setState({ errorInfo });
   }
 
@@ -32,10 +56,10 @@ class ErrorBoundary extends React.Component {
             {this.state.errorInfo && this.state.errorInfo.componentStack}
           </pre>
           <button 
-            onClick={() => { localStorage.clear(); window.location.reload(); }}
+            onClick={() => { window.location.reload(); }}
             style={{ marginTop: '20px', padding: '10px 20px', background: '#991b1b', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer' }}
           >
-            Clear LocalStorage & Reload
+            Reload Application
           </button>
         </div>
       );

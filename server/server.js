@@ -2239,15 +2239,20 @@ app.get('/proctor-logs/:assignmentId', authenticateToken, requireRole('Teacher',
         const assignmentId = String(req.params.assignmentId);
         const classroomId = req.query.classroomId ? String(req.query.classroomId) : null;
         let logs = [];
-        if (classroomId) {
+        if (classroomId && classroomId !== 'none' && classroomId !== 'undefined' && classroomId !== 'default') {
             logs = await db.all(
-                'SELECT * FROM proctor_session_logs WHERE assignment_id = ? AND classroom_id = ? ORDER BY id ASC',
-                assignmentId, classroomId
+                `SELECT * FROM proctor_session_logs 
+                 WHERE (assignment_id = ? OR CAST(assignment_id AS TEXT) = ? OR assignment_id = 'none' OR assignment_id = 'default') 
+                   AND (classroom_id = ? OR CAST(classroom_id AS TEXT) = ? OR classroom_id = 'none' OR classroom_id = 'default' OR classroom_id IS NULL) 
+                 ORDER BY id ASC`,
+                assignmentId, assignmentId, classroomId, classroomId
             ).catch(() => []);
         } else {
             logs = await db.all(
-                'SELECT * FROM proctor_session_logs WHERE assignment_id = ? ORDER BY id ASC',
-                assignmentId
+                `SELECT * FROM proctor_session_logs 
+                 WHERE assignment_id = ? OR CAST(assignment_id AS TEXT) = ? OR assignment_id = 'none' OR assignment_id = 'default'
+                 ORDER BY id ASC`,
+                assignmentId, assignmentId
             ).catch(() => []);
         }
         res.status(200).json({ logs: logs || [] });
@@ -3300,9 +3305,94 @@ async function getKioskSettings() {
 let currentInstruction = "";
 const activeStudents = {};
 
+function getActiveActivitiesMap(targetClassroomId = null) {
+    const counts = {};
+    for (const student of Object.values(activeStudents)) {
+        if (!student || !student.assignmentId || student.assignmentId === 'none' || student.assignmentId === 'unassigned') continue;
+        if (student.isLive === false || student.status === 'Offline' || student.status === 'Submitted') continue;
+        if (targetClassroomId && targetClassroomId !== 'all' && String(student.classroomId) !== String(targetClassroomId)) continue;
+        const aId = String(student.assignmentId);
+        counts[aId] = (counts[aId] || 0) + 1;
+    }
+    return counts;
+}
+
+function broadcastActiveActivities() {
+    const allCounts = {};
+    for (const student of Object.values(activeStudents)) {
+        if (!student || !student.assignmentId || student.assignmentId === 'none' || student.assignmentId === 'unassigned') continue;
+        if (student.isLive === false || student.status === 'Offline' || student.status === 'Submitted') continue;
+        const aId = String(student.assignmentId);
+        allCounts[aId] = (allCounts[aId] || 0) + 1;
+    }
+    io.emit('active_activities_update', { counts: allCounts });
+}
+
+function removeStudentFromPreviousActivities(studentId, studentName, excludeKey = null) {
+    const sIdStr = String(studentId || '');
+    const sNameStr = String(studentName || '').trim().toLowerCase();
+    const removedRooms = [];
+
+    for (const [key, student] of Object.entries(activeStudents)) {
+        if (key === excludeKey) continue;
+        if (!student) continue;
+
+        const curId = String(student.studentId || student.id || '');
+        const curName = String(student.name || student.studentName || '').trim().toLowerCase();
+
+        const isMatch = (sIdStr && curId === sIdStr) || (sNameStr && curName === sNameStr);
+        if (isMatch) {
+            removedRooms.push({
+                key,
+                classroomId: student.classroomId,
+                assignmentId: student.assignmentId,
+                studentId: student.studentId || studentId,
+                studentName: student.name || studentName
+            });
+            delete activeStudents[key];
+        }
+    }
+
+    for (const item of removedRooms) {
+        const roomName = `classroom:${item.classroomId}:assignment:${item.assignmentId}`;
+        const payload = {
+            studentId: item.studentId,
+            studentName: item.studentName,
+            classroomId: item.classroomId,
+            assignmentId: item.assignmentId,
+            reason: 'switched_activity'
+        };
+        io.to(roomName).emit('teacher_student_left', payload);
+        io.emit('teacher_student_left', payload);
+    }
+
+    if (removedRooms.length > 0) {
+        broadcastActiveActivities();
+    }
+}
+
+app.get('/active-activities', (req, res) => {
+    try {
+        const counts = getActiveActivitiesMap(req.query.classroomId);
+        res.status(200).json({ counts });
+    } catch (e) {
+        res.status(500).json({ message: e.message });
+    }
+});
 
 io.on('connection', (socket) => {
     console.log('🟢 Student Workspace Connected: ' + socket.id);
+
+    socket.on('get_active_activities', (data) => {
+        socket.emit('active_activities_update', { counts: getActiveActivitiesMap(data?.classroomId) });
+    });
+
+    socket.on('teacher_leave', (data) => {
+        if (socket.data.teacherRoom) {
+            socket.leave(socket.data.teacherRoom);
+            socket.data.teacherRoom = null;
+        }
+    });
 
     // .NET SDK status & setup socket listeners
     socket.on('check_dotnet_status', (cb) => {
@@ -3419,52 +3509,31 @@ io.on('connection', (socket) => {
         // Fetch past session warnings from the database so late-joining teachers get all warnings
         let dbLogs = [];
         try {
-            dbLogs = await db.all(
-                'SELECT * FROM proctor_session_logs WHERE classroom_id = ? AND assignment_id = ? ORDER BY id ASC',
-                cIdStr, aIdStr
-            ).catch(() => []);
+            if (cIdStr && cIdStr !== 'none' && cIdStr !== 'undefined' && cIdStr !== 'default') {
+                dbLogs = await db.all(
+                    `SELECT * FROM proctor_session_logs 
+                     WHERE (assignment_id = ? OR CAST(assignment_id AS TEXT) = ? OR assignment_id = 'none' OR assignment_id = 'default') 
+                       AND (classroom_id = ? OR CAST(classroom_id AS TEXT) = ? OR classroom_id = 'none' OR classroom_id = 'default' OR classroom_id IS NULL) 
+                     ORDER BY id ASC`,
+                    aIdStr, aIdStr, cIdStr, cIdStr
+                ).catch(() => []);
+            } else {
+                dbLogs = await db.all(
+                    `SELECT * FROM proctor_session_logs 
+                     WHERE assignment_id = ? OR CAST(assignment_id AS TEXT) = ? OR assignment_id = 'none' OR assignment_id = 'default'
+                     ORDER BY id ASC`,
+                    aIdStr, aIdStr
+                ).catch(() => []);
+            }
         } catch (_) {}
 
         if (Array.isArray(dbLogs) && dbLogs.length > 0) {
-            for (const log of dbLogs) {
-                const sKey = `${cIdStr}:${aIdStr}:${log.student_id}`;
-                const targetKey = Object.keys(activeStudents).find(k => 
-                    k.startsWith(filterKey + ':') && 
-                    (activeStudents[k].studentId === log.student_id || activeStudents[k].name === log.student_name)
-                ) || sKey;
-
-                if (!activeStudents[targetKey]) {
-                    activeStudents[targetKey] = {
-                        studentId: log.student_id,
-                        name: log.student_name || log.student_id,
-                        code: '',
-                        classroomId: cIdStr,
-                        assignmentId: aIdStr,
-                        logs: [],
-                        status: 'Live'
-                    };
-                }
-
-                const curStudent = activeStudents[targetKey];
-                const logs = Array.isArray(curStudent.logs) ? curStudent.logs : [];
-                const exists = logs.some(l => l.id === log.id || (l.action === log.action && l.time === log.time));
-                if (!exists) {
-                    logs.unshift({
-                        id: log.id,
-                        action: log.action,
-                        message: log.message || log.action,
-                        time: log.time,
-                        color: log.color,
-                        studentId: log.student_id,
-                        studentName: log.student_name
-                    });
-                    curStudent.logs = logs;
-                }
-            }
+            socket.emit('teacher_past_warnings', dbLogs);
         }
 
         for (const [key, student] of Object.entries(activeStudents)) {
-            if (key.startsWith(filterKey + ':')) {
+            if (!student || student.isLive === false || student.status === 'Offline') continue;
+            if (key.startsWith(filterKey + ':') || (aIdStr !== 'none' && key.startsWith(`none:${aIdStr}:`))) {
                 socket.emit('teacher_update_code', {
                     ...student,
                     logs: student.logs || []
@@ -3479,7 +3548,8 @@ io.on('connection', (socket) => {
         const filterKey = `${cIdStr}:${aIdStr}`;
 
         for (const [key, student] of Object.entries(activeStudents)) {
-            if (key.startsWith(filterKey + ':')) {
+            if (!student || student.isLive === false || student.status === 'Offline') continue;
+            if (key.startsWith(filterKey + ':') || (aIdStr !== 'none' && key.startsWith(`none:${aIdStr}:`))) {
                 socket.emit('teacher_update_code', {
                     ...student,
                     logs: student.logs || []
@@ -4033,6 +4103,14 @@ io.on('connection', (socket) => {
         const assignmentId = data.assignmentId != null ? String(data.assignmentId) : 'none';
         const studentKey = `${classroomId}:${assignmentId}:${studentId}`;
         
+        // Remove student from any previous activity so they don't linger in other activity monitoring
+        removeStudentFromPreviousActivities(studentId, studentName, studentKey);
+
+        const roomName = `classroom:${classroomId}:assignment:${assignmentId}`;
+        if (socket.data.roomName && socket.data.roomName !== roomName) {
+            socket.leave(socket.data.roomName);
+        }
+
         const existing = activeStudents[studentKey] || {};
         const existingLogs = Array.isArray(existing.logs) ? existing.logs : [];
 
@@ -4075,39 +4153,44 @@ io.on('connection', (socket) => {
         activeStudents[studentKey] = updated;
         socket.data.studentKey = studentKey;
         socket.data.studentId = studentId;
+        socket.data.studentName = studentName;
+        socket.data.classroomId = classroomId;
+        socket.data.assignmentId = assignmentId;
+        socket.data.roomName = roomName;
 
-        const roomName = `classroom:${classroomId}:assignment:${assignmentId}`;
         socket.join(roomName);
 
-        // Broadcast to monitoring teachers in room and all active connections
+        // Broadcast ONLY to monitoring teachers in this specific activity room
         io.to(roomName).emit('teacher_update_code', updated);
-        socket.broadcast.emit('teacher_update_code', updated);
+
+        // Real-time update activity indicator dots for instructors
+        broadcastActiveActivities();
     };
 
     socket.on('student_enter_activity', handleStudentActivity);
     socket.on('student_typing', handleStudentActivity);
 
     socket.on('proctor_alert', async (data) => {
-        if (data && data.studentId) {
-            const studentId = data.studentId;
-            const studentName = data.name || studentId;
-            let classroomId = data.classroomId != null ? String(data.classroomId) : null;
-            let assignmentId = data.assignmentId != null ? String(data.assignmentId) : null;
+        if (data && (data.studentId || data.id || data.name || data.studentName || socket.data?.studentId)) {
+            const studentId = String(data.studentId || data.id || data.name || socket.data?.studentId || 'student');
+            const studentName = String(data.name || data.studentName || studentId || 'Student').trim();
+            let classroomId = data.classroomId != null && data.classroomId !== 'default' ? String(data.classroomId) : null;
+            let assignmentId = data.assignmentId != null && data.assignmentId !== 'default' ? String(data.assignmentId) : null;
 
             if (!classroomId || !assignmentId) {
                 if (socket.data.studentKey) {
                     const parts = socket.data.studentKey.split(':');
                     if (parts.length >= 3) {
-                        classroomId = classroomId || parts[0];
-                        assignmentId = assignmentId || parts[1];
+                        classroomId = classroomId || (parts[0] !== 'default' ? parts[0] : null);
+                        assignmentId = assignmentId || (parts[1] !== 'default' ? parts[1] : null);
                     }
                 } else {
                     const found = Object.values(activeStudents).find(s => 
                         s && (s.studentId === studentId || s.name === studentName)
                     );
                     if (found) {
-                        classroomId = classroomId || found.classroomId;
-                        assignmentId = assignmentId || found.assignmentId;
+                        classroomId = classroomId || (found.classroomId !== 'default' ? found.classroomId : null);
+                        assignmentId = assignmentId || (found.assignmentId !== 'default' ? found.assignmentId : null);
                     }
                 }
             }
@@ -4176,7 +4259,7 @@ io.on('connection', (socket) => {
             } catch (_) {}
 
             const roomName = `classroom:${classroomId}:assignment:${assignmentId}`;
-            socket.to(roomName).emit('teacher_receive_alert', {
+            const alertPayload = {
                 ...data,
                 id: newLog.id,
                 studentId,
@@ -4184,18 +4267,24 @@ io.on('connection', (socket) => {
                 action: actionText,
                 message: messageText,
                 time: timeText,
-                color: colorVal
-            });
+                color: colorVal,
+                classroomId,
+                assignmentId
+            };
+            io.to(roomName).emit('teacher_receive_alert', alertPayload);
+            // Broadcast to all connected clients so teachers in Live Monitoring receive it regardless of room string nuances
+            socket.broadcast.emit('teacher_receive_alert', alertPayload);
         }
 
         try {
             const key = todayKey();
             const actionStr = (data?.action || '').toLowerCase();
             const descStr = (data?.desc || '').toLowerCase();
-            const isSystemExit = actionStr.includes('system exit') || descStr.includes('system exit') || descStr.includes('exited system') || descStr.includes('exited the system');
-            const isExitTab = !isSystemExit && (actionStr.includes('tab') || actionStr.includes('exit') || actionStr.includes('blur') || descStr.includes('tab') || descStr.includes('blur'));
-            const isCopyPaste = actionStr.includes('paste') || actionStr.includes('clipboard') || actionStr.includes('copy');
-            const isAltTabCopyPaste = isExitTab || isCopyPaste || isSystemExit;
+            const isCrash = Boolean(data?.isCrash) || actionStr.includes('crash') || descStr.includes('crash');
+            const isSystemExit = !isCrash && (actionStr.includes('system exit') || descStr.includes('system exit') || descStr.includes('exited system') || descStr.includes('exited the system'));
+            const isExitTab = !isCrash && !isSystemExit && (actionStr.includes('tab') || actionStr.includes('exit') || actionStr.includes('blur') || descStr.includes('tab') || descStr.includes('blur'));
+            const isCopyPaste = !isCrash && (actionStr.includes('paste') || actionStr.includes('clipboard') || actionStr.includes('copy'));
+            const isAltTabCopyPaste = !isCrash && (isExitTab || isCopyPaste || isSystemExit);
 
             if (isAltTabCopyPaste) {
                 // Count under Alt-Tab / Copy-Paste flags
@@ -4204,7 +4293,7 @@ io.on('connection', (socket) => {
                     key
                 );
             } else {
-                // Count under high-severity Security Flags Today
+                // Count under high-severity Security Flags Today (including System Crash)
                 await db.run(
                     'INSERT INTO security_flags (date_string, count, alt_tab_copy_paste_count) VALUES (?, 1, 0) ON CONFLICT(date_string) DO UPDATE SET count = COALESCE(security_flags.count, 0) + 1',
                     key
@@ -4219,7 +4308,10 @@ io.on('connection', (socket) => {
                 let logType = 'Security Flag Alert';
                 let logSeverity = 'High';
                 
-                if (isSystemExit) {
+                if (isCrash) {
+                    logType = 'System Crash Violation';
+                    logSeverity = 'High';
+                } else if (isSystemExit) {
                     logType = 'System Exit Violation';
                     logSeverity = 'Warning';
                 } else if (isCopyPaste) {
@@ -4243,6 +4335,7 @@ io.on('connection', (socket) => {
             // Emit live real-time update to all admin sessions
             io.emit('admin_security_alert', {
                 ...data,
+                isCrash,
                 isAltTabCopyPaste,
                 isSystemExit,
                 timestamp: nowIso
@@ -4269,10 +4362,13 @@ io.on('connection', (socket) => {
         delete activeStudents[studentKey];
         delete activeStudents[`${classroomId}:${assignmentId}:${authenticatedName}`];
         delete activeStudents[`${classroomId}:${assignmentId}:${authenticatedId}`];
+        removeStudentFromPreviousActivities(authenticatedId, authenticatedName);
+        broadcastActiveActivities();
 
         const roomName = `classroom:${classroomId}:assignment:${assignmentId}`;
         socket.to(roomName).emit('teacher_receive_submission', payload);
-        socket.to(roomName).emit('teacher_student_left', { studentId: authenticatedName, studentIdNum: authenticatedId, reason: 'submitted' });
+        socket.to(roomName).emit('teacher_student_left', { studentId: authenticatedName, studentIdNum: authenticatedId, reason: 'submitted', assignmentId, classroomId });
+        io.emit('teacher_student_left', { studentId: authenticatedName, studentIdNum: authenticatedId, reason: 'submitted', assignmentId, classroomId });
 
         try {
             await db.run('DELETE FROM submissions WHERE assignment_id = ? AND student_name = ?', assignmentId, authenticatedName);
@@ -4319,20 +4415,53 @@ io.on('connection', (socket) => {
     });
 
     socket.on('student_terminal_update', (data) => {
-        socket.broadcast.emit('teacher_terminal_update', data);
+        if (data?.classroomId && data?.assignmentId) {
+            io.to(`classroom:${data.classroomId}:assignment:${data.assignmentId}`).emit('teacher_terminal_update', data);
+        } else {
+            socket.broadcast.emit('teacher_terminal_update', data);
+        }
     });
 
-    socket.on('student_leave_workspace', () => {
+    socket.on('student_leave_workspace', (data) => {
         if (activeProcess) {
-            activeProcess.kill();
+            try { activeProcess.kill(); } catch (_) {}
             activeProcess = null;
         }
+        const studentId = socket.data.studentId || data?.studentId;
+        const studentName = data?.name || data?.studentName || socket.user?.name || socket.data.studentName;
+        const classroomId = data?.classroomId || socket.data.classroomId;
+        const assignmentId = data?.assignmentId || socket.data.assignmentId;
+
         if (socket.data.studentKey) {
             delete activeStudents[socket.data.studentKey];
-            socket.broadcast.emit('teacher_student_left', { studentId: socket.data.studentId });
-            socket.data.studentKey = null;
-            socket.data.studentId = null;
         }
+        if (studentId || studentName) {
+            removeStudentFromPreviousActivities(studentId, studentName);
+        }
+
+        const roomName = socket.data.roomName || (classroomId && assignmentId ? `classroom:${classroomId}:assignment:${assignmentId}` : null);
+        const leftPayload = {
+            studentId,
+            studentName,
+            classroomId,
+            assignmentId,
+            reason: 'left_workspace'
+        };
+
+        if (roomName) {
+            io.to(roomName).emit('teacher_student_left', leftPayload);
+            socket.leave(roomName);
+        }
+        socket.broadcast.emit('teacher_student_left', leftPayload);
+
+        socket.data.studentKey = null;
+        socket.data.studentId = null;
+        socket.data.studentName = null;
+        socket.data.classroomId = null;
+        socket.data.assignmentId = null;
+        socket.data.roomName = null;
+
+        broadcastActiveActivities();
     });
 
     socket.on('disconnect', async () => {
@@ -4340,10 +4469,32 @@ io.on('connection', (socket) => {
             try { activeProcess.kill(); } catch (_) {}
             activeProcess = null;
         }
+        const studentId = socket.data.studentId || socket.user?.id;
+        const studentName = socket.data.studentName || socket.user?.name;
+        const classroomId = socket.data.classroomId;
+        const assignmentId = socket.data.assignmentId;
+
         if (socket.data.studentKey) {
             delete activeStudents[socket.data.studentKey];
-            socket.broadcast.emit('teacher_student_left', { studentId: socket.data.studentId });
         }
+        if (studentId || studentName) {
+            removeStudentFromPreviousActivities(studentId, studentName);
+        }
+
+        const leftPayload = {
+            studentId,
+            studentName,
+            classroomId,
+            assignmentId,
+            reason: 'disconnected'
+        };
+
+        if (socket.data.roomName) {
+            io.to(socket.data.roomName).emit('teacher_student_left', leftPayload);
+        }
+        socket.broadcast.emit('teacher_student_left', leftPayload);
+
+        broadcastActiveActivities();
 
         // If a student disconnects, check if an exit log was already posted in the last 4 seconds
         if (socket.user && socket.user.role === 'Student') {
@@ -4376,7 +4527,7 @@ io.on('connection', (socket) => {
                         type: 'System Exit Violation',
                         desc: `Student exited the system: ${userName} closed or disconnected application`,
                         severity: 'Warning',
-                        isAltTabCopyPaste: true,
+                        isAltTabCopyPaste: false,
                         isSystemExit: true,
                         timestamp: nowIso
                     });
@@ -4423,8 +4574,9 @@ app.post('/audit-logs', authenticateToken, async (req, res) => {
             const key = todayKey();
             const descLower = (desc || '').toLowerCase();
             const typeLower = (type || '').toLowerCase();
-            const isSystemExit = typeLower.includes('system exit') || descLower.includes('system exit') || descLower.includes('exited system') || descLower.includes('exited the system');
-            const isAltTabCopyPaste = isSystemExit || (descLower.includes('tab') || descLower.includes('paste') || descLower.includes('clipboard') || descLower.includes('copy') || descLower.includes('exit tab') || typeLower.includes('alt-tab') || typeLower.includes('copy-paste'));
+            const isCrash = typeLower.includes('crash') || descLower.includes('crash');
+            const isSystemExit = !isCrash && (typeLower.includes('system exit') || descLower.includes('system exit') || descLower.includes('exited system') || descLower.includes('exited the system'));
+            const isAltTabCopyPaste = !isCrash && (isSystemExit || descLower.includes('tab') || descLower.includes('paste') || descLower.includes('clipboard') || descLower.includes('copy') || descLower.includes('exit tab') || typeLower.includes('alt-tab') || typeLower.includes('copy-paste'));
 
             if (isAltTabCopyPaste) {
                 await db.run(
@@ -4437,6 +4589,44 @@ app.post('/audit-logs', authenticateToken, async (req, res) => {
                     key
                 );
             }
+
+            const timeText = new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }).toLowerCase();
+            const actionText = isCrash ? 'System Crash' : (isAltTabCopyPaste ? (descLower.includes('paste') ? 'Copy/Paste' : 'Alt Tab') : (type || 'Violation'));
+            const colorVal = isCrash ? '#dc2626' : (isAltTabCopyPaste ? '#eab308' : '#ef4444');
+
+            // Find classroom/assignment context for this student if active
+            const foundActive = Object.values(activeStudents).find(s => s && (s.studentId === user || s.name === user));
+            const cId = foundActive?.classroomId || 'none';
+            const aId = foundActive?.assignmentId || 'none';
+
+            try {
+                await db.run(
+                    'INSERT INTO proctor_session_logs (classroom_id, assignment_id, student_id, student_name, action, message, time, color) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+                    cId,
+                    aId,
+                    String(user),
+                    String(user),
+                    actionText,
+                    actionText,
+                    timeText,
+                    colorVal
+                ).catch(() => {});
+            } catch (_) {}
+
+            // Broadcast directly to instructors in Live Monitoring
+            io.emit('teacher_receive_alert', {
+                id: Date.now(),
+                studentId: user,
+                studentName: user,
+                name: user,
+                action: actionText,
+                message: actionText,
+                time: timeText,
+                color: colorVal,
+                isCrash,
+                classroomId: cId,
+                assignmentId: aId
+            });
 
             // Emit live real-time update to all admin sessions
             io.emit('admin_security_alert', {
