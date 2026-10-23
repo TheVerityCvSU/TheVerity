@@ -11,6 +11,7 @@ import { apiFetch } from '../utils/api';
 import Skeleton from '../components/Skeleton';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { useMediaQuery } from '../hooks/useMediaQuery';
+import ClassroomBannerIllustration from '../components/ClassroomBannerIllustration';
 import { 
   getThemeStorageKeys,
   getClassroomStorageKey,
@@ -116,7 +117,7 @@ const StudentCourseCard = ({ classroom, onClick, index, colSpan, isArchived = fa
 
   let bgStyle = classTheme?.customImageUrl
     ? {
-        background: `linear-gradient(to right, rgba(15, 23, 42, 0.85) 0%, rgba(15, 23, 42, 0.4) 100%), url(${classTheme.customImageUrl})`,
+        background: `linear-gradient(to right, rgba(15, 23, 42, 0.88) 0%, rgba(15, 23, 42, 0.5) 50%, rgba(15, 23, 42, 0.25) 100%), url(${classTheme.customImageUrl})`,
         backgroundSize: 'cover',
         backgroundPosition: 'center',
       }
@@ -134,8 +135,8 @@ const StudentCourseCard = ({ classroom, onClick, index, colSpan, isArchived = fa
         ...bgStyle,
         borderRadius: '20px',
         padding: '24px',
-        minHeight: '220px',
-        height: '240px',
+        minHeight: '240px',
+        height: '260px',
         display: 'flex',
         flexDirection: 'column',
         justifyContent: 'space-between',
@@ -150,6 +151,33 @@ const StudentCourseCard = ({ classroom, onClick, index, colSpan, isArchived = fa
         filter: isArchived ? 'grayscale(20%)' : 'none'
       }}
     >
+      {/* ═══ Background banner illustration layer ═══ */}
+      <div
+        style={{
+          position: 'absolute',
+          inset: 0,
+          borderRadius: '20px',
+          overflow: 'hidden',
+          pointerEvents: 'none',
+          zIndex: 1
+        }}
+      >
+        {!classTheme?.customImageUrl && (
+          <ClassroomBannerIllustration
+            themeId={classTheme?.id || theme.id}
+            style={{
+              position: 'absolute',
+              right: 0,
+              top: 0,
+              bottom: 0,
+              width: 'min(380px, 60%)',
+              height: '100%',
+              opacity: 0.95
+            }}
+          />
+        )}
+      </div>
+
       {/* Subtle overlay for archived state */}
       {isArchived && (
         <div style={{
@@ -158,7 +186,7 @@ const StudentCourseCard = ({ classroom, onClick, index, colSpan, isArchived = fa
           borderRadius: '20px',
           backgroundColor: 'rgba(15, 23, 42, 0.35)',
           pointerEvents: 'none',
-          zIndex: 1
+          zIndex: 2
         }} />
       )}
 
@@ -322,9 +350,11 @@ const StudentCourseCard = ({ classroom, onClick, index, colSpan, isArchived = fa
       </div>
       
       <div style={{ position: 'relative', zIndex: 10 }}>
-        <p style={{ margin: 0, fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: isArchived ? '#cbd5e1' : theme.statusColor, marginBottom: '4px' }}>
-          {isArchived ? 'COMPLETED / READ-ONLY' : theme.status}
-        </p>
+        {isArchived && (
+          <p style={{ margin: 0, fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: '#cbd5e1', marginBottom: '4px' }}>
+            COMPLETED / READ-ONLY
+          </p>
+        )}
         <p style={{ margin: 0, fontSize: '0.95rem', fontWeight: '600', color: theme.textColor, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
           {classroom.section || 'Methods, parameters, and clean interfaces'}
         </p>
@@ -742,10 +772,8 @@ export default function StudentDashboard({ currentUser, onLogout, onEnterClassro
           alignItems: 'center', 
           justifyContent: 'center',
           gap: '8px',
-          opacity: isHeaderHovered ? 1 : 0,
-          pointerEvents: isHeaderHovered ? 'auto' : 'none',
-          transition: 'opacity 0.3s ease, transform 0.3s ease',
-          transform: isHeaderHovered ? 'translateY(0)' : 'translateY(-10px)',
+          opacity: 1,
+          pointerEvents: 'auto',
           position: 'relative'
         }}>
           <div style={{
@@ -837,10 +865,8 @@ export default function StudentDashboard({ currentUser, onLogout, onEnterClassro
               fontSize: '0.9rem',
               cursor: 'pointer',
               boxShadow: '0 4px 12px rgba(16, 185, 129, 0.2)',
-              opacity: isHeaderHovered ? 1 : 0,
-              pointerEvents: isHeaderHovered ? 'auto' : 'none',
-              transition: 'opacity 0.3s ease, transform 0.3s ease',
-              transform: isHeaderHovered ? 'translateY(0)' : 'translateY(-10px)'
+              opacity: 1,
+              pointerEvents: 'auto'
             }}
           >
             <Plus size={18} /> Add course
@@ -948,7 +974,7 @@ export default function StudentDashboard({ currentUser, onLogout, onEnterClassro
                 }}>
                   {loadingClassrooms ? (
                     [...Array(4)].map((_, i) => (
-                      <div key={i} style={{ gridColumn: `span ${isMobile ? 12 : cardThemes[i % cardThemes.length].colSpan}`, height: '240px', backgroundColor: cardBg, borderRadius: '20px', animation: 'pulse 1.5s infinite' }} />
+                      <div key={i} style={{ gridColumn: `span ${isMobile ? 12 : cardThemes[i % cardThemes.length].colSpan}`, height: '260px', backgroundColor: cardBg, borderRadius: '20px', animation: 'pulse 1.5s infinite' }} />
                     ))
                   ) : (
                     activeClassrooms.map((cls, idx) => (

@@ -5,12 +5,12 @@ import SettingsPanel from './SettingsPanel';
 import ProfileMenu from './ProfileMenu';
 import TeacherCalendar from './TeacherCalendar';
 import ClassroomSettings from './ClassroomSettings';
-import ClassroomCard from '../components/ClassroomCard';
 import { apiFetch } from '../utils/api';
 import Skeleton from '../components/Skeleton';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { useSidebarNav } from '../hooks/useSidebarNav';
 import { useMediaQuery } from '../hooks/useMediaQuery';
+import ClassroomBannerIllustration from '../components/ClassroomBannerIllustration';
 
 import { 
   isPhantomClassroom, 
@@ -95,12 +95,24 @@ const cardThemes = [
   }
 ];
 
-const TeacherCourseCard = ({ classroom, onClick, onSettings, onArchive, onUnarchive, onDelete, isArchived, index, initial, animate, transition }) => {
+const getCardColSpan = (idx, total, isMobile) => {
+  if (isMobile) return 12;
+  if (!total || total === 1) return 12;
+  // If the last card sits alone on a row of 7 or 5, expand it to 12 for a balanced layout
+  if (idx === total - 1 && (idx % 5 === 0 || idx % 5 === 2)) {
+    return 12;
+  }
+  return cardThemes[idx % cardThemes.length].colSpan;
+};
+
+const TeacherCourseCard = ({ classroom, onClick, onSettings, onArchive, onUnarchive, onDelete, isArchived, index, initial, animate, transition, colSpan }) => {
   const { isDark } = useDarkMode();
   const [menuOpen, setMenuOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const classTheme = (classroom.theme && (classroom.theme.primary || classroom.theme.id)) ? classroom.theme : getClassroomTheme(classroom);
   const theme = cardThemes.find(t => t.id === classTheme?.id) || cardThemes[index % cardThemes.length];
+  const isMobile = typeof window !== 'undefined' && window.innerWidth <= 768;
+  const finalSpan = isMobile ? 12 : (colSpan || theme.colSpan);
 
   const handleCopyCode = (e) => {
     if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
@@ -122,7 +134,7 @@ const TeacherCourseCard = ({ classroom, onClick, onSettings, onArchive, onUnarch
 
   let bgStyle = classTheme?.customImageUrl
     ? {
-        background: `linear-gradient(to right, rgba(15, 23, 42, 0.85) 0%, rgba(15, 23, 42, 0.4) 100%), url(${classTheme.customImageUrl})`,
+        background: `linear-gradient(to right, rgba(15, 23, 42, 0.88) 0%, rgba(15, 23, 42, 0.5) 50%, rgba(15, 23, 42, 0.25) 100%), url(${classTheme.customImageUrl})`,
         backgroundSize: 'cover',
         backgroundPosition: 'center',
       }
@@ -142,7 +154,8 @@ const TeacherCourseCard = ({ classroom, onClick, onSettings, onArchive, onUnarch
         ...bgStyle,
         borderRadius: '20px',
         padding: '24px',
-        height: '240px',
+        minHeight: '240px',
+        height: '260px',
         display: 'flex',
         flexDirection: 'column',
         justifyContent: 'space-between',
@@ -151,11 +164,39 @@ const TeacherCourseCard = ({ classroom, onClick, onSettings, onArchive, onUnarch
         overflow: 'visible',
         boxShadow: '0 8px 24px rgba(0,0,0,0.1)',
         color: theme.textColor,
+        gridColumn: `span ${finalSpan}`,
         width: '100%',
         boxSizing: 'border-box',
         opacity: isArchived ? 0.75 : 1
       }}
     >
+      {/* ═══ Background banner illustration layer ═══ */}
+      <div
+        style={{
+          position: 'absolute',
+          inset: 0,
+          borderRadius: '20px',
+          overflow: 'hidden',
+          pointerEvents: 'none',
+          zIndex: 1
+        }}
+      >
+        {!classTheme?.customImageUrl && (
+          <ClassroomBannerIllustration
+            themeId={classTheme?.id || theme.id}
+            style={{
+              position: 'absolute',
+              right: 0,
+              top: 0,
+              bottom: 0,
+              width: 'min(380px, 60%)',
+              height: '100%',
+              opacity: 0.95
+            }}
+          />
+        )}
+      </div>
+
       <div style={{ position: 'relative', zIndex: 10 }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -308,9 +349,11 @@ const TeacherCourseCard = ({ classroom, onClick, onSettings, onArchive, onUnarch
       
       <div style={{ position: 'relative', zIndex: 10, display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between' }}>
         <div>
-          <p style={{ margin: 0, fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: theme.statusColor, marginBottom: '4px', fontWeight: '700' }}>
-            {isArchived ? 'ARCHIVED' : 'ACTIVE'}
-          </p>
+          {isArchived && (
+            <p style={{ margin: 0, fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: theme.statusColor, marginBottom: '4px', fontWeight: '700' }}>
+              ARCHIVED
+            </p>
+          )}
           <p style={{ margin: 0, fontSize: '0.95rem', fontWeight: '600', color: theme.textColor }}>
             {classroom.section || 'General Section'}
           </p>
@@ -818,10 +861,8 @@ export default function TeacherDashboard({ currentUser, onLogout, onEnterClassro
           alignItems: 'center', 
           justifyContent: 'center',
           gap: '8px',
-          opacity: isHeaderHovered ? 1 : 0,
-          pointerEvents: isHeaderHovered ? 'auto' : 'none',
-          transition: 'opacity 0.3s ease, transform 0.3s ease',
-          transform: isHeaderHovered ? 'translateY(0)' : 'translateY(-10px)',
+          opacity: 1,
+          pointerEvents: 'auto',
           position: 'relative'
         }}>
           <div style={{
@@ -909,8 +950,8 @@ export default function TeacherDashboard({ currentUser, onLogout, onEnterClassro
         flexDirection: 'column',
         overflow: 'visible',
         padding: '32px clamp(20px, 3vw, 48px)',
-        maxWidth: '100%',
-        margin: 0,
+        maxWidth: '1600px',
+        margin: '0 auto',
         width: '100%',
         boxSizing: 'border-box'
       }}>
@@ -947,18 +988,39 @@ export default function TeacherDashboard({ currentUser, onLogout, onEnterClassro
                   <p style={{ marginTop: '10px', color: isDark ? '#6b7280' : '#9ca3af' }}>Classrooms you archive will appear here.</p>
                 </div>
               ) : (
-                <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fill, minmax(320px, 1fr))', gap: '24px' }}>
-                  {archivedClassrooms.map((cls, idx) => (
-                    <TeacherCourseCard
-                      key={cls.id}
-                      classroom={cls}
-                      index={idx}
-                      onClick={onEnterClassroom}
-                      onUnarchive={handleUnarchiveClass}
-                      onDelete={(allowDelete || currentUser?.role === 'Admin') ? handleDeleteClass : undefined}
-                      isArchived={true}
-                    />
-                  ))}
+                <div style={{
+                  display: 'grid',
+                  gridTemplateColumns: isMobile ? '1fr' : 'repeat(12, 1fr)',
+                  gap: '24px',
+                  width: '100%',
+                  boxSizing: 'border-box'
+                }}>
+                  {archivedClassrooms.map((cls, idx) => {
+                    const span = getCardColSpan(idx, archivedClassrooms.length, isMobile);
+                    return (
+                      <motion.div
+                        key={cls.id}
+                        initial={{ opacity: 0, y: 20, scale: 0.98 }}
+                        animate={{ opacity: 1, y: 0, scale: 1 }}
+                        transition={{ duration: 0.35, delay: idx * 0.05, ease: [0.16, 1, 0.3, 1] }}
+                        style={{
+                          gridColumn: `span ${span}`,
+                          width: '100%',
+                          minWidth: 0
+                        }}
+                      >
+                        <TeacherCourseCard
+                          classroom={cls}
+                          index={idx}
+                          colSpan={span}
+                          onClick={onEnterClassroom}
+                          onUnarchive={handleUnarchiveClass}
+                          onDelete={(allowDelete || currentUser?.role === 'Admin') ? handleDeleteClass : undefined}
+                          isArchived={true}
+                        />
+                      </motion.div>
+                    );
+                  })}
                 </div>
               )}
             </motion.div>
@@ -1031,61 +1093,87 @@ export default function TeacherDashboard({ currentUser, onLogout, onEnterClassro
               {/* Classroom Grid */}
               <div style={{
                 display: 'grid',
-                gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fill, minmax(320px, 1fr))',
-                gap: '24px'
+                gridTemplateColumns: isMobile ? '1fr' : 'repeat(12, 1fr)',
+                gap: '24px',
+                width: '100%',
+                boxSizing: 'border-box'
               }}>
-                {loadingClassrooms
-                  ? Array.from({ length: 4 }).map((_, i) => <Skeleton.Card key={i} />)
-                  : activeClassrooms.length === 0 ? (
+                {loadingClassrooms ? (
+                  [...Array(4)].map((_, i) => (
+                    <div
+                      key={i}
+                      style={{
+                        gridColumn: `span ${isMobile ? 12 : getCardColSpan(i, 4, isMobile)}`,
+                        height: '260px',
+                        backgroundColor: isDark ? '#262626' : '#ffffff',
+                        borderRadius: '20px',
+                        animation: 'pulse 1.5s infinite',
+                        border: isDark ? '1px solid #333333' : '1px solid #e5e7eb'
+                      }}
+                    />
+                  ))
+                ) : activeClassrooms.length === 0 ? (
+                  <div style={{
+                    gridColumn: '1 / -1',
+                    padding: '50px 20px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    textAlign: 'center',
+                    background: isDark ? 'rgba(255,255,255,0.02)' : 'rgba(0,0,0,0.01)',
+                    borderRadius: '20px',
+                    border: isDark ? '1.5px dashed #404040' : '1.5px dashed #cbd5e1'
+                  }}>
                     <div style={{
-                      gridColumn: '1 / -1',
-                      padding: '50px 20px',
+                      width: '56px',
+                      height: '56px',
+                      borderRadius: '16px',
+                      backgroundColor: isDark ? '#262626' : '#f1f5f9',
                       display: 'flex',
-                      flexDirection: 'column',
                       alignItems: 'center',
                       justifyContent: 'center',
-                      textAlign: 'center',
-                      background: isDark ? 'rgba(255,255,255,0.02)' : 'rgba(0,0,0,0.01)',
-                      borderRadius: '20px',
-                      border: isDark ? '1.5px dashed #404040' : '1.5px dashed #cbd5e1'
+                      marginBottom: '14px'
                     }}>
-                      <div style={{
-                        width: '56px',
-                        height: '56px',
-                        borderRadius: '16px',
-                        backgroundColor: isDark ? '#262626' : '#f1f5f9',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        marginBottom: '14px'
-                      }}>
-                        <Home size={28} color="#10b981" />
-                      </div>
-                      <h3 style={{ margin: '0 0 6px', fontSize: '1.15rem', fontWeight: '700', color: isDark ? '#f5f5f5' : '#1e293b' }}>
-                        No Classrooms Yet
-                      </h3>
-                      <p style={{ margin: '0 0 16px', maxWidth: '380px', fontSize: '0.88rem', color: isDark ? '#a3a3a3' : '#64748b' }}>
-                        Click <strong>Create Class</strong> above to create your first classroom.
-                      </p>
+                      <Home size={28} color="#10b981" />
                     </div>
-                  ) : activeClassrooms.map((cls, idx) => (
-                    <TeacherCourseCard
+                    <h3 style={{ margin: '0 0 6px', fontSize: '1.15rem', fontWeight: '700', color: isDark ? '#f5f5f5' : '#1e293b' }}>
+                      No Classrooms Yet
+                    </h3>
+                    <p style={{ margin: '0 0 16px', maxWidth: '380px', fontSize: '0.88rem', color: isDark ? '#a3a3a3' : '#64748b' }}>
+                      Click <strong>Create Class</strong> above to create your first classroom.
+                    </p>
+                  </div>
+                ) : activeClassrooms.map((cls, idx) => {
+                  const span = getCardColSpan(idx, activeClassrooms.length, isMobile);
+                  return (
+                    <motion.div
                       key={cls.id}
-                      classroom={cls}
-                      index={idx}
-                      onClick={onEnterClassroom}
-                      onArchive={handleArchiveClass}
-                      onSettings={(c) => {
-                        setSettingsClassroom(c);
-                        handleSetView('classroomSettings');
-                      }}
-                      onDelete={(allowDelete || currentUser?.role === 'Admin') ? handleDeleteClass : undefined}
-                      isArchived={false}
-                      initial={{ opacity: 0, y: 20, scale: 0.97 }}
+                      initial={{ opacity: 0, y: 20, scale: 0.98 }}
                       animate={{ opacity: 1, y: 0, scale: 1 }}
-                      transition={{ duration: 0.35, delay: idx * 0.07, ease: [0.16, 1, 0.3, 1] }}
-                    />
-                ))}
+                      transition={{ duration: 0.35, delay: idx * 0.05, ease: [0.16, 1, 0.3, 1] }}
+                      style={{
+                        gridColumn: `span ${span}`,
+                        width: '100%',
+                        minWidth: 0
+                      }}
+                    >
+                      <TeacherCourseCard
+                        classroom={cls}
+                        index={idx}
+                        colSpan={span}
+                        onClick={onEnterClassroom}
+                        onArchive={handleArchiveClass}
+                        onSettings={(c) => {
+                          setSettingsClassroom(c);
+                          handleSetView('classroomSettings');
+                        }}
+                        onDelete={(allowDelete || currentUser?.role === 'Admin') ? handleDeleteClass : undefined}
+                        isArchived={false}
+                      />
+                    </motion.div>
+                  );
+                })}
               </div>
             </motion.div>
           )}

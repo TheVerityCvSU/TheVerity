@@ -3,6 +3,7 @@ import { motion } from 'framer-motion';
 import { MoreVertical, Copy, Check, Trash2, Archive, RotateCcw, Settings } from 'lucide-react';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { getClassroomTheme } from '../utils/classroomUtils';
+import ClassroomBannerIllustration from './ClassroomBannerIllustration';
 export const getClassroomCardTheme = (cls) => getClassroomTheme(cls);
 
 export default function ClassroomCard({
@@ -81,7 +82,7 @@ export default function ClassroomCard({
         cursor: 'pointer',
         display: 'flex',
         flexDirection: 'column',
-        height: '290px',
+        height: '310px',
         position: 'relative',
         opacity: isArchived ? 0.75 : 1
       }}
@@ -90,7 +91,7 @@ export default function ClassroomCard({
       {/* ═══ TOP BANNER HEADER ═══ */}
       <div
         style={{
-          height: '135px',
+          height: '160px',
           background: theme?.customImageUrl
             ? `url(${theme.customImageUrl}) center/cover no-repeat`
             : `linear-gradient(135deg, ${theme.primary}, ${theme.secondary})`,
@@ -103,47 +104,11 @@ export default function ClassroomCard({
           flexShrink: 0
         }}
       >
-        {/* SVG Illustration in Top-Right Corner (Matching Google Classroom screenshot) */}
+        {/* SVG Illustration in Top-Right Corner */}
         {!theme?.customImageUrl && (
-          <svg
-            viewBox="0 0 170 145"
-            fill="none"
-            style={{ position: 'absolute', right: 0, top: 0, height: '100%', pointerEvents: 'none' }}
-          >
-            {/* Dark green background circle accent */}
-            <circle cx="145" cy="80" r="70" fill="#0d5d28" opacity="0.6" />
-
-            {/* Open Book tilted */}
-            <g transform="translate(106, 28) rotate(-30)">
-              {/* Dark Book Cover / Outline */}
-              <rect x="-6" y="-6" width="94" height="64" rx="4" fill="#0b4a22" />
-
-              {/* Left Page (mint/off-white) */}
-              <rect x="-4" y="-4" width="44" height="60" rx="3" fill="#d8f3e5" />
-              {/* Right Page (slightly darker mint) */}
-              <rect x="42" y="-4" width="44" height="60" rx="3" fill="#b7e4ce" />
-
-              {/* Center spine */}
-              <line x1="41" y1="-5" x2="41" y2="57" stroke="#87bfa5" strokeWidth="1.5" />
-
-              {/* Left Page Ruling Lines */}
-              <line x1="4" y1="8" x2="33" y2="8" stroke="#a2d6be" strokeWidth="1.5" strokeLinecap="round" />
-              <line x1="4" y1="17" x2="33" y2="17" stroke="#a2d6be" strokeWidth="1.5" strokeLinecap="round" />
-              <line x1="4" y1="26" x2="33" y2="26" stroke="#a2d6be" strokeWidth="1.5" strokeLinecap="round" />
-              <line x1="4" y1="35" x2="33" y2="35" stroke="#a2d6be" strokeWidth="1.5" strokeLinecap="round" />
-              <line x1="4" y1="44" x2="26" y2="44" stroke="#a2d6be" strokeWidth="1.5" strokeLinecap="round" />
-
-              {/* Right Page Ruling Lines */}
-              <line x1="49" y1="8" x2="78" y2="8" stroke="#8cbfa9" strokeWidth="1.5" strokeLinecap="round" />
-              <line x1="49" y1="17" x2="78" y2="17" stroke="#8cbfa9" strokeWidth="1.5" strokeLinecap="round" />
-              <line x1="49" y1="26" x2="78" y2="26" stroke="#8cbfa9" strokeWidth="1.5" strokeLinecap="round" />
-              <line x1="49" y1="35" x2="78" y2="35" stroke="#8cbfa9" strokeWidth="1.5" strokeLinecap="round" />
-              <line x1="49" y1="44" x2="70" y2="44" stroke="#8cbfa9" strokeWidth="1.5" strokeLinecap="round" />
-
-              {/* Orange Bookmark Ribbon extending down from spine */}
-              <path d="M38 16 L38 72 L41 67 L44 72 L44 16 Z" fill="#f26522" />
-            </g>
-          </svg>
+          <div style={{ position: 'absolute', right: 0, top: 0, height: '100%', width: '55%', pointerEvents: 'none', overflow: 'hidden' }}>
+            <ClassroomBannerIllustration themeId={theme?.id} style={{ width: '100%', height: '100%' }} />
+          </div>
         )}
 
         {/* Title */}

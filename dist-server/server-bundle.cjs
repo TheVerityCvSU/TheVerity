@@ -96560,6 +96560,274 @@ var require_db4 = __commonJS({
   }
 });
 
+// server/dotnetManager.js
+var require_dotnetManager = __commonJS({
+  "server/dotnetManager.js"(exports2, module2) {
+    var { execSync: execSync2, exec: exec2 } = require("child_process");
+    var fs3 = require("fs");
+    var path2 = require("path");
+    var os3 = require("os");
+    var https2 = require("https");
+    var http4 = require("http");
+    var DOTNET_INSTALLER_URL = "https://aka.ms/dotnet/8.0/dotnet-sdk-win-x64.exe";
+    var activeDownloadRequest = null;
+    var state = {
+      installed: false,
+      version: null,
+      targetFramework: null,
+      stage: "idle",
+      // 'idle' | 'checking' | 'downloading' | 'installing' | 'completed' | 'error'
+      percent: 0,
+      downloadedMB: "0.0",
+      totalMB: "0.0",
+      speed: "0 KB/s",
+      error: null,
+      message: ""
+    };
+    var STANDARD_DOTNET_PATHS = [
+      path2.join(process.env["ProgramFiles"] || "C:\\Program Files", "dotnet", "dotnet.exe"),
+      path2.join(process.env["ProgramFiles(x86)"] || "C:\\Program Files (x86)", "dotnet", "dotnet.exe"),
+      path2.join(process.env["LOCALAPPDATA"] || "", "Microsoft", "dotnet", "dotnet.exe")
+    ];
+    function ensureDotnetInPath() {
+      for (const exePath of STANDARD_DOTNET_PATHS) {
+        if (fs3.existsSync(exePath)) {
+          const dir = path2.dirname(exePath);
+          const currentPath = process.env.PATH || "";
+          if (!currentPath.split(path2.delimiter).some((p) => p.toLowerCase() === dir.toLowerCase())) {
+            process.env.PATH = `${dir}${path2.delimiter}${currentPath}`;
+            console.log(`[DotnetManager] Appended ${dir} to process.env.PATH`);
+          }
+          return exePath;
+        }
+      }
+      return null;
+    }
+    function checkDotnetStatus(env2 = process.env) {
+      ensureDotnetInPath();
+      try {
+        const output = execSync2("dotnet --version", {
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "ignore"],
+          env: { ...process.env, ...env2, DOTNET_CLI_TELEMETRY_OPTOUT: "1", DOTNET_NOLOGO: "1" }
+        }).trim();
+        const major = parseInt(output.split(".")[0], 10);
+        const targetFramework = !isNaN(major) && major >= 6 ? `net${major}.0` : "net8.0";
+        state.installed = true;
+        state.version = output;
+        state.targetFramework = targetFramework;
+        state.error = null;
+        if (state.stage === "idle" || state.stage === "checking") {
+          state.stage = "completed";
+        }
+        return { ...state };
+      } catch (e2) {
+        state.installed = false;
+        state.version = null;
+        state.targetFramework = null;
+        state.error = e2.message;
+        if (state.stage !== "downloading" && state.stage !== "installing") {
+          state.stage = "idle";
+        }
+        return { ...state };
+      }
+    }
+    function downloadFileWithRedirect(url, destPath, onProgress, maxRedirects = 5) {
+      return new Promise((resolve, reject) => {
+        if (maxRedirects < 0) return reject(new Error("Too many redirects while downloading .NET SDK"));
+        const parsed = new URL(url);
+        const client = parsed.protocol === "https:" ? https2 : http4;
+        const req = client.get(url, (res) => {
+          if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+            let redirectUrl = res.headers.location;
+            if (!redirectUrl.startsWith("http")) {
+              redirectUrl = new URL(redirectUrl, url).href;
+            }
+            res.resume();
+            return downloadFileWithRedirect(redirectUrl, destPath, onProgress, maxRedirects - 1).then(resolve).catch(reject);
+          }
+          if (res.statusCode !== 200) {
+            res.resume();
+            return reject(new Error(`Download failed with HTTP ${res.statusCode} ${res.statusMessage}`));
+          }
+          const totalBytes = parseInt(res.headers["content-length"] || "0", 10);
+          let downloadedBytes = 0;
+          let lastReportTime = Date.now();
+          let lastBytes = 0;
+          const fileStream = fs3.createWriteStream(destPath);
+          res.on("data", (chunk) => {
+            downloadedBytes += chunk.length;
+            const now = Date.now();
+            if (now - lastReportTime >= 350) {
+              const elapsedSec = (now - lastReportTime) / 1e3;
+              const deltaBytes = downloadedBytes - lastBytes;
+              const bps = elapsedSec > 0 ? deltaBytes / elapsedSec : 0;
+              const speed = bps > 1048576 ? `${(bps / 1048576).toFixed(1)} MB/s` : `${(bps / 1024).toFixed(0)} KB/s`;
+              const percent = totalBytes > 0 ? Math.min(100, Math.round(downloadedBytes / totalBytes * 100)) : 0;
+              if (onProgress) {
+                onProgress({
+                  percent,
+                  downloadedBytes,
+                  totalBytes,
+                  downloadedMB: (downloadedBytes / 1048576).toFixed(1),
+                  totalMB: (totalBytes / 1048576).toFixed(1),
+                  speed
+                });
+              }
+              lastReportTime = now;
+              lastBytes = downloadedBytes;
+            }
+          });
+          res.pipe(fileStream);
+          fileStream.on("finish", () => {
+            fileStream.close(() => resolve({ destPath, totalBytes: downloadedBytes }));
+          });
+          fileStream.on("error", (err) => {
+            try {
+              fs3.unlinkSync(destPath);
+            } catch (_) {
+            }
+            reject(err);
+          });
+        });
+        activeDownloadRequest = req;
+        req.on("error", (err) => {
+          activeDownloadRequest = null;
+          try {
+            fs3.unlinkSync(destPath);
+          } catch (_) {
+          }
+          reject(err);
+        });
+        req.setTimeout(6e4, () => {
+          req.destroy();
+          activeDownloadRequest = null;
+          try {
+            fs3.unlinkSync(destPath);
+          } catch (_) {
+          }
+          reject(new Error("Download connection timed out. Please check your internet connection."));
+        });
+      });
+    }
+    async function startInstallDotnet(io2 = null, onReadyCallback = null) {
+      if (state.stage === "downloading" || state.stage === "installing") {
+        return { ...state };
+      }
+      const current = checkDotnetStatus();
+      if (current.installed) {
+        state.stage = "completed";
+        state.percent = 100;
+        state.message = `.NET SDK ${current.version} is already installed and ready.`;
+        if (io2) io2.emit("dotnet_setup_progress", { ...state });
+        return { ...state };
+      }
+      const tempInstallerPath = path2.join(os3.tmpdir(), `verity_dotnet_sdk_${Date.now()}.exe`);
+      try {
+        state.stage = "downloading";
+        state.percent = 0;
+        state.downloadedMB = "0.0";
+        state.totalMB = "0.0";
+        state.speed = "Connecting...";
+        state.error = null;
+        state.message = "Connecting to Microsoft CDN for official .NET 8 SDK...";
+        if (io2) io2.emit("dotnet_setup_progress", { ...state });
+        console.log(`[DotnetManager] Starting .NET SDK download from ${DOTNET_INSTALLER_URL}...`);
+        await downloadFileWithRedirect(DOTNET_INSTALLER_URL, tempInstallerPath, (progress) => {
+          state.percent = progress.percent;
+          state.downloadedMB = progress.downloadedMB;
+          state.totalMB = progress.totalMB;
+          state.speed = progress.speed;
+          state.message = `Downloading Microsoft .NET SDK (${progress.downloadedMB} / ${progress.totalMB} MB)...`;
+          if (io2) io2.emit("dotnet_setup_progress", { ...state });
+        });
+        activeDownloadRequest = null;
+        state.stage = "installing";
+        state.percent = 100;
+        state.speed = "";
+        state.message = "Running silent installation... Please approve the Windows Security (UAC) prompt if prompted.";
+        if (io2) io2.emit("dotnet_setup_progress", { ...state });
+        console.log(`[DotnetManager] Download complete (${tempInstallerPath}). Launching silent installer...`);
+        await new Promise((resolve, reject) => {
+          const escapedPath = tempInstallerPath.replace(/"/g, '`"');
+          const psCommand = `Start-Process -FilePath "${escapedPath}" -ArgumentList "/install", "/quiet", "/norestart" -Verb RunAs -Wait -PassThru`;
+          exec2(`powershell -NoProfile -ExecutionPolicy Bypass -Command "${psCommand}"`, { windowsHide: true }, (err, stdout, stderr) => {
+            if (err) {
+              if (err.message && (err.message.includes("canceled by the user") || err.code === 1223)) {
+                return reject(new Error("Installation was cancelled by user (administrator permission was not granted)."));
+              }
+              return reject(new Error(`Installer execution failed: ${err.message}`));
+            }
+            resolve();
+          });
+        });
+        try {
+          if (fs3.existsSync(tempInstallerPath)) fs3.unlinkSync(tempInstallerPath);
+        } catch (_) {
+        }
+        ensureDotnetInPath();
+        const verified = checkDotnetStatus();
+        if (verified.installed) {
+          state.stage = "completed";
+          state.installed = true;
+          state.version = verified.version;
+          state.targetFramework = verified.targetFramework;
+          state.error = null;
+          state.message = `Successfully installed Microsoft .NET SDK ${verified.version}! C# Compiler is ready.`;
+          console.log(`[DotnetManager] Verified: .NET SDK ${verified.version} (${verified.targetFramework}) ready.`);
+          if (typeof onReadyCallback === "function") {
+            try {
+              onReadyCallback(verified);
+            } catch (_) {
+            }
+          }
+          if (io2) io2.emit("dotnet_setup_progress", { ...state });
+          return { ...state };
+        } else {
+          throw new Error("Installer completed, but dotnet command was not found in Program Files. A computer restart may be required.");
+        }
+      } catch (err) {
+        console.error("[DotnetManager] Installation error:", err.message);
+        state.stage = "error";
+        state.error = err.message;
+        state.message = err.message;
+        activeDownloadRequest = null;
+        try {
+          if (fs3.existsSync(tempInstallerPath)) fs3.unlinkSync(tempInstallerPath);
+        } catch (_) {
+        }
+        if (io2) io2.emit("dotnet_setup_progress", { ...state });
+        return { ...state };
+      }
+    }
+    function cancelInstallDotnet(io2 = null) {
+      if (activeDownloadRequest) {
+        try {
+          activeDownloadRequest.destroy();
+        } catch (_) {
+        }
+        activeDownloadRequest = null;
+      }
+      state.stage = "idle";
+      state.percent = 0;
+      state.error = "Installation cancelled.";
+      state.message = "Installation was cancelled.";
+      if (io2) io2.emit("dotnet_setup_progress", { ...state });
+      return { ...state };
+    }
+    function getDotnetState() {
+      return { ...state };
+    }
+    module2.exports = {
+      checkDotnetStatus,
+      startInstallDotnet,
+      cancelInstallDotnet,
+      getDotnetState,
+      ensureDotnetInPath
+    };
+  }
+});
+
 // server/server.js
 var path = require("path");
 var fs2 = require("fs");
@@ -96592,6 +96860,7 @@ var jwt = require_jsonwebtoken();
 var crypto2 = require("crypto");
 var { sendOtpEmail } = require_emailService();
 var db = require_db4();
+var dotnetManager = require_dotnetManager();
 var DATA_DIR = process.env.DATA_DIR || __dirname;
 var app = express();
 app.set("trust proxy", 1);
@@ -98060,7 +98329,26 @@ async function checkAssignmentAccess(req, assignmentId) {
   if (!cw) {
     cw = await db.get("SELECT classroom_id FROM classwork WHERE CAST(id AS TEXT) = ?", String(assignmentId));
   }
-  if (!cw) return false;
+  if (!cw) {
+    if (roleLower === "student") {
+      const studentEmail = (req.user.email || "").trim().toLowerCase();
+      const studentName = (req.user.name || "").trim().toLowerCase();
+      const studentId = String(req.user.id || "");
+      const hasSub = await db.get(
+        `SELECT 1 FROM submissions 
+                 WHERE (assignment_id = ? OR CAST(assignment_id AS TEXT) = ?)
+                   AND (student_name = ? OR LOWER(student_name) = ? OR LOWER(student_name) = ? OR student_name = ?)`,
+        assignmentId,
+        String(assignmentId),
+        req.user.name || "",
+        studentName,
+        studentEmail,
+        studentId
+      ).catch(() => null);
+      if (hasSub) return true;
+    }
+    return false;
+  }
   return checkClassroomAccess(req, cw.classroom_id);
 }
 app.get("/classwork", authenticateToken, async (req, res) => {
@@ -98509,16 +98797,59 @@ app.delete("/submissions/:assignmentId/:studentName", authenticateToken, require
     }
     const studentName = decodeURIComponent(req.params.studentName);
     if (req.user.role === "Student") {
-      const isSelf = studentName === req.user.name || studentName === req.user.email || studentName.toLowerCase() === (req.user.name || "").toLowerCase() || studentName.toLowerCase() === (req.user.email || "").toLowerCase();
+      const sLower2 = (studentName || "").trim().toLowerCase();
+      const uNameLower2 = (req.user.name || "").trim().toLowerCase();
+      const uEmailLower2 = (req.user.email || "").trim().toLowerCase();
+      const uId2 = String(req.user.id || "");
+      let isSelf = sLower2 === uNameLower2 || sLower2 === uEmailLower2 || studentName === uId2 || sLower2 === uId2;
+      if (!isSelf && (req.user.id || req.user.email)) {
+        const enr = await db.get(
+          `SELECT 1 FROM enrollments 
+                     WHERE (student_id = ? OR CAST(student_id AS TEXT) = ? OR LOWER(student_email) = ?)
+                       AND (LOWER(student_name) = ? OR student_id = ? OR CAST(student_id AS TEXT) = ?)`,
+          req.user.id,
+          uId2,
+          uEmailLower2,
+          sLower2,
+          studentName,
+          studentName
+        ).catch(() => null);
+        if (enr) isSelf = true;
+      }
+      if (!isSelf && (req.user.name || req.user.email || req.user.id)) {
+        const sub = await db.get(
+          `SELECT 1 FROM submissions 
+                     WHERE (assignment_id = ? OR CAST(assignment_id AS TEXT) = ?)
+                       AND (LOWER(student_name) = ? OR student_name = ? OR LOWER(student_name) = ? OR LOWER(student_name) = ?)`,
+          req.params.assignmentId,
+          String(req.params.assignmentId),
+          sLower2,
+          studentName,
+          uNameLower2,
+          uEmailLower2
+        ).catch(() => null);
+        if (sub) isSelf = true;
+      }
       if (!isSelf) {
         return res.status(403).json({ message: "Access denied: You can only delete your own submission." });
       }
     }
+    const sLower = (studentName || "").trim().toLowerCase();
+    const uNameLower = (req.user?.name || "").trim().toLowerCase();
+    const uEmailLower = (req.user?.email || "").trim().toLowerCase();
+    const uId = String(req.user?.id || "");
     await db.run(
-      "DELETE FROM submissions WHERE assignment_id = ? AND (student_name = ? OR LOWER(student_name) = LOWER(?))",
+      `DELETE FROM submissions 
+             WHERE (assignment_id = ? OR CAST(assignment_id AS TEXT) = ?)
+               AND (student_name = ? OR LOWER(student_name) = ? OR LOWER(student_name) = ? OR LOWER(student_name) = ? OR student_name = ? OR student_name = ?)`,
       req.params.assignmentId,
+      String(req.params.assignmentId),
       studentName,
-      studentName
+      sLower,
+      uNameLower,
+      uEmailLower,
+      req.user?.name || "",
+      uId
     );
     res.status(200).json({ message: "Submission deleted" });
   } catch (e2) {
@@ -98879,15 +99210,16 @@ app.get("/submission-counts", authenticateToken, requireRole("Teacher", "Admin")
     let studentCount = 0;
     const cid = req.query.classroomId;
     if (cid && cid !== "default" && cid !== "all") {
+      const numCid = !isNaN(Number(cid)) ? Number(cid) : 0;
       const enrolledRow = await db.get(`
-                SELECT COUNT(DISTINCT COALESCE(student_id, student_email, student_name)) as c 
+                SELECT COUNT(DISTINCT COALESCE(CAST(student_id AS TEXT), student_email, student_name)) as c 
                 FROM enrollments 
                 WHERE classroom_id = ? OR CAST(classroom_id AS TEXT) = CAST(? AS TEXT)
-            `, cid, String(cid));
+            `, numCid, String(cid));
       studentCount = enrolledRow ? Number(enrolledRow.c) : 0;
     } else if (req.user?.role !== "Admin") {
       const enrolledRow = await db.get(`
-                SELECT COUNT(DISTINCT COALESCE(e.student_id, e.student_email, e.student_name)) as c 
+                SELECT COUNT(DISTINCT COALESCE(CAST(e.student_id AS TEXT), e.student_email, e.student_name)) as c 
                 FROM enrollments e
                 JOIN classrooms cr ON (e.classroom_id = cr.id OR CAST(e.classroom_id AS TEXT) = CAST(cr.id AS TEXT))
                 WHERE (cr.instructor_email IS NOT NULL AND cr.instructor_email != '' AND LOWER(cr.instructor_email) = ?)
@@ -98976,9 +99308,44 @@ app.get("/notifications", authenticateToken, async (req, res) => {
     res.status(500).json({ message: e2.message });
   }
 });
+app.get("/api/system/dotnet-status", (req, res) => {
+  try {
+    const status = dotnetManager.checkDotnetStatus(OFFLINE_DOTNET_ENV);
+    res.status(200).json(status);
+  } catch (e2) {
+    res.status(500).json({ installed: false, error: e2.message, stage: "idle" });
+  }
+});
+app.post("/api/system/install-dotnet", async (req, res) => {
+  try {
+    dotnetManager.startInstallDotnet(io, (verified) => {
+      resetDotnetCache();
+      ensureBaseTemplate();
+    }).catch((err) => {
+      console.error("[server] Dotnet auto-install error:", err.message);
+    });
+    res.status(200).json(dotnetManager.getDotnetState());
+  } catch (e2) {
+    res.status(500).json({ message: e2.message });
+  }
+});
+app.post("/api/system/cancel-dotnet-install", (req, res) => {
+  try {
+    const status = dotnetManager.cancelInstallDotnet(io);
+    res.status(200).json(status);
+  } catch (e2) {
+    res.status(500).json({ message: e2.message });
+  }
+});
 var COMPILER_BASE_DIR = path.join(os2.tmpdir(), "verity_compiler_base_template");
 var baseTemplatePromise = null;
 var sessionWorkspaces = /* @__PURE__ */ new Map();
+function resetDotnetCache() {
+  cachedDotnetTargetFramework = null;
+  cachedRoslynConfig = null;
+  baseTemplatePromise = null;
+  console.log("\u26A1 Verity Compiler: Invalidate and reset local .NET SDK cache");
+}
 var OFFLINE_DOTNET_ENV = {
   ...process.env,
   DOTNET_CLI_TELEMETRY_OPTOUT: "1",
@@ -98999,6 +99366,7 @@ var OFFLINE_NUGET_CONFIG = `<?xml version="1.0" encoding="utf-8"?>
 `;
 var cachedDotnetTargetFramework = null;
 function getDotnetTargetFramework() {
+  dotnetManager.ensureDotnetInPath();
   if (cachedDotnetTargetFramework) return cachedDotnetTargetFramework;
   try {
     const output = execSync("dotnet --version", { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], env: OFFLINE_DOTNET_ENV }).trim();
@@ -99337,6 +99705,20 @@ var currentInstruction = "";
 var activeStudents = {};
 io.on("connection", (socket) => {
   console.log("\u{1F7E2} Student Workspace Connected: " + socket.id);
+  socket.on("check_dotnet_status", (cb) => {
+    const s2 = dotnetManager.checkDotnetStatus(OFFLINE_DOTNET_ENV);
+    if (typeof cb === "function") cb(s2);
+    else socket.emit("dotnet_setup_progress", s2);
+  });
+  socket.on("install_dotnet", async () => {
+    await dotnetManager.startInstallDotnet(io, (verified) => {
+      resetDotnetCache();
+      ensureBaseTemplate();
+    });
+  });
+  socket.on("cancel_dotnet_install", () => {
+    dotnetManager.cancelInstallDotnet(io);
+  });
   let activeProcess = null;
   const authenticateSocket = (targetSocket, token, userData) => {
     if (targetSocket.user) return targetSocket.user;
@@ -99574,6 +99956,12 @@ io.on("connection", (socket) => {
         socket.emit("terminal_output", `
 [Compiler Error: Unsupported language "${language}". Verity Compiler strictly compiles C# (.NET SDK) only.]
 `);
+        return socket.emit("process_exit", { code: 1 });
+      }
+      const dotnetStatus = dotnetManager.checkDotnetStatus(OFFLINE_DOTNET_ENV);
+      if (!dotnetStatus.installed) {
+        socket.emit("terminal_output", "\n[Error: Microsoft .NET SDK is not installed on this machine.]\n[Verity C# Compiler requires Microsoft .NET SDK. Please reinstall The Verity and select the Microsoft .NET SDK option in the installer, or download it from https://dotnet.microsoft.com/download/dotnet/8.0]\n");
+        socket.emit("dotnet_missing", { error: "DOTNET_NOT_INSTALLED" });
         return socket.emit("process_exit", { code: 1 });
       }
       const studentKey = socket.user?.id ? `u_${socket.user.id}` : socket.user?.email ? `e_${socket.user.email.replace(/[^a-zA-Z0-9]/g, "_")}` : `s_${socket.id.replace(/[^a-zA-Z0-9]/g, "")}`;
@@ -100225,21 +100613,33 @@ io.on("connection", (socket) => {
       activeStudents[studentKey] = { ...activeStudents[studentKey], status: "Active" };
     }
     try {
+      const sLower = String(studentName || "").trim().toLowerCase();
+      const uNameLower = String(socket.user?.name || "").trim().toLowerCase();
+      const uEmailLower = String(socket.user?.email || "").trim().toLowerCase();
+      const uId = String(socket.user?.id || "");
+      const passedId = data.studentId != null ? String(data.studentId) : "";
       await db.run(
-        "DELETE FROM submissions WHERE assignment_id = ? AND (student_name = ? OR student_name = ? OR LOWER(student_name) = LOWER(?) OR LOWER(student_name) = LOWER(?))",
+        `DELETE FROM submissions 
+                 WHERE (assignment_id = ? OR CAST(assignment_id AS TEXT) = ?)
+                   AND (student_name = ? OR LOWER(student_name) = ? OR LOWER(student_name) = ? OR LOWER(student_name) = ? OR student_name = ? OR student_name = ? OR student_name = ?)`,
         assignmentId,
+        String(assignmentId),
         studentName,
-        studentName,
-        studentName,
-        studentName
+        sLower,
+        uNameLower,
+        uEmailLower,
+        socket.user?.name || "",
+        uId,
+        passedId
       );
     } catch (e2) {
       console.error(e2);
     }
+    const safeStudentId = String(studentId || "");
     const roomName = `classroom:${classroomId}:assignment:${assignmentId}`;
-    socket.to(roomName).emit("teacher_student_unsubmitted", { studentName, assignmentId, studentId });
-    socket.emit("student_unsubmitted", { studentName, assignmentId, studentId });
-    socket.broadcast.emit("student_unsubmitted", { studentName, assignmentId, studentId });
+    socket.to(roomName).emit("teacher_student_unsubmitted", { studentName, assignmentId, studentId: safeStudentId });
+    socket.emit("student_unsubmitted", { studentName, assignmentId, studentId: safeStudentId });
+    socket.broadcast.emit("student_unsubmitted", { studentName, assignmentId, studentId: safeStudentId });
   });
   socket.on("student_terminal_update", (data) => {
     socket.broadcast.emit("teacher_terminal_update", data);

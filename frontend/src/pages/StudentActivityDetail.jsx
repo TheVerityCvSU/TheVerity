@@ -13,6 +13,7 @@ import AttachmentCard from '../components/AttachmentCard';
 import { localStore } from '../services/localStore';
 import { getClassroomStorageKey, getCachedClassrooms, saveCachedClassrooms } from '../utils/classroomUtils';
 import { getStudentGrade, isStudentGraded, formatGradeScore } from '../utils/gradeUtils';
+import { formatFullDate } from '../utils/dateUtils';
 
 const getStorageKey = (user) => getClassroomStorageKey(user, 'student');
 
@@ -382,7 +383,7 @@ export default function StudentActivityDetail({
       classroomId: classroomId,
       finalCode: currentCode,
       codeHistory: resolvedHistory,
-      submittedAt: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+      submittedAt: new Date().toISOString()
     };
 
     const allKeys = [
@@ -564,10 +565,8 @@ export default function StudentActivityDetail({
           alignItems: 'center', 
           justifyContent: 'center',
           gap: '8px',
-          opacity: isHeaderHovered ? 1 : 0,
-          pointerEvents: isHeaderHovered ? 'auto' : 'none',
-          transition: 'opacity 0.3s ease, transform 0.3s ease',
-          transform: isHeaderHovered ? 'translateY(0)' : 'translateY(-10px)',
+          opacity: 1,
+          pointerEvents: 'auto',
           position: 'relative'
         }}>
           <div style={{
@@ -810,7 +809,7 @@ export default function StudentActivityDetail({
                               Code Submitted
                             </span>
                             <span style={{ fontSize: '0.8rem', color: isDark ? '#9AA0A6' : '#64748b', marginLeft: '10px' }}>
-                              {submission?.submittedAt ? `Turned in on ${submission.submittedAt}` : 'Turned in'}
+                              {submission?.submittedAt ? `Turned in on ${formatFullDate(submission.submittedAt)}` : 'Turned in'}
                             </span>
                             {displayScore !== null && (
                               <span style={{ fontSize: '0.8rem', color: '#10b981', marginLeft: '10px', fontWeight: 'bold' }}>

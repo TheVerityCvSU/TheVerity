@@ -15,33 +15,7 @@ import ImagePreviewModal from '../components/ImagePreviewModal';
 import VideoPreviewModal from '../components/VideoPreviewModal';
 import VideoAttachment from '../components/VideoAttachment';
 import { getStudentGrade, isStudentGraded, formatGradeScore } from '../utils/gradeUtils';
-
-const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-const formatShortDate = (value) => {
-  if (!value) return '';
-  let d;
-  if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}/.test(value)) {
-    const parts = value.split('T')[0].split('-').map(Number);
-    d = new Date(parts[0], parts[1] - 1, parts[2]);
-  } else {
-    d = new Date(value);
-  }
-  if (isNaN(d.getTime())) return '';
-  return `${MONTHS[d.getMonth()]} ${d.getDate()}`;
-};
-
-const formatFullDate = (value) => {
-  if (!value) return '';
-  const d = new Date(value);
-  if (isNaN(d.getTime())) return String(value);
-  return d.toLocaleDateString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit'
-  });
-};
+import { formatShortDate, formatFullDate } from '../utils/dateUtils';
 
 export default function TeacherGrading({
   classroom,
@@ -568,16 +542,14 @@ export default function TeacherGrading({
           <span style={styles.instructorTag}>Instructor</span>
         </div>
 
-        {/* Center Hover Navigation */}
+        {/* Center Navigation */}
         <div style={{
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
           gap: '8px',
-          opacity: isHeaderHovered ? 1 : 0,
-          pointerEvents: isHeaderHovered ? 'auto' : 'none',
-          transition: 'opacity 0.3s ease, transform 0.3s ease',
-          transform: isHeaderHovered ? 'translateY(0)' : 'translateY(-10px)',
+          opacity: 1,
+          pointerEvents: 'auto',
           position: 'relative'
         }}>
           <div style={{

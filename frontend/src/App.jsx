@@ -245,7 +245,8 @@ export default function App() {
   };
 
   const navigateTo = (targetScreen, context = {}) => {
-    if (targetScreen === currentScreen && !context.force) return;
+    const isSameScreen = targetScreen === currentScreen;
+    if (isSameScreen && !context.force && !context.classroom && !context.assignment) return;
 
     const snapshot = {
       screen: currentScreen,
@@ -840,8 +841,10 @@ export default function App() {
           {currentScreen === 'classroom_view' && (
             <ProtectedRoute currentUser={currentUser} setCurrentScreen={setCurrentScreen}>
               <ClassroomView
+                key={activeClassroom?.id ? `student_class_${activeClassroom.id}` : 'classroom_view'}
                 onEnterClassroom={(classroom) => {
-                  navigateTo('classroom_view', { classroom });
+                  setActiveClassroom(classroom);
+                  navigateTo('classroom_view', { classroom, force: true });
                 }}
                 socket={socket}
                 currentUser={currentUser}
@@ -935,8 +938,10 @@ export default function App() {
           {currentScreen === 'teacher_classwork' && (
             <ProtectedRoute currentUser={currentUser} setCurrentScreen={setCurrentScreen}>
               <TeacherClasswork
+                key={activeClassroom?.id ? `teacher_class_${activeClassroom.id}` : 'teacher_classwork'}
                 onEnterClassroom={(classroom) => {
-                  navigateTo('teacher_classwork', { classroom });
+                  setActiveClassroom(classroom);
+                  navigateTo('teacher_classwork', { classroom, force: true });
                 }}
                 socket={socket}
                 classroom={activeClassroom}

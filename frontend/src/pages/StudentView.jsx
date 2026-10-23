@@ -11,6 +11,7 @@ import ImagePreviewModal from '../components/ImagePreviewModal';
 import VideoPreviewModal from '../components/VideoPreviewModal';
 import VideoAttachment from '../components/VideoAttachment';
 import AttachmentCard from '../components/AttachmentCard';
+import { openDotnetSetup } from '../utils/dotnetHelper';
 
 // Strip whitespace so editor auto-indent on paste doesn't cause false mismatches.
 const normalize = (text) => (text || "").replace(/\s+/g, '');
@@ -1298,12 +1299,17 @@ export default function StudentView({ socket, currentUser, username, assignment,
       }));
     };
 
+    const handleDotnetMissing = () => {
+      // Handled via compiler terminal_output message
+    };
+
     socket.on('terminal_output', handleOutput);
     socket.on('program_started', handleStarted);
     socket.on('process_exit', handleExit);
     socket.on('compiler_diagnostics', handleDiagnostics);
     socket.on('test_cases_results', handleTestResults);
     socket.on('test_case_result', handleSingleTestResult);
+    socket.on('dotnet_missing', handleDotnetMissing);
 
     if (localSocket) {
       localSocket.on('terminal_output', handleOutput);
@@ -1312,6 +1318,7 @@ export default function StudentView({ socket, currentUser, username, assignment,
       localSocket.on('compiler_diagnostics', handleDiagnostics);
       localSocket.on('test_cases_results', handleTestResults);
       localSocket.on('test_case_result', handleSingleTestResult);
+      localSocket.on('dotnet_missing', handleDotnetMissing);
     }
 
     return () => {
@@ -1321,6 +1328,7 @@ export default function StudentView({ socket, currentUser, username, assignment,
       socket.off('compiler_diagnostics', handleDiagnostics);
       socket.off('test_cases_results', handleTestResults);
       socket.off('test_case_result', handleSingleTestResult);
+      socket.off('dotnet_missing', handleDotnetMissing);
       if (localSocket) {
         localSocket.off('terminal_output', handleOutput);
         localSocket.off('program_started', handleStarted);
@@ -1328,6 +1336,7 @@ export default function StudentView({ socket, currentUser, username, assignment,
         localSocket.off('compiler_diagnostics', handleDiagnostics);
         localSocket.off('test_cases_results', handleTestResults);
         localSocket.off('test_case_result', handleSingleTestResult);
+        localSocket.off('dotnet_missing', handleDotnetMissing);
       }
     };
   }, [socket, localSocket, safeUsername, classroom, assignment]);
@@ -1534,7 +1543,7 @@ export default function StudentView({ socket, currentUser, username, assignment,
       classroomId: classroom?.id ?? null,
       finalCode: code,
       codeHistory: subHistory,
-      submittedAt: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+      submittedAt: new Date().toISOString()
     };
     getSubKeys().forEach(k => {
       try { localStorage.setItem(k, JSON.stringify(subRecord)); } catch { }

@@ -6,6 +6,7 @@ import {
   CheckSquare, Plus, PlayCircle, X
 } from 'lucide-react';
 import { useDarkMode } from '../hooks/useDarkMode';
+import { openDotnetSetup } from '../utils/dotnetHelper';
 
 const DEFAULT_CSHARP = 'using System;\n\nclass Program {\n    static void Main(string[] args) {\n        Console.WriteLine("Hello, World!");\n    }\n}';
 
@@ -82,6 +83,15 @@ export default function CompilerView() {
         socketRef.current = null;
       }
     };
+  }, []);
+
+  // Listen for background .NET SDK installation completions
+  useEffect(() => {
+    const handleDotnetReady = (e) => {
+      addLine(`\n⚡ Microsoft .NET SDK ${e.detail?.version || '8.0'} installed successfully — C# Compiler is ready.\n`, 'out');
+    };
+    window.addEventListener('verity:dotnet-installed', handleDotnetReady);
+    return () => window.removeEventListener('verity:dotnet-installed', handleDotnetReady);
   }, []);
 
   // Relayout when terminal changes height
@@ -252,6 +262,11 @@ export default function CompilerView() {
 
       socket.on('error', (err) => {
         addLine(`Error: ${err?.message || 'Socket error'}`, 'err');
+        cleanupRun();
+      });
+
+      socket.on('dotnet_missing', () => {
+        addLine('\n[Error: Microsoft .NET SDK is not installed on this machine.]\n[Please run the Verity installer and select the Microsoft .NET SDK option, or download it from https://dotnet.microsoft.com/download/dotnet/8.0]\n', 'err');
         cleanupRun();
       });
 

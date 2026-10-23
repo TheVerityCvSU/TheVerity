@@ -17,22 +17,31 @@ if (typeof window !== 'undefined') {
   try {
     localStorage.removeItem('verity_server_url');
     const cloud = localStorage.getItem('verity_cloud_url');
-    if (cloud && (cloud.includes(':3001') || cloud.includes('vercel.app'))) {
+    if (cloud && (cloud.includes('localhost:3001') || cloud.includes('127.0.0.1:3001') || cloud.includes('vercel.app'))) {
       localStorage.removeItem('verity_cloud_url');
     }
   } catch (_) {}
 }
 
 export const getCloudUrl = () => {
+  const isWebHosted = typeof window !== 'undefined' && 
+                      window.location && 
+                      window.location.hostname !== 'localhost' && 
+                      window.location.hostname !== '127.0.0.1' &&
+                      !window.electronAPI;
+
   if (typeof window !== 'undefined') {
     const custom = localStorage.getItem('verity_cloud_url');
-    if (custom && custom.trim() && !custom.includes(':3001') && !custom.includes('vercel.app')) {
+    if (custom && custom.trim() && !custom.includes('localhost:3001') && !custom.includes('127.0.0.1:3001') && !custom.includes('vercel.app')) {
       return custom.trim().replace(/\/$/, '');
     }
   }
 
   const envUrl = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
-  if (envUrl && !envUrl.includes(':3001') && !envUrl.includes('localhost') && !envUrl.includes('127.0.0.1')) {
+  if (envUrl) {
+    if (isWebHosted && (envUrl.includes('localhost') || envUrl.includes('127.0.0.1'))) {
+      return DEFAULT_CLOUD_API_URL;
+    }
     return envUrl;
   }
 

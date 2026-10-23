@@ -31,6 +31,7 @@ const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const { sendOtpEmail } = require('./utils/emailService');
 const db = require('./db/index.js');
+const dotnetManager = require('./dotnetManager');
 
 const DATA_DIR = process.env.DATA_DIR || __dirname;
 
@@ -2613,15 +2614,16 @@ app.get('/submission-counts', authenticateToken, requireRole('Teacher', 'Admin')
         let studentCount = 0;
         const cid = req.query.classroomId;
         if (cid && cid !== 'default' && cid !== 'all') {
+            const numCid = !isNaN(Number(cid)) ? Number(cid) : 0;
             const enrolledRow = await db.get(`
-                SELECT COUNT(DISTINCT COALESCE(student_id, student_email, student_name)) as c 
+                SELECT COUNT(DISTINCT COALESCE(CAST(student_id AS TEXT), student_email, student_name)) as c 
                 FROM enrollments 
                 WHERE classroom_id = ? OR CAST(classroom_id AS TEXT) = CAST(? AS TEXT)
-            `, cid, String(cid));
+            `, numCid, String(cid));
             studentCount = enrolledRow ? Number(enrolledRow.c) : 0;
         } else if (req.user?.role !== 'Admin') {
             const enrolledRow = await db.get(`
-                SELECT COUNT(DISTINCT COALESCE(e.student_id, e.student_email, e.student_name)) as c 
+                SELECT COUNT(DISTINCT COALESCE(CAST(e.student_id AS TEXT), e.student_email, e.student_name)) as c 
                 FROM enrollments e
                 JOIN classrooms cr ON (e.classroom_id = cr.id OR CAST(e.classroom_id AS TEXT) = CAST(cr.id AS TEXT))
                 WHERE (cr.instructor_email IS NOT NULL AND cr.instructor_email != '' AND LOWER(cr.instructor_email) = ?)
@@ -2725,10 +2727,51 @@ app.get('/notifications', authenticateToken, async (req, res) => {
     }
 });
 
+// --- .NET SDK MANAGER (Option 3: In-App Web Bootstrap Setup) ---
+app.get('/api/system/dotnet-status', (req, res) => {
+    try {
+        const status = dotnetManager.checkDotnetStatus(OFFLINE_DOTNET_ENV);
+        res.status(200).json(status);
+    } catch (e) {
+        res.status(500).json({ installed: false, error: e.message, stage: 'idle' });
+    }
+});
+
+app.post('/api/system/install-dotnet', async (req, res) => {
+    try {
+        // Trigger automated download & silent install in the background
+        dotnetManager.startInstallDotnet(io, (verified) => {
+            resetDotnetCache();
+            ensureBaseTemplate();
+        }).catch(err => {
+            console.error('[server] Dotnet auto-install error:', err.message);
+        });
+        res.status(200).json(dotnetManager.getDotnetState());
+    } catch (e) {
+        res.status(500).json({ message: e.message });
+    }
+});
+
+app.post('/api/system/cancel-dotnet-install', (req, res) => {
+    try {
+        const status = dotnetManager.cancelInstallDotnet(io);
+        res.status(200).json(status);
+    } catch (e) {
+        res.status(500).json({ message: e.message });
+    }
+});
+
 // --- REAL-TIME C# COMPILER & PROCTORING (The Brain) ---
 const COMPILER_BASE_DIR = path.join(os.tmpdir(), 'verity_compiler_base_template');
 let baseTemplatePromise = null;
 const sessionWorkspaces = new Map();
+
+function resetDotnetCache() {
+    cachedDotnetTargetFramework = null;
+    cachedRoslynConfig = null;
+    baseTemplatePromise = null;
+    console.log('⚡ Verity Compiler: Invalidate and reset local .NET SDK cache');
+}
 
 const OFFLINE_DOTNET_ENV = {
     ...process.env,
@@ -2754,6 +2797,7 @@ const OFFLINE_NUGET_CONFIG = `<?xml version="1.0" encoding="utf-8"?>
 
 let cachedDotnetTargetFramework = null;
 function getDotnetTargetFramework() {
+    dotnetManager.ensureDotnetInPath();
     if (cachedDotnetTargetFramework) return cachedDotnetTargetFramework;
     try {
         const output = execSync('dotnet --version', { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], env: OFFLINE_DOTNET_ENV }).trim();
@@ -3125,6 +3169,24 @@ const activeStudents = {};
 io.on('connection', (socket) => {
     console.log('🟢 Student Workspace Connected: ' + socket.id);
 
+    // .NET SDK status & setup socket listeners
+    socket.on('check_dotnet_status', (cb) => {
+        const s = dotnetManager.checkDotnetStatus(OFFLINE_DOTNET_ENV);
+        if (typeof cb === 'function') cb(s);
+        else socket.emit('dotnet_setup_progress', s);
+    });
+
+    socket.on('install_dotnet', async () => {
+        await dotnetManager.startInstallDotnet(io, (verified) => {
+            resetDotnetCache();
+            ensureBaseTemplate();
+        });
+    });
+
+    socket.on('cancel_dotnet_install', () => {
+        dotnetManager.cancelInstallDotnet(io);
+    });
+
     let activeProcess = null;
 
     // Resilient socket authentication (JWT verified -> unverified decode fallback for offline/cross-env -> payload user fallback)
@@ -3393,6 +3455,14 @@ io.on('connection', (socket) => {
         const { code, extraFiles = [], language } = data || {};
         if (language && !['csharp', 'cs', 'c#'].includes(String(language).toLowerCase())) {
             socket.emit('terminal_output', `\n[Compiler Error: Unsupported language "${language}". Verity Compiler strictly compiles C# (.NET SDK) only.]\n`);
+            return socket.emit('process_exit', { code: 1 });
+        }
+
+        // Verify .NET SDK is available on host machine
+        const dotnetStatus = dotnetManager.checkDotnetStatus(OFFLINE_DOTNET_ENV);
+        if (!dotnetStatus.installed) {
+            socket.emit('terminal_output', "\n[Error: Microsoft .NET SDK is not installed on this machine.]\n[Verity C# Compiler requires Microsoft .NET SDK. Please reinstall The Verity and select the Microsoft .NET SDK option in the installer, or download it from https://dotnet.microsoft.com/download/dotnet/8.0]\n");
+            socket.emit('dotnet_missing', { error: 'DOTNET_NOT_INSTALLED' });
             return socket.emit('process_exit', { code: 1 });
         }
 

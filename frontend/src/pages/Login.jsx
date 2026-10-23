@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { useGoogleLogin } from '@react-oauth/google';
-import { Moon, Sun, Loader2, Construction, AlertTriangle, Eye, EyeOff } from 'lucide-react';
+import { Moon, Sun, Loader2, Construction, AlertTriangle, Eye, EyeOff, Server } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { apiFetch } from '../utils/api';
 import { useDarkMode } from '../hooks/useDarkMode';
+import ServerConfigModal from '../components/ServerConfigModal';
 import { io } from 'socket.io-client';
 
 export default function Login({ onLogin, onGoToRegister }) {
@@ -15,6 +16,7 @@ export default function Login({ onLogin, onGoToRegister }) {
   const [isGoogleLoading, setIsGoogleLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [maintenance, setMaintenance] = useState({ enabled: false, message: '' });
+  const [showServerModal, setShowServerModal] = useState(false);
 
   // Check maintenance status on mount
   useEffect(() => {
@@ -316,6 +318,37 @@ export default function Login({ onLogin, onGoToRegister }) {
         </AnimatePresence>
       </motion.button>
 
+      {/* Server / Host IP Configuration Button */}
+      <motion.button
+        initial={{ opacity: 0, x: 20 }}
+        animate={{ opacity: 1, x: 0 }}
+        transition={{ duration: 0.5, ease: 'easeOut', delay: 0.05 }}
+        whileHover={{ scale: 1.08 }}
+        whileTap={{ scale: 0.92 }}
+        onClick={() => setShowServerModal(true)}
+        type="button"
+        style={{
+          position: 'absolute',
+          top: '30px',
+          right: '92px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          width: '42px',
+          height: '42px',
+          borderRadius: '50%',
+          backgroundColor: isDark ? '#262626' : 'white',
+          border: isDark ? '1px solid #3f3f46' : '1px solid #e2e8f0',
+          color: isDark ? '#818cf8' : '#4f46e5',
+          boxShadow: isDark ? '0 4px 12px rgba(0,0,0,0.4)' : '0 2px 8px rgba(0,0,0,0.1)',
+          cursor: 'pointer',
+          transition: 'all 0.2s ease',
+        }}
+        title="Server Connection (Offline Lab Host IP)"
+      >
+        <Server size={19} />
+      </motion.button>
+
       {/* Login Card */}
       <motion.div
         initial={{ opacity: 0, y: 28, scale: 0.97 }}
@@ -486,6 +519,8 @@ export default function Login({ onLogin, onGoToRegister }) {
         </form>
       </motion.div>
 
+      {/* Server Connection Modal for Offline Labs */}
+      <ServerConfigModal isOpen={showServerModal} onClose={() => setShowServerModal(false)} />
     </div>
   );
 }
