@@ -1059,13 +1059,23 @@ export default function TeacherClasswork({
   };
 
   const handleSaveLink = (linkAttachment) => {
-    const appendHtml = `<br/><a href="${linkAttachment.url}" target="_blank" rel="noopener noreferrer">${linkAttachment.name || linkAttachment.url}</a><br/>`;
-    
-    if (!insertAtMarker(appendHtml)) {
-      setForm(prev => ({
-        ...prev,
-        instruction: (prev.instruction || "") + appendHtml
-      }));
+    setForm(prev => ({
+      ...prev,
+      attachments: [...(prev.attachments || []), linkAttachment]
+    }));
+  };
+
+  const handleInstructionClick = (e) => {
+    const anchor = e.target.closest('a');
+    if (anchor && anchor.href) {
+      e.preventDefault();
+      e.stopPropagation();
+      const targetUrl = anchor.href;
+      setPreviewIframe({
+        url: targetUrl,
+        name: anchor.innerText?.trim() || targetUrl,
+        type: 'link'
+      });
     }
   };
 
@@ -1351,15 +1361,18 @@ export default function TeacherClasswork({
         </div>
 
         {/* Center: Navigation */}
-        <div style={{ 
-          display: 'flex', 
-          alignItems: 'center', 
-          justifyContent: 'center',
-          gap: '8px',
-          opacity: 1,
-          pointerEvents: 'auto',
-          position: 'relative'
-        }}>
+        <div 
+          className="header-center-nav"
+          style={{ 
+            display: isMobile ? 'none' : 'flex', 
+            alignItems: 'center', 
+            justifyContent: 'center',
+            gap: '8px',
+            opacity: 1,
+            pointerEvents: 'auto',
+            position: 'relative'
+          }}
+        >
           <div style={{
             position: 'absolute',
             left: indicatorStyle.left,
@@ -1689,8 +1702,7 @@ export default function TeacherClasswork({
                         style={{ width: '100%', display: 'flex', flexDirection: 'column' }}
                       >
                   <div style={{ marginBottom: '18px' }}>
-                    <h2 style={{ fontSize: '1.6rem', fontWeight: 500, letterSpacing: '-0.01em', margin: '0 0 6px', color: ui.text }}>Classroom stream</h2>
-                    <p style={{ margin: 0, fontSize: '0.82rem', color: ui.muted }}>Assignments, learning materials, and activities in one place.</p>
+                    <h2 style={{ fontSize: '1.6rem', fontWeight: 500, letterSpacing: '-0.01em', margin: 0, color: ui.text }}>Classroom stream</h2>
                   </div>
 
                   {/* Latest activity header */}
@@ -1996,11 +2008,9 @@ export default function TeacherClasswork({
                                             textOverflow: 'ellipsis'
                                           })
                                         }}
+                                        onClick={handleInstructionClick}
                                       >
-                                        {expandedInstructionId === item.id 
-                                          ? <div dangerouslySetInnerHTML={{ __html: item.details }} />
-                                          : item.details.replace(/<[^>]*>?/gm, '').replace(/&nbsp;/g, ' ')
-                                        }
+                                        <div dangerouslySetInnerHTML={{ __html: item.details }} />
                                       </div>
                                       {expandedInstructionId !== item.id && item.details.replace(/<[^>]*>?/gm, '').length > 100 && (
                                         <div 
@@ -2126,7 +2136,7 @@ export default function TeacherClasswork({
                         List of Materials
                       </h2>
                       <p style={{ margin: '4px 0 0 0', color: isDark ? '#a3a3a3' : '#64748b', fontSize: '0.85rem' }}>
-                        Upload and manage resources, syllabus, and study guides for {classroom?.name || 'this class'}.
+                        Upload and manage resources, syllabus, and study guides for this classroom.
                       </p>
                     </div>
                     <div>
@@ -2283,11 +2293,9 @@ export default function TeacherClasswork({
                                             textOverflow: 'ellipsis'
                                           })
                                         }}
+                                        onClick={handleInstructionClick}
                                       >
-                                        {expandedInstructionId === item.id 
-                                          ? <div dangerouslySetInnerHTML={{ __html: item.details }} />
-                                          : item.details.replace(/<[^>]*>?/gm, '').replace(/&nbsp;/g, ' ')
-                                        }
+                                        <div dangerouslySetInnerHTML={{ __html: item.details }} />
                                       </div>
                                       {expandedInstructionId !== item.id && item.details.replace(/<[^>]*>?/gm, '').length > 100 && (
                                         <div 
@@ -2320,12 +2328,8 @@ export default function TeacherClasswork({
                                             onClick={(clickedAtt) => {
                                               if (clickedAtt.type === 'image') setPreviewImage(clickedAtt);
                                               else if (clickedAtt.type === 'video') setPreviewVideo(clickedAtt);
-                                              else if (clickedAtt.type === 'document') window.open(clickedAtt.url, '_blank', 'noopener,noreferrer');
-                                              else if (clickedAtt.type === 'link' && clickedAtt.url) {
-                                                const targetUrl = clickedAtt.url.startsWith('http://') || clickedAtt.url.startsWith('https://')
-                                                  ? clickedAtt.url
-                                                  : `https://${clickedAtt.url}`;
-                                                window.open(targetUrl, '_blank', 'noopener,noreferrer');
+                                              else if (clickedAtt.type === 'document' || clickedAtt.type === 'link') {
+                                                setPreviewIframe(clickedAtt);
                                               }
                                             }}
                                           />
@@ -3296,6 +3300,15 @@ export default function TeacherClasswork({
         />
       )}
 
+      {previewIframe && (
+        <IframePreviewModal
+          url={previewIframe.url}
+          title={previewIframe.name}
+          type={previewIframe.type}
+          onClose={() => setPreviewIframe(null)}
+        />
+      )}
+
       <AddStudentModal
         isOpen={isAddStudentOpen}
         onClose={() => setIsAddStudentOpen(false)}
@@ -3304,6 +3317,59 @@ export default function TeacherClasswork({
         onSuccess={() => setRefreshStudentsKey(k => k + 1)}
         isDark={isDark}
       />
+
+      {/* MOBILE BOTTOM NAVIGATION */}
+      {isMobile && (
+        <nav style={{
+          display: 'flex',
+          justifyContent: 'space-around',
+          alignItems: 'center',
+          backgroundColor: isDark ? '#262626' : '#ffffff',
+          borderTop: isDark ? '1px solid #3f3f46' : '1px solid #e5e7eb',
+          height: '65px',
+          flexShrink: 0,
+          paddingBottom: 'env(safe-area-inset-bottom, 0px)',
+          position: 'sticky',
+          bottom: 0,
+          zIndex: 60
+        }}>
+          {[
+            { id: 'classrooms', Icon: Home, label: 'Home' },
+            { id: 'calendar', Icon: Calendar, label: 'Calendar' },
+            { id: 'archived', Icon: Archive, label: 'Archived' },
+            { id: 'settings', Icon: Settings, label: 'Settings' }
+          ].map(({ id, Icon, label }) => {
+            return (
+              <button
+                key={id}
+                onClick={() => {
+                  if (id === 'settings') {
+                    setIsSettingsModalOpen(true);
+                  } else if (onNavigateView) {
+                    onNavigateView(id);
+                  } else {
+                    onBack();
+                  }
+                }}
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  background: 'none',
+                  border: 'none',
+                  color: isDark ? '#a3a3a3' : '#64748b',
+                  cursor: 'pointer',
+                  padding: '8px',
+                  minWidth: '64px'
+                }}
+              >
+                <Icon size={20} style={{ marginBottom: '4px' }} />
+                <span style={{ fontSize: '0.65rem', fontWeight: '600' }}>{label}</span>
+              </button>
+            );
+          })}
+        </nav>
+      )}
     </motion.div>
   );
 }

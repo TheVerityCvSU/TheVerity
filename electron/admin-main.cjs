@@ -80,6 +80,7 @@ app.userAgentFallback = CHROME_USER_AGENT;
 
 let mainWindow;
 let splashWindow = null;
+let googleAuthWindow = null;
 let serverProcess = null;
 
 function seedDatabase(dataDir) {
@@ -231,7 +232,12 @@ function createWindow() {
   });
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    if (url.includes('accounts.google.com') || url.includes('google.com/gsi/') || url.includes('oauth2.googleapis.com')) {
+    if (
+      url.includes('accounts.google.com') ||
+      url.includes('google.com/gsi/') ||
+      url.includes('oauth2.googleapis.com') ||
+      url.includes('/auth/google')
+    ) {
       return {
         action: 'allow',
         overrideBrowserWindowOptions: {
@@ -251,6 +257,16 @@ function createWindow() {
       shell.openExternal(url);
     }
     return { action: 'deny' };
+  });
+
+  mainWindow.webContents.on('did-create-window', (childWindow) => {
+    logStartup('[admin-main] Child window created from mainWindow webContents');
+    childWindow.on('closed', () => {
+      logStartup('[admin-main] Child window closed, notifying google-auth-closed');
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('google-auth-closed');
+      }
+    });
   });
 
   mainWindow.webContents.on('will-navigate', (event, navigationUrl) => {
@@ -381,6 +397,58 @@ ipcMain.on('open-external', (event, url) => {
   shell.openExternal(url);
 });
 
+ipcMain.on('open-google-auth', (event, url) => {
+  logStartup(`[admin-main] open-google-auth requested: ${url}`);
+  if (googleAuthWindow && !googleAuthWindow.isDestroyed()) {
+    googleAuthWindow.focus();
+    return;
+  }
+
+  googleAuthWindow = new BrowserWindow({
+    width: 520,
+    height: 650,
+    title: 'Sign in with Google - The Verity Admin',
+    parent: mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined,
+    modal: false,
+    autoHideMenuBar: true,
+    show: true,
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      userAgent: CHROME_USER_AGENT,
+    }
+  });
+
+  googleAuthWindow.webContents.setWindowOpenHandler(({ url: childUrl }) => {
+    shell.openExternal(childUrl);
+    return { action: 'deny' };
+  });
+
+  googleAuthWindow.loadURL(url).catch((err) => {
+    logStartup(`[admin-main] googleAuthWindow loadURL error: ${err.message}`);
+  });
+
+  googleAuthWindow.on('closed', () => {
+    logStartup('[admin-main] googleAuthWindow closed by user');
+    googleAuthWindow = null;
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('google-auth-closed');
+    }
+  });
+});
+
+ipcMain.on('close-google-auth', () => {
+  if (googleAuthWindow && !googleAuthWindow.isDestroyed()) {
+    logStartup('[admin-main] close-google-auth received; closing auth window');
+    googleAuthWindow.close();
+    googleAuthWindow = null;
+  }
+});
+
+ipcMain.handle('check-google-auth-status', () => {
+  return !!(googleAuthWindow && !googleAuthWindow.isDestroyed());
+});
+
 // IPC Handler for client-side local database
 ipcMain.handle('local-db:saveDraft', (event, assignmentId, studentId, code, history) => {
   return localDbAPI.saveDraft(assignmentId, studentId, code, history);
@@ -422,5 +490,9 @@ app.on('window-all-closed', () => {
 });
 
 app.on('will-quit', () => {
+  if (googleAuthWindow && !googleAuthWindow.isDestroyed()) {
+    googleAuthWindow.close();
+    googleAuthWindow = null;
+  }
   stopServer();
 });

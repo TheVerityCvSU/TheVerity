@@ -89461,25 +89461,47 @@ var require_emailService = __commonJS({
     var path2 = require("path");
     var fs3 = require("fs");
     try {
-      const envPath = path2.resolve(__dirname, "../.env");
-      if (fs3.existsSync(envPath)) {
-        require_dist().config({ path: envPath });
+      const envCandidates2 = [
+        path2.resolve(__dirname, "../.env"),
+        path2.resolve(__dirname, "../../.env"),
+        path2.resolve(process.cwd(), "server/.env"),
+        path2.resolve(process.cwd(), ".env")
+      ];
+      for (const envPath of envCandidates2) {
+        if (fs3.existsSync(envPath)) {
+          require_dist().config({ path: envPath });
+        }
       }
     } catch (_) {
     }
+    var DEFAULT_SMTP_USER = "kimfabie159@gmail.com";
+    var DEFAULT_SMTP_PASS = "bwuuabczntiqoqnz";
+    var DEFAULT_SMTP_SERVICE = "gmail";
     function escapeHtml(str) {
       if (!str) return "";
       return String(str).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
     }
     var cachedTransporter = null;
-    function createTransporter() {
+    function createTransporter(useFallbackPort = false) {
       const host = process.env.SMTP_HOST;
-      const port = process.env.SMTP_PORT ? parseInt(process.env.SMTP_PORT, 10) : 587;
-      const user = (process.env.SMTP_USER || process.env.EMAIL_USER || "").trim();
-      const pass = (process.env.SMTP_PASS || process.env.EMAIL_PASS || "").trim().replace(/\s+/g, "");
-      const service = (process.env.SMTP_SERVICE || process.env.EMAIL_SERVICE || "").trim().toLowerCase();
+      const user = (process.env.SMTP_USER || process.env.EMAIL_USER || DEFAULT_SMTP_USER).trim();
+      const pass = (process.env.SMTP_PASS || process.env.EMAIL_PASS || DEFAULT_SMTP_PASS).trim().replace(/\s+/g, "");
+      const service = (process.env.SMTP_SERVICE || process.env.EMAIL_SERVICE || DEFAULT_SMTP_SERVICE).trim().toLowerCase();
       if (!user || !pass) {
         return null;
+      }
+      if (useFallbackPort) {
+        return nodemailer.createTransport({
+          host: host || "smtp.gmail.com",
+          port: 587,
+          secure: false,
+          requireTLS: true,
+          family: 4,
+          connectionTimeout: 1e4,
+          greetingTimeout: 1e4,
+          socketTimeout: 15e3,
+          auth: { user, pass }
+        });
       }
       if (service === "gmail" || !host && user.endsWith("@gmail.com")) {
         return nodemailer.createTransport({
@@ -89493,6 +89515,7 @@ var require_emailService = __commonJS({
         });
       }
       if (host && user) {
+        const port = process.env.SMTP_PORT ? parseInt(process.env.SMTP_PORT, 10) : 587;
         return nodemailer.createTransport({
           host,
           port,
@@ -89619,15 +89642,15 @@ You're receiving this email because a verification code was requested to create 
       console.log(`\u{1F449} CODE: ${otp}`);
       console.log(`\u23F0 Expires in: 15 minutes`);
       console.log("========================================\n");
-      const transporter = getTransporter();
-      const user = (process.env.SMTP_USER || process.env.EMAIL_USER || "").trim();
-      const from = process.env.SMTP_FROM || process.env.EMAIL_FROM || (user ? `"The Verity Team" <${user}>` : '"The Verity Team" <noreply@verity.edu>');
-      if (!transporter) {
+      const user = (process.env.SMTP_USER || process.env.EMAIL_USER || DEFAULT_SMTP_USER).trim();
+      const from = process.env.SMTP_FROM || process.env.EMAIL_FROM || (user ? `"The Verity Team" <${user}>` : '"The Verity Team" <kimfabie159@gmail.com>');
+      const primaryTransporter = getTransporter();
+      if (!primaryTransporter) {
         console.log(`\u2139\uFE0F [EMAIL SERVICE] SMTP not configured. OTP logged above for development.`);
         return { success: false, simulated: true, otp, error: "SMTP not configured" };
       }
       try {
-        const info = await transporter.sendMail({
+        const info = await primaryTransporter.sendMail({
           from,
           to: email,
           subject,
@@ -89637,8 +89660,25 @@ You're receiving this email because a verification code was requested to create 
         console.log(`\u2705 [EMAIL SERVICE] Email sent successfully to ${email}. MessageId: ${info.messageId}`);
         return { success: true, messageId: info.messageId, otp };
       } catch (error) {
-        console.error(`\u274C [EMAIL SERVICE] Failed to send email to ${email}:`, error.message);
-        return { success: false, error: error.message, simulated: false, otp };
+        console.warn(`\u26A0\uFE0F [EMAIL SERVICE] Primary send to ${email} failed: ${error.message}. Retrying via fallback port 587...`);
+        try {
+          const fallbackTransporter = createTransporter(true);
+          if (!fallbackTransporter) {
+            throw error;
+          }
+          const fallbackInfo = await fallbackTransporter.sendMail({
+            from,
+            to: email,
+            subject,
+            text,
+            html
+          });
+          console.log(`\u2705 [EMAIL SERVICE] Email sent successfully via fallback port 587 to ${email}. MessageId: ${fallbackInfo.messageId}`);
+          return { success: true, messageId: fallbackInfo.messageId, otp };
+        } catch (fallbackError) {
+          console.error(`\u274C [EMAIL SERVICE] All email attempts failed for ${email}:`, fallbackError.message);
+          return { success: false, error: fallbackError.message, simulated: false, otp };
+        }
       }
     }
     module2.exports = {
@@ -96229,7 +96269,7 @@ var require_db4 = __commonJS({
       pgPool = new Pool({
         connectionString: connStr,
         ssl: sslConfig,
-        max: 15,
+        max: 5,
         idleTimeoutMillis: 3e4,
         connectionTimeoutMillis: 1e4
       });
@@ -96251,6 +96291,26 @@ var require_db4 = __commonJS({
         }
         console.log("[Database] PostgreSQL schema verified/initialized.");
         provider = "postgres";
+        if (sqliteDb) {
+          try {
+            const pgUsers = await client.query("SELECT id, name, email, role, status FROM users").catch(() => ({ rows: [] }));
+            if (pgUsers.rows && pgUsers.rows.length > 0) {
+              const updateSqlite = sqliteDb.prepare(
+                "UPDATE users SET email = ?, name = COALESCE(NULLIF(?, ''), name), role = COALESCE(NULLIF(?, ''), role), status = COALESCE(NULLIF(?, ''), status) WHERE id = ? OR LOWER(email) = LOWER(?)"
+              );
+              for (const u of pgUsers.rows) {
+                if (u.email) {
+                  try {
+                    updateSqlite.run(u.email, u.name || "", u.role || "", u.status || "", u.id, u.email);
+                  } catch (_) {
+                  }
+                }
+              }
+            }
+          } catch (syncErr) {
+            console.warn("[Database] User sync warning:", syncErr.message);
+          }
+        }
       } catch (err) {
         console.warn("[Database] Schema verification notice:", err.message);
         provider = "postgres";
@@ -96314,15 +96374,7 @@ var require_db4 = __commonJS({
           try {
             const pgSql = convertPlaceholders(sql);
             const res = await pgPool.query(pgSql, params);
-            let rows = res.rows.map(normalizeRow);
-            if (rows.length === 0 && /FROM\s+(?:users|admin_users)\b/i.test(sql) && sqliteDb) {
-              try {
-                const localRows = sqliteDb.prepare(sql).all(...params);
-                if (localRows.length > 0) rows = localRows.map(normalizeRow);
-              } catch (_) {
-              }
-            }
-            return rows;
+            return res.rows.map(normalizeRow);
           } catch (err) {
             if (isNetworkError(err)) {
               console.warn(`[Database] PostgreSQL connection lost (${err.message}). Switching to local SQLite.`);
@@ -96334,15 +96386,7 @@ var require_db4 = __commonJS({
           }
         } else {
           if (!sqliteDb) initSqlite();
-          let rows = sqliteDb.prepare(sql).all(...params);
-          if (rows.length === 0 && /FROM\s+(?:users|admin_users)\b/i.test(sql) && pgPool) {
-            try {
-              const pgRes = await pgPool.query(convertPlaceholders(sql), params);
-              if (pgRes.rows.length > 0) rows = pgRes.rows.map(normalizeRow);
-            } catch (_) {
-            }
-          }
-          return rows;
+          return sqliteDb.prepare(sql).all(...params);
         }
       },
       // Execute query and return the first matching row or undefined
@@ -96353,17 +96397,7 @@ var require_db4 = __commonJS({
           try {
             const pgSql = convertPlaceholders(sql);
             const res = await pgPool.query(pgSql, params);
-            let row = res.rows[0] ? normalizeRow(res.rows[0]) : void 0;
-            if (!row && /FROM\s+(?:users|admin_users)\b/i.test(sql) && sqliteDb) {
-              try {
-                const localRow = sqliteDb.prepare(sql).get(...params);
-                if (localRow) {
-                  row = normalizeRow(localRow);
-                }
-              } catch (_) {
-              }
-            }
-            return row;
+            return res.rows[0] ? normalizeRow(res.rows[0]) : void 0;
           } catch (err) {
             if (isNetworkError(err)) {
               console.warn(`[Database] PostgreSQL connection lost (${err.message}). Switching to local SQLite.`);
@@ -96375,17 +96409,7 @@ var require_db4 = __commonJS({
           }
         } else {
           if (!sqliteDb) initSqlite();
-          let row = sqliteDb.prepare(sql).get(...params);
-          if (!row && /FROM\s+(?:users|admin_users)\b/i.test(sql) && pgPool) {
-            try {
-              const pgRes = await pgPool.query(convertPlaceholders(sql), params);
-              if (pgRes.rows[0]) {
-                row = normalizeRow(pgRes.rows[0]);
-              }
-            } catch (_) {
-            }
-          }
-          return row;
+          return sqliteDb.prepare(sql).get(...params);
         }
       },
       // Execute INSERT, UPDATE, DELETE and return { lastInsertRowid, changes }
@@ -96553,6 +96577,10 @@ var require_db4 = __commonJS({
       async close() {
         if (pgPool) await pgPool.end();
         if (sqliteDb) sqliteDb.close();
+      },
+      getSqliteDb() {
+        if (!sqliteDb) initSqlite();
+        return sqliteDb;
       },
       generateClassCodeSync
     };
@@ -97188,11 +97216,15 @@ app.post("/auth/send-otp", async (req, res) => {
       otp: otpCode
     });
     if (!emailResult.success) {
-      console.warn(`[AUTH] Email delivery failed or offline for ${cleanEmail} (${emailResult.error}). Operating in Offline ComLab mode.`);
+      console.warn(`[AUTH] Email delivery failed or offline for ${cleanEmail} (${emailResult.error}).`);
+      if (cleanEmail.toLowerCase().endsWith("@cvsu.edu.ph")) {
+        return res.status(500).json({
+          message: `Failed to deliver verification email to ${cleanEmail}: ${emailResult.error || "Delivery failed"}. Please check your email address or try again.`
+        });
+      }
       return res.status(200).json({
         message: `Offline ComLab mode: Verification code is ${otpCode}`,
         email: cleanEmail,
-        devOtp: otpCode,
         expiresInMinutes: 15
       });
     }
@@ -97352,11 +97384,15 @@ app.post("/auth/resend-otp", async (req, res) => {
       otp: otpCode
     });
     if (!emailResult.success) {
-      console.warn(`[AUTH] Failed to resend email or offline for ${cleanEmail} (${emailResult.error}). Operating in Offline ComLab mode.`);
+      console.warn(`[AUTH] Failed to resend email or offline for ${cleanEmail} (${emailResult.error}).`);
+      if (cleanEmail.toLowerCase().endsWith("@cvsu.edu.ph")) {
+        return res.status(500).json({
+          message: `Failed to deliver verification code to ${cleanEmail}: ${emailResult.error || "Delivery failed"}. Please try again.`
+        });
+      }
       return res.status(200).json({
         message: `Offline ComLab mode: Verification code is ${otpCode}`,
         email: cleanEmail,
-        devOtp: otpCode,
         expiresInMinutes: 15
       });
     }
@@ -97492,7 +97528,7 @@ app.post("/login", async (req, res) => {
     const isAdminAcc = await db.get("SELECT id FROM admin_users WHERE LOWER(email) = ?", cleanEmail);
     if (isAdminAcc) {
       return res.status(401).json({
-        message: "This account has Administrator privileges. Please sign in through the Admin Portal (/admin)."
+        message: "Invalid credentials. No account found with this email address."
       });
     }
     let user = await db.get("SELECT * FROM users WHERE LOWER(email) = ? AND password = ?", cleanEmail, rawPassword);
@@ -97517,7 +97553,7 @@ app.post("/login", async (req, res) => {
       } catch (_) {
       }
       return res.status(401).json({
-        message: "This account has Administrator privileges. Please sign in through the Admin Portal (/admin)."
+        message: "Invalid credentials. No account found with this email address."
       });
     }
     if (user.status === "Pending") {
@@ -97580,9 +97616,17 @@ app.get("/admin/profile", authenticateToken, adminIpWhitelist, requireRole("Admi
     res.status(500).json({ message: e2.message });
   }
 });
+var GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || "228468530633-cc2hnruslpc1sh0o7fd2s7hgjipsibil.apps.googleusercontent.com";
+var GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || "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";
+var ALLOWED_GOOGLE_AUDIENCES = [
+  GOOGLE_CLIENT_ID,
+  process.env.VITE_GOOGLE_CLIENT_ID,
+  "6514928694-2rd8cu7b67o4f2jqtuv5hk1d51s97lcc.apps.googleusercontent.com",
+  "228468530633-cc2hnruslpc1sh0o7fd2s7hgjipsibil.apps.googleusercontent.com"
+].filter(Boolean);
 var googleClient = new OAuth2Client(
-  process.env.GOOGLE_CLIENT_ID,
-  process.env.GOOGLE_CLIENT_SECRET,
+  GOOGLE_CLIENT_ID,
+  GOOGLE_CLIENT_SECRET,
   // We will dynamically set redirect URI per request, but define a fallback
   process.env.GOOGLE_REDIRECT_URI || "http://localhost:3001/auth/google/callback"
 );
@@ -97591,34 +97635,66 @@ app.get("/auth/google/external", (req, res) => {
   if (!sessionId) {
     return res.status(400).send("Missing sessionId");
   }
-  const redirectUri = `${req.protocol}://${req.get("host")}/auth/google/callback`;
+  const requestedRole = req.query.role === "Teacher" ? "Teacher" : "Student";
+  const host = req.headers["x-forwarded-host"] || req.get("host");
+  const isLocal = host.includes("localhost") || host.includes("127.0.0.1");
+  const protocol = isLocal ? req.protocol || "http" : req.headers["x-forwarded-proto"] || "https";
+  const redirectUri = `${protocol}://${host}/auth/google/callback`;
   const authorizeUrl = googleClient.generateAuthUrl({
     access_type: "offline",
     scope: ["email", "profile"],
-    state: sessionId,
-    redirect_uri: redirectUri
+    state: `${sessionId}:${requestedRole}`,
+    redirect_uri: redirectUri,
+    hd: "cvsu.edu.ph",
+    prompt: "select_account"
   });
   res.redirect(authorizeUrl);
 });
 app.get("/auth/google/callback", async (req, res) => {
-  const { code, state: sessionId } = req.query;
-  if (!code || !sessionId) {
+  const { code, state } = req.query;
+  if (!code || !state) {
     return res.status(400).send("Missing code or state");
   }
+  const stateParts = String(state).split(":");
+  const sessionId = stateParts[0];
+  const requestedRole = stateParts[1] === "Teacher" ? "Teacher" : "Student";
   try {
-    const redirectUri = `${req.protocol}://${req.get("host")}/auth/google/callback`;
+    const host = req.headers["x-forwarded-host"] || req.get("host");
+    const isLocal = host.includes("localhost") || host.includes("127.0.0.1");
+    const protocol = isLocal ? req.protocol || "http" : req.headers["x-forwarded-proto"] || "https";
+    const redirectUri = `${protocol}://${host}/auth/google/callback`;
     const { tokens } = await googleClient.getToken({
       code,
       redirect_uri: redirectUri
     });
     const ticket = await googleClient.verifyIdToken({
       idToken: tokens.id_token,
-      audience: process.env.GOOGLE_CLIENT_ID
+      audience: ALLOWED_GOOGLE_AUDIENCES
     });
     const payload = ticket.getPayload();
     const email = payload.email;
     const name = payload.name;
     const cleanEmail = (email || "").trim().toLowerCase();
+    if (!cleanEmail.endsWith("@cvsu.edu.ph")) {
+      const errorMsg = "Access restricted: Only official @cvsu.edu.ph Google accounts can register or sign in.";
+      io.emit(`google-login-error-${sessionId}`, { message: errorMsg });
+      return res.status(403).send(`
+                <html>
+                    <body style="font-family: sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; background: #1a1a1a; color: white; margin: 0; padding: 20px;">
+                        <div style="text-align: center; max-width: 460px; background: #262626; padding: 36px 30px; border-radius: 16px; border: 1px solid #ef4444; box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
+                            <h2 style="color: #ef4444; margin-top: 0; margin-bottom: 12px;">Access Restricted</h2>
+                            <p style="color: #e5e7eb; font-size: 1rem; line-height: 1.5; margin-bottom: 12px;">
+                                Only official <strong>@cvsu.edu.ph</strong> Google accounts are authorized to register or sign in to The Verity.
+                            </p>
+                            <p style="color: #9ca3af; font-size: 0.85rem; margin-bottom: 24px; word-break: break-all;">
+                                Attempted email: <em>${cleanEmail}</em>
+                            </p>
+                            <button onclick="window.close()" style="background: #374151; color: white; border: none; padding: 10px 20px; border-radius: 8px; cursor: pointer; font-size: 0.9rem;">Close Window</button>
+                        </div>
+                    </body>
+                </html>
+            `);
+    }
     const maintenance = await getMaintenanceStatus();
     if (maintenance.enabled) {
       io.emit(`google-login-error-${sessionId}`, { message: maintenance.message });
@@ -97626,8 +97702,8 @@ app.get("/auth/google/callback", async (req, res) => {
     }
     const isAdminAcc = await db.get("SELECT id FROM admin_users WHERE LOWER(email) = ?", cleanEmail);
     if (isAdminAcc) {
-      io.emit(`google-login-error-${sessionId}`, { message: "Invalid credentials" });
-      return res.send(`<h2>Error</h2><p>Cannot login with admin account here.</p>`);
+      io.emit(`google-login-error-${sessionId}`, { message: "Invalid credentials. No account found with this email address." });
+      return res.send(`<h2>Error</h2><p>Invalid credentials. No account found with this email address.</p>`);
     }
     let user = await db.get("SELECT * FROM users WHERE LOWER(email) = ?", cleanEmail);
     if (user) {
@@ -97647,20 +97723,50 @@ app.get("/auth/google/callback", async (req, res) => {
         }
       } catch (e2) {
       }
-      const role = "Student";
-      const status = "Active";
+      const role = requestedRole;
+      const status = role === "Teacher" && requireApproval ? "Pending" : "Active";
       const lastLogin = (/* @__PURE__ */ new Date()).toISOString();
       const password = "google_sso_user";
       const info = await db.run(
         "INSERT INTO users (name, email, password, role, lastLogin, status) VALUES (?, ?, ?, ?, ?, ?)",
-        name,
+        name || "Google User",
         cleanEmail,
         password,
         role,
         lastLogin,
         status
       );
-      user = { id: info.lastInsertRowid, name, email: cleanEmail, password, role, status, lastLogin };
+      user = { id: info.lastInsertRowid, name: name || "Google User", email: cleanEmail, password, role, status, lastLogin };
+      try {
+        const nowIso = (/* @__PURE__ */ new Date()).toISOString();
+        const auditAction = role === "Teacher" ? status === "Pending" ? `New instructor account registered via Google and pending admin approval (${cleanEmail})` : `New instructor account registered via Google (${cleanEmail})` : `New student account registered via Google (${cleanEmail})`;
+        await db.run(
+          "INSERT INTO audit_logs (timestamp, admin, action, severity, details) VALUES (?, ?, ?, ?, ?)",
+          nowIso,
+          name || cleanEmail,
+          "User Registration",
+          "Normal",
+          auditAction
+        );
+      } catch (auditErr) {
+        console.error("[Google SSO Callback] Failed to record registration audit log:", auditErr);
+      }
+      if (status === "Pending") {
+        io.emit(`google-login-error-${sessionId}`, { message: "Your instructor account has been created and is pending administrator approval." });
+        return res.send(`
+                    <html>
+                        <body style="font-family: sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; background: #1a1a1a; color: white; margin: 0; padding: 20px;">
+                            <div style="text-align: center; max-width: 460px; background: #262626; padding: 36px 30px; border-radius: 16px; border: 1px solid #f59e0b;">
+                                <h2 style="color: #f59e0b; margin-top: 0; margin-bottom: 12px;">Account Pending Approval</h2>
+                                <p style="color: #e5e7eb; font-size: 1rem; line-height: 1.5; margin-bottom: 24px;">
+                                    Your instructor account has been created and is waiting for administrator approval before you can sign in.
+                                </p>
+                                <button onclick="window.close()" style="background: #374151; color: white; border: none; padding: 10px 20px; border-radius: 8px; cursor: pointer; font-size: 0.9rem;">Close Window</button>
+                            </div>
+                        </body>
+                    </html>
+                `);
+      }
     }
     const token = jwt.sign({ id: user.id, email: user.email, role: user.role, name: user.name }, JWT_SECRET);
     io.emit(`google-login-success-${sessionId}`, { user, token });
@@ -97679,7 +97785,10 @@ app.get("/auth/google/callback", async (req, res) => {
         `);
   } catch (err) {
     console.error("Google OAuth Callback Error:", err);
-    io.emit(`google-login-error-${sessionId}`, { message: "Google authentication failed" });
+    const sessionToNotify = (req.query?.state || "").split(":")[0];
+    if (sessionToNotify) {
+      io.emit(`google-login-error-${sessionToNotify}`, { message: "Google authentication failed" });
+    }
     res.status(500).send("<h2>Authentication Failed</h2><p>An error occurred during Google sign-in. Please try again.</p>");
   }
 });
@@ -97702,16 +97811,21 @@ app.post("/auth/google", async (req, res) => {
     } else {
       const ticket = await googleClient.verifyIdToken({
         idToken: token,
-        audience: process.env.GOOGLE_CLIENT_ID || "6514928694-2rd8cu7b67o4f2jqtuv5hk1d51s97lcc.apps.googleusercontent.com"
+        audience: ALLOWED_GOOGLE_AUDIENCES
       });
       const payload = ticket.getPayload();
       email = payload.email;
       name = payload.name;
     }
     const cleanEmail = (email || "").trim().toLowerCase();
+    if (!cleanEmail.endsWith("@cvsu.edu.ph")) {
+      return res.status(403).json({
+        message: "Access restricted: Only official @cvsu.edu.ph Google accounts can register or sign in."
+      });
+    }
     const isAdminAcc = await db.get("SELECT id FROM admin_users WHERE LOWER(email) = ?", cleanEmail);
     if (isAdminAcc) {
-      return res.status(401).json({ message: "Invalid credentials" });
+      return res.status(401).json({ message: "Invalid credentials. No account found with this email address." });
     }
     let user = await db.get("SELECT * FROM users WHERE LOWER(email) = ?", cleanEmail);
     if (user) {
@@ -97738,16 +97852,30 @@ app.post("/auth/google", async (req, res) => {
       const password = "google_sso_user";
       const info = await db.run(
         "INSERT INTO users (name, email, password, role, lastLogin, status) VALUES (?, ?, ?, ?, ?, ?)",
-        name,
-        email,
+        name || "Google User",
+        cleanEmail,
         password,
         role,
         lastLogin,
         status
       );
-      user = { id: info.lastInsertRowid, name, email, password, role, lastLogin, status };
+      user = { id: info.lastInsertRowid, name: name || "Google User", email: cleanEmail, password, role, lastLogin, status };
+      try {
+        const nowIso = (/* @__PURE__ */ new Date()).toISOString();
+        const auditAction = role === "Teacher" ? status === "Pending" ? `New instructor account registered via Google and pending admin approval (${cleanEmail})` : `New instructor account registered via Google (${cleanEmail})` : `New student account registered via Google (${cleanEmail})`;
+        await db.run(
+          "INSERT INTO audit_logs (timestamp, admin, action, severity, details) VALUES (?, ?, ?, ?, ?)",
+          nowIso,
+          name || cleanEmail,
+          "User Registration",
+          "Normal",
+          auditAction
+        );
+      } catch (auditErr) {
+        console.error("[Google SSO] Failed to record registration audit log:", auditErr);
+      }
       if (status === "Pending") {
-        return res.status(403).json({ message: "Your account is pending admin approval", user });
+        return res.status(403).json({ message: "Your instructor account has been created and is pending administrator approval.", user });
       }
     }
     res.status(200).json({ message: "Google login successful", user, token: jwt.sign({ id: user.id, email: user.email, role: user.role, name: user.name }, JWT_SECRET) });
@@ -97919,22 +98047,24 @@ app.put("/users/:email", authenticateToken, requireRole("Admin"), async (req, re
       const passwordError = await validatePassword(password.trim());
       if (passwordError) return res.status(400).json({ message: passwordError });
       await db.run(
-        "UPDATE users SET name = ?, email = ?, role = ?, status = ?, password = ? WHERE id = ?",
+        "UPDATE users SET name = ?, email = ?, role = ?, status = ?, password = ? WHERE id = ? OR LOWER(email) = LOWER(?)",
         newName,
         newEmail,
         newRole,
         newStatus,
         password.trim(),
-        existing.id
+        existing.id,
+        existing.email
       );
     } else {
       await db.run(
-        "UPDATE users SET name = ?, email = ?, role = ?, status = ? WHERE id = ?",
+        "UPDATE users SET name = ?, email = ?, role = ?, status = ? WHERE id = ? OR LOWER(email) = LOWER(?)",
         newName,
         newEmail,
         newRole,
         newStatus,
-        existing.id
+        existing.id,
+        existing.email
       );
     }
     await syncUserEmailAcrossData(existing.id, existing.email, newEmail, newName, newRole);
@@ -97951,6 +98081,23 @@ async function syncUserEmailAcrossData(userId, oldEmail, newEmail, name, role) {
   const cleanName = (name || "").trim();
   const roleLower = String(role || "").toLowerCase();
   const isTeacher = roleLower === "teacher" || roleLower === "instructor";
+  if (cleanOldEmail && cleanNewEmail && cleanOldEmail !== cleanNewEmail) {
+    try {
+      await db.run("UPDATE users SET email = ? WHERE id = ? OR LOWER(email) = LOWER(?)", cleanNewEmail, userId, cleanOldEmail).catch(() => {
+      });
+      await db.run("DELETE FROM users WHERE LOWER(email) = LOWER(?) AND id != ?", cleanOldEmail, userId).catch(() => {
+      });
+    } catch (_) {
+    }
+    const localSqlite = db.getSqliteDb ? db.getSqliteDb() : null;
+    if (localSqlite) {
+      try {
+        localSqlite.prepare("UPDATE users SET email = ? WHERE id = ? OR LOWER(email) = LOWER(?)").run(cleanNewEmail, userId, cleanOldEmail);
+        localSqlite.prepare("DELETE FROM users WHERE LOWER(email) = LOWER(?) AND id != ?").run(cleanOldEmail, userId);
+      } catch (_) {
+      }
+    }
+  }
   try {
     const oldEnrollments = await db.all(
       `SELECT * FROM enrollments 
@@ -98109,11 +98256,24 @@ app.post("/users/verify-email-change", authenticateToken, async (req, res) => {
     if (!current) {
       const adminCurrent = await db.get("SELECT * FROM admin_users WHERE id = ?", userId);
       if (!adminCurrent) return res.status(404).json({ message: "User account not found" });
-      await db.run("UPDATE admin_users SET email = ? WHERE id = ?", cleanEmail, userId);
+      const oldAdminEmail = (adminCurrent.email || "").trim().toLowerCase();
+      await db.run("UPDATE admin_users SET email = ? WHERE id = ? OR LOWER(email) = LOWER(?)", cleanEmail, userId, oldAdminEmail);
+      await db.run("DELETE FROM admin_users WHERE LOWER(email) = LOWER(?) AND id != ?", oldAdminEmail, userId).catch(() => {
+      });
       if (newPassword && newPassword.trim()) {
         await db.run("UPDATE admin_users SET password = ? WHERE id = ?", newPassword.trim(), userId);
       }
+      const localSqlite2 = db.getSqliteDb ? db.getSqliteDb() : null;
+      if (localSqlite2) {
+        try {
+          localSqlite2.prepare("UPDATE admin_users SET email = ? WHERE id = ? OR LOWER(email) = LOWER(?)").run(cleanEmail, userId, oldAdminEmail);
+          localSqlite2.prepare("DELETE FROM admin_users WHERE LOWER(email) = LOWER(?) AND id != ?").run(oldAdminEmail, userId);
+        } catch (_) {
+        }
+      }
       await db.run("DELETE FROM otp_verifications WHERE id = ?", record.id);
+      await db.run("DELETE FROM otp_verifications WHERE LOWER(email) = ? OR LOWER(email) = ?", cleanEmail, oldAdminEmail).catch(() => {
+      });
       const updatedUser2 = { ...adminCurrent, email: cleanEmail };
       const token2 = jwt.sign(
         { id: updatedUser2.id, email: cleanEmail, role: "Admin", name: updatedUser2.name, isAdmin: true },
@@ -98121,16 +98281,34 @@ app.post("/users/verify-email-change", authenticateToken, async (req, res) => {
       );
       return res.status(200).json({ message: "Email address updated successfully", user: updatedUser2, token: token2 });
     }
-    await db.run("UPDATE users SET email = ? WHERE id = ?", cleanEmail, userId);
+    const oldEmail = (current.email || "").trim().toLowerCase();
+    await db.run("UPDATE users SET email = ? WHERE id = ? OR LOWER(email) = LOWER(?)", cleanEmail, userId, oldEmail);
+    await db.run("DELETE FROM users WHERE LOWER(email) = LOWER(?) AND id != ?", oldEmail, userId).catch(() => {
+    });
     if (newPassword && newPassword.trim()) {
       await db.run("UPDATE users SET password = ? WHERE id = ?", newPassword.trim(), userId);
     }
-    await syncUserEmailAcrossData(userId, current.email, cleanEmail, current.name, current.role);
+    await syncUserEmailAcrossData(userId, oldEmail, cleanEmail, current.name, current.role);
     if (current.role === "Admin") {
-      await db.run("UPDATE admin_users SET email = ? WHERE id = ?", cleanEmail, userId).catch(() => {
+      await db.run("UPDATE admin_users SET email = ? WHERE id = ? OR LOWER(email) = LOWER(?)", cleanEmail, userId, oldEmail).catch(() => {
+      });
+      await db.run("DELETE FROM admin_users WHERE LOWER(email) = LOWER(?) AND id != ?", oldEmail, userId).catch(() => {
       });
     }
+    const localSqlite = db.getSqliteDb ? db.getSqliteDb() : null;
+    if (localSqlite) {
+      try {
+        localSqlite.prepare("UPDATE users SET email = ? WHERE id = ? OR LOWER(email) = LOWER(?)").run(cleanEmail, userId, oldEmail);
+        localSqlite.prepare("DELETE FROM users WHERE LOWER(email) = LOWER(?) AND id != ?").run(oldEmail, userId);
+        if (newPassword && newPassword.trim()) {
+          localSqlite.prepare("UPDATE users SET password = ? WHERE id = ?").run(newPassword.trim(), userId);
+        }
+      } catch (_) {
+      }
+    }
     await db.run("DELETE FROM otp_verifications WHERE id = ?", record.id);
+    await db.run("DELETE FROM otp_verifications WHERE LOWER(email) = ? OR LOWER(email) = ?", cleanEmail, oldEmail).catch(() => {
+    });
     const updatedUser = {
       id: current.id,
       name: current.name,
@@ -100527,7 +100705,7 @@ io.on("connection", (socket) => {
       const isSystemExit = actionStr.includes("system exit") || descStr.includes("system exit") || descStr.includes("exited system") || descStr.includes("exited the system");
       const isExitTab = !isSystemExit && (actionStr.includes("tab") || actionStr.includes("exit") || actionStr.includes("blur") || descStr.includes("tab") || descStr.includes("blur"));
       const isCopyPaste = actionStr.includes("paste") || actionStr.includes("clipboard") || actionStr.includes("copy");
-      const isAltTabCopyPaste = isExitTab || isCopyPaste;
+      const isAltTabCopyPaste = isExitTab || isCopyPaste || isSystemExit;
       if (isAltTabCopyPaste) {
         await db.run(
           "INSERT INTO security_flags (date_string, count, alt_tab_copy_paste_count) VALUES (?, 0, 1) ON CONFLICT(date_string) DO UPDATE SET alt_tab_copy_paste_count = COALESCE(security_flags.alt_tab_copy_paste_count, 0) + 1",
@@ -100546,7 +100724,7 @@ io.on("connection", (socket) => {
         let logSeverity = "High";
         if (isSystemExit) {
           logType = "System Exit Violation";
-          logSeverity = "High";
+          logSeverity = "Warning";
         } else if (isCopyPaste) {
           logType = "Copy/Paste Violation";
           logSeverity = "High";
@@ -100690,7 +100868,7 @@ io.on("connection", (socket) => {
             nowIso,
             userName,
             "System Exit Violation",
-            "High",
+            "Warning",
             `Student exited the system: ${userName} closed or disconnected application (outside workspace)`
           );
           io.emit("admin_security_alert", {
@@ -100699,8 +100877,8 @@ io.on("connection", (socket) => {
             studentId: socket.user.id || userName,
             type: "System Exit Violation",
             desc: `Student exited the system: ${userName} closed or disconnected application`,
-            severity: "High",
-            isAltTabCopyPaste: false,
+            severity: "Warning",
+            isAltTabCopyPaste: true,
             isSystemExit: true,
             timestamp: nowIso
           });
@@ -100749,7 +100927,7 @@ app.post("/audit-logs", authenticateToken, async (req, res) => {
       const descLower = (desc || "").toLowerCase();
       const typeLower = (type || "").toLowerCase();
       const isSystemExit = typeLower.includes("system exit") || descLower.includes("system exit") || descLower.includes("exited system") || descLower.includes("exited the system");
-      const isAltTabCopyPaste = !isSystemExit && (descLower.includes("tab") || descLower.includes("paste") || descLower.includes("clipboard") || descLower.includes("copy") || descLower.includes("exit tab") || typeLower.includes("alt-tab") || typeLower.includes("copy-paste"));
+      const isAltTabCopyPaste = isSystemExit || (descLower.includes("tab") || descLower.includes("paste") || descLower.includes("clipboard") || descLower.includes("copy") || descLower.includes("exit tab") || typeLower.includes("alt-tab") || typeLower.includes("copy-paste"));
       if (isAltTabCopyPaste) {
         await db.run(
           `INSERT INTO security_flags (date_string, count, alt_tab_copy_paste_count) VALUES (?, 0, 1) ON CONFLICT(date_string) DO UPDATE SET alt_tab_copy_paste_count = COALESCE(security_flags.alt_tab_copy_paste_count, 0) + 1`,

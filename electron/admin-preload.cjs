@@ -7,6 +7,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   enableLockdown: () => {},
   disableLockdown: () => {},
   openExternal: (url) => ipcRenderer.send('open-external', url),
+  openGoogleAuth: (url) => ipcRenderer.send('open-google-auth', url),
+  closeGoogleAuth: () => ipcRenderer.send('close-google-auth'),
+  checkGoogleAuthStatus: () => ipcRenderer.invoke('check-google-auth-status'),
+  onGoogleAuthClosed: (callback) => {
+    const handler = () => callback();
+    ipcRenderer.on('google-auth-closed', handler);
+    return () => ipcRenderer.removeListener('google-auth-closed', handler);
+  },
 
   // Client-side SQLite local storage
   localDB: {

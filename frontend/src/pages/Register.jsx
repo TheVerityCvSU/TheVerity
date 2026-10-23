@@ -2,11 +2,12 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useGoogleLogin } from '@react-oauth/google';
 import { Moon, Sun, Eye, EyeOff, Mail, ArrowLeft, RefreshCw, KeyRound, CheckCircle2, ShieldCheck, Loader2, AlertCircle, X, Info } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { apiFetch } from '../utils/api';
+import { apiFetch, getCloudUrl } from '../utils/api';
 import { useDarkMode } from '../hooks/useDarkMode';
 import PasswordRequirements from '../components/PasswordRequirements';
+import { io } from 'socket.io-client';
 
-export default function Register({ onBackToLogin }) {
+export default function Register({ onBackToLogin, onLogin }) {
   const { isDark, toggle } = useDarkMode();
   const [step, setStep] = useState('form'); // 'form' | 'otp'
   const [formData, setFormData] = useState({
@@ -28,6 +29,8 @@ export default function Register({ onBackToLogin }) {
   const [resendCooldown, setResendCooldown] = useState(0);
   const [resending, setResending] = useState(false);
   const inputRefs = useRef([]);
+  const socketRef = useRef(null);
+  const authTimeoutRef = useRef(null);
 
   useEffect(() => {
     apiFetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/kiosk-settings`)
@@ -68,18 +71,101 @@ export default function Register({ onBackToLogin }) {
     }
   }, [step]);
 
+  // Listen for Google Auth Window closed event from Electron .exe
+  useEffect(() => {
+    if (window.electronAPI?.onGoogleAuthClosed) {
+      const unsubscribe = window.electronAPI.onGoogleAuthClosed(() => {
+        setIsGoogleLoading(false);
+        if (socketRef.current) {
+          socketRef.current.disconnect();
+          socketRef.current = null;
+        }
+        if (authTimeoutRef.current) {
+          clearTimeout(authTimeoutRef.current);
+          authTimeoutRef.current = null;
+        }
+      });
+      return () => {
+        if (typeof unsubscribe === 'function') unsubscribe();
+      };
+    }
+  }, []);
+
+  // When mainWindow regains focus, check if auth window was closed
+  useEffect(() => {
+    const handleFocus = async () => {
+      if (isGoogleLoading && window.electronAPI?.checkGoogleAuthStatus) {
+        try {
+          const isOpen = await window.electronAPI.checkGoogleAuthStatus();
+          if (!isOpen) {
+            setIsGoogleLoading(false);
+            if (socketRef.current) {
+              socketRef.current.disconnect();
+              socketRef.current = null;
+            }
+            if (authTimeoutRef.current) {
+              clearTimeout(authTimeoutRef.current);
+              authTimeoutRef.current = null;
+            }
+          }
+        } catch (_) {}
+      }
+    };
+
+    window.addEventListener('focus', handleFocus);
+    return () => window.removeEventListener('focus', handleFocus);
+  }, [isGoogleLoading]);
+
+  // Clean up any pending socket or timer on unmount
+  useEffect(() => {
+    return () => {
+      if (socketRef.current) {
+        socketRef.current.disconnect();
+        socketRef.current = null;
+      }
+      if (authTimeoutRef.current) {
+        clearTimeout(authTimeoutRef.current);
+        authTimeoutRef.current = null;
+      }
+    };
+  }, []);
+
   const handleGoogleSuccess = async (tokenResponse) => {
     setIsGoogleLoading(true);
     try {
-      const response = await apiFetch(`${import.meta.env.VITE_API_URL}/auth/google`, {
+      const response = await apiFetch('/auth/google', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token: tokenResponse.credential, access_token: tokenResponse.access_token, role: formData.role })
+        body: JSON.stringify({
+          token: tokenResponse.credential,
+          access_token: tokenResponse.access_token,
+          role: formData.role
+        })
       });
       const data = await response.json();
       if (response.ok) {
-        setMessage({ type: 'success', text: 'Google Registration successful! Redirecting...' });
-        setTimeout(() => onBackToLogin(), 1200);
+        if (data.user?.status === 'Pending') {
+          setMessage({ type: 'info', text: 'Account created! Your instructor account is pending administrator approval.' });
+          setIsGoogleLoading(false);
+          setTimeout(() => onBackToLogin(), 3500);
+          return;
+        }
+
+        try {
+          localStorage.setItem('verity_saved_account_email', data.user?.email || '');
+          localStorage.setItem('verity_remember_account', 'true');
+          if (window.electronAPI?.localDB?.setLocal) {
+            window.electronAPI.localDB.setLocal('verity_saved_account_email', data.user?.email || '').catch(() => {});
+            window.electronAPI.localDB.setLocal('verity_remember_account', 'true').catch(() => {});
+          }
+        } catch (_) {}
+
+        if (onLogin && data.user && data.token) {
+          onLogin(data.user, data.token);
+        } else {
+          setMessage({ type: 'success', text: 'Google sign-up successful! Redirecting...' });
+          setTimeout(() => onBackToLogin(), 1200);
+        }
       } else {
         setMessage({ type: 'error', text: data.message || 'Google registration failed on server' });
         setIsGoogleLoading(false);
@@ -100,7 +186,105 @@ export default function Register({ onBackToLogin }) {
     onError: handleGoogleError,
     onNonOAuthError: handleGoogleError,
     flow: 'implicit',
+    hosted_domain: 'cvsu.edu.ph',
   });
+
+  const handleGoogleElectron = () => {
+    setIsGoogleLoading(true);
+    setMessage(null);
+
+    // Clean up any previous session
+    if (socketRef.current) {
+      socketRef.current.disconnect();
+      socketRef.current = null;
+    }
+    if (authTimeoutRef.current) {
+      clearTimeout(authTimeoutRef.current);
+      authTimeoutRef.current = null;
+    }
+
+    const sessionId = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+    const activeCloud = getCloudUrl() || 'https://verity-2z4v.onrender.com';
+    const isWebHosted = typeof window !== 'undefined' && 
+                        window.location && 
+                        window.location.hostname !== 'localhost' && 
+                        window.location.hostname !== '127.0.0.1' &&
+                        !window.electronAPI;
+    const backendUrl = isWebHosted ? activeCloud : (import.meta.env.VITE_API_URL || activeCloud || 'http://localhost:3001');
+
+    const socket = io(backendUrl, { transports: ['websocket', 'polling'] });
+    socketRef.current = socket;
+
+    socket.on(`google-login-success-${sessionId}`, (data) => {
+      socket.disconnect();
+      socketRef.current = null;
+      if (authTimeoutRef.current) {
+        clearTimeout(authTimeoutRef.current);
+        authTimeoutRef.current = null;
+      }
+      if (window.electronAPI?.closeGoogleAuth) {
+        window.electronAPI.closeGoogleAuth();
+      }
+      if (data && data.token && data.user) {
+        if (data.user.status === 'Pending') {
+          setMessage({ type: 'info', text: 'Account created! Your instructor account is pending administrator approval.' });
+          setIsGoogleLoading(false);
+          setTimeout(() => onBackToLogin(), 3500);
+          return;
+        }
+
+        try {
+          localStorage.setItem('verity_saved_account_email', data.user.email || '');
+          localStorage.setItem('verity_remember_account', 'true');
+          if (window.electronAPI?.localDB?.setLocal) {
+            window.electronAPI.localDB.setLocal('verity_saved_account_email', data.user.email || '').catch(() => {});
+            window.electronAPI.localDB.setLocal('verity_remember_account', 'true').catch(() => {});
+          }
+        } catch (_) {}
+
+        if (onLogin) {
+          onLogin(data.user, data.token);
+        } else {
+          setMessage({ type: 'success', text: 'Google sign-up successful! Redirecting...' });
+          setTimeout(() => onBackToLogin(), 1200);
+        }
+      } else {
+        setMessage({ type: 'error', text: 'Received invalid data from external authentication.' });
+        setIsGoogleLoading(false);
+      }
+    });
+
+    socket.on(`google-login-error-${sessionId}`, (data) => {
+      socket.disconnect();
+      socketRef.current = null;
+      if (authTimeoutRef.current) {
+        clearTimeout(authTimeoutRef.current);
+        authTimeoutRef.current = null;
+      }
+      if (window.electronAPI?.closeGoogleAuth) {
+        window.electronAPI.closeGoogleAuth();
+      }
+      setMessage({ type: 'error', text: data.message || 'External Google authentication failed.' });
+      setIsGoogleLoading(false);
+    });
+
+    const roleParam = encodeURIComponent(formData.role || 'Student');
+    const url = `${backendUrl}/auth/google/external?sessionId=${sessionId}&role=${roleParam}`;
+    if (window.electronAPI && window.electronAPI.openGoogleAuth) {
+      window.electronAPI.openGoogleAuth(url);
+    } else if (window.electronAPI && window.electronAPI.openExternal) {
+      window.electronAPI.openExternal(url);
+    } else {
+      const popup = window.open(url, '_blank', 'width=520,height=650');
+      authTimeoutRef.current = setTimeout(() => {
+        setIsGoogleLoading(false);
+        if (socketRef.current) {
+          socketRef.current.disconnect();
+          socketRef.current = null;
+        }
+      }, 5 * 60 * 1000);
+    }
+  };
 
   // Step 1: Submit Details & Request Email OTP
   const handleInitiateOtp = async (e) => {
@@ -132,21 +316,13 @@ export default function Register({ onBackToLogin }) {
 
       if (response.ok) {
         setStep('otp');
-        if (data.devOtp) {
-          const digits = String(data.devOtp).split('').slice(0, 6);
-          setOtpDigits(digits);
-          setMessage({
-            type: 'info',
-            text: data.message || `Offline mode: Verification code is ${data.devOtp}`
-          });
-        } else {
-          setOtpDigits(['', '', '', '', '', '']);
-          setMessage({
-            type: 'info',
-            text: `A 6-digit verification code has been sent to ${payload.email}.`
-          });
-        }
+        setOtpDigits(['', '', '', '', '', '']);
+        setMessage({
+          type: 'info',
+          text: `A 6-digit verification code has been sent to ${payload.email}.`
+        });
         setResendCooldown(30);
+        setTimeout(() => inputRefs.current[0]?.focus(), 100);
       } else {
         setMessage({ type: 'error', text: data.message || 'Failed to send verification code.' });
       }
@@ -303,14 +479,8 @@ export default function Register({ onBackToLogin }) {
       const data = await response.json();
 
       if (response.ok) {
-        if (data.devOtp) {
-          const digits = String(data.devOtp).split('').slice(0, 6);
-          setOtpDigits(digits);
-          setMessage({ type: 'info', text: data.message || `Offline mode: Verification code is ${data.devOtp}` });
-        } else {
-          setOtpDigits(['', '', '', '', '', '']);
-          setMessage({ type: 'info', text: 'A new 6-digit verification code was sent to your email.' });
-        }
+        setOtpDigits(['', '', '', '', '', '']);
+        setMessage({ type: 'info', text: 'A new 6-digit verification code was sent to your email.' });
         setResendCooldown(45);
         setTimeout(() => inputRefs.current[0]?.focus(), 100);
       } else {
@@ -534,7 +704,29 @@ export default function Register({ onBackToLogin }) {
               <button
                 type="button"
                 onClick={() => setShowPassword(!showPassword)}
-                style={{ position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', padding: 0, color: isDark ? '#9ca3af' : '#64748b', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                style={{
+                  position: 'absolute',
+                  right: '12px',
+                  top: 0,
+                  bottom: 0,
+                  margin: 'auto 0',
+                  height: '24px',
+                  width: '24px',
+                  background: 'none',
+                  border: 'none',
+                  cursor: 'pointer',
+                  padding: 0,
+                  color: isDark ? '#9ca3af' : '#64748b',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  outline: 'none',
+                  transition: 'color 0.15s ease'
+                }}
+                onMouseEnter={e => e.currentTarget.style.color = isDark ? '#e4e4e7' : '#1f2937'}
+                onMouseLeave={e => e.currentTarget.style.color = isDark ? '#9ca3af' : '#64748b'}
+                title={showPassword ? 'Hide password' : 'Show password'}
+                tabIndex={-1}
               >
                 {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
               </button>
@@ -559,7 +751,29 @@ export default function Register({ onBackToLogin }) {
               <button
                 type="button"
                 onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                style={{ position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', padding: 0, color: isDark ? '#9ca3af' : '#64748b', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                style={{
+                  position: 'absolute',
+                  right: '12px',
+                  top: 0,
+                  bottom: 0,
+                  margin: 'auto 0',
+                  height: '24px',
+                  width: '24px',
+                  background: 'none',
+                  border: 'none',
+                  cursor: 'pointer',
+                  padding: 0,
+                  color: isDark ? '#9ca3af' : '#64748b',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  outline: 'none',
+                  transition: 'color 0.15s ease'
+                }}
+                onMouseEnter={e => e.currentTarget.style.color = isDark ? '#e4e4e7' : '#1f2937'}
+                onMouseLeave={e => e.currentTarget.style.color = isDark ? '#9ca3af' : '#64748b'}
+                title={showConfirmPassword ? 'Hide password' : 'Show password'}
+                tabIndex={-1}
               >
                 {showConfirmPassword ? <EyeOff size={18} /> : <Eye size={18} />}
               </button>
@@ -619,8 +833,12 @@ export default function Register({ onBackToLogin }) {
               <button
                 type="button"
                 onClick={() => {
-                  setIsGoogleLoading(true);
-                  googleLogin();
+                  if (window.electronAPI) {
+                    handleGoogleElectron();
+                  } else {
+                    setIsGoogleLoading(true);
+                    googleLogin();
+                  }
                 }}
                 disabled={isGoogleLoading || loading}
                 style={isGoogleLoading ? {

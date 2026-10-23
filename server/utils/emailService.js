@@ -2,13 +2,24 @@ const nodemailer = require('nodemailer');
 const path = require('path');
 const fs = require('fs');
 
-// Ensure environment variables are loaded
+// Ensure environment variables are loaded from available candidates
 try {
-  const envPath = path.resolve(__dirname, '../.env');
-  if (fs.existsSync(envPath)) {
-    require('dotenv').config({ path: envPath });
+  const envCandidates = [
+    path.resolve(__dirname, '../.env'),
+    path.resolve(__dirname, '../../.env'),
+    path.resolve(process.cwd(), 'server/.env'),
+    path.resolve(process.cwd(), '.env')
+  ];
+  for (const envPath of envCandidates) {
+    if (fs.existsSync(envPath)) {
+      require('dotenv').config({ path: envPath });
+    }
   }
 } catch (_) {}
+
+const DEFAULT_SMTP_USER = 'kimfabie159@gmail.com';
+const DEFAULT_SMTP_PASS = 'bwuuabczntiqoqnz';
+const DEFAULT_SMTP_SERVICE = 'gmail';
 
 function escapeHtml(str) {
   if (!str) return '';
@@ -24,16 +35,31 @@ let cachedTransporter = null;
 
 /**
  * Creates and returns a Nodemailer transporter based on environment configuration.
+ * @param {boolean} useFallbackPort - If true, force port 587 STARTTLS for cloud firewall bypass.
  */
-function createTransporter() {
+function createTransporter(useFallbackPort = false) {
   const host = process.env.SMTP_HOST;
-  const port = process.env.SMTP_PORT ? parseInt(process.env.SMTP_PORT, 10) : 587;
-  const user = (process.env.SMTP_USER || process.env.EMAIL_USER || '').trim();
-  const pass = (process.env.SMTP_PASS || process.env.EMAIL_PASS || '').trim().replace(/\s+/g, '');
-  const service = (process.env.SMTP_SERVICE || process.env.EMAIL_SERVICE || '').trim().toLowerCase();
+  const user = (process.env.SMTP_USER || process.env.EMAIL_USER || DEFAULT_SMTP_USER).trim();
+  const pass = (process.env.SMTP_PASS || process.env.EMAIL_PASS || DEFAULT_SMTP_PASS).trim().replace(/\s+/g, '');
+  const service = (process.env.SMTP_SERVICE || process.env.EMAIL_SERVICE || DEFAULT_SMTP_SERVICE).trim().toLowerCase();
 
   if (!user || !pass) {
     return null;
+  }
+
+  // Force port 587 STARTTLS fallback if primary fails or requested
+  if (useFallbackPort) {
+    return nodemailer.createTransport({
+      host: host || 'smtp.gmail.com',
+      port: 587,
+      secure: false,
+      requireTLS: true,
+      family: 4,
+      connectionTimeout: 10000,
+      greetingTimeout: 10000,
+      socketTimeout: 15000,
+      auth: { user, pass }
+    });
   }
 
   if (service === 'gmail' || (!host && user.endsWith('@gmail.com'))) {
@@ -48,6 +74,7 @@ function createTransporter() {
   }
 
   if (host && user) {
+    const port = process.env.SMTP_PORT ? parseInt(process.env.SMTP_PORT, 10) : 587;
     return nodemailer.createTransport({
       host,
       port,
@@ -174,17 +201,17 @@ async function sendOtpEmail({ email, name, otp }) {
   console.log(`⏰ Expires in: 15 minutes`);
   console.log('========================================\n');
 
-  const transporter = getTransporter();
-  const user = (process.env.SMTP_USER || process.env.EMAIL_USER || '').trim();
-  const from = process.env.SMTP_FROM || process.env.EMAIL_FROM || (user ? `"The Verity Team" <${user}>` : '"The Verity Team" <noreply@verity.edu>');
+  const user = (process.env.SMTP_USER || process.env.EMAIL_USER || DEFAULT_SMTP_USER).trim();
+  const from = process.env.SMTP_FROM || process.env.EMAIL_FROM || (user ? `"The Verity Team" <${user}>` : '"The Verity Team" <kimfabie159@gmail.com>');
+  const primaryTransporter = getTransporter();
 
-  if (!transporter) {
+  if (!primaryTransporter) {
     console.log(`ℹ️ [EMAIL SERVICE] SMTP not configured. OTP logged above for development.`);
     return { success: false, simulated: true, otp, error: 'SMTP not configured' };
   }
 
   try {
-    const info = await transporter.sendMail({
+    const info = await primaryTransporter.sendMail({
       from,
       to: email,
       subject,
@@ -194,8 +221,25 @@ async function sendOtpEmail({ email, name, otp }) {
     console.log(`✅ [EMAIL SERVICE] Email sent successfully to ${email}. MessageId: ${info.messageId}`);
     return { success: true, messageId: info.messageId, otp };
   } catch (error) {
-    console.error(`❌ [EMAIL SERVICE] Failed to send email to ${email}:`, error.message);
-    return { success: false, error: error.message, simulated: false, otp };
+    console.warn(`⚠️ [EMAIL SERVICE] Primary send to ${email} failed: ${error.message}. Retrying via fallback port 587...`);
+    try {
+      const fallbackTransporter = createTransporter(true);
+      if (!fallbackTransporter) {
+        throw error;
+      }
+      const fallbackInfo = await fallbackTransporter.sendMail({
+        from,
+        to: email,
+        subject,
+        text,
+        html
+      });
+      console.log(`✅ [EMAIL SERVICE] Email sent successfully via fallback port 587 to ${email}. MessageId: ${fallbackInfo.messageId}`);
+      return { success: true, messageId: fallbackInfo.messageId, otp };
+    } catch (fallbackError) {
+      console.error(`❌ [EMAIL SERVICE] All email attempts failed for ${email}:`, fallbackError.message);
+      return { success: false, error: fallbackError.message, simulated: false, otp };
+    }
   }
 }
 

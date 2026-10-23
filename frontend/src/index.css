@@ -183,6 +183,40 @@ body, button, input, select, textarea {
     display: none;
     /* Hide sidebar on mobile, would need hamburger menu */
   }
+  .header-center-nav {
+    display: none !important;
+  }
+  .offline-status-banner.has-bottom-nav {
+    bottom: 76px !important;
+  }
+}
+
+/* Responsive Offline Status Banner */
+.offline-status-banner {
+  max-width: calc(100vw - 20px);
+  box-sizing: border-box;
+}
+
+.offline-banner-text-mobile {
+  display: none;
+}
+.offline-banner-text-desktop {
+  display: inline;
+}
+
+@media (max-width: 640px) {
+  .offline-status-banner {
+    padding: 5px 12px !important;
+    font-size: 0.72rem !important;
+    gap: 6px !important;
+    max-width: calc(100vw - 20px) !important;
+  }
+  .offline-banner-text-desktop {
+    display: none !important;
+  }
+  .offline-banner-text-mobile {
+    display: inline !important;
+  }
 }
 
 /* Utility: responsive container */

@@ -9,6 +9,7 @@ import { useDarkMode } from '../hooks/useDarkMode';
 import { useMediaQuery } from '../hooks/useMediaQuery';
 import ImagePreviewModal from '../components/ImagePreviewModal';
 import VideoPreviewModal from '../components/VideoPreviewModal';
+import IframePreviewModal from '../components/IframePreviewModal';
 import VideoAttachment from '../components/VideoAttachment';
 import AttachmentCard from '../components/AttachmentCard';
 import { openDotnetSetup } from '../utils/dotnetHelper';
@@ -233,6 +234,21 @@ export default function StudentView({ socket, currentUser, username, assignment,
   const [showUnsubmitModal, setShowUnsubmitModal] = useState(false);
   const [previewImage, setPreviewImage] = useState(null);
   const [previewVideo, setPreviewVideo] = useState(null);
+  const [previewIframe, setPreviewIframe] = useState(null);
+
+  const handleInstructionClick = (e) => {
+    const anchor = e.target.closest('a');
+    if (anchor && anchor.href) {
+      e.preventDefault();
+      e.stopPropagation();
+      const targetUrl = anchor.href;
+      setPreviewIframe({
+        url: targetUrl,
+        name: anchor.innerText?.trim() || targetUrl,
+        type: 'link'
+      });
+    }
+  };
   const [editorFontSize, setEditorFontSize] = useState(() => {
     try {
       return Number(localStorage.getItem('verity_editor_font_size')) || 16;
@@ -1886,11 +1902,15 @@ export default function StudentView({ socket, currentUser, username, assignment,
             ...(isDark ? { backgroundColor: '#282828' } : {})
           }}>
             {instruction ? (
-              <div style={{
-                ...styles.instructionText,
-                whiteSpace: 'normal',
-                ...(isDark ? { color: '#d1d5db' } : {})
-              }} dangerouslySetInnerHTML={{ __html: instruction }} />
+              <div 
+                style={{
+                  ...styles.instructionText,
+                  whiteSpace: 'normal',
+                  ...(isDark ? { color: '#d1d5db' } : {})
+                }} 
+                dangerouslySetInnerHTML={{ __html: instruction }} 
+                onClick={handleInstructionClick}
+              />
             ) : (
               <p style={{ color: isDark ? '#888888' : '#9ca3af', fontStyle: 'italic', fontSize: '0.9rem' }}>Waiting for instructions...</p>
             )}
@@ -2928,6 +2948,15 @@ export default function StudentView({ socket, currentUser, username, assignment,
           src={previewVideo.url}
           name={previewVideo.name}
           onClose={() => setPreviewVideo(null)}
+        />
+      )}
+
+      {previewIframe && (
+        <IframePreviewModal
+          url={previewIframe.url}
+          title={previewIframe.name}
+          type={previewIframe.type}
+          onClose={() => setPreviewIframe(null)}
         />
       )}
 

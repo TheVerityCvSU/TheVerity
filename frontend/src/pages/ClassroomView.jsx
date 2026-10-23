@@ -111,6 +111,20 @@ export default function ClassroomView({
   const [previewIframe, setPreviewIframe] = useState(null);
   const [isFadingOut, setIsFadingOut] = useState(false);
 
+  const handleInstructionClick = (e) => {
+    const anchor = e.target.closest('a');
+    if (anchor && anchor.href) {
+      e.preventDefault();
+      e.stopPropagation();
+      const targetUrl = anchor.href;
+      setPreviewIframe({
+        url: targetUrl,
+        name: anchor.innerText?.trim() || targetUrl,
+        type: 'link'
+      });
+    }
+  };
+
   const handleExit = (action) => {
     setIsFadingOut(true);
     setTimeout(() => action(), 100);
@@ -810,15 +824,18 @@ export default function ClassroomView({
           <span style={{ color: textColor, fontSize: '1.75rem', fontWeight: '900', fontStyle: 'italic' }}>erity</span>
           <span style={{ fontSize: '0.7rem', color: textMuted, marginLeft: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Student</span>
         </div>
-        <div style={{ 
-          display: 'flex', 
-          alignItems: 'center', 
-          justifyContent: 'center',
-          gap: '8px',
-          opacity: 1,
-          pointerEvents: 'auto',
-          position: 'relative'
-        }}>
+        <div 
+          className="header-center-nav"
+          style={{ 
+            display: isMobile ? 'none' : 'flex', 
+            alignItems: 'center', 
+            justifyContent: 'center',
+            gap: '8px',
+            opacity: 1,
+            pointerEvents: 'auto',
+            position: 'relative'
+          }}
+        >
           <div style={{
             position: 'absolute',
             left: headerIndicatorStyle.left,
@@ -1309,32 +1326,7 @@ export default function ClassroomView({
                  </div>
                </div>
 
-               {/* Course Materials Notification Card (Replaced Class Discussion) */}
-               <div style={{ backgroundColor: isDark ? '#1e293b' : '#0f172a', borderRadius: '16px', padding: '16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', color: 'white' }}>
-                 <div style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0 }}>
-                   <div style={{ width: '38px', height: '38px', borderRadius: '10px', backgroundColor: hasUnseenMaterials ? 'rgba(245, 158, 11, 0.2)' : 'rgba(56, 189, 248, 0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: hasUnseenMaterials ? '#fbbf24' : '#38bdf8', flexShrink: 0 }}>
-                     <FileText size={20} />
-                   </div>
-                   <div style={{ minWidth: 0 }}>
-                     <div style={{ fontSize: '0.9rem', fontWeight: 'bold', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                       {hasUnseenMaterials ? 'You have unseen materials.' : 'Course materials'}
-                     </div>
-                     <div style={{ fontSize: '0.75rem', color: hasUnseenMaterials ? '#fcd34d' : 'rgba(255,255,255,0.7)', marginTop: '2px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                       {hasUnseenMaterials 
-                         ? `${unseenMaterials.length} new material${unseenMaterials.length > 1 ? 's' : ''} uploaded` 
-                         : visibleMaterials.length > 0
-                           ? `All materials viewed (${visibleMaterials.length} in library)`
-                           : 'No new materials uploaded'}
-                     </div>
-                   </div>
-                 </div>
-                 <button 
-                   onClick={handleOpenMaterials}
-                   style={{ backgroundColor: hasUnseenMaterials ? '#f59e0b' : 'rgba(255,255,255,0.15)', border: 'none', color: hasUnseenMaterials ? '#0f172a' : 'white', padding: '6px 14px', borderRadius: '50px', fontSize: '0.75rem', fontWeight: 'bold', cursor: 'pointer', flexShrink: 0, marginLeft: '8px', transition: 'all 0.2s' }}
-                 >
-                   Open
-                 </button>
-               </div>
+
                
              </div>
 
@@ -1739,11 +1731,9 @@ export default function ClassroomView({
                                                 textOverflow: 'ellipsis'
                                               })
                                             }}
+                                            onClick={handleInstructionClick}
                                           >
-                                            {expandedInstructionId === item.id 
-                                              ? <div dangerouslySetInnerHTML={{ __html: item.details }} />
-                                              : item.details.replace(/<[^>]*>?/gm, '').replace(/&nbsp;/g, ' ')
-                                            }
+                                            <div dangerouslySetInnerHTML={{ __html: item.details }} />
                                           </div>
                                           {expandedInstructionId !== item.id && item.details.replace(/<[^>]*>?/gm, '').length > 100 && (
                                             <div 

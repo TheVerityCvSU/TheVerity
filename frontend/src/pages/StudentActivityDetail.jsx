@@ -8,6 +8,7 @@ import { useMediaQuery } from '../hooks/useMediaQuery';
 import Skeleton from '../components/Skeleton';
 import ImagePreviewModal from '../components/ImagePreviewModal';
 import VideoPreviewModal from '../components/VideoPreviewModal';
+import IframePreviewModal from '../components/IframePreviewModal';
 import VideoAttachment from '../components/VideoAttachment';
 import AttachmentCard from '../components/AttachmentCard';
 import { localStore } from '../services/localStore';
@@ -38,6 +39,21 @@ export default function StudentActivityDetail({
   const [loading, setLoading] = useState(!assignment);
   const [previewImage, setPreviewImage] = useState(null);
   const [previewVideo, setPreviewVideo] = useState(null);
+  const [previewIframe, setPreviewIframe] = useState(null);
+
+  const handleInstructionClick = (e) => {
+    const anchor = e.target.closest('a');
+    if (anchor && anchor.href) {
+      e.preventDefault();
+      e.stopPropagation();
+      const targetUrl = anchor.href;
+      setPreviewIframe({
+        url: targetUrl,
+        name: anchor.innerText?.trim() || targetUrl,
+        type: 'link'
+      });
+    }
+  };
 
   useEffect(() => {
     if (!assignment) {
@@ -560,15 +576,18 @@ export default function StudentActivityDetail({
           <span style={{ fontSize: '0.7rem', color: isDark ? '#a3a3a3' : '#6b7280', marginLeft: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Student</span>
         </div>
 
-        <div style={{ 
-          display: 'flex', 
-          alignItems: 'center', 
-          justifyContent: 'center',
-          gap: '8px',
-          opacity: 1,
-          pointerEvents: 'auto',
-          position: 'relative'
-        }}>
+        <div 
+          className="header-center-nav"
+          style={{ 
+            display: isMobile ? 'none' : 'flex', 
+            alignItems: 'center', 
+            justifyContent: 'center',
+            gap: '8px',
+            opacity: 1,
+            pointerEvents: 'auto',
+            position: 'relative'
+          }}
+        >
           <div style={{
             position: 'absolute',
             left: headerIndicatorStyle.left,
@@ -731,6 +750,7 @@ export default function StudentActivityDetail({
                     <div 
                       style={{ ...styles.instructionText, whiteSpace: 'normal', margin: 0, color: isDark ? '#d1d5db' : '#334155' }}
                       dangerouslySetInnerHTML={{ __html: details }}
+                      onClick={handleInstructionClick}
                     />
                     
                     {/* Attachments if any */}
@@ -744,11 +764,8 @@ export default function StudentActivityDetail({
                             onClick={(clickedAtt) => {
                               if (clickedAtt.type === 'image') setPreviewImage(clickedAtt);
                               else if (clickedAtt.type === 'video') setPreviewVideo(clickedAtt);
-                              else if (clickedAtt.type === 'link' && clickedAtt.url) {
-                                const targetUrl = clickedAtt.url.startsWith('http://') || clickedAtt.url.startsWith('https://')
-                                  ? clickedAtt.url
-                                  : `https://${clickedAtt.url}`;
-                                window.open(targetUrl, '_blank', 'noopener,noreferrer');
+                              else if (clickedAtt.type === 'document' || clickedAtt.type === 'link') {
+                                setPreviewIframe(clickedAtt);
                               }
                             }}
                           />
@@ -1164,6 +1181,15 @@ export default function StudentActivityDetail({
           src={previewVideo.url}
           name={previewVideo.name}
           onClose={() => setPreviewVideo(null)}
+        />
+      )}
+
+      {previewIframe && (
+        <IframePreviewModal
+          url={previewIframe.url}
+          title={previewIframe.name}
+          type={previewIframe.type}
+          onClose={() => setPreviewIframe(null)}
         />
       )}
       {/* MOBILE BOTTOM NAVIGATION */}

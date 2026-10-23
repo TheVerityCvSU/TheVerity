@@ -1,7 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  Shield, Users, HardDrive, UploadCloud, Calendar,
+  Shield, Users, HardDrive, Calendar,
   AlertOctagon, Database, Clock, KeyRound, Sparkles,
   Bell, Monitor, Code2, Download, Moon, Sun,
   LayoutList, Volume2, VolumeX, Timer, Check,
@@ -461,39 +461,11 @@ function AdminCheckUpdateCard() {
 }
 
 function GeneralPreferencesTab({ data, onChange, direction }) {
-  const [dragActive, setDragActive] = useState(false);
   const update = (key, val) => onChange({ ...data, [key]: val });
 
   return (
     <motion.div custom={direction} variants={tabVariants} initial="initial" animate="animate" exit="exit" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
       <div style={styles.card}>
-        {/* Platform Branding */}
-        <div>
-          <h3 style={styles.sectionTitle}><Sparkles size={18} color={T.blue} /><span>Platform Branding</span></h3>
-          <p style={styles.sectionSub}>Customize institution name and logo displayed on kiosks and dashboards.</p>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '20px' }}>
-            <div>
-              <label style={styles.label}>Institution Name</label>
-              <input type="text" value={data.institutionName} onChange={e => update('institutionName', e.target.value)} placeholder="e.g. Verity Institute of Technology" style={styles.input} />
-            </div>
-            <div>
-              <label style={styles.label}>Logo Upload</label>
-              <div
-                onDragOver={e => { e.preventDefault(); setDragActive(true); }}
-                onDragLeave={() => setDragActive(false)}
-                onDrop={e => { e.preventDefault(); setDragActive(false); }}
-                style={{ border: `2px dashed ${dragActive ? T.blue : '#cbd5e1'}`, borderRadius: '16px', padding: '16px', textAlign: 'center', backgroundColor: dragActive ? '#f0f7ff' : T.bg, cursor: 'pointer', transition: 'all 0.2s ease' }}
-              >
-                <UploadCloud size={24} color={dragActive ? T.blue : T.muted} style={{ marginBottom: '6px' }} />
-                <div style={{ fontSize: '0.82rem', fontWeight: '700', color: T.text }}>Drag & drop institution logo</div>
-                <div style={{ fontSize: '0.75rem', color: T.muted, marginTop: '2px' }}>Supports PNG, SVG, or JPG (Max 2MB)</div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div style={styles.divider} />
-
         {/* Academic Calendar */}
         <div>
           <h3 style={styles.sectionTitle}><Calendar size={18} color={T.blue} /><span>Academic Calendar & Term Settings</span></h3>
@@ -1038,29 +1010,32 @@ export default function SystemSettingsTab({ currentUser: propCurrentUser }) {
     setLoading(false);
   };
 
-  const handleSave = async () => {
-    setSaveError('');
+  const handleSave = async (newSettings) => {
+    const toSave = newSettings && typeof newSettings === 'object' && !newSettings.preventDefault ? newSettings : settings;
     try {
-      const res = await apiFetch(`${API_BASE}/system-settings`, {
+      await apiFetch(`${API_BASE}/system-settings`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ settings: { global_config: settings } }),
+        body: JSON.stringify({ settings: { global_config: toSave } }),
       });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        setSaveError(err.message || 'Failed to save settings');
-        setTimeout(() => setSaveError(''), 4000);
-        return;
-      }
+      logSecurityEvent({ user: currentUserName, type: 'Settings Updated', severity: 'Normal', desc: `Updated system settings tab: ${activeTab.toUpperCase()}` });
     } catch (e) {
-      setSaveError('Network error — settings could not be saved');
-      setTimeout(() => setSaveError(''), 4000);
+      console.warn('Auto-save error:', e);
+    }
+  };
+
+  const isInitialLoad = useRef(true);
+  useEffect(() => {
+    if (loading) return;
+    if (isInitialLoad.current) {
+      isInitialLoad.current = false;
       return;
     }
-    logSecurityEvent({ user: currentUserName, type: 'Settings Updated', severity: 'Normal', desc: `Updated system settings tab: ${activeTab.toUpperCase()}` });
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2500);
-  };
+    const timer = setTimeout(() => {
+      handleSave(settings);
+    }, 600);
+    return () => clearTimeout(timer);
+  }, [settings, loading]);
 
   const tabs = [
     { id: 'general',       Icon: Sparkles,  label: 'General' },
@@ -1131,21 +1106,6 @@ export default function SystemSettingsTab({ currentUser: propCurrentUser }) {
         )}
       </AnimatePresence>
       )}
-
-      {/* ═══ FLOATING SAVE BAR ═══ */}
-      <motion.div
-        initial={{ y: 80, opacity: 0 }} animate={{ y: 0, opacity: 1 }}
-        transition={{ delay: 0.3, type: 'spring', stiffness: 400, damping: 30 }}
-        style={styles.floatingBar}
-      >
-        <span style={{ fontSize: '0.82rem', color: saveError ? T.red : T.muted, fontWeight: '600' }}>
-          {saveError ? `⚠ ${saveError}` : saved ? '✓ Saved successfully' : 'Unsaved changes'}
-        </span>
-        <motion.button whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }} onClick={handleSave} style={styles.saveBtn(saved)} disabled={loading}>
-          {saved ? <Check size={16} /> : null}
-          <span>{saved ? 'Saved!' : 'Save All Settings'}</span>
-        </motion.button>
-      </motion.div>
     </div>
   );
 }

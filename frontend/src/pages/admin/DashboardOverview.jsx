@@ -146,7 +146,7 @@ export default function DashboardOverview({ stats, users, query, setQuery, onDel
       if (loginA !== loginB) return loginB - loginA;
       return (a.name || '').localeCompare(b.name || '');
     });
-  const fmt = iso => { if (!iso) return 'Never'; try { return new Date(iso).toLocaleString([], { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }); } catch { return iso; } };
+  const fmt = iso => { if (!iso) return 'Never'; try { return new Date(iso).toLocaleString('en-US', { year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true }); } catch { return iso; } };
 
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {

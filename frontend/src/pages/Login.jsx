@@ -1,8 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useGoogleLogin } from '@react-oauth/google';
 import { Moon, Sun, Loader2, Construction, AlertTriangle, Eye, EyeOff, Server } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { apiFetch } from '../utils/api';
+import { apiFetch, getCloudUrl } from '../utils/api';
 import { useDarkMode } from '../hooks/useDarkMode';
 import ServerConfigModal from '../components/ServerConfigModal';
 import { io } from 'socket.io-client';
@@ -17,12 +17,45 @@ export default function Login({ onLogin, onGoToRegister }) {
   const [showPassword, setShowPassword] = useState(false);
   const [maintenance, setMaintenance] = useState({ enabled: false, message: '' });
   const [showServerModal, setShowServerModal] = useState(false);
+  const [rememberAccount, setRememberAccount] = useState(() => {
+    try {
+      const savedPref = localStorage.getItem('verity_remember_account');
+      return savedPref !== 'false';
+    } catch (_) {
+      return true;
+    }
+  });
+
+  const socketRef = useRef(null);
+  const authTimeoutRef = useRef(null);
+  const authWindowRef = useRef(null);
+
+  // Load saved account email on mount (localStorage + Electron localDB)
+  useEffect(() => {
+    const loadSavedAccount = async () => {
+      let savedEmail = '';
+      try {
+        savedEmail = localStorage.getItem('verity_saved_account_email') || '';
+      } catch (_) {}
+
+      if (!savedEmail && window.electronAPI?.localDB?.getLocal) {
+        try {
+          savedEmail = await window.electronAPI.localDB.getLocal('verity_saved_account_email') || '';
+        } catch (_) {}
+      }
+
+      if (savedEmail) {
+        setEmail(savedEmail);
+      }
+    };
+    loadSavedAccount();
+  }, []);
 
   // Check maintenance status on mount
   useEffect(() => {
     const checkMaintenance = async () => {
       try {
-        const res = await apiFetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/maintenance-status`);
+        const res = await apiFetch('/maintenance-status');
         if (res.ok) {
           const data = await res.json();
           if (data.enabled) {
@@ -37,10 +70,92 @@ export default function Login({ onLogin, onGoToRegister }) {
     return () => clearInterval(interval);
   }, []);
 
+  // Listen for Google Auth Window closed event from Electron .exe
+  useEffect(() => {
+    if (window.electronAPI?.onGoogleAuthClosed) {
+      const unsubscribe = window.electronAPI.onGoogleAuthClosed(() => {
+        setIsGoogleLoading(false);
+        if (socketRef.current) {
+          socketRef.current.disconnect();
+          socketRef.current = null;
+        }
+        if (authTimeoutRef.current) {
+          clearTimeout(authTimeoutRef.current);
+          authTimeoutRef.current = null;
+        }
+      });
+      return () => {
+        if (typeof unsubscribe === 'function') unsubscribe();
+      };
+    }
+  }, []);
+
+  // When mainWindow regains focus, check if auth window was closed
+  useEffect(() => {
+    const handleFocus = async () => {
+      if (isGoogleLoading && window.electronAPI?.checkGoogleAuthStatus) {
+        try {
+          const isOpen = await window.electronAPI.checkGoogleAuthStatus();
+          if (!isOpen) {
+            setIsGoogleLoading(false);
+            if (socketRef.current) {
+              socketRef.current.disconnect();
+              socketRef.current = null;
+            }
+            if (authTimeoutRef.current) {
+              clearTimeout(authTimeoutRef.current);
+              authTimeoutRef.current = null;
+            }
+          }
+        } catch (_) {}
+      }
+    };
+
+    window.addEventListener('focus', handleFocus);
+    return () => window.removeEventListener('focus', handleFocus);
+  }, [isGoogleLoading]);
+
+  // Clean up any pending socket or timer on unmount
+  useEffect(() => {
+    return () => {
+      if (socketRef.current) {
+        socketRef.current.disconnect();
+        socketRef.current = null;
+      }
+      if (authTimeoutRef.current) {
+        clearTimeout(authTimeoutRef.current);
+        authTimeoutRef.current = null;
+      }
+    };
+  }, []);
+
+  const persistRememberedAccount = (accountEmail) => {
+    const cleanEmail = (accountEmail || '').trim();
+    if (rememberAccount && cleanEmail) {
+      try {
+        localStorage.setItem('verity_saved_account_email', cleanEmail);
+        localStorage.setItem('verity_remember_account', 'true');
+        if (window.electronAPI?.localDB?.setLocal) {
+          window.electronAPI.localDB.setLocal('verity_saved_account_email', cleanEmail).catch(() => {});
+          window.electronAPI.localDB.setLocal('verity_remember_account', 'true').catch(() => {});
+        }
+      } catch (_) {}
+    } else if (!rememberAccount) {
+      try {
+        localStorage.removeItem('verity_saved_account_email');
+        localStorage.setItem('verity_remember_account', 'false');
+        if (window.electronAPI?.localDB?.setLocal) {
+          window.electronAPI.localDB.setLocal('verity_saved_account_email', null).catch(() => {});
+          window.electronAPI.localDB.setLocal('verity_remember_account', 'false').catch(() => {});
+        }
+      } catch (_) {}
+    }
+  };
+
   const handleGoogleSuccess = async (tokenResponse) => {
     setIsGoogleLoading(true);
     try {
-      const response = await apiFetch(`${import.meta.env.VITE_API_URL}/auth/google`, {
+      const response = await apiFetch('/auth/google', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ token: tokenResponse.credential, access_token: tokenResponse.access_token })
@@ -52,6 +167,7 @@ export default function Login({ onLogin, onGoToRegister }) {
         return;
       }
       if (response.ok) {
+        persistRememberedAccount(data.user?.email);
         onLogin(data.user, data.token);
       } else {
         setError(data.message || 'Google login failed on server');
@@ -73,20 +189,47 @@ export default function Login({ onLogin, onGoToRegister }) {
     onError: handleGoogleError,
     onNonOAuthError: handleGoogleError,
     flow: 'implicit',
+    hosted_domain: 'cvsu.edu.ph',
   });
 
   const handleGoogleElectron = () => {
     setIsGoogleLoading(true);
     setError('');
     
+    // Clean up any previous session
+    if (socketRef.current) {
+      socketRef.current.disconnect();
+      socketRef.current = null;
+    }
+    if (authTimeoutRef.current) {
+      clearTimeout(authTimeoutRef.current);
+      authTimeoutRef.current = null;
+    }
+
     const sessionId = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
-    const backendUrl = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+    const activeCloud = getCloudUrl() || 'https://verity-2z4v.onrender.com';
+    const isWebHosted = typeof window !== 'undefined' && 
+                        window.location && 
+                        window.location.hostname !== 'localhost' && 
+                        window.location.hostname !== '127.0.0.1' &&
+                        !window.electronAPI;
+    const backendUrl = isWebHosted ? activeCloud : (import.meta.env.VITE_API_URL || activeCloud || 'http://localhost:3001');
     
     const socket = io(backendUrl, { transports: ['websocket', 'polling'] });
+    socketRef.current = socket;
     
     socket.on(`google-login-success-${sessionId}`, (data) => {
       socket.disconnect();
+      socketRef.current = null;
+      if (authTimeoutRef.current) {
+        clearTimeout(authTimeoutRef.current);
+        authTimeoutRef.current = null;
+      }
+      if (window.electronAPI?.closeGoogleAuth) {
+        window.electronAPI.closeGoogleAuth();
+      }
       if (data && data.token && data.user) {
+        persistRememberedAccount(data.user?.email);
         onLogin(data.user, data.token);
       } else {
         setError('Received invalid data from external login.');
@@ -96,20 +239,47 @@ export default function Login({ onLogin, onGoToRegister }) {
     
     socket.on(`google-login-error-${sessionId}`, (data) => {
       socket.disconnect();
+      socketRef.current = null;
+      if (authTimeoutRef.current) {
+        clearTimeout(authTimeoutRef.current);
+        authTimeoutRef.current = null;
+      }
+      if (window.electronAPI?.closeGoogleAuth) {
+        window.electronAPI.closeGoogleAuth();
+      }
       setError(data.message || 'External Google login failed.');
       setIsGoogleLoading(false);
     });
     
     const url = `${backendUrl}/auth/google/external?sessionId=${sessionId}`;
-    if (window.electronAPI && window.electronAPI.openExternal) {
+    if (window.electronAPI && window.electronAPI.openGoogleAuth) {
+      window.electronAPI.openGoogleAuth(url);
+    } else if (window.electronAPI && window.electronAPI.openExternal) {
       window.electronAPI.openExternal(url);
     } else {
-      window.open(url, '_blank');
+      const popup = window.open(url, '_blank', 'width=520,height=650');
+      if (popup) {
+        authWindowRef.current = popup;
+        const pollTimer = setInterval(() => {
+          if (!popup || popup.closed) {
+            clearInterval(pollTimer);
+            setIsGoogleLoading(false);
+            if (socketRef.current) {
+              socketRef.current.disconnect();
+              socketRef.current = null;
+            }
+          }
+        }, 500);
+      }
     }
     
-    setTimeout(() => {
-      if (socket.connected) {
-        socket.disconnect();
+    authTimeoutRef.current = setTimeout(() => {
+      if (socketRef.current && socketRef.current.connected) {
+        socketRef.current.disconnect();
+        socketRef.current = null;
+        if (window.electronAPI?.closeGoogleAuth) {
+          window.electronAPI.closeGoogleAuth();
+        }
         setIsGoogleLoading(false);
         setError('Login timed out. Please try again.');
       }
@@ -122,7 +292,7 @@ export default function Login({ onLogin, onGoToRegister }) {
     setIsLoading(true);
 
     try {
-      const response = await apiFetch(`${import.meta.env.VITE_API_URL}/login`, {
+      const response = await apiFetch('/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password })
@@ -137,6 +307,7 @@ export default function Login({ onLogin, onGoToRegister }) {
       }
 
       if (response.ok) {
+        persistRememberedAccount(email);
         onLogin(data.user, data.token);
       } else {
         setError(data.message || 'Invalid login credentials');
@@ -412,19 +583,69 @@ export default function Login({ onLogin, onGoToRegister }) {
                 paddingRight: '40px'
               }}
             />
-            <motion.button
+            <button
               type="button"
-              whileTap={{ scale: 0.85 }}
               onClick={() => setShowPassword(!showPassword)}
-              style={{ position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', padding: 0, color: isDark ? '#9ca3af' : '#64748b', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+              style={{
+                position: 'absolute',
+                right: '12px',
+                top: 0,
+                bottom: 0,
+                margin: 'auto 0',
+                height: '24px',
+                width: '24px',
+                background: 'none',
+                border: 'none',
+                cursor: 'pointer',
+                padding: 0,
+                color: isDark ? '#9ca3af' : '#64748b',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                outline: 'none',
+                transition: 'color 0.15s ease'
+              }}
+              onMouseEnter={e => e.currentTarget.style.color = isDark ? '#e4e4e7' : '#1f2937'}
+              onMouseLeave={e => e.currentTarget.style.color = isDark ? '#9ca3af' : '#64748b'}
+              title={showPassword ? 'Hide password' : 'Show password'}
+              tabIndex={-1}
             >
-              <AnimatePresence mode="wait" initial={false}>
-                <motion.span key={showPassword ? 'hide' : 'show'} initial={{ opacity: 0, scale: 0.7 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.7 }} transition={{ duration: 0.15 }} style={{ display: 'flex' }}>
-                  {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
-                </motion.span>
-              </AnimatePresence>
-            </motion.button>
+              {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+            </button>
           </motion.div>
+
+          {/* Remember Account Toggle */}
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            margin: '4px 0 6px',
+            fontSize: '0.88rem',
+            userSelect: 'none'
+          }}>
+            <label style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              cursor: 'pointer',
+              color: isDark ? '#a1a1aa' : '#4b5563',
+              fontSize: '0.88rem'
+            }}>
+              <input
+                type="checkbox"
+                checked={rememberAccount}
+                onChange={(e) => setRememberAccount(e.target.checked)}
+                style={{
+                  accentColor: '#10b981',
+                  width: '16px',
+                  height: '16px',
+                  cursor: 'pointer',
+                  borderRadius: '4px'
+                }}
+              />
+              <span>Remember account</span>
+            </label>
+          </div>
 
           <motion.button
             initial={{ opacity: 0, y: 10 }}

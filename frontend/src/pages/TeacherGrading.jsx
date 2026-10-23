@@ -13,6 +13,7 @@ import { useMediaQuery } from '../hooks/useMediaQuery';
 import AttachmentCard from '../components/AttachmentCard';
 import ImagePreviewModal from '../components/ImagePreviewModal';
 import VideoPreviewModal from '../components/VideoPreviewModal';
+import IframePreviewModal from '../components/IframePreviewModal';
 import VideoAttachment from '../components/VideoAttachment';
 import { getStudentGrade, isStudentGraded, formatGradeScore } from '../utils/gradeUtils';
 import { formatShortDate, formatFullDate } from '../utils/dateUtils';
@@ -74,6 +75,21 @@ export default function TeacherGrading({
   const [copiedCode, setCopiedCode] = useState(false);
   const [previewImage, setPreviewImage] = useState(null);
   const [previewVideo, setPreviewVideo] = useState(null);
+  const [previewIframe, setPreviewIframe] = useState(null);
+
+  const handleInstructionClick = (e) => {
+    const anchor = e.target.closest('a');
+    if (anchor && anchor.href) {
+      e.preventDefault();
+      e.stopPropagation();
+      const targetUrl = anchor.href;
+      setPreviewIframe({
+        url: targetUrl,
+        name: anchor.innerText?.trim() || targetUrl,
+        type: 'link'
+      });
+    }
+  };
 
   // Top header indicator state
   const [isHeaderHovered, setIsHeaderHovered] = useState(false);
@@ -543,15 +559,18 @@ export default function TeacherGrading({
         </div>
 
         {/* Center Navigation */}
-        <div style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          gap: '8px',
-          opacity: 1,
-          pointerEvents: 'auto',
-          position: 'relative'
-        }}>
+        <div 
+          className="header-center-nav"
+          style={{
+            display: isMobile ? 'none' : 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: '8px',
+            opacity: 1,
+            pointerEvents: 'auto',
+            position: 'relative'
+          }}
+        >
           <div style={{
             position: 'absolute',
             left: headerIndicatorStyle.left,
@@ -693,6 +712,7 @@ export default function TeacherGrading({
                     dangerouslySetInnerHTML={{
                       __html: assignment.details || assignment.instruction
                     }}
+                    onClick={handleInstructionClick}
                   />
                 ) : (
                   <p style={{ margin: 0, color: isDark ? '#94a3b8' : '#64748b', fontSize: '0.9rem' }}>
@@ -715,7 +735,7 @@ export default function TeacherGrading({
                           onClick={(clickedAtt) => {
                             if (clickedAtt.type === 'image') setPreviewImage(clickedAtt);
                             else if (clickedAtt.type === 'video') setPreviewVideo(clickedAtt);
-                            else if (clickedAtt.url) window.open(clickedAtt.url, '_blank', 'noopener,noreferrer');
+                            else if (clickedAtt.url) setPreviewIframe(clickedAtt);
                           }}
                         />
                       ))}
@@ -1243,6 +1263,69 @@ export default function TeacherGrading({
           onClose={() => setPreviewVideo(null)}
           isDark={isDark}
         />
+      )}
+
+      {/* Iframe Link Preview Modal */}
+      {previewIframe && (
+        <IframePreviewModal
+          url={previewIframe.url}
+          title={previewIframe.name}
+          type={previewIframe.type}
+          onClose={() => setPreviewIframe(null)}
+        />
+      )}
+
+      {/* MOBILE BOTTOM NAVIGATION */}
+      {isMobile && (
+        <nav style={{
+          display: 'flex',
+          justifyContent: 'space-around',
+          alignItems: 'center',
+          backgroundColor: isDark ? '#262626' : '#ffffff',
+          borderTop: isDark ? '1px solid #3f3f46' : '1px solid #e5e7eb',
+          height: '65px',
+          flexShrink: 0,
+          paddingBottom: 'env(safe-area-inset-bottom, 0px)',
+          position: 'sticky',
+          bottom: 0,
+          zIndex: 60
+        }}>
+          {[
+            { id: 'classrooms', Icon: Home, label: 'Home' },
+            { id: 'calendar', Icon: Calendar, label: 'Calendar' },
+            { id: 'archived', Icon: Archive, label: 'Archived' },
+            { id: 'settings', Icon: Settings, label: 'Settings' }
+          ].map(({ id, Icon, label }) => {
+            return (
+              <button
+                key={id}
+                onClick={() => {
+                  if (id === 'settings') {
+                    setIsSettingsModalOpen(true);
+                  } else if (onNavigateView) {
+                    onNavigateView(id);
+                  } else if (onBack) {
+                    onBack();
+                  }
+                }}
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  background: 'none',
+                  border: 'none',
+                  color: isDark ? '#a3a3a3' : '#64748b',
+                  cursor: 'pointer',
+                  padding: '8px',
+                  minWidth: '64px'
+                }}
+              >
+                <Icon size={20} style={{ marginBottom: '4px' }} />
+                <span style={{ fontSize: '0.65rem', fontWeight: '600' }}>{label}</span>
+              </button>
+            );
+          })}
+        </nav>
       )}
     </div>
   );

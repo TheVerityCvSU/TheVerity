@@ -425,11 +425,15 @@ app.post('/auth/send-otp', async (req, res) => {
         });
 
         if (!emailResult.success) {
-            console.warn(`[AUTH] Email delivery failed or offline for ${cleanEmail} (${emailResult.error}). Operating in Offline ComLab mode.`);
+            console.warn(`[AUTH] Email delivery failed or offline for ${cleanEmail} (${emailResult.error}).`);
+            if (cleanEmail.toLowerCase().endsWith('@cvsu.edu.ph')) {
+                return res.status(500).json({
+                    message: `Failed to deliver verification email to ${cleanEmail}: ${emailResult.error || 'Delivery failed'}. Please check your email address or try again.`
+                });
+            }
             return res.status(200).json({
                 message: `Offline ComLab mode: Verification code is ${otpCode}`,
                 email: cleanEmail,
-                devOtp: otpCode,
                 expiresInMinutes: 15
             });
         }
@@ -606,11 +610,15 @@ app.post('/auth/resend-otp', async (req, res) => {
         });
 
         if (!emailResult.success) {
-            console.warn(`[AUTH] Failed to resend email or offline for ${cleanEmail} (${emailResult.error}). Operating in Offline ComLab mode.`);
+            console.warn(`[AUTH] Failed to resend email or offline for ${cleanEmail} (${emailResult.error}).`);
+            if (cleanEmail.toLowerCase().endsWith('@cvsu.edu.ph')) {
+                return res.status(500).json({
+                    message: `Failed to deliver verification code to ${cleanEmail}: ${emailResult.error || 'Delivery failed'}. Please try again.`
+                });
+            }
             return res.status(200).json({
                 message: `Offline ComLab mode: Verification code is ${otpCode}`,
                 email: cleanEmail,
-                devOtp: otpCode,
                 expiresInMinutes: 15
             });
         }
@@ -750,7 +758,7 @@ app.post('/login', async (req, res) => {
         const isAdminAcc = await db.get('SELECT id FROM admin_users WHERE LOWER(email) = ?', cleanEmail);
         if (isAdminAcc) {
             return res.status(401).json({ 
-                message: 'This account has Administrator privileges. Please sign in through the Admin Portal (/admin).' 
+                message: 'Invalid credentials. No account found with this email address.' 
             });
         }
 
@@ -777,7 +785,7 @@ app.post('/login', async (req, res) => {
         if (user.role === 'Admin' || user.role === 'admin') {
             try { await db.run('DELETE FROM users WHERE id = ?', user.id); } catch (_) {}
             return res.status(401).json({ 
-                message: 'This account has Administrator privileges. Please sign in through the Admin Portal (/admin).' 
+                message: 'Invalid credentials. No account found with this email address.' 
             });
         }
         if (user.status === 'Pending') {
@@ -853,9 +861,18 @@ app.get('/admin/profile', authenticateToken, adminIpWhitelist, requireRole('Admi
     }
 });
 
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '228468530633-cc2hnruslpc1sh0o7fd2s7hgjipsibil.apps.googleusercontent.com';
+const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || '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';
+const ALLOWED_GOOGLE_AUDIENCES = [
+    GOOGLE_CLIENT_ID,
+    process.env.VITE_GOOGLE_CLIENT_ID,
+    '6514928694-2rd8cu7b67o4f2jqtuv5hk1d51s97lcc.apps.googleusercontent.com',
+    '228468530633-cc2hnruslpc1sh0o7fd2s7hgjipsibil.apps.googleusercontent.com'
+].filter(Boolean);
+
 const googleClient = new OAuth2Client(
-    process.env.GOOGLE_CLIENT_ID,
-    process.env.GOOGLE_CLIENT_SECRET,
+    GOOGLE_CLIENT_ID,
+    GOOGLE_CLIENT_SECRET,
     // We will dynamically set redirect URI per request, but define a fallback
     process.env.GOOGLE_REDIRECT_URI || 'http://localhost:3001/auth/google/callback'
 );
@@ -865,24 +882,37 @@ app.get('/auth/google/external', (req, res) => {
     if (!sessionId) {
         return res.status(400).send('Missing sessionId');
     }
-    const redirectUri = `${req.protocol}://${req.get('host')}/auth/google/callback`;
+    const requestedRole = req.query.role === 'Teacher' ? 'Teacher' : 'Student';
+    const host = req.headers['x-forwarded-host'] || req.get('host');
+    const isLocal = host.includes('localhost') || host.includes('127.0.0.1');
+    const protocol = isLocal ? (req.protocol || 'http') : (req.headers['x-forwarded-proto'] || 'https');
+    const redirectUri = `${protocol}://${host}/auth/google/callback`;
     const authorizeUrl = googleClient.generateAuthUrl({
         access_type: 'offline',
         scope: ['email', 'profile'],
-        state: sessionId,
-        redirect_uri: redirectUri
+        state: `${sessionId}:${requestedRole}`,
+        redirect_uri: redirectUri,
+        hd: 'cvsu.edu.ph',
+        prompt: 'select_account'
     });
     res.redirect(authorizeUrl);
 });
 
 app.get('/auth/google/callback', async (req, res) => {
-    const { code, state: sessionId } = req.query;
-    if (!code || !sessionId) {
+    const { code, state } = req.query;
+    if (!code || !state) {
         return res.status(400).send('Missing code or state');
     }
 
+    const stateParts = String(state).split(':');
+    const sessionId = stateParts[0];
+    const requestedRole = stateParts[1] === 'Teacher' ? 'Teacher' : 'Student';
+
     try {
-        const redirectUri = `${req.protocol}://${req.get('host')}/auth/google/callback`;
+        const host = req.headers['x-forwarded-host'] || req.get('host');
+        const isLocal = host.includes('localhost') || host.includes('127.0.0.1');
+        const protocol = isLocal ? (req.protocol || 'http') : (req.headers['x-forwarded-proto'] || 'https');
+        const redirectUri = `${protocol}://${host}/auth/google/callback`;
         const { tokens } = await googleClient.getToken({
             code,
             redirect_uri: redirectUri
@@ -890,12 +920,34 @@ app.get('/auth/google/callback', async (req, res) => {
 
         const ticket = await googleClient.verifyIdToken({
             idToken: tokens.id_token,
-            audience: process.env.GOOGLE_CLIENT_ID
+            audience: ALLOWED_GOOGLE_AUDIENCES
         });
         const payload = ticket.getPayload();
         const email = payload.email;
         const name = payload.name;
         const cleanEmail = (email || '').trim().toLowerCase();
+
+        // Enforce @cvsu.edu.ph restriction: strictly only @cvsu.edu.ph accounts are created or permitted
+        if (!cleanEmail.endsWith('@cvsu.edu.ph')) {
+            const errorMsg = 'Access restricted: Only official @cvsu.edu.ph Google accounts can register or sign in.';
+            io.emit(`google-login-error-${sessionId}`, { message: errorMsg });
+            return res.status(403).send(`
+                <html>
+                    <body style="font-family: sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; background: #1a1a1a; color: white; margin: 0; padding: 20px;">
+                        <div style="text-align: center; max-width: 460px; background: #262626; padding: 36px 30px; border-radius: 16px; border: 1px solid #ef4444; box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
+                            <h2 style="color: #ef4444; margin-top: 0; margin-bottom: 12px;">Access Restricted</h2>
+                            <p style="color: #e5e7eb; font-size: 1rem; line-height: 1.5; margin-bottom: 12px;">
+                                Only official <strong>@cvsu.edu.ph</strong> Google accounts are authorized to register or sign in to The Verity.
+                            </p>
+                            <p style="color: #9ca3af; font-size: 0.85rem; margin-bottom: 24px; word-break: break-all;">
+                                Attempted email: <em>${cleanEmail}</em>
+                            </p>
+                            <button onclick="window.close()" style="background: #374151; color: white; border: none; padding: 10px 20px; border-radius: 8px; cursor: pointer; font-size: 0.9rem;">Close Window</button>
+                        </div>
+                    </body>
+                </html>
+            `);
+        }
 
         const maintenance = await getMaintenanceStatus();
         if (maintenance.enabled) {
@@ -905,8 +957,8 @@ app.get('/auth/google/callback', async (req, res) => {
 
         const isAdminAcc = await db.get('SELECT id FROM admin_users WHERE LOWER(email) = ?', cleanEmail);
         if (isAdminAcc) {
-            io.emit(`google-login-error-${sessionId}`, { message: 'Invalid credentials' });
-            return res.send(`<h2>Error</h2><p>Cannot login with admin account here.</p>`);
+            io.emit(`google-login-error-${sessionId}`, { message: 'Invalid credentials. No account found with this email address.' });
+            return res.send(`<h2>Error</h2><p>Invalid credentials. No account found with this email address.</p>`);
         }
 
         let user = await db.get('SELECT * FROM users WHERE LOWER(email) = ?', cleanEmail);
@@ -919,6 +971,7 @@ app.get('/auth/google/callback', async (req, res) => {
             user.lastLogin = new Date().toISOString();
             await db.run('UPDATE users SET lastLogin = ? WHERE id = ?', user.lastLogin, user.id);
         } else {
+            // New user self-registration via Google SSO
             let requireApproval = true;
             try {
                 const row = await db.get("SELECT value FROM system_settings WHERE key = 'global_config'");
@@ -928,17 +981,47 @@ app.get('/auth/google/callback', async (req, res) => {
                 }
             } catch (e) {}
 
-            // Default to Student for new external SSO signups unless we know they chose Teacher (not possible via basic GET)
-            const role = 'Student';
-            const status = 'Active';
+            const role = requestedRole;
+            const status = (role === 'Teacher' && requireApproval) ? 'Pending' : 'Active';
             const lastLogin = new Date().toISOString();
             const password = 'google_sso_user';
 
             const info = await db.run(
                 'INSERT INTO users (name, email, password, role, lastLogin, status) VALUES (?, ?, ?, ?, ?, ?)',
-                name, cleanEmail, password, role, lastLogin, status
+                name || 'Google User', cleanEmail, password, role, lastLogin, status
             );
-            user = { id: info.lastInsertRowid, name, email: cleanEmail, password, role, status, lastLogin };
+            user = { id: info.lastInsertRowid, name: name || 'Google User', email: cleanEmail, password, role, status, lastLogin };
+
+            // Audit log for new user registration
+            try {
+                const nowIso = new Date().toISOString();
+                const auditAction = role === 'Teacher'
+                    ? (status === 'Pending' ? `New instructor account registered via Google and pending admin approval (${cleanEmail})` : `New instructor account registered via Google (${cleanEmail})`)
+                    : `New student account registered via Google (${cleanEmail})`;
+                await db.run(
+                    'INSERT INTO audit_logs (timestamp, admin, action, severity, details) VALUES (?, ?, ?, ?, ?)',
+                    nowIso, name || cleanEmail, 'User Registration', 'Normal', auditAction
+                );
+            } catch (auditErr) {
+                console.error('[Google SSO Callback] Failed to record registration audit log:', auditErr);
+            }
+
+            if (status === 'Pending') {
+                io.emit(`google-login-error-${sessionId}`, { message: 'Your instructor account has been created and is pending administrator approval.' });
+                return res.send(`
+                    <html>
+                        <body style="font-family: sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; background: #1a1a1a; color: white; margin: 0; padding: 20px;">
+                            <div style="text-align: center; max-width: 460px; background: #262626; padding: 36px 30px; border-radius: 16px; border: 1px solid #f59e0b;">
+                                <h2 style="color: #f59e0b; margin-top: 0; margin-bottom: 12px;">Account Pending Approval</h2>
+                                <p style="color: #e5e7eb; font-size: 1rem; line-height: 1.5; margin-bottom: 24px;">
+                                    Your instructor account has been created and is waiting for administrator approval before you can sign in.
+                                </p>
+                                <button onclick="window.close()" style="background: #374151; color: white; border: none; padding: 10px 20px; border-radius: 8px; cursor: pointer; font-size: 0.9rem;">Close Window</button>
+                            </div>
+                        </body>
+                    </html>
+                `);
+            }
         }
 
         const token = jwt.sign({ id: user.id, email: user.email, role: user.role, name: user.name }, JWT_SECRET);
@@ -960,7 +1043,10 @@ app.get('/auth/google/callback', async (req, res) => {
         `);
     } catch (err) {
         console.error('Google OAuth Callback Error:', err);
-        io.emit(`google-login-error-${sessionId}`, { message: 'Google authentication failed' });
+        const sessionToNotify = (req.query?.state || '').split(':')[0];
+        if (sessionToNotify) {
+            io.emit(`google-login-error-${sessionToNotify}`, { message: 'Google authentication failed' });
+        }
         res.status(500).send('<h2>Authentication Failed</h2><p>An error occurred during Google sign-in. Please try again.</p>');
     }
 });
@@ -989,7 +1075,7 @@ app.post('/auth/google', async (req, res) => {
             // Legacy: GoogleLogin component sends credential (ID token)
             const ticket = await googleClient.verifyIdToken({
                 idToken: token,
-                audience: process.env.GOOGLE_CLIENT_ID || '6514928694-2rd8cu7b67o4f2jqtuv5hk1d51s97lcc.apps.googleusercontent.com'
+                audience: ALLOWED_GOOGLE_AUDIENCES
             });
             const payload = ticket.getPayload();
             email = payload.email;
@@ -998,9 +1084,16 @@ app.post('/auth/google', async (req, res) => {
 
         const cleanEmail = (email || '').trim().toLowerCase();
 
+        // Enforce @cvsu.edu.ph restriction: strictly only @cvsu.edu.ph accounts are created or permitted
+        if (!cleanEmail.endsWith('@cvsu.edu.ph')) {
+            return res.status(403).json({
+                message: 'Access restricted: Only official @cvsu.edu.ph Google accounts can register or sign in.'
+            });
+        }
+
         const isAdminAcc = await db.get('SELECT id FROM admin_users WHERE LOWER(email) = ?', cleanEmail);
         if (isAdminAcc) {
-            return res.status(401).json({ message: 'Invalid credentials' });
+            return res.status(401).json({ message: 'Invalid credentials. No account found with this email address.' });
         }
 
         let user = await db.get('SELECT * FROM users WHERE LOWER(email) = ?', cleanEmail);
@@ -1031,12 +1124,26 @@ app.post('/auth/google', async (req, res) => {
 
             const info = await db.run(
                 'INSERT INTO users (name, email, password, role, lastLogin, status) VALUES (?, ?, ?, ?, ?, ?)',
-                name, email, password, role, lastLogin, status
+                name || 'Google User', cleanEmail, password, role, lastLogin, status
             );
-            user = { id: info.lastInsertRowid, name, email, password, role, lastLogin, status };
+            user = { id: info.lastInsertRowid, name: name || 'Google User', email: cleanEmail, password, role, lastLogin, status };
+
+            // Audit log for new user registration
+            try {
+                const nowIso = new Date().toISOString();
+                const auditAction = role === 'Teacher'
+                    ? (status === 'Pending' ? `New instructor account registered via Google and pending admin approval (${cleanEmail})` : `New instructor account registered via Google (${cleanEmail})`)
+                    : `New student account registered via Google (${cleanEmail})`;
+                await db.run(
+                    'INSERT INTO audit_logs (timestamp, admin, action, severity, details) VALUES (?, ?, ?, ?, ?)',
+                    nowIso, name || cleanEmail, 'User Registration', 'Normal', auditAction
+                );
+            } catch (auditErr) {
+                console.error('[Google SSO] Failed to record registration audit log:', auditErr);
+            }
 
             if (status === 'Pending') {
-                return res.status(403).json({ message: 'Your account is pending admin approval', user });
+                return res.status(403).json({ message: 'Your instructor account has been created and is pending administrator approval.', user });
             }
         }
 
@@ -1226,13 +1333,13 @@ app.put('/users/:email', authenticateToken, requireRole('Admin'), async (req, re
             if (passwordError) return res.status(400).json({ message: passwordError });
 
             await db.run(
-                'UPDATE users SET name = ?, email = ?, role = ?, status = ?, password = ? WHERE id = ?',
-                newName, newEmail, newRole, newStatus, password.trim(), existing.id
+                'UPDATE users SET name = ?, email = ?, role = ?, status = ?, password = ? WHERE id = ? OR LOWER(email) = LOWER(?)',
+                newName, newEmail, newRole, newStatus, password.trim(), existing.id, existing.email
             );
         } else {
             await db.run(
-                'UPDATE users SET name = ?, email = ?, role = ?, status = ? WHERE id = ?',
-                newName, newEmail, newRole, newStatus, existing.id
+                'UPDATE users SET name = ?, email = ?, role = ?, status = ? WHERE id = ? OR LOWER(email) = LOWER(?)',
+                newName, newEmail, newRole, newStatus, existing.id, existing.email
             );
         }
 
@@ -1253,6 +1360,21 @@ async function syncUserEmailAcrossData(userId, oldEmail, newEmail, name, role) {
     const cleanName = (name || '').trim();
     const roleLower = String(role || '').toLowerCase();
     const isTeacher = roleLower === 'teacher' || roleLower === 'instructor';
+
+    // Synchronize both databases (PostgreSQL and local SQLite) so no stale old email records linger
+    if (cleanOldEmail && cleanNewEmail && cleanOldEmail !== cleanNewEmail) {
+        try {
+            await db.run('UPDATE users SET email = ? WHERE id = ? OR LOWER(email) = LOWER(?)', cleanNewEmail, userId, cleanOldEmail).catch(() => {});
+            await db.run('DELETE FROM users WHERE LOWER(email) = LOWER(?) AND id != ?', cleanOldEmail, userId).catch(() => {});
+        } catch (_) {}
+        const localSqlite = db.getSqliteDb ? db.getSqliteDb() : null;
+        if (localSqlite) {
+            try {
+                localSqlite.prepare('UPDATE users SET email = ? WHERE id = ? OR LOWER(email) = LOWER(?)').run(cleanNewEmail, userId, cleanOldEmail);
+                localSqlite.prepare('DELETE FROM users WHERE LOWER(email) = LOWER(?) AND id != ?').run(cleanOldEmail, userId);
+            } catch (_) {}
+        }
+    }
 
     // 1. Keep student enrollments in sync safely without unique constraint collision
     try {
@@ -1419,11 +1541,21 @@ app.post('/users/verify-email-change', authenticateToken, async (req, res) => {
             const adminCurrent = await db.get('SELECT * FROM admin_users WHERE id = ?', userId);
             if (!adminCurrent) return res.status(404).json({ message: 'User account not found' });
             
-            await db.run('UPDATE admin_users SET email = ? WHERE id = ?', cleanEmail, userId);
+            const oldAdminEmail = (adminCurrent.email || '').trim().toLowerCase();
+            await db.run('UPDATE admin_users SET email = ? WHERE id = ? OR LOWER(email) = LOWER(?)', cleanEmail, userId, oldAdminEmail);
+            await db.run('DELETE FROM admin_users WHERE LOWER(email) = LOWER(?) AND id != ?', oldAdminEmail, userId).catch(() => {});
             if (newPassword && newPassword.trim()) {
                 await db.run('UPDATE admin_users SET password = ? WHERE id = ?', newPassword.trim(), userId);
             }
+            const localSqlite = db.getSqliteDb ? db.getSqliteDb() : null;
+            if (localSqlite) {
+                try {
+                    localSqlite.prepare('UPDATE admin_users SET email = ? WHERE id = ? OR LOWER(email) = LOWER(?)').run(cleanEmail, userId, oldAdminEmail);
+                    localSqlite.prepare('DELETE FROM admin_users WHERE LOWER(email) = LOWER(?) AND id != ?').run(oldAdminEmail, userId);
+                } catch (_) {}
+            }
             await db.run('DELETE FROM otp_verifications WHERE id = ?', record.id);
+            await db.run('DELETE FROM otp_verifications WHERE LOWER(email) = ? OR LOWER(email) = ?', cleanEmail, oldAdminEmail).catch(() => {});
             const updatedUser = { ...adminCurrent, email: cleanEmail };
             const token = jwt.sign(
                 { id: updatedUser.id, email: cleanEmail, role: 'Admin', name: updatedUser.name, isAdmin: true },
@@ -1432,20 +1564,36 @@ app.post('/users/verify-email-change', authenticateToken, async (req, res) => {
             return res.status(200).json({ message: 'Email address updated successfully', user: updatedUser, token });
         }
 
-        await db.run('UPDATE users SET email = ? WHERE id = ?', cleanEmail, userId);
+        const oldEmail = (current.email || '').trim().toLowerCase();
+
+        await db.run('UPDATE users SET email = ? WHERE id = ? OR LOWER(email) = LOWER(?)', cleanEmail, userId, oldEmail);
+        await db.run('DELETE FROM users WHERE LOWER(email) = LOWER(?) AND id != ?', oldEmail, userId).catch(() => {});
 
         if (newPassword && newPassword.trim()) {
             await db.run('UPDATE users SET password = ? WHERE id = ?', newPassword.trim(), userId);
         }
 
         // Keep student enrollments and teacher classrooms in sync so classrooms remain intact
-        await syncUserEmailAcrossData(userId, current.email, cleanEmail, current.name, current.role);
+        await syncUserEmailAcrossData(userId, oldEmail, cleanEmail, current.name, current.role);
 
         if (current.role === 'Admin') {
-            await db.run('UPDATE admin_users SET email = ? WHERE id = ?', cleanEmail, userId).catch(() => {});
+            await db.run('UPDATE admin_users SET email = ? WHERE id = ? OR LOWER(email) = LOWER(?)', cleanEmail, userId, oldEmail).catch(() => {});
+            await db.run('DELETE FROM admin_users WHERE LOWER(email) = LOWER(?) AND id != ?', oldEmail, userId).catch(() => {});
+        }
+
+        const localSqlite = db.getSqliteDb ? db.getSqliteDb() : null;
+        if (localSqlite) {
+            try {
+                localSqlite.prepare('UPDATE users SET email = ? WHERE id = ? OR LOWER(email) = LOWER(?)').run(cleanEmail, userId, oldEmail);
+                localSqlite.prepare('DELETE FROM users WHERE LOWER(email) = LOWER(?) AND id != ?').run(oldEmail, userId);
+                if (newPassword && newPassword.trim()) {
+                    localSqlite.prepare('UPDATE users SET password = ? WHERE id = ?').run(newPassword.trim(), userId);
+                }
+            } catch (_) {}
         }
 
         await db.run('DELETE FROM otp_verifications WHERE id = ?', record.id);
+        await db.run('DELETE FROM otp_verifications WHERE LOWER(email) = ? OR LOWER(email) = ?', cleanEmail, oldEmail).catch(() => {});
 
         const updatedUser = {
             id: current.id,
@@ -4060,7 +4208,7 @@ io.on('connection', (socket) => {
             const isSystemExit = actionStr.includes('system exit') || descStr.includes('system exit') || descStr.includes('exited system') || descStr.includes('exited the system');
             const isExitTab = !isSystemExit && (actionStr.includes('tab') || actionStr.includes('exit') || actionStr.includes('blur') || descStr.includes('tab') || descStr.includes('blur'));
             const isCopyPaste = actionStr.includes('paste') || actionStr.includes('clipboard') || actionStr.includes('copy');
-            const isAltTabCopyPaste = isExitTab || isCopyPaste;
+            const isAltTabCopyPaste = isExitTab || isCopyPaste || isSystemExit;
 
             if (isAltTabCopyPaste) {
                 // Count under Alt-Tab / Copy-Paste flags
@@ -4069,7 +4217,7 @@ io.on('connection', (socket) => {
                     key
                 );
             } else {
-                // Count under high-severity Security Flags Today (including System Exit Violation)
+                // Count under high-severity Security Flags Today
                 await db.run(
                     'INSERT INTO security_flags (date_string, count, alt_tab_copy_paste_count) VALUES (?, 1, 0) ON CONFLICT(date_string) DO UPDATE SET count = COALESCE(security_flags.count, 0) + 1',
                     key
@@ -4086,7 +4234,7 @@ io.on('connection', (socket) => {
                 
                 if (isSystemExit) {
                     logType = 'System Exit Violation';
-                    logSeverity = 'High';
+                    logSeverity = 'Warning';
                 } else if (isCopyPaste) {
                     logType = 'Copy/Paste Violation';
                     logSeverity = 'High';
@@ -4231,7 +4379,7 @@ io.on('connection', (socket) => {
                         nowIso,
                         userName,
                         'System Exit Violation',
-                        'High',
+                        'Warning',
                         `Student exited the system: ${userName} closed or disconnected application (outside workspace)`
                     );
                     io.emit('admin_security_alert', {
@@ -4240,8 +4388,8 @@ io.on('connection', (socket) => {
                         studentId: socket.user.id || userName,
                         type: 'System Exit Violation',
                         desc: `Student exited the system: ${userName} closed or disconnected application`,
-                        severity: 'High',
-                        isAltTabCopyPaste: false,
+                        severity: 'Warning',
+                        isAltTabCopyPaste: true,
                         isSystemExit: true,
                         timestamp: nowIso
                     });
@@ -4289,7 +4437,7 @@ app.post('/audit-logs', authenticateToken, async (req, res) => {
             const descLower = (desc || '').toLowerCase();
             const typeLower = (type || '').toLowerCase();
             const isSystemExit = typeLower.includes('system exit') || descLower.includes('system exit') || descLower.includes('exited system') || descLower.includes('exited the system');
-            const isAltTabCopyPaste = !isSystemExit && (descLower.includes('tab') || descLower.includes('paste') || descLower.includes('clipboard') || descLower.includes('copy') || descLower.includes('exit tab') || typeLower.includes('alt-tab') || typeLower.includes('copy-paste'));
+            const isAltTabCopyPaste = isSystemExit || (descLower.includes('tab') || descLower.includes('paste') || descLower.includes('clipboard') || descLower.includes('copy') || descLower.includes('exit tab') || typeLower.includes('alt-tab') || typeLower.includes('copy-paste'));
 
             if (isAltTabCopyPaste) {
                 await db.run(

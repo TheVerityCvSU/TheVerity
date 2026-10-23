@@ -164,21 +164,31 @@ export const apiFetch = async (url, options = {}) => {
                       window.location.hostname !== '127.0.0.1' &&
                       !window.electronAPI;
 
-  let targetUrl = url;
+  let targetUrl = url ? String(url).trim() : '';
+
+  // Clean up any "undefined/" or "null/" prefix from missing env vars
+  if (/^(?:undefined|null)\b/i.test(targetUrl)) {
+    targetUrl = targetUrl.replace(/^(?:undefined|null)\/?/i, '/');
+  }
 
   // Resolve relative URLs to current active base
   if (targetUrl.startsWith('/')) {
     targetUrl = `${isWebHosted ? cloudUrl : (cloudUrl || localUrl)}${targetUrl}`;
   }
 
-  // On hosted web (e.g. Vercel), rewrite any accidentally passed localhost:3001 or domain:3001 to cloudUrl
+  // On hosted web (e.g. Vercel), rewrite any accidentally passed localhost or loopback calls to cloudUrl
   if (isWebHosted) {
-    if (targetUrl.startsWith('http://localhost:3001') || targetUrl.startsWith('http://127.0.0.1:3001')) {
-      targetUrl = targetUrl.replace(/^http:\/\/(localhost|127\.0\.0\.1):3001/, cloudUrl);
-    } else if (targetUrl.includes(':3001')) {
-      targetUrl = targetUrl.replace(/https?:\/\/[^/]+:3001/, cloudUrl);
+    if (/^https?:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?/i.test(targetUrl)) {
+      targetUrl = targetUrl.replace(/^https?:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?/i, cloudUrl);
+    } else if (/https?:\/\/[^/]+:3001/i.test(targetUrl)) {
+      targetUrl = targetUrl.replace(/https?:\/\/[^/]+:3001/i, cloudUrl);
+    } else if (!targetUrl.startsWith('http://') && !targetUrl.startsWith('https://')) {
+      targetUrl = `${cloudUrl}/${targetUrl.replace(/^\/+/, '')}`;
     }
   }
+
+  // Clean up any double slashes in the path portion (e.g. https://domain.com//login -> https://domain.com/login)
+  targetUrl = targetUrl.replace(/([^:])\/{2,}/g, '$1/');
 
   // Cache busting for GET requests to prevent stale data
   if (!options.method || options.method.toUpperCase() === 'GET') {

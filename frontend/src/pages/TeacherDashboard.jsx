@@ -856,15 +856,18 @@ export default function TeacherDashboard({ currentUser, onLogout, onEnterClassro
         </div>
 
         {/* Center: Navigation */}
-        <div style={{ 
-          display: 'flex', 
-          alignItems: 'center', 
-          justifyContent: 'center',
-          gap: '8px',
-          opacity: 1,
-          pointerEvents: 'auto',
-          position: 'relative'
-        }}>
+        <div 
+          className="header-center-nav"
+          style={{ 
+            display: isMobile ? 'none' : 'flex', 
+            alignItems: 'center', 
+            justifyContent: 'center',
+            gap: '8px',
+            opacity: 1,
+            pointerEvents: 'auto',
+            position: 'relative'
+          }}
+        >
           <div style={{
             position: 'absolute',
             left: indicatorStyle.left,

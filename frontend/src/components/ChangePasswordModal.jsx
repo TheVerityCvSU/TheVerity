@@ -320,14 +320,20 @@ export default function ChangePasswordModal({
                       style={{
                         position: 'absolute',
                         right: '10px',
+                        top: 0,
+                        bottom: 0,
+                        margin: 'auto 0',
+                        height: '24px',
+                        width: '24px',
                         background: 'none',
                         border: 'none',
                         cursor: 'pointer',
                         color: colors.subText,
-                        padding: '4px',
+                        padding: 0,
                         display: 'flex',
                         alignItems: 'center',
-                        justifyContent: 'center'
+                        justifyContent: 'center',
+                        outline: 'none'
                       }}
                       title={showCurrent ? 'Hide password' : 'Show password'}
                     >
@@ -378,14 +384,20 @@ export default function ChangePasswordModal({
                     style={{
                       position: 'absolute',
                       right: '10px',
+                      top: 0,
+                      bottom: 0,
+                      margin: 'auto 0',
+                      height: '24px',
+                      width: '24px',
                       background: 'none',
                       border: 'none',
                       cursor: 'pointer',
                       color: colors.subText,
-                      padding: '4px',
+                      padding: 0,
                       display: 'flex',
                       alignItems: 'center',
-                      justifyContent: 'center'
+                      justifyContent: 'center',
+                      outline: 'none'
                     }}
                     title={showNew ? 'Hide password' : 'Show password'}
                   >
@@ -435,14 +447,20 @@ export default function ChangePasswordModal({
                     style={{
                       position: 'absolute',
                       right: '10px',
+                      top: 0,
+                      bottom: 0,
+                      margin: 'auto 0',
+                      height: '24px',
+                      width: '24px',
                       background: 'none',
                       border: 'none',
                       cursor: 'pointer',
                       color: colors.subText,
-                      padding: '4px',
+                      padding: 0,
                       display: 'flex',
                       alignItems: 'center',
-                      justifyContent: 'center'
+                      justifyContent: 'center',
+                      outline: 'none'
                     }}
                     title={showConfirm ? 'Hide password' : 'Show password'}
                   >

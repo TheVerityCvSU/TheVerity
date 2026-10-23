@@ -94,7 +94,7 @@ Function confirmPageCreate
     Pop $confirmPath
   ${EndIf}
 
-  # --- Microsoft .NET SDK Choice Option ---
+  # --- Microsoft .NET SDK Choice Option (Bundled Inside Same Installer) ---
   ${If} $isDotnetAlreadyInstalled == "1"
     ${NSD_CreateCheckbox} 0 58u 100% 14u "Install Microsoft .NET SDK (Already detected on this computer)"
     Pop $hwndDotnetCheckbox
@@ -109,7 +109,7 @@ Function confirmPageCreate
     ${Else}
       ${NSD_Uncheck} $hwndDotnetCheckbox
     ${EndIf}
-    ${NSD_CreateLabel} 12u 74u 95% 16u "Recommended. Automatically downloads and installs Microsoft .NET 8.0 SDK during setup."
+    ${NSD_CreateLabel} 12u 74u 95% 16u "Bundled inside this setup package. Enables student C# offline programming and assessments."
     Pop $hwndDotnetDesc
   ${EndIf}
 
@@ -192,11 +192,24 @@ FunctionEnd
   ${If} $installDotnetChoice == "1"
     DetailPrint "--------------------------------------------------------"
     DetailPrint "Setting up Microsoft .NET SDK..."
-    DetailPrint "Downloading and configuring official Microsoft .NET SDK..."
+    DetailPrint "Extracting bundled Microsoft .NET 8.0 SDK installer..."
     InitPluginsDir
-    File /oname=$PLUGINSDIR\install-dotnet.ps1 "${BUILD_RESOURCES_DIR}\install-dotnet.ps1"
-    nsExec::ExecToLog 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$PLUGINSDIR\install-dotnet.ps1" -ExeDir "$EXEDIR"'
-    DetailPrint "Microsoft .NET SDK setup finished."
+    File /oname=$PLUGINSDIR\dotnet-sdk-win-x64.exe "${BUILD_RESOURCES_DIR}\dotnet-sdk-win-x64.exe"
+
+    DetailPrint "Installing Microsoft .NET SDK silently (background)..."
+    DetailPrint "Please wait, this will take about 1-2 minutes..."
+    ExecShellWait "runas" "$PLUGINSDIR\dotnet-sdk-win-x64.exe" "/install /quiet /norestart" SW_HIDE
+
+    # Verify installation
+    ${If} ${FileExists} "$PROGRAMFILES64\dotnet\dotnet.exe"
+      DetailPrint "Microsoft .NET SDK successfully installed!"
+    ${ElseIf} ${FileExists} "$PROGRAMFILES\dotnet\dotnet.exe"
+      DetailPrint "Microsoft .NET SDK successfully installed!"
+    ${Else}
+      DetailPrint "Microsoft .NET SDK setup completed."
+    ${EndIf}
+
+    Delete "$PLUGINSDIR\dotnet-sdk-win-x64.exe"
     DetailPrint "--------------------------------------------------------"
   ${EndIf}
 !macroend

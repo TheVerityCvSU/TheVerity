@@ -47,3 +47,7 @@ server/database.sqlite*
 local-cache.*
 server/uploads/
 
+# Build Prerequisites
+build/*.exe
+build/dotnet-sdk*
+

@@ -37,9 +37,16 @@ export default function AttachmentCard({
   }
 
   const handleClick = (e) => {
-    if (type === 'link' && targetUrl !== '#') {
-      window.open(targetUrl, '_blank', 'noopener,noreferrer');
-      if (onClick) onClick(att);
+    if (type === 'link') {
+      if (onClick) {
+        if (e && e.preventDefault) e.preventDefault();
+        if (e && e.stopPropagation) e.stopPropagation();
+        onClick(att);
+        return;
+      }
+      if (targetUrl !== '#') {
+        window.open(targetUrl, '_blank', 'noopener,noreferrer');
+      }
       return;
     }
     if (onClick) {
@@ -213,7 +220,7 @@ export default function AttachmentCard({
     </>
   );
 
-  // If link, render as native <a> tag for instant navigation and popup-blocker immunity
+  // If link, render as card; intercept if onClick provided to open in-app preview
   if (type === 'link') {
     return (
       <a
@@ -225,7 +232,11 @@ export default function AttachmentCard({
         onMouseLeave={() => setIsHovered(false)}
         title={name}
         onClick={(e) => {
-          if (onClick) onClick(att);
+          if (onClick) {
+            e.preventDefault();
+            e.stopPropagation();
+            onClick(att);
+          }
         }}
       >
         {cardContent}

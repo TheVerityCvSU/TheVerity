@@ -10,6 +10,34 @@ export default function AdminLogin({ onLogin }) {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const [rememberAdmin, setRememberAdmin] = useState(() => {
+    try {
+      const savedPref = localStorage.getItem('verity_remember_admin');
+      return savedPref !== 'false';
+    } catch (_) {
+      return true;
+    }
+  });
+
+  useEffect(() => {
+    const loadSavedAdmin = async () => {
+      let savedEmail = '';
+      try {
+        savedEmail = localStorage.getItem('verity_admin_saved_email') || '';
+      } catch (_) {}
+
+      if (!savedEmail && window.electronAPI?.localDB?.getLocal) {
+        try {
+          savedEmail = await window.electronAPI.localDB.getLocal('verity_admin_saved_email') || '';
+        } catch (_) {}
+      }
+
+      if (savedEmail) {
+        setEmail(savedEmail);
+      }
+    };
+    loadSavedAdmin();
+  }, []);
 
   const handleAdminLogin = async (e) => {
     e.preventDefault();
@@ -26,6 +54,26 @@ export default function AdminLogin({ onLogin }) {
       const data = await response.json();
 
       if (response.ok) {
+        const cleanEmail = (email || '').trim();
+        if (rememberAdmin && cleanEmail) {
+          try {
+            localStorage.setItem('verity_admin_saved_email', cleanEmail);
+            localStorage.setItem('verity_remember_admin', 'true');
+            if (window.electronAPI?.localDB?.setLocal) {
+              window.electronAPI.localDB.setLocal('verity_admin_saved_email', cleanEmail).catch(() => {});
+              window.electronAPI.localDB.setLocal('verity_remember_admin', 'true').catch(() => {});
+            }
+          } catch (_) {}
+        } else if (!rememberAdmin) {
+          try {
+            localStorage.removeItem('verity_admin_saved_email');
+            localStorage.setItem('verity_remember_admin', 'false');
+            if (window.electronAPI?.localDB?.setLocal) {
+              window.electronAPI.localDB.setLocal('verity_admin_saved_email', null).catch(() => {});
+              window.electronAPI.localDB.setLocal('verity_remember_admin', 'false').catch(() => {});
+            }
+          } catch (_) {}
+        }
         onLogin(data.user, data.token);
       } else {
         setError(data.message || 'Invalid admin credentials');
@@ -120,7 +168,7 @@ export default function AdminLogin({ onLogin }) {
             <label style={{ ...styles.label, color: isDark ? '#d4d4d8' : '#475569' }}>Admin Identifier / Email</label>
             <input
               type="email"
-              placeholder="admin@verity.com"
+              placeholder="admin@example.com"
               required
               value={email}
               onChange={(e) => setEmail(e.target.value)}
@@ -153,11 +201,65 @@ export default function AdminLogin({ onLogin }) {
               <button
                 type="button"
                 onClick={() => setShowPassword(!showPassword)}
-                style={{ position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', padding: 0, color: isDark ? '#9ca3af' : '#64748b', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                style={{
+                  position: 'absolute',
+                  right: '12px',
+                  top: 0,
+                  bottom: 0,
+                  margin: 'auto 0',
+                  height: '24px',
+                  width: '24px',
+                  background: 'none',
+                  border: 'none',
+                  cursor: 'pointer',
+                  padding: 0,
+                  color: isDark ? '#9ca3af' : '#64748b',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  outline: 'none',
+                  transition: 'color 0.15s ease'
+                }}
+                onMouseEnter={e => e.currentTarget.style.color = isDark ? '#e4e4e7' : '#0f172a'}
+                onMouseLeave={e => e.currentTarget.style.color = isDark ? '#9ca3af' : '#64748b'}
+                title={showPassword ? 'Hide password' : 'Show password'}
+                tabIndex={-1}
               >
                 {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
               </button>
             </div>
+          </div>
+
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            margin: '2px 0 6px',
+            fontSize: '0.85rem',
+            userSelect: 'none'
+          }}>
+            <label style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              cursor: 'pointer',
+              color: isDark ? '#a1a1aa' : '#64748b',
+              fontSize: '0.85rem'
+            }}>
+              <input
+                type="checkbox"
+                checked={rememberAdmin}
+                onChange={(e) => setRememberAdmin(e.target.checked)}
+                style={{
+                  accentColor: '#3b82f6',
+                  width: '15px',
+                  height: '15px',
+                  cursor: 'pointer',
+                  borderRadius: '4px'
+                }}
+              />
+              <span>Remember admin identifier</span>
+            </label>
           </div>
 
           <button

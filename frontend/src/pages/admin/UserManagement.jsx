@@ -262,7 +262,7 @@ export default function UserManagementTab({ users = [], loading = false, onDelet
     const matchesStatus = statusFilter === 'All' || userStatus.toLowerCase() === statusFilter.toLowerCase();
     return matchesQuery && matchesRole && matchesStatus;
   });
-  const fmt = iso => { if (!iso) return 'Never'; try { return new Date(iso).toLocaleString(); } catch { return iso; } };
+  const fmt = iso => { if (!iso) return 'Never'; try { return new Date(iso).toLocaleString('en-US', { year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true }); } catch { return iso; } };
   const toggleSel = email => setSelected(p => p.includes(email) ? p.filter(e => e !== email) : [...p, email]);
   const toggleAll = () => setSelected(selected.length === filtered.length && filtered.length > 0 ? [] : filtered.map(u => u.email));
 
@@ -543,7 +543,33 @@ export default function UserManagementTab({ users = [], loading = false, onDelet
                     </p>
                     <div style={{ position: 'relative' }}>
                       <input type={showBulkPassword ? "text" : "password"} placeholder="New Password" value={newPassword} onChange={e => setNewPassword(e.target.value)} style={{ ...sh.inputPill, paddingRight: '40px' }} />
-                      <button type="button" onClick={() => setShowBulkPassword(!showBulkPassword)} style={{ position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', padding: 0, color: isDark ? '#9ca3af' : '#64748b', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <button
+                        type="button"
+                        onClick={() => setShowBulkPassword(!showBulkPassword)}
+                        style={{
+                          position: 'absolute',
+                          right: '12px',
+                          top: 0,
+                          bottom: 0,
+                          margin: 'auto 0',
+                          height: '24px',
+                          width: '24px',
+                          background: 'none',
+                          border: 'none',
+                          cursor: 'pointer',
+                          padding: 0,
+                          color: isDark ? '#9ca3af' : '#64748b',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          outline: 'none',
+                          transition: 'color 0.15s ease'
+                        }}
+                        onMouseEnter={e => e.currentTarget.style.color = isDark ? '#e4e4e7' : '#1f2937'}
+                        onMouseLeave={e => e.currentTarget.style.color = isDark ? '#9ca3af' : '#64748b'}
+                        title={showBulkPassword ? 'Hide password' : 'Show password'}
+                        tabIndex={-1}
+                      >
                         {showBulkPassword ? <EyeOff size={18} /> : <Eye size={18} />}
                       </button>
                     </div>
@@ -592,7 +618,33 @@ export default function UserManagementTab({ users = [], loading = false, onDelet
                 <input type="email" placeholder="Email" required value={newUser.email} onChange={e => setNewUser({ ...newUser, email: e.target.value })} style={sh.inputPill} />
                 <div style={{ position: 'relative' }}>
                   <input type={showAddPassword ? "text" : "password"} placeholder="Password" required value={newUser.password} onChange={e => setNewUser({ ...newUser, password: e.target.value })} style={{ ...sh.inputPill, paddingRight: '40px' }} />
-                  <button type="button" onClick={() => setShowAddPassword(!showAddPassword)} style={{ position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', padding: 0, color: isDark ? '#9ca3af' : '#64748b', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <button
+                    type="button"
+                    onClick={() => setShowAddPassword(!showAddPassword)}
+                    style={{
+                      position: 'absolute',
+                      right: '12px',
+                      top: 0,
+                      bottom: 0,
+                      margin: 'auto 0',
+                      height: '24px',
+                      width: '24px',
+                      background: 'none',
+                      border: 'none',
+                      cursor: 'pointer',
+                      padding: 0,
+                      color: isDark ? '#9ca3af' : '#64748b',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      outline: 'none',
+                      transition: 'color 0.15s ease'
+                    }}
+                    onMouseEnter={e => e.currentTarget.style.color = isDark ? '#e4e4e7' : '#1f2937'}
+                    onMouseLeave={e => e.currentTarget.style.color = isDark ? '#9ca3af' : '#64748b'}
+                    title={showAddPassword ? 'Hide password' : 'Show password'}
+                    tabIndex={-1}
+                  >
                     {showAddPassword ? <EyeOff size={18} /> : <Eye size={18} />}
                   </button>
                 </div>
@@ -916,7 +968,29 @@ export default function UserManagementTab({ users = [], loading = false, onDelet
                     <button
                       type="button"
                       onClick={() => setShowEditPassword(!showEditPassword)}
-                      style={{ position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', padding: 0, color: isDark ? '#9ca3af' : '#64748b', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                      style={{
+                        position: 'absolute',
+                        right: '12px',
+                        top: 0,
+                        bottom: 0,
+                        margin: 'auto 0',
+                        height: '24px',
+                        width: '24px',
+                        background: 'none',
+                        border: 'none',
+                        cursor: 'pointer',
+                        padding: 0,
+                        color: isDark ? '#9ca3af' : '#64748b',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        outline: 'none',
+                        transition: 'color 0.15s ease'
+                      }}
+                      onMouseEnter={e => e.currentTarget.style.color = isDark ? '#e4e4e7' : '#1f2937'}
+                      onMouseLeave={e => e.currentTarget.style.color = isDark ? '#9ca3af' : '#64748b'}
+                      title={showEditPassword ? 'Hide password' : 'Show password'}
+                      tabIndex={-1}
                     >
                       {showEditPassword ? <EyeOff size={18} /> : <Eye size={18} />}
                     </button>

@@ -21,6 +21,7 @@ import syncService from './services/syncService';
 import { subscribeConnectionStatus, getConnectionStatus, getCloudUrl, apiFetch } from './utils/api';
 import { saveClassroomTheme } from './utils/classroomUtils';
 import { notifyUserListeners } from './hooks/useCurrentUser';
+import { useMediaQuery } from './hooks/useMediaQuery';
 
 // Connect to Backend (Cloud-first with local offline fallback)
 const isWebHosted = typeof window !== 'undefined' &&
@@ -78,12 +79,13 @@ export const isRunningInAdminMode = () => {
 
 export default function App() {
   const isAdminApp = isRunningInAdminMode();
+  const isMobile = useMediaQuery('(max-width: 768px)');
 
   // 1. INITIALIZE STATE FROM LOCAL STORAGE
   const [currentScreen, setCurrentScreen] = useState(() => {
     let savedUser = null;
     try {
-      const savedUserStr = localStorage.getItem('currentUser');
+      const savedUserStr = localStorage.getItem('currentUser') || localStorage.getItem('verity_user');
       savedUser = savedUserStr ? JSON.parse(savedUserStr) : null;
     } catch (_) {}
 
@@ -109,7 +111,7 @@ export default function App() {
 
   const [currentUser, setCurrentUser] = useState(() => {
     try {
-      const savedUserStr = localStorage.getItem('currentUser');
+      const savedUserStr = localStorage.getItem('currentUser') || localStorage.getItem('verity_user');
       const savedUser = savedUserStr ? JSON.parse(savedUserStr) : null;
       if (isAdminApp && savedUser && savedUser.role !== 'Admin') {
         return null;
@@ -120,6 +122,84 @@ export default function App() {
       return null;
     }
   });
+
+  // Restore persistent account session in Electron (.exe) from SQLite localDB
+  useEffect(() => {
+    const restoreAccountSession = async () => {
+      let savedUser = null;
+      let savedToken = null;
+      let savedScreen = null;
+
+      try {
+        const savedUserStr = localStorage.getItem('currentUser') || localStorage.getItem('verity_user');
+        if (savedUserStr) savedUser = JSON.parse(savedUserStr);
+        savedToken = localStorage.getItem('verity_token') || localStorage.getItem('token');
+        savedScreen = localStorage.getItem('currentScreen');
+      } catch (_) {}
+
+      // If missing from localStorage or in Electron, check localDB
+      if (window.electronAPI?.localDB?.getLocal) {
+        try {
+          if (!savedUser) {
+            savedUser = await window.electronAPI.localDB.getLocal('verity_saved_session_user');
+          }
+          if (!savedToken) {
+            savedToken = await window.electronAPI.localDB.getLocal('verity_saved_session_token');
+          }
+          if (!savedScreen) {
+            savedScreen = await window.electronAPI.localDB.getLocal('verity_saved_session_screen');
+          }
+        } catch (err) {
+          console.warn('[App] Electron localDB session check failed:', err);
+        }
+      }
+
+      if (savedUser) {
+        if (isAdminApp && savedUser.role !== 'Admin') return;
+
+        localStorage.setItem('currentUser', JSON.stringify(savedUser));
+        localStorage.setItem('verity_user', JSON.stringify(savedUser));
+        if (savedToken) {
+          localStorage.setItem('verity_token', savedToken);
+          localStorage.setItem('token', savedToken);
+        }
+
+        if (window.electronAPI?.localDB?.setLocal) {
+          window.electronAPI.localDB.setLocal('verity_saved_session_user', savedUser).catch(() => {});
+          if (savedToken) window.electronAPI.localDB.setLocal('verity_saved_session_token', savedToken).catch(() => {});
+        }
+
+        setCurrentUser(savedUser);
+        notifyUserListeners(savedUser);
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('verity:user-updated', { detail: savedUser }));
+        }
+
+        let destScreen = savedScreen;
+        if (!destScreen || destScreen === 'login' || destScreen === 'admin_login') {
+          if (isAdminApp || savedUser.role === 'Admin') {
+            destScreen = 'admin_dashboard';
+          } else if (savedUser.role === 'Teacher') {
+            destScreen = 'teacher_dashboard';
+          } else {
+            destScreen = 'student_dashboard';
+          }
+        }
+
+        if (savedUser.role === 'Student' && destScreen !== 'login') {
+          lockDown();
+        }
+
+        setCurrentScreen(destScreen);
+        localStorage.setItem('currentScreen', destScreen);
+        if (window.electronAPI?.localDB?.setLocal) {
+          window.electronAPI.localDB.setLocal('verity_saved_session_screen', destScreen).catch(() => {});
+        }
+      }
+    };
+
+    restoreAccountSession();
+  }, [isAdminApp]);
 
   // Strict screen guard: If in Admin App, enforce that only admin screens can ever be shown
   useEffect(() => {
@@ -450,6 +530,7 @@ export default function App() {
   useEffect(() => {
     if (currentUser) {
       localStorage.setItem('currentUser', JSON.stringify(currentUser));
+      localStorage.setItem('verity_user', JSON.stringify(currentUser));
       notifyUserListeners(currentUser);
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('verity:user-updated', { detail: currentUser }));
@@ -457,13 +538,28 @@ export default function App() {
       const token = localStorage.getItem('verity_token') || localStorage.getItem('token');
       socket.auth = { token };
       socket.emit('authenticate', { token, user: currentUser });
+
+      // Persist to Electron SQLite storage so closing .exe remembers the login
+      if (window.electronAPI?.localDB?.setLocal) {
+        window.electronAPI.localDB.setLocal('verity_saved_session_user', currentUser).catch(() => {});
+        if (token) {
+          window.electronAPI.localDB.setLocal('verity_saved_session_token', token).catch(() => {});
+        }
+        window.electronAPI.localDB.setLocal('verity_saved_session_screen', currentScreen).catch(() => {});
+      }
     } else {
       localStorage.removeItem('currentUser');
+      localStorage.removeItem('verity_user');
       notifyUserListeners(null);
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('verity:user-updated', { detail: null }));
       }
       socket.auth = {};
+      if (window.electronAPI?.localDB?.setLocal) {
+        window.electronAPI.localDB.setLocal('verity_saved_session_user', null).catch(() => {});
+        window.electronAPI.localDB.setLocal('verity_saved_session_token', null).catch(() => {});
+        window.electronAPI.localDB.setLocal('verity_saved_session_screen', null).catch(() => {});
+      }
     }
   }, [currentUser]);
 
@@ -631,14 +727,14 @@ export default function App() {
           email: currentUser.email || '',
           action: 'Exited System',
           desc,
-          color: '#ef4444'
+          color: '#f59e0b'
         });
       }
 
       const payload = JSON.stringify({
         user: studentName,
         type: 'System Exit Violation',
-        severity: 'High',
+        severity: 'Warning',
         desc
       });
 
@@ -690,7 +786,7 @@ export default function App() {
           email: currentUser.email || '',
           action: 'Exited System (Logout)',
           desc,
-          color: '#ef4444'
+          color: '#f59e0b'
         });
       }
 
@@ -700,7 +796,7 @@ export default function App() {
         body: JSON.stringify({
           user: studentName,
           type: 'System Exit Violation',
-          severity: 'High',
+          severity: 'Warning',
           desc
         })
       }).catch(() => {});
@@ -720,7 +816,14 @@ export default function App() {
     localStorage.removeItem('activeClassroom');
     localStorage.removeItem('activeAssignment');
     localStorage.removeItem('verity_token');
+    localStorage.removeItem('token');
     localStorage.removeItem('verity_user');
+    // Clear persistent Electron session
+    if (window.electronAPI?.localDB?.setLocal) {
+      window.electronAPI.localDB.setLocal('verity_saved_session_user', null).catch(() => {});
+      window.electronAPI.localDB.setLocal('verity_saved_session_token', null).catch(() => {});
+      window.electronAPI.localDB.setLocal('verity_saved_session_screen', null).catch(() => {});
+    }
     // Clear un-scoped legacy keys so accounts never bleed into each other
     localStorage.removeItem('verity_teacher_classrooms');
     localStorage.removeItem('verity_classrooms');
@@ -730,6 +833,50 @@ export default function App() {
     localStorage.removeItem('verity_teacher_classrooms_default');
     localStorage.removeItem('verity_cached_classrooms');
     sessionStorage.clear();
+  };
+
+  const handleUserLogin = (user, token) => {
+    localStorage.removeItem('verity_teacher_classrooms');
+    localStorage.removeItem('verity_classrooms');
+    localStorage.removeItem('verity_student_classrooms_default');
+    localStorage.removeItem('verity_teacher_classrooms_default');
+    localStorage.setItem('currentUser', JSON.stringify(user));
+    localStorage.setItem('verity_user', JSON.stringify(user));
+    if (token) {
+      localStorage.setItem('verity_token', token);
+      localStorage.setItem('token', token);
+    }
+
+    let targetScreen = 'student_dashboard';
+    if (user.role === 'Admin') {
+      targetScreen = 'admin_login';
+    } else if (user.role === 'Teacher') {
+      targetScreen = 'teacher_dashboard';
+    } else {
+      targetScreen = 'student_dashboard';
+    }
+    localStorage.setItem('currentScreen', targetScreen);
+
+    if (window.electronAPI?.localDB?.setLocal) {
+      window.electronAPI.localDB.setLocal('verity_saved_session_user', user).catch(() => {});
+      if (token) window.electronAPI.localDB.setLocal('verity_saved_session_token', token).catch(() => {});
+      window.electronAPI.localDB.setLocal('verity_saved_session_screen', targetScreen).catch(() => {});
+    }
+
+    setCurrentUser(user);
+    notifyUserListeners(user);
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('verity:user-updated', { detail: user }));
+    }
+    if (user.role === 'Admin') {
+      setCurrentScreen('admin_login');
+      return;
+    } else if (user.role === 'Teacher') {
+      setCurrentScreen('teacher_dashboard');
+    } else {
+      lockDown(); // students only
+      setCurrentScreen('student_dashboard');
+    }
   };
 
 // ==========================
@@ -759,12 +906,25 @@ export default function App() {
                   onLogin={(user, token) => {
                     localStorage.removeItem('verity_teacher_classrooms');
                     localStorage.removeItem('verity_classrooms');
+                    localStorage.setItem('currentUser', JSON.stringify(user));
+                    localStorage.setItem('verity_user', JSON.stringify(user));
+                    if (token) {
+                      localStorage.setItem('verity_token', token);
+                      localStorage.setItem('token', token);
+                    }
+                    localStorage.setItem('currentScreen', 'admin_dashboard');
+
+                    if (window.electronAPI?.localDB?.setLocal) {
+                      window.electronAPI.localDB.setLocal('verity_saved_session_user', user).catch(() => {});
+                      if (token) window.electronAPI.localDB.setLocal('verity_saved_session_token', token).catch(() => {});
+                      window.electronAPI.localDB.setLocal('verity_saved_session_screen', 'admin_dashboard').catch(() => {});
+                    }
+
                     setCurrentUser(user);
                     notifyUserListeners(user);
                     if (typeof window !== 'undefined') {
                       window.dispatchEvent(new CustomEvent('verity:user-updated', { detail: user }));
                     }
-                    if (token) localStorage.setItem('verity_token', token);
                     setCurrentScreen('admin_dashboard');
                   }}
                 />
@@ -778,12 +938,25 @@ export default function App() {
               onLogin={(user, token) => {
                 localStorage.removeItem('verity_teacher_classrooms');
                 localStorage.removeItem('verity_classrooms');
+                localStorage.setItem('currentUser', JSON.stringify(user));
+                localStorage.setItem('verity_user', JSON.stringify(user));
+                if (token) {
+                  localStorage.setItem('verity_token', token);
+                  localStorage.setItem('token', token);
+                }
+                localStorage.setItem('currentScreen', 'admin_dashboard');
+
+                if (window.electronAPI?.localDB?.setLocal) {
+                  window.electronAPI.localDB.setLocal('verity_saved_session_user', user).catch(() => {});
+                  if (token) window.electronAPI.localDB.setLocal('verity_saved_session_token', token).catch(() => {});
+                  window.electronAPI.localDB.setLocal('verity_saved_session_screen', 'admin_dashboard').catch(() => {});
+                }
+
                 setCurrentUser(user);
                 notifyUserListeners(user);
                 if (typeof window !== 'undefined') {
                   window.dispatchEvent(new CustomEvent('verity:user-updated', { detail: user }));
                 }
-                if (token) localStorage.setItem('verity_token', token);
                 setCurrentScreen('admin_dashboard');
               }}
             />
@@ -791,33 +964,16 @@ export default function App() {
 
           {currentScreen === 'login' && (
             <Login
-              onLogin={(user, token) => {
-                localStorage.removeItem('verity_teacher_classrooms');
-                localStorage.removeItem('verity_classrooms');
-                localStorage.removeItem('verity_student_classrooms_default');
-                localStorage.removeItem('verity_teacher_classrooms_default');
-                setCurrentUser(user);
-                notifyUserListeners(user);
-                if (typeof window !== 'undefined') {
-                  window.dispatchEvent(new CustomEvent('verity:user-updated', { detail: user }));
-                }
-                if (token) localStorage.setItem('verity_token', token);
-                if (user.role === 'Admin') {
-                  setCurrentScreen('admin_login');
-                  return;
-                } else if (user.role === 'Teacher') {
-                  setCurrentScreen('teacher_dashboard');
-                } else {
-                  lockDown(); // students only
-                  setCurrentScreen('student_dashboard');
-                }
-              }}
+              onLogin={handleUserLogin}
               onGoToRegister={() => setCurrentScreen('register')}
             />
           )}
 
           {currentScreen === 'register' && (
-            <Register onBackToLogin={() => setCurrentScreen('login')} />
+            <Register
+              onBackToLogin={() => setCurrentScreen('login')}
+              onLogin={handleUserLogin}
+            />
           )}
 
           {/* --- STUDENT ROUTES (Protected) --- */}
@@ -1077,73 +1233,111 @@ export default function App() {
         </motion.div>
       </AnimatePresence>
 
-      {/* --- OFFLINE LOCAL FALLBACK BANNER (Electron / Desktop) --- */}
-      {connStatus?.activeMode === 'local' && Boolean(getCloudUrl()) && (
-        <div style={{
-          position: 'fixed',
-          bottom: '16px',
-          left: '50%',
-          transform: 'translateX(-50%)',
-          zIndex: 999999,
-          backgroundColor: '#0f172a',
-          color: '#f8fafc',
-          padding: '8px 18px',
-          borderRadius: '9999px',
-          fontSize: '0.8rem',
-          fontWeight: '600',
-          display: 'flex',
-          alignItems: 'center',
-          gap: '10px',
-          boxShadow: '0 8px 24px rgba(0,0,0,0.35)',
-          border: '1px solid rgba(255,255,255,0.12)',
-          pointerEvents: 'none',
-          backdropFilter: 'blur(8px)',
-        }}>
-          <span style={{
-            width: '9px',
-            height: '9px',
-            borderRadius: '50%',
-            backgroundColor: '#f59e0b',
-            boxShadow: '0 0 8px #f59e0b',
-            display: 'inline-block'
-          }}></span>
-          <span>Offline Mode &bull; Working locally &bull; Changes will sync when reconnected</span>
-        </div>
-      )}
+      {/* --- OFFLINE LOCAL FALLBACK BANNER (Electron / Desktop / Mobile) --- */}
+      {connStatus?.activeMode === 'local' && Boolean(getCloudUrl()) && (() => {
+        const hasBottomNav = isMobile && Boolean(currentUser && ['student_dashboard', 'classroom_view', 'student_activity_detail', 'teacher_dashboard', 'teacher_classwork', 'teacher_grading'].includes(currentScreen));
+        return (
+          <div 
+            className={`offline-status-banner ${hasBottomNav ? 'has-bottom-nav' : ''}`}
+            style={{
+              position: 'fixed',
+              bottom: hasBottomNav ? '76px' : '16px',
+              left: '50%',
+              transform: 'translateX(-50%)',
+              zIndex: 999999,
+              backgroundColor: 'rgba(15, 23, 42, 0.65)',
+              color: '#f8fafc',
+              opacity: 0.85,
+              padding: isMobile ? '5px 12px' : '7px 16px',
+              borderRadius: '9999px',
+              fontSize: isMobile ? '0.72rem' : '0.8rem',
+              fontWeight: '500',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: isMobile ? '6px' : '10px',
+              boxShadow: '0 4px 20px rgba(0,0,0,0.25)',
+              border: '1px solid rgba(255,255,255,0.15)',
+              pointerEvents: 'none',
+              backdropFilter: 'blur(10px)',
+              WebkitBackdropFilter: 'blur(10px)',
+              maxWidth: 'calc(100vw - 20px)',
+              boxSizing: 'border-box',
+              textAlign: 'center',
+              transition: 'bottom 0.25s ease, padding 0.2s ease, font-size 0.2s ease, opacity 0.2s ease'
+            }}
+          >
+            <span style={{
+              width: isMobile ? '7px' : '8px',
+              height: isMobile ? '7px' : '8px',
+              borderRadius: '50%',
+              backgroundColor: '#f59e0b',
+              boxShadow: '0 0 6px #f59e0b',
+              display: 'inline-block',
+              flexShrink: 0
+            }}></span>
+            <span className="offline-banner-text-desktop">
+              Offline Mode &bull; Working locally &bull; Changes will sync when reconnected
+            </span>
+            <span className="offline-banner-text-mobile">
+              Offline Mode &bull; Working locally
+            </span>
+          </div>
+        );
+      })()}
 
       {/* --- OFFLINE NO CONNECTION BANNER (Hosted Web / Vercel) --- */}
-      {connStatus?.activeMode === 'offline' && (
-        <div style={{
-          position: 'fixed',
-          bottom: '16px',
-          left: '50%',
-          transform: 'translateX(-50%)',
-          zIndex: 999999,
-          backgroundColor: '#0f172a',
-          color: '#f8fafc',
-          padding: '8px 18px',
-          borderRadius: '9999px',
-          fontSize: '0.8rem',
-          fontWeight: '600',
-          display: 'flex',
-          alignItems: 'center',
-          gap: '10px',
-          boxShadow: '0 8px 24px rgba(0,0,0,0.35)',
-          border: '1px solid rgba(255,255,255,0.12)',
-          pointerEvents: 'none',
-          backdropFilter: 'blur(8px)',
-        }}>
-          <span style={{
-            width: '9px',
-            height: '9px',
-            borderRadius: '50%',
-            backgroundColor: '#ef4444',
-            boxShadow: '0 0 8px #ef4444',
-            display: 'inline-block'
-          }}></span>
-          <span>Offline &bull; Could not connect to backend server</span>
-        </div>
-      )}
+      {connStatus?.activeMode === 'offline' && (() => {
+        const hasBottomNav = isMobile && Boolean(currentUser && ['student_dashboard', 'classroom_view', 'student_activity_detail', 'teacher_dashboard', 'teacher_classwork', 'teacher_grading'].includes(currentScreen));
+        return (
+          <div 
+            className={`offline-status-banner ${hasBottomNav ? 'has-bottom-nav' : ''}`}
+            style={{
+              position: 'fixed',
+              bottom: hasBottomNav ? '76px' : '16px',
+              left: '50%',
+              transform: 'translateX(-50%)',
+              zIndex: 999999,
+              backgroundColor: 'rgba(15, 23, 42, 0.65)',
+              color: '#f8fafc',
+              opacity: 0.85,
+              padding: isMobile ? '5px 12px' : '7px 16px',
+              borderRadius: '9999px',
+              fontSize: isMobile ? '0.72rem' : '0.8rem',
+              fontWeight: '500',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: isMobile ? '6px' : '10px',
+              boxShadow: '0 4px 20px rgba(0,0,0,0.25)',
+              border: '1px solid rgba(255,255,255,0.15)',
+              pointerEvents: 'none',
+              backdropFilter: 'blur(10px)',
+              WebkitBackdropFilter: 'blur(10px)',
+              maxWidth: 'calc(100vw - 20px)',
+              boxSizing: 'border-box',
+              textAlign: 'center',
+              transition: 'bottom 0.25s ease, padding 0.2s ease, font-size 0.2s ease, opacity 0.2s ease'
+            }}
+          >
+            <span style={{
+              width: isMobile ? '7px' : '8px',
+              height: isMobile ? '7px' : '8px',
+              borderRadius: '50%',
+              backgroundColor: '#ef4444',
+              boxShadow: '0 0 6px #ef4444',
+              display: 'inline-block',
+              flexShrink: 0
+            }}></span>
+            <span className="offline-banner-text-desktop">
+              Offline &bull; Could not connect to backend server
+            </span>
+            <span className="offline-banner-text-mobile">
+              Offline &bull; Could not connect
+            </span>
+          </div>
+        );
+      })()}
     </div>
   );
 }

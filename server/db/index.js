@@ -401,7 +401,7 @@ async function initPostgres(connStr = cleanedUrl) {
     pgPool = new Pool({
         connectionString: connStr,
         ssl: sslConfig,
-        max: 15,
+        max: 5,
         idleTimeoutMillis: 30000,
         connectionTimeoutMillis: 10000,
     });
@@ -429,6 +429,27 @@ async function initPostgres(connStr = cleanedUrl) {
 
         console.log('[Database] PostgreSQL schema verified/initialized.');
         provider = 'postgres';
+
+        // Synchronize active Postgres users with local SQLite so offline cache matches the primary database
+        if (sqliteDb) {
+            try {
+                const pgUsers = await client.query('SELECT id, name, email, role, status FROM users').catch(() => ({ rows: [] }));
+                if (pgUsers.rows && pgUsers.rows.length > 0) {
+                    const updateSqlite = sqliteDb.prepare(
+                        'UPDATE users SET email = ?, name = COALESCE(NULLIF(?, \'\'), name), role = COALESCE(NULLIF(?, \'\'), role), status = COALESCE(NULLIF(?, \'\'), status) WHERE id = ? OR LOWER(email) = LOWER(?)'
+                    );
+                    for (const u of pgUsers.rows) {
+                        if (u.email) {
+                            try {
+                                updateSqlite.run(u.email, u.name || '', u.role || '', u.status || '', u.id, u.email);
+                            } catch (_) {}
+                        }
+                    }
+                }
+            } catch (syncErr) {
+                console.warn('[Database] User sync warning:', syncErr.message);
+            }
+        }
     } catch (err) {
         console.warn('[Database] Schema verification notice:', err.message);
         provider = 'postgres';
@@ -505,14 +526,7 @@ const db = {
             try {
                 const pgSql = convertPlaceholders(sql);
                 const res = await pgPool.query(pgSql, params);
-                let rows = res.rows.map(normalizeRow);
-                if (rows.length === 0 && /FROM\s+(?:users|admin_users)\b/i.test(sql) && sqliteDb) {
-                    try {
-                        const localRows = sqliteDb.prepare(sql).all(...params);
-                        if (localRows.length > 0) rows = localRows.map(normalizeRow);
-                    } catch (_) {}
-                }
-                return rows;
+                return res.rows.map(normalizeRow);
             } catch (err) {
                 if (isNetworkError(err)) {
                     console.warn(`[Database] PostgreSQL connection lost (${err.message}). Switching to local SQLite.`);
@@ -524,14 +538,7 @@ const db = {
             }
         } else {
             if (!sqliteDb) initSqlite();
-            let rows = sqliteDb.prepare(sql).all(...params);
-            if (rows.length === 0 && /FROM\s+(?:users|admin_users)\b/i.test(sql) && pgPool) {
-                try {
-                    const pgRes = await pgPool.query(convertPlaceholders(sql), params);
-                    if (pgRes.rows.length > 0) rows = pgRes.rows.map(normalizeRow);
-                } catch (_) {}
-            }
-            return rows;
+            return sqliteDb.prepare(sql).all(...params);
         }
     },
 
@@ -543,17 +550,7 @@ const db = {
             try {
                 const pgSql = convertPlaceholders(sql);
                 const res = await pgPool.query(pgSql, params);
-                let row = res.rows[0] ? normalizeRow(res.rows[0]) : undefined;
-                // Fallback for user authentication & accounts: check SQLite if not found in Postgres
-                if (!row && /FROM\s+(?:users|admin_users)\b/i.test(sql) && sqliteDb) {
-                    try {
-                        const localRow = sqliteDb.prepare(sql).get(...params);
-                        if (localRow) {
-                            row = normalizeRow(localRow);
-                        }
-                    } catch (_) {}
-                }
-                return row;
+                return res.rows[0] ? normalizeRow(res.rows[0]) : undefined;
             } catch (err) {
                 if (isNetworkError(err)) {
                     console.warn(`[Database] PostgreSQL connection lost (${err.message}). Switching to local SQLite.`);
@@ -565,17 +562,7 @@ const db = {
             }
         } else {
             if (!sqliteDb) initSqlite();
-            let row = sqliteDb.prepare(sql).get(...params);
-            // Fallback for user authentication & accounts: check Postgres if not found in SQLite
-            if (!row && /FROM\s+(?:users|admin_users)\b/i.test(sql) && pgPool) {
-                try {
-                    const pgRes = await pgPool.query(convertPlaceholders(sql), params);
-                    if (pgRes.rows[0]) {
-                        row = normalizeRow(pgRes.rows[0]);
-                    }
-                } catch (_) {}
-            }
-            return row;
+            return sqliteDb.prepare(sql).get(...params);
         }
     },
 
@@ -752,6 +739,11 @@ const db = {
     async close() {
         if (pgPool) await pgPool.end();
         if (sqliteDb) sqliteDb.close();
+    },
+
+    getSqliteDb() {
+        if (!sqliteDb) initSqlite();
+        return sqliteDb;
     },
 
     generateClassCodeSync
