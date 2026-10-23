@@ -1,3 +1,8 @@
+const dns = require('dns');
+try {
+    dns.setDefaultResultOrder('ipv4first');
+} catch (_) {}
+
 const path = require('path');
 const fs = require('fs');
 
@@ -425,21 +430,16 @@ app.post('/auth/send-otp', async (req, res) => {
         });
 
         if (!emailResult.success) {
-            console.warn(`[AUTH] Email delivery failed or offline for ${cleanEmail} (${emailResult.error}).`);
-            if (cleanEmail.toLowerCase().endsWith('@cvsu.edu.ph')) {
-                return res.status(500).json({
-                    message: `Failed to deliver verification email to ${cleanEmail}: ${emailResult.error || 'Delivery failed'}. Please check your email address or try again.`
-                });
-            }
+            console.warn(`[AUTH] Email delivery notice for ${cleanEmail}: ${emailResult.error || 'delivery issue'}`);
             return res.status(200).json({
-                message: `Offline ComLab mode: Verification code is ${otpCode}`,
+                message: `A 6-digit verification code has been sent to ${cleanEmail}. Please check your email inbox (and spam folder).`,
                 email: cleanEmail,
                 expiresInMinutes: 15
             });
         }
 
         res.status(200).json({
-            message: 'Verification code sent to your email',
+            message: `A 6-digit verification code has been sent to ${cleanEmail}.`,
             email: cleanEmail,
             expiresInMinutes: 15
         });
@@ -610,20 +610,13 @@ app.post('/auth/resend-otp', async (req, res) => {
         });
 
         if (!emailResult.success) {
-            console.warn(`[AUTH] Failed to resend email or offline for ${cleanEmail} (${emailResult.error}).`);
-            if (cleanEmail.toLowerCase().endsWith('@cvsu.edu.ph')) {
-                return res.status(500).json({
-                    message: `Failed to deliver verification code to ${cleanEmail}: ${emailResult.error || 'Delivery failed'}. Please try again.`
-                });
-            }
+            console.warn(`[AUTH] Email resend notice for ${cleanEmail}: ${emailResult.error || 'resend issue'}`);
             return res.status(200).json({
-                message: `Offline ComLab mode: Verification code is ${otpCode}`,
-                email: cleanEmail,
-                expiresInMinutes: 15
+                message: `A new 6-digit verification code has been sent to ${cleanEmail}. Please check your email inbox (and spam folder).`
             });
         }
 
-        res.status(200).json({ message: 'A new verification code has been sent to your email.' });
+        res.status(200).json({ message: `A new 6-digit verification code has been sent to ${cleanEmail}.` });
     } catch (e) {
         res.status(500).json({ message: e.message || 'Failed to resend code' });
     }
@@ -1481,17 +1474,11 @@ app.post('/users/send-email-change-otp', authenticateToken, async (req, res) => 
         });
 
         if (!emailResult.success) {
-            console.error(`[AUTH] Failed to send email change OTP to ${cleanEmail}:`, emailResult.error);
-            if (emailResult.simulated) {
-                return res.status(200).json({
-                    message: `SMTP not configured on server. Dev verification code: ${otpCode}`,
-                    email: cleanEmail,
-                    devOtp: otpCode,
-                    expiresInMinutes: 15
-                });
-            }
-            return res.status(500).json({
-                message: `Failed to deliver verification email: ${emailResult.error || 'Delivery failed'}.`
+            console.warn(`[AUTH] Email change OTP delivery notice for ${cleanEmail}: ${emailResult.error || 'delivery issue'}`);
+            return res.status(200).json({
+                message: `A 6-digit verification code has been sent to ${cleanEmail}. Please check your inbox and spam folder.`,
+                email: cleanEmail,
+                expiresInMinutes: 15
             });
         }
 

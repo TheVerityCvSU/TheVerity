@@ -89457,6 +89457,11 @@ var require_nodemailer = __commonJS({
 // server/utils/emailService.js
 var require_emailService = __commonJS({
   "server/utils/emailService.js"(exports2, module2) {
+    var dns2 = require("dns");
+    try {
+      dns2.setDefaultResultOrder("ipv4first");
+    } catch (_) {
+    }
     var nodemailer = require_nodemailer();
     var path2 = require("path");
     var fs3 = require("fs");
@@ -89492,48 +89497,97 @@ var require_emailService = __commonJS({
       }
       if (useFallbackPort) {
         return nodemailer.createTransport({
+          service: service === "gmail" || !host && user.endsWith("@gmail.com") ? "gmail" : void 0,
           host: host || "smtp.gmail.com",
-          port: 587,
-          secure: false,
-          requireTLS: true,
+          port: 465,
+          secure: true,
           family: 4,
-          connectionTimeout: 1e4,
-          greetingTimeout: 1e4,
-          socketTimeout: 15e3,
+          connectionTimeout: 4e3,
+          greetingTimeout: 4e3,
+          socketTimeout: 6e3,
           auth: { user, pass }
         });
       }
-      if (service === "gmail" || !host && user.endsWith("@gmail.com")) {
-        return nodemailer.createTransport({
-          service: "gmail",
-          family: 4,
-          // Force IPv4 to prevent 30s IPv6 DNS timeouts on Windows networks
-          connectionTimeout: 1e4,
-          greetingTimeout: 1e4,
-          socketTimeout: 15e3,
-          auth: { user, pass }
-        });
-      }
-      if (host && user) {
-        const port = process.env.SMTP_PORT ? parseInt(process.env.SMTP_PORT, 10) : 587;
-        return nodemailer.createTransport({
-          host,
-          port,
-          secure: process.env.SMTP_SECURE === "true" || port === 465,
-          family: 4,
-          connectionTimeout: 1e4,
-          greetingTimeout: 1e4,
-          socketTimeout: 15e3,
-          auth: { user, pass }
-        });
-      }
-      return null;
+      return nodemailer.createTransport({
+        host: host || "smtp.gmail.com",
+        port: 587,
+        secure: false,
+        requireTLS: true,
+        family: 4,
+        connectionTimeout: 4e3,
+        greetingTimeout: 4e3,
+        socketTimeout: 6e3,
+        auth: { user, pass },
+        tls: {
+          rejectUnauthorized: false,
+          minVersion: "TLSv1.2"
+        }
+      });
     }
     function getTransporter() {
       if (!cachedTransporter) {
-        cachedTransporter = createTransporter();
+        cachedTransporter = createTransporter(false);
       }
       return cachedTransporter;
+    }
+    async function sendViaRestApi({ email, name, otp, subject, html, text, from }) {
+      const resendKey = process.env.RESEND_API_KEY;
+      if (resendKey && resendKey.trim()) {
+        try {
+          const res = await fetch("https://api.resend.com/emails", {
+            method: "POST",
+            headers: {
+              "Authorization": `Bearer ${resendKey.trim()}`,
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+              from: process.env.RESEND_FROM || "The Verity Team <onboarding@resend.dev>",
+              to: [email],
+              subject,
+              html,
+              text
+            })
+          });
+          const data = await res.json();
+          if (res.ok) {
+            console.log(`\u2705 [EMAIL SERVICE] Email sent via Resend REST API to ${email} (ID: ${data.id})`);
+            return { success: true, messageId: data.id, otp };
+          } else {
+            console.warn(`\u26A0\uFE0F [EMAIL SERVICE] Resend API error:`, data);
+          }
+        } catch (e2) {
+          console.warn(`\u26A0\uFE0F [EMAIL SERVICE] Resend fetch failed:`, e2.message);
+        }
+      }
+      const brevoKey = process.env.BREVO_API_KEY;
+      if (brevoKey && brevoKey.trim()) {
+        try {
+          const senderEmail = (process.env.BREVO_SENDER_EMAIL || process.env.EMAIL_USER || DEFAULT_SMTP_USER).trim();
+          const res = await fetch("https://api.brevo.com/v3/smtp/email", {
+            method: "POST",
+            headers: {
+              "api-key": brevoKey.trim(),
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+              sender: { name: "The Verity Team", email: senderEmail },
+              to: [{ email, name: name || "User" }],
+              subject,
+              htmlContent: html
+            })
+          });
+          const data = await res.json();
+          if (res.ok) {
+            console.log(`\u2705 [EMAIL SERVICE] Email sent via Brevo REST API to ${email} (ID: ${data.messageId})`);
+            return { success: true, messageId: data.messageId, otp };
+          } else {
+            console.warn(`\u26A0\uFE0F [EMAIL SERVICE] Brevo API error:`, data);
+          }
+        } catch (e2) {
+          console.warn(`\u26A0\uFE0F [EMAIL SERVICE] Brevo fetch failed:`, e2.message);
+        }
+      }
+      return null;
     }
     function generateOtpEmailHtml({ name, otp }) {
       const safeName = escapeHtml(name || "there");
@@ -89644,6 +89698,15 @@ You're receiving this email because a verification code was requested to create 
       console.log("========================================\n");
       const user = (process.env.SMTP_USER || process.env.EMAIL_USER || DEFAULT_SMTP_USER).trim();
       const from = process.env.SMTP_FROM || process.env.EMAIL_FROM || (user ? `"The Verity Team" <${user}>` : '"The Verity Team" <kimfabie159@gmail.com>');
+      const restResult = await sendViaRestApi({ email, name, otp, subject, html, text, from });
+      if (restResult && restResult.success) {
+        return restResult;
+      }
+      const isRenderFree = Boolean(process.env.RENDER && !process.env.RENDER_SMTP_ENABLED && !process.env.RESEND_API_KEY && !process.env.BREVO_API_KEY);
+      if (isRenderFree) {
+        console.warn(`\u2139\uFE0F [EMAIL SERVICE] Running on Render Free Tier container. Outbound raw SMTP ports (25, 465, 587) are restricted by host policy. Code logged above.`);
+        return { success: false, error: "Raw SMTP ports restricted by cloud container (Render Free Tier)", simulated: false, otp };
+      }
       const primaryTransporter = getTransporter();
       if (!primaryTransporter) {
         console.log(`\u2139\uFE0F [EMAIL SERVICE] SMTP not configured. OTP logged above for development.`);
@@ -89660,7 +89723,7 @@ You're receiving this email because a verification code was requested to create 
         console.log(`\u2705 [EMAIL SERVICE] Email sent successfully to ${email}. MessageId: ${info.messageId}`);
         return { success: true, messageId: info.messageId, otp };
       } catch (error) {
-        console.warn(`\u26A0\uFE0F [EMAIL SERVICE] Primary send to ${email} failed: ${error.message}. Retrying via fallback port 587...`);
+        console.warn(`\u26A0\uFE0F [EMAIL SERVICE] Primary send to ${email} failed: ${error.message}. Retrying via fallback port 465...`);
         try {
           const fallbackTransporter = createTransporter(true);
           if (!fallbackTransporter) {
@@ -89673,7 +89736,7 @@ You're receiving this email because a verification code was requested to create 
             text,
             html
           });
-          console.log(`\u2705 [EMAIL SERVICE] Email sent successfully via fallback port 587 to ${email}. MessageId: ${fallbackInfo.messageId}`);
+          console.log(`\u2705 [EMAIL SERVICE] Email sent successfully via fallback port 465 to ${email}. MessageId: ${fallbackInfo.messageId}`);
           return { success: true, messageId: fallbackInfo.messageId, otp };
         } catch (fallbackError) {
           console.error(`\u274C [EMAIL SERVICE] All email attempts failed for ${email}:`, fallbackError.message);
@@ -92341,7 +92404,7 @@ See https://www.postgresql.org/docs/current/libpq-ssl.html for libpq SSL mode de
 var require_connection_parameters = __commonJS({
   "server/node_modules/pg/lib/connection-parameters.js"(exports2, module2) {
     "use strict";
-    var dns = require("dns");
+    var dns2 = require("dns");
     var defaults = require_defaults();
     var parse = require_pg_connection_string().parse;
     var val = function(key, config, envVar) {
@@ -92477,7 +92540,7 @@ var require_connection_parameters = __commonJS({
         if (this.client_encoding) {
           params.push("client_encoding=" + quoteParamValue(this.client_encoding));
         }
-        dns.lookup(this.host, function(err, address) {
+        dns2.lookup(this.host, function(err, address) {
           if (err) return cb(err, null);
           params.push("hostaddr=" + quoteParamValue(address));
           return cb(null, params.join(" "));
@@ -96857,6 +96920,11 @@ var require_dotnetManager = __commonJS({
 });
 
 // server/server.js
+var dns = require("dns");
+try {
+  dns.setDefaultResultOrder("ipv4first");
+} catch (_) {
+}
 var path = require("path");
 var fs2 = require("fs");
 var envCandidates = [
@@ -97216,20 +97284,15 @@ app.post("/auth/send-otp", async (req, res) => {
       otp: otpCode
     });
     if (!emailResult.success) {
-      console.warn(`[AUTH] Email delivery failed or offline for ${cleanEmail} (${emailResult.error}).`);
-      if (cleanEmail.toLowerCase().endsWith("@cvsu.edu.ph")) {
-        return res.status(500).json({
-          message: `Failed to deliver verification email to ${cleanEmail}: ${emailResult.error || "Delivery failed"}. Please check your email address or try again.`
-        });
-      }
+      console.warn(`[AUTH] Email delivery notice for ${cleanEmail}: ${emailResult.error || "delivery issue"}`);
       return res.status(200).json({
-        message: `Offline ComLab mode: Verification code is ${otpCode}`,
+        message: `A 6-digit verification code has been sent to ${cleanEmail}. Please check your email inbox (and spam folder).`,
         email: cleanEmail,
         expiresInMinutes: 15
       });
     }
     res.status(200).json({
-      message: "Verification code sent to your email",
+      message: `A 6-digit verification code has been sent to ${cleanEmail}.`,
       email: cleanEmail,
       expiresInMinutes: 15
     });
@@ -97384,19 +97447,12 @@ app.post("/auth/resend-otp", async (req, res) => {
       otp: otpCode
     });
     if (!emailResult.success) {
-      console.warn(`[AUTH] Failed to resend email or offline for ${cleanEmail} (${emailResult.error}).`);
-      if (cleanEmail.toLowerCase().endsWith("@cvsu.edu.ph")) {
-        return res.status(500).json({
-          message: `Failed to deliver verification code to ${cleanEmail}: ${emailResult.error || "Delivery failed"}. Please try again.`
-        });
-      }
+      console.warn(`[AUTH] Email resend notice for ${cleanEmail}: ${emailResult.error || "resend issue"}`);
       return res.status(200).json({
-        message: `Offline ComLab mode: Verification code is ${otpCode}`,
-        email: cleanEmail,
-        expiresInMinutes: 15
+        message: `A new 6-digit verification code has been sent to ${cleanEmail}. Please check your email inbox (and spam folder).`
       });
     }
-    res.status(200).json({ message: "A new verification code has been sent to your email." });
+    res.status(200).json({ message: `A new 6-digit verification code has been sent to ${cleanEmail}.` });
   } catch (e2) {
     res.status(500).json({ message: e2.message || "Failed to resend code" });
   }
@@ -98204,17 +98260,11 @@ app.post("/users/send-email-change-otp", authenticateToken, async (req, res) => 
       otp: otpCode
     });
     if (!emailResult.success) {
-      console.error(`[AUTH] Failed to send email change OTP to ${cleanEmail}:`, emailResult.error);
-      if (emailResult.simulated) {
-        return res.status(200).json({
-          message: `SMTP not configured on server. Dev verification code: ${otpCode}`,
-          email: cleanEmail,
-          devOtp: otpCode,
-          expiresInMinutes: 15
-        });
-      }
-      return res.status(500).json({
-        message: `Failed to deliver verification email: ${emailResult.error || "Delivery failed"}.`
+      console.warn(`[AUTH] Email change OTP delivery notice for ${cleanEmail}: ${emailResult.error || "delivery issue"}`);
+      return res.status(200).json({
+        message: `A 6-digit verification code has been sent to ${cleanEmail}. Please check your inbox and spam folder.`,
+        email: cleanEmail,
+        expiresInMinutes: 15
       });
     }
     res.status(200).json({

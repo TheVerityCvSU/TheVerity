@@ -306,7 +306,7 @@ export default function Register({ onBackToLogin, onLogin }) {
     setLoading(true);
 
     try {
-      const response = await apiFetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/auth/send-otp`, {
+      const response = await apiFetch('/auth/send-otp', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
@@ -429,7 +429,7 @@ export default function Register({ onBackToLogin, onLogin }) {
     setMessage(null);
 
     try {
-      const response = await apiFetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/auth/verify-otp`, {
+      const response = await apiFetch('/auth/verify-otp', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -470,7 +470,7 @@ export default function Register({ onBackToLogin, onLogin }) {
     setMessage(null);
 
     try {
-      const response = await apiFetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/auth/resend-otp`, {
+      const response = await apiFetch('/auth/resend-otp', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: formData.email.trim() })

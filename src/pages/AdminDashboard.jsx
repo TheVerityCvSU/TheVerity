@@ -82,7 +82,6 @@ export default function AdminDashboard({ onLogout }) {
   };
 
   const handleDeleteUser = async (email) => {
-    if (!window.confirm(`Delete user ${email}?`)) return;
     try {
       const res = await fetch(`${API}/users/${encodeURIComponent(email)}`, { method: 'DELETE' });
       if (res.ok) { loadUsers(); loadStats(); }

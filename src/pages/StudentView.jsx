@@ -152,7 +152,6 @@ export default function StudentView({ socket, username, assignment, onBack }) {
 
   const handleSubmit = () => {
     if (submitted) return;
-    if (!window.confirm("Submit your work? You won't be able to make changes after submitting.")) return;
     setSubmitted(true);
     socket.emit('submit_exam', {
       studentName: safeUsername,

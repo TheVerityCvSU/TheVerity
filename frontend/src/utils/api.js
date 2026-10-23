@@ -23,11 +23,21 @@ if (typeof window !== 'undefined') {
   } catch (_) {}
 }
 
+export const isPrivateHost = (hostname) => {
+  if (!hostname) return false;
+  if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1' || hostname.endsWith('.local')) {
+    return true;
+  }
+  if (/^10\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(hostname)) return true;
+  if (/^192\.168\.\d{1,3}\.\d{1,3}$/.test(hostname)) return true;
+  if (/^172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3}$/.test(hostname)) return true;
+  return false;
+};
+
 export const getCloudUrl = () => {
   const isWebHosted = typeof window !== 'undefined' && 
                       window.location && 
-                      window.location.hostname !== 'localhost' && 
-                      window.location.hostname !== '127.0.0.1' &&
+                      !isPrivateHost(window.location.hostname) &&
                       !window.electronAPI;
 
   if (typeof window !== 'undefined') {
@@ -49,6 +59,9 @@ export const getCloudUrl = () => {
 };
 
 export const getLocalApiUrl = () => {
+  if (typeof window !== 'undefined' && window.location && isPrivateHost(window.location.hostname) && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+    return `http://${window.location.hostname}:3001`;
+  }
   return LOCAL_DEV_API_URL;
 };
 
@@ -62,8 +75,7 @@ export const getConnectionStatus = () => {
   const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
   const isWebHosted = typeof window !== 'undefined' && 
                       window.location && 
-                      window.location.hostname !== 'localhost' && 
-                      window.location.hostname !== '127.0.0.1' &&
+                      !isPrivateHost(window.location.hostname) &&
                       !window.electronAPI;
 
   const cloudUrl = getCloudUrl();
@@ -160,8 +172,7 @@ export const apiFetch = async (url, options = {}) => {
   const localUrl = getLocalApiUrl();
   const isWebHosted = typeof window !== 'undefined' &&
                       window.location &&
-                      window.location.hostname !== 'localhost' &&
-                      window.location.hostname !== '127.0.0.1' &&
+                      !isPrivateHost(window.location.hostname) &&
                       !window.electronAPI;
 
   let targetUrl = url ? String(url).trim() : '';
@@ -228,10 +239,28 @@ export const apiFetch = async (url, options = {}) => {
 
   try {
     const response = await fetch(targetUrl, { ...options, headers });
-    if (isCloudDown) {
-      isCloudDown = false;
-      notifyListeners();
+    if (response.ok) {
+      if (isCloudDown) {
+        isCloudDown = false;
+        notifyListeners();
+      }
+      return response;
     }
+
+    // If cloud server returned a 5xx error (e.g. 500 mail timeout / platform crash)
+    // and we are targeting cloud in Electron/desktop/dev where local server is present:
+    if (isTargetingCloud && response.status >= 500) {
+      console.warn(`⚠️ [apiFetch] Cloud server returned HTTP ${response.status}. Attempting local server fallback: ${localFallbackUrl}`);
+      try {
+        const localRes = await fetch(localFallbackUrl, { ...options, headers });
+        if (localRes.ok || localRes.status < 500) {
+          return localRes;
+        }
+      } catch (localErr) {
+        console.warn('[apiFetch] Local fallback also failed:', localErr.message);
+      }
+    }
+
     return response;
   } catch (err) {
     if (isTargetingCloud) {

@@ -172,9 +172,16 @@ export default function AdminDashboard({ currentUser, onLogout, socket }) {
   };
 
   const handleDeleteUser = async (email) => {
-    if (!window.confirm(`Delete user ${email}?`)) return;
-    try { const r = await apiFetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/users/${encodeURIComponent(email)}`, { method: 'DELETE' }); if (r.ok) { loadUsers(); loadStats(); loadNotifications(); } }
-    catch { setMsg({ type: 'error', text: 'Could not connect to server.' }); }
+    try {
+      const r = await apiFetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/users/${encodeURIComponent(email)}`, { method: 'DELETE' });
+      if (r.ok) {
+        loadUsers();
+        loadStats();
+        loadNotifications();
+      }
+    } catch {
+      setMsg({ type: 'error', text: 'Could not connect to server.' });
+    }
   };
 
   // Nav menu items mapping
