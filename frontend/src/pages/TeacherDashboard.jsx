@@ -688,6 +688,13 @@ export default function TeacherDashboard({ currentUser, onLogout, onEnterClassro
         if (res.ok && active) {
           const data = await res.json();
           const serverList = (Array.isArray(data) ? data : (data.classrooms || [])).filter(c => !isPhantomClassroom(c));
+          // If server returns empty list (offline local fallback), do NOT wipe existing cached classrooms!
+          if (serverList.length === 0) {
+            const cached = getCachedClassrooms(currentUser, 'teacher').filter(c => !isPhantomClassroom(c));
+            if (cached.length > 0) {
+              return;
+            }
+          }
           // Filter strictly for this teacher: match by email OR instructor name
           const teacherClasses = serverList.filter(c => {
             const emailStr = (c.instructor_email || c.instructorEmail || '').toLowerCase();

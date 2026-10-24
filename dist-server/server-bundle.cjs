@@ -97530,11 +97530,57 @@ app.post("/upload", (req, res, next) => {
     thumbnailUrl: isVideo ? `${protocol}://${host}/uploads/${baseNoExt}_thumb.jpg` : null
   });
 });
-app.get("/api/check-update", (req, res) => {
-  const currentVersion = "1.0.0";
+app.get("/api/check-update", async (req, res) => {
+  let currentVersion = "1.0.0";
+  try {
+    const pkg = JSON.parse(fs2.readFileSync(path.resolve(__dirname, "../package.json"), "utf8"));
+    if (pkg.version) currentVersion = pkg.version;
+  } catch (_) {
+  }
   const forceUpdate = req.query.force === "true" || req.query.force === "1";
-  const latestVersion = forceUpdate ? "1.0.1" : process.env.LATEST_APP_VERSION || currentVersion;
-  const updateAvailable = latestVersion !== currentVersion;
+  let latestVersion = process.env.LATEST_APP_VERSION || currentVersion;
+  let releaseNotes = "Version " + latestVersion + ": Enhanced proctoring stability, UI performance optimizations, and security patches.";
+  let githubDownloadUrl = null;
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 3500);
+    const ghRes = await fetch("https://api.github.com/repos/belheroth/Verity/releases/latest", {
+      headers: { "User-Agent": "The-Verity-App" },
+      signal: controller.signal
+    });
+    clearTimeout(timeout);
+    if (ghRes.ok) {
+      const releaseData = await ghRes.json();
+      const tagName = (releaseData.tag_name || "").replace(/^v/i, "").trim();
+      if (tagName) {
+        latestVersion = tagName;
+        if (releaseData.body) releaseNotes = releaseData.body;
+        const isAdmin2 = req.query.role === "admin" || req.query.app === "admin" || req.query.role === "Administrator";
+        const asset = (releaseData.assets || []).find(
+          (a) => isAdmin2 ? /admin.*\.exe$/i.test(a.name) : /\.exe$/i.test(a.name) && !/admin/i.test(a.name)
+        );
+        if (asset?.browser_download_url) {
+          githubDownloadUrl = asset.browser_download_url;
+        }
+      }
+    }
+  } catch (_) {
+  }
+  if (forceUpdate) {
+    latestVersion = "1.0.1";
+  }
+  const isNewer = (latest, current) => {
+    const lParts = latest.split(".").map((n) => parseInt(n, 10) || 0);
+    const cParts = current.split(".").map((n) => parseInt(n, 10) || 0);
+    for (let i2 = 0; i2 < Math.max(lParts.length, cParts.length); i2++) {
+      const l = lParts[i2] || 0;
+      const c = cParts[i2] || 0;
+      if (l > c) return true;
+      if (l < c) return false;
+    }
+    return false;
+  };
+  const updateAvailable = forceUpdate || isNewer(latestVersion, currentVersion);
   const protocol = req.headers["x-forwarded-proto"] || req.protocol;
   const host = req.get("host");
   const baseUrl = `${protocol}://${host}`;
@@ -97544,19 +97590,33 @@ app.get("/api/check-update", (req, res) => {
     currentVersion,
     latestVersion,
     updateAvailable,
-    downloadUrl: process.env.UPDATE_DOWNLOAD_URL || `${baseUrl}/api/download-update${downloadQuery}`,
-    releaseNotes: "Version " + latestVersion + ": Enhanced proctoring stability, UI performance optimizations, and security patches."
+    downloadUrl: process.env.UPDATE_DOWNLOAD_URL || githubDownloadUrl || `${baseUrl}/api/download-update${downloadQuery}`,
+    releaseNotes
   });
 });
 app.get("/api/download-update", (req, res) => {
   const isAdmin = req.query.role === "admin" || req.query.app === "admin" || req.query.role === "Administrator";
-  const installerName = isAdmin ? "The Verity Admin Setup.exe" : "The Verity Setup 1.0.0.exe";
-  const installerPath = path.resolve(__dirname, "../dist", installerName);
-  if (fs2.existsSync(installerPath)) {
-    res.download(installerPath, installerName);
-  } else {
-    res.redirect("https://github.com/belheroth/Verity/releases/latest");
+  const candidateDirs = [
+    path.resolve(__dirname, isAdmin ? "../release/Admin" : "../release/Users"),
+    path.resolve(__dirname, "../dist"),
+    path.resolve(__dirname, "../release")
+  ];
+  for (const dir of candidateDirs) {
+    if (fs2.existsSync(dir)) {
+      try {
+        const files = fs2.readdirSync(dir);
+        const installerFile = files.find((f3) => {
+          const lower2 = f3.toLowerCase();
+          return lower2.endsWith(".exe") && (isAdmin ? lower2.includes("admin") : !lower2.includes("admin"));
+        });
+        if (installerFile) {
+          return res.download(path.join(dir, installerFile), installerFile);
+        }
+      } catch (_) {
+      }
+    }
   }
+  res.redirect("https://github.com/belheroth/Verity/releases/latest");
 });
 app.get("/health", async (req, res) => {
   try {
@@ -99386,8 +99446,8 @@ app.get("/proctor-logs/:assignmentId", authenticateToken, requireRole("Teacher",
     if (classroomId && classroomId !== "none" && classroomId !== "undefined" && classroomId !== "default") {
       logs = await db.all(
         `SELECT * FROM proctor_session_logs 
-                 WHERE (assignment_id = ? OR CAST(assignment_id AS TEXT) = ? OR assignment_id = 'none' OR assignment_id = 'default') 
-                   AND (classroom_id = ? OR CAST(classroom_id AS TEXT) = ? OR classroom_id = 'none' OR classroom_id = 'default' OR classroom_id IS NULL) 
+                 WHERE (assignment_id = ? OR CAST(assignment_id AS TEXT) = ?) 
+                   AND (classroom_id = ? OR CAST(classroom_id AS TEXT) = ? OR classroom_id IS NULL) 
                  ORDER BY id ASC`,
         assignmentId,
         assignmentId,
@@ -99397,7 +99457,7 @@ app.get("/proctor-logs/:assignmentId", authenticateToken, requireRole("Teacher",
     } else {
       logs = await db.all(
         `SELECT * FROM proctor_session_logs 
-                 WHERE assignment_id = ? OR CAST(assignment_id AS TEXT) = ? OR assignment_id = 'none' OR assignment_id = 'default'
+                 WHERE assignment_id = ? OR CAST(assignment_id AS TEXT) = ?
                  ORDER BY id ASC`,
         assignmentId,
         assignmentId
@@ -100547,8 +100607,8 @@ io.on("connection", (socket) => {
       if (cIdStr && cIdStr !== "none" && cIdStr !== "undefined" && cIdStr !== "default") {
         dbLogs = await db.all(
           `SELECT * FROM proctor_session_logs 
-                     WHERE (assignment_id = ? OR CAST(assignment_id AS TEXT) = ? OR assignment_id = 'none' OR assignment_id = 'default') 
-                       AND (classroom_id = ? OR CAST(classroom_id AS TEXT) = ? OR classroom_id = 'none' OR classroom_id = 'default' OR classroom_id IS NULL) 
+                     WHERE (assignment_id = ? OR CAST(assignment_id AS TEXT) = ?) 
+                       AND (classroom_id = ? OR CAST(classroom_id AS TEXT) = ? OR classroom_id IS NULL) 
                      ORDER BY id ASC`,
           aIdStr,
           aIdStr,
@@ -100558,7 +100618,7 @@ io.on("connection", (socket) => {
       } else {
         dbLogs = await db.all(
           `SELECT * FROM proctor_session_logs 
-                     WHERE assignment_id = ? OR CAST(assignment_id AS TEXT) = ? OR assignment_id = 'none' OR assignment_id = 'default'
+                     WHERE assignment_id = ? OR CAST(assignment_id AS TEXT) = ?
                      ORDER BY id ASC`,
           aIdStr,
           aIdStr
@@ -101363,7 +101423,6 @@ io.on("connection", (socket) => {
         assignmentId
       };
       io.to(roomName).emit("teacher_receive_alert", alertPayload);
-      socket.broadcast.emit("teacher_receive_alert", alertPayload);
     }
     try {
       const key = todayKey();
@@ -101692,19 +101751,22 @@ app.post("/audit-logs", authenticateToken, async (req, res) => {
         });
       } catch (_) {
       }
-      io.emit("teacher_receive_alert", {
-        id: Date.now(),
-        studentId: user,
-        studentName: user,
-        name: user,
-        action: actionText,
-        message: actionText,
-        time: timeText,
-        color: colorVal,
-        isCrash,
-        classroomId: cId,
-        assignmentId: aId
-      });
+      if (aId && aId !== "none" && aId !== "default") {
+        const targetRoom = `classroom:${cId}:assignment:${aId}`;
+        io.to(targetRoom).emit("teacher_receive_alert", {
+          id: Date.now(),
+          studentId: user,
+          studentName: user,
+          name: user,
+          action: actionText,
+          message: actionText,
+          time: timeText,
+          color: colorVal,
+          isCrash,
+          classroomId: cId,
+          assignmentId: aId
+        });
+      }
       io.emit("admin_security_alert", {
         user,
         name: user,

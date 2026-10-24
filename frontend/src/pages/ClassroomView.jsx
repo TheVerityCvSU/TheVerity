@@ -361,10 +361,23 @@ export default function ClassroomView({
 
 
   // Classwork & Assignments state
+  const classroomId = classroom?.id ?? 'default';
+  const storageKey = `verity_classwork_${classroomId}`;
   const [expandedId, setExpandedId] = useState(null);
   const [expandedInstructionId, setExpandedInstructionId] = useState(null);
-  const [assignments, setAssignments] = useState([]);
-  const [loadingAssignments, setLoadingAssignments] = useState(true);
+  const [assignments, setAssignments] = useState(() => {
+    try {
+      const saved = localStorage.getItem(`verity_classwork_${classroom?.id ?? 'default'}`);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed.filter(item => !item.archived && !isLegacyHardcoded(item));
+        }
+      }
+    } catch {}
+    return [];
+  });
+  const [loadingAssignments, setLoadingAssignments] = useState(false);
 
   const visibleClasswork = assignments.filter(item => item.activityType !== 'Material');
   const visibleMaterials = assignments.filter(item => item.activityType === 'Material');
@@ -425,25 +438,36 @@ export default function ClassroomView({
   }, [activeTab, visibleMaterials.length, hasUnseenMaterials]);
 
   useEffect(() => {
-    const classroomId = classroom?.id ?? 'default';
-    const storageKey = `verity_classwork_${classroomId}`;
-
     const applyList = (list) => {
-      if (Array.isArray(list)) {
+      if (Array.isArray(list) && list.length > 0) {
         setAssignments(list.filter(item => !item.archived && !isLegacyHardcoded(item)));
-      } else {
-        setAssignments([]);
       }
     };
 
     const loadFromLocal = () => {
       try {
         const saved = localStorage.getItem(storageKey);
-        applyList(saved ? JSON.parse(saved) : []);
-      } catch {
-        setAssignments([]);
-      }
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            applyList(parsed);
+            return;
+          }
+        }
+        if (window.electronAPI?.localDB?.getCachedClasswork) {
+          window.electronAPI.localDB.getCachedClasswork(classroomId)
+            .then(cached => {
+              if (Array.isArray(cached) && cached.length > 0) {
+                applyList(cached);
+              }
+            })
+            .catch(() => {});
+        }
+      } catch {}
     };
+
+    // Load from local storage / SQLite immediately
+    loadFromLocal();
 
     let cancelled = false;
     apiFetch(`${import.meta.env.VITE_API_URL}/classwork/${classroomId}`)
@@ -452,7 +476,14 @@ export default function ClassroomView({
         if (cancelled) return;
         if (Array.isArray(data.classwork) && data.classwork.length > 0) {
           applyList(data.classwork);
+          try {
+            localStorage.setItem(storageKey, JSON.stringify(data.classwork));
+          } catch (_) {}
+          if (window.electronAPI?.localDB?.cacheClasswork) {
+            window.electronAPI.localDB.cacheClasswork(classroomId, data.classwork).catch(() => {});
+          }
         } else {
+          // If server returned empty (offline local fallback), preserve existing cached activities!
           loadFromLocal();
         }
       })
@@ -461,10 +492,15 @@ export default function ClassroomView({
 
     const onClassworkChanged = (payload) => {
       if (String(payload?.classroomId) === String(classroomId) && Array.isArray(payload?.classwork)) {
-        applyList(payload.classwork);
-        try {
-          localStorage.setItem(storageKey, JSON.stringify(payload.classwork));
-        } catch (e) { }
+        if (payload.classwork.length > 0) {
+          applyList(payload.classwork);
+          try {
+            localStorage.setItem(storageKey, JSON.stringify(payload.classwork));
+          } catch (e) {}
+          if (window.electronAPI?.localDB?.cacheClasswork) {
+            window.electronAPI.localDB.cacheClasswork(classroomId, payload.classwork).catch(() => {});
+          }
+        }
       }
     };
     if (socket) socket.on('classwork_changed', onClassworkChanged);

@@ -94,18 +94,60 @@ export default function TeacherView({
     try {
       const key = `verity_session_warnings_${classroom?.id || 'all'}_${assignment.id}`;
       const cached = localStorage.getItem(key);
-      return cached ? JSON.parse(cached) : [];
+      const list = cached ? JSON.parse(cached) : [];
+      if (Array.isArray(list)) {
+        return list.filter(l => {
+          const aId = l.assignmentId || l.assignment_id;
+          return !aId || aId === 'none' || String(aId) === String(assignment.id);
+        });
+      }
+      return [];
     } catch {
       return [];
     }
   });
 
+  // Re-hydrate session warnings whenever assignment changes
+  useEffect(() => {
+    if (!assignment?.id) {
+      setSessionWarnings([]);
+      return;
+    }
+    try {
+      const key = `verity_session_warnings_${classroom?.id || 'all'}_${assignment.id}`;
+      const cached = localStorage.getItem(key);
+      const list = cached ? JSON.parse(cached) : [];
+      if (Array.isArray(list)) {
+        setSessionWarnings(list.filter(l => {
+          const aId = l.assignmentId || l.assignment_id;
+          return !aId || aId === 'none' || String(aId) === String(assignment.id);
+        }));
+      } else {
+        setSessionWarnings([]);
+      }
+    } catch {
+      setSessionWarnings([]);
+    }
+  }, [assignment?.id, classroom?.id]);
+
   const mergeWarningLogs = useCallback((incomingList) => {
     if (!Array.isArray(incomingList) || incomingList.length === 0) return;
+    const curAId = assignment?.id != null ? String(assignment.id) : null;
+    const curCId = classroom?.id && classroom.id !== 'none' ? String(classroom.id) : null;
+
     setSessionWarnings((prev) => {
       const map = new Map();
       [...incomingList, ...prev].forEach((l) => {
         if (!l) return;
+        const logAId = l.assignmentId || l.assignment_id;
+        // Strictly ignore any warning belonging to another assignment!
+        if (curAId && logAId && logAId !== 'none' && logAId !== 'default' && String(logAId) !== curAId) {
+          return;
+        }
+        const logCId = l.classroomId || l.classroom_id;
+        if (curCId && logCId && logCId !== 'none' && logCId !== 'default' && String(logCId) !== curCId) {
+          return;
+        }
         const sName = String(l.studentName || l.student_name || l.studentId || l.student_id || 'Student').trim();
         const sId = String(l.studentId || l.student_id || sName).trim();
         const act = l.action || l.message || 'Violation';
@@ -119,8 +161,8 @@ export default function TeacherView({
             color: l.color || '#ef4444',
             studentName: sName,
             studentId: sId,
-            classroomId: l.classroomId || l.classroom_id,
-            assignmentId: l.assignmentId || l.assignment_id
+            classroomId: logCId || curCId,
+            assignmentId: logAId || curAId
           });
         }
       });
@@ -516,7 +558,14 @@ export default function TeacherView({
 
     const handlePastWarnings = (pastLogs) => {
       if (Array.isArray(pastLogs) && pastLogs.length > 0) {
-        mergeWarningLogs(pastLogs);
+        const curAId = assignment?.id ? String(assignment.id) : null;
+        const filtered = curAId
+          ? pastLogs.filter(l => {
+              const lAId = l.assignmentId || l.assignment_id;
+              return !lAId || String(lAId) === curAId;
+            })
+          : pastLogs;
+        mergeWarningLogs(filtered);
       }
     };
     socket.on('teacher_past_warnings', handlePastWarnings);
@@ -666,11 +715,12 @@ export default function TeacherView({
 
       socket.on('teacher_receive_alert', (data) => {
         if (!data) return;
-        // Isolate alerts strictly to the active assignment
-        if (data.assignmentId && assignment?.id && data.assignmentId !== 'none' && data.assignmentId !== 'default' && String(data.assignmentId) !== String(assignment.id)) {
+        const incomingAId = data.assignmentId || data.assignment_id;
+        if (assignment?.id && incomingAId && incomingAId !== 'none' && incomingAId !== 'default' && String(incomingAId) !== String(assignment.id)) {
           return;
         }
-        if (data.classroomId && data.classroomId !== 'none' && data.classroomId !== 'default' && classroom?.id && String(data.classroomId) !== String(classroom.id)) {
+        const incomingCId = data.classroomId || data.classroom_id;
+        if (classroom?.id && incomingCId && incomingCId !== 'none' && incomingCId !== 'default' && String(incomingCId) !== String(classroom.id)) {
           return;
         }
         const studentId = String(data.studentId || data.id || data.name || '');
@@ -690,7 +740,9 @@ export default function TeacherView({
             }).toLowerCase(),
           color: data.color || '#ef4444',
           studentName: studentName,
-          studentId: studentId
+          studentId: studentId,
+          assignmentId: incomingAId || assignment?.id,
+          classroomId: incomingCId || classroom?.id
         };
 
         // Merge into persistent session warnings immediately
@@ -1100,17 +1152,28 @@ export default function TeacherView({
       logs.push(logItem);
     };
 
+    const curAId = assignment?.id != null ? String(assignment.id) : null;
+
     // 1. Add persistent session warnings (retained even if students leave or teacher navigates)
     if (Array.isArray(sessionWarnings)) {
-      sessionWarnings.forEach((w) => addLog(w));
+      sessionWarnings.forEach((w) => {
+        const wAId = w?.assignmentId || w?.assignment_id;
+        if (curAId && wAId && wAId !== 'none' && wAId !== 'default' && String(wAId) !== curAId) return;
+        addLog(w);
+      });
     }
 
     // 2. Add logs from student objects
     Object.values(students).forEach((student) => {
       if (mode === 'playback' && student.id !== selectedStudentId && student.name !== selectedStudentId) return;
 
+      const sAId = student.assignmentId || student.assignment_id;
+      if (curAId && sAId && sAId !== 'none' && sAId !== 'default' && String(sAId) !== curAId) return;
+
       if (Array.isArray(student.logs)) {
         student.logs.forEach((log) => {
+          const lAId = log?.assignmentId || log?.assignment_id;
+          if (curAId && lAId && lAId !== 'none' && lAId !== 'default' && String(lAId) !== curAId) return;
           addLog(log, student.name, student.id);
         });
       }
@@ -1120,6 +1183,8 @@ export default function TeacherView({
       if (Array.isArray(hist)) {
         hist.forEach((h) => {
           if (h && h.warning) {
+            const hAId = h.assignmentId || h.assignment_id;
+            if (curAId && hAId && hAId !== 'none' && hAId !== 'default' && String(hAId) !== curAId) return;
             const sanitizedWarning = sanitizeAction(h.warning);
             addLog({
               id: h.time || Date.now(),
@@ -1134,7 +1199,8 @@ export default function TeacherView({
                 .toLowerCase(),
               color: getLogColor(sanitizedWarning),
               studentName: student.name,
-              studentId: student.id
+              studentId: student.id,
+              assignmentId: curAId
             }, student.name, student.id);
           }
         });

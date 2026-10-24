@@ -195,14 +195,20 @@ export default function TeacherCalendar({ classrooms }) {
         if (res.ok) {
           const data = await res.json();
           if (!cancelled && data && Array.isArray(data.classwork)) {
+            // If data.classwork is empty (offline local fallback), do NOT wipe existing cached activities!
+            if (data.classwork.length === 0) return;
             const classList = Array.isArray(classrooms) ? classrooms : [];
             const valid = data.classwork.filter(
-              item => !item.archived && !isLegacyHardcoded(item) && !!item.dueDate && classList.some(c => String(c.id) === String(item.classroom_id || item.classId))
+              item => !item.archived && !isLegacyHardcoded(item) && !!item.dueDate && (
+                classList.length === 0 || classList.some(c => String(c.id) === String(item.classroom_id || item.classId))
+              )
             );
-            setActivities(valid);
-            try {
-              localStorage.setItem('verity_cached_classwork', JSON.stringify(valid));
-            } catch {}
+            if (valid.length > 0) {
+              setActivities(valid);
+              try {
+                localStorage.setItem('verity_cached_classwork', JSON.stringify(valid));
+              } catch {}
+            }
             return;
           }
         }

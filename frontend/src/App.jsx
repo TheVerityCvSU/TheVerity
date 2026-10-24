@@ -1140,6 +1140,7 @@ export default function App() {
               {currentScreen === 'student_workspace' && (
                 <ProtectedRoute currentUser={currentUser} setCurrentScreen={setCurrentScreen}>
                   <StudentView
+                    key={activeAssignment?.id ? `student_view_${activeAssignment.id}` : 'student_view'}
                     socket={socket}
                     currentUser={currentUser}
                     username={currentUser?.name}
@@ -1268,6 +1269,7 @@ export default function App() {
           {(currentScreen === 'teacher_proctoring' || currentScreen === 'teacher_live_monitoring' || currentScreen === 'teacher_playback') && (
             <ProtectedRoute currentUser={currentUser} setCurrentScreen={setCurrentScreen}>
               <TeacherView
+                key={activeAssignment?.id ? `teacher_view_${activeAssignment.id}_${currentScreen}` : 'teacher_view'}
                 socket={socket}
                 currentUser={currentUser}
                 assignment={activeAssignment}

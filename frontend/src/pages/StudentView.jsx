@@ -520,20 +520,22 @@ export default function StudentView({ socket, currentUser, username, assignment,
   const diagnosticsRef = useRef([]);
   const [proctorLogs, setProctorLogs] = useState(() => {
     try {
+      const aId = assignment?.id != null ? String(assignment.id) : (assignmentId && assignmentId !== 'none' ? String(assignmentId) : null);
+      if (!aId || aId === 'none' || aId === 'default' || aId === 'undefined') return [];
       const cId = classroom?.id != null ? String(classroom.id) : (classroomId || 'none');
-      const aId = assignment?.id != null ? String(assignment.id) : (assignmentId || 'none');
       const sId = studentActualId || 'student';
       const keys = [
         `verity_proctor_logs_${cId}_${aId}_${sId}`,
-        `verity_proctor_logs_${cId}_${aId}_${safeUsername}`,
-        `verity_proctor_logs_none_${aId}_${sId}`,
-        `verity_proctor_logs_default_${aId}_${sId}`
-      ];
+        sId !== safeUsername ? `verity_proctor_logs_${cId}_${aId}_${safeUsername}` : null,
+        cId !== 'none' ? `verity_proctor_logs_none_${aId}_${sId}` : null
+      ].filter(Boolean);
       for (const k of keys) {
         const saved = localStorage.getItem(k);
         if (saved) {
           const parsed = JSON.parse(saved);
-          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            return parsed.filter(l => !l.assignmentId || String(l.assignmentId) === aId);
+          }
         }
       }
     } catch {}
@@ -544,27 +546,34 @@ export default function StudentView({ socket, currentUser, username, assignment,
 
   // Sync proctorLogs when assignment / classroom finishes loading
   useEffect(() => {
+    const aId = assignment?.id != null ? String(assignment.id) : (assignmentId && assignmentId !== 'none' ? String(assignmentId) : null);
+    if (!aId || aId === 'none' || aId === 'default' || aId === 'undefined') {
+      setProctorLogs([]);
+      return;
+    }
     const cId = classroom?.id != null ? String(classroom.id) : (classroomId || 'none');
-    const aId = assignment?.id != null ? String(assignment.id) : (assignmentId || 'none');
     const sId = studentActualId || 'student';
     try {
       const keys = [
         `verity_proctor_logs_${cId}_${aId}_${sId}`,
-        `verity_proctor_logs_${cId}_${aId}_${safeUsername}`,
-        `verity_proctor_logs_none_${aId}_${sId}`,
-        `verity_proctor_logs_default_${aId}_${sId}`
-      ];
+        sId !== safeUsername ? `verity_proctor_logs_${cId}_${aId}_${safeUsername}` : null,
+        cId !== 'none' ? `verity_proctor_logs_none_${aId}_${sId}` : null
+      ].filter(Boolean);
+      let found = null;
       for (const k of keys) {
         const saved = localStorage.getItem(k);
         if (saved) {
           const parsed = JSON.parse(saved);
           if (Array.isArray(parsed) && parsed.length > 0) {
-            setProctorLogs(prev => prev.length > 0 ? prev : parsed);
+            found = parsed.filter(l => !l.assignmentId || String(l.assignmentId) === aId);
             break;
           }
         }
       }
-    } catch {}
+      setProctorLogs(found || []);
+    } catch {
+      setProctorLogs([]);
+    }
   }, [classroom?.id, classroomId, assignment?.id, assignmentId, studentActualId, safeUsername]);
 
   // High-Speed Local Compiler Socket (instant execution in Electron / local machine)
@@ -1222,27 +1231,35 @@ export default function StudentView({ socket, currentUser, username, assignment,
     const logColor = detectedCrash ? '#dc2626' : color;
     const actionLabel = detectedCrash ? 'System Crash' : message;
 
+    const cId = classroom?.id != null ? String(classroom.id) : (classroomId || 'none');
+    const aId = assignment?.id != null ? String(assignment.id) : (assignmentId && assignmentId !== 'none' ? String(assignmentId) : 'none');
+    const sId = studentActualId || 'student';
+
     const newLogItem = {
       id: Date.now(),
       message: actionLabel,
       action: actionLabel,
       time: timeString,
       color: logColor,
-      isCrash: detectedCrash
+      isCrash: detectedCrash,
+      assignmentId: aId,
+      classroomId: cId
     };
 
-    const cId = classroom?.id != null ? String(classroom.id) : (classroomId || 'none');
-    const aId = assignment?.id != null ? String(assignment.id) : (assignmentId || 'none');
-    const sId = studentActualId || 'student';
-
     setProctorLogs(prevLogs => {
-      const updated = [newLogItem, ...prevLogs];
+      // Filter out any past logs that might belong to another assignment
+      const filteredPrev = prevLogs.filter(l => !l.assignmentId || String(l.assignmentId) === aId);
+      const updated = [newLogItem, ...filteredPrev];
       try {
-        localStorage.setItem(`verity_proctor_logs_${cId}_${aId}_${sId}`, JSON.stringify(updated));
-        if (sId !== safeUsername) {
-          localStorage.setItem(`verity_proctor_logs_${cId}_${aId}_${safeUsername}`, JSON.stringify(updated));
+        if (aId && aId !== 'none' && aId !== 'default' && aId !== 'undefined') {
+          localStorage.setItem(`verity_proctor_logs_${cId}_${aId}_${sId}`, JSON.stringify(updated));
+          if (sId !== safeUsername) {
+            localStorage.setItem(`verity_proctor_logs_${cId}_${aId}_${safeUsername}`, JSON.stringify(updated));
+          }
+          if (cId && cId !== 'none') {
+            localStorage.setItem(`verity_proctor_logs_none_${aId}_${sId}`, JSON.stringify(updated));
+          }
         }
-        localStorage.setItem(`verity_proctor_logs_none_${aId}_${sId}`, JSON.stringify(updated));
       } catch {}
       return updated;
     });

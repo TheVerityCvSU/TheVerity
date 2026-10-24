@@ -362,11 +362,64 @@ app.post('/upload', (req, res, next) => {
     });
 });
 
-app.get('/api/check-update', (req, res) => {
-    const currentVersion = '1.0.0';
+app.get('/api/check-update', async (req, res) => {
+    let currentVersion = '1.0.0';
+    try {
+        const pkg = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../package.json'), 'utf8'));
+        if (pkg.version) currentVersion = pkg.version;
+    } catch (_) {}
+
     const forceUpdate = req.query.force === 'true' || req.query.force === '1';
-    const latestVersion = forceUpdate ? '1.0.1' : (process.env.LATEST_APP_VERSION || currentVersion);
-    const updateAvailable = latestVersion !== currentVersion;
+    let latestVersion = process.env.LATEST_APP_VERSION || currentVersion;
+    let releaseNotes = 'Version ' + latestVersion + ': Enhanced proctoring stability, UI performance optimizations, and security patches.';
+    let githubDownloadUrl = null;
+
+    // Check GitHub Releases API if online
+    try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 3500);
+        const ghRes = await fetch('https://api.github.com/repos/belheroth/Verity/releases/latest', {
+            headers: { 'User-Agent': 'The-Verity-App' },
+            signal: controller.signal
+        });
+        clearTimeout(timeout);
+        if (ghRes.ok) {
+            const releaseData = await ghRes.json();
+            const tagName = (releaseData.tag_name || '').replace(/^v/i, '').trim();
+            if (tagName) {
+                latestVersion = tagName;
+                if (releaseData.body) releaseNotes = releaseData.body;
+                const isAdmin = req.query.role === 'admin' || req.query.app === 'admin' || req.query.role === 'Administrator';
+                const asset = (releaseData.assets || []).find(a => 
+                    isAdmin ? /admin.*\.exe$/i.test(a.name) : /\.exe$/i.test(a.name) && !/admin/i.test(a.name)
+                );
+                if (asset?.browser_download_url) {
+                    githubDownloadUrl = asset.browser_download_url;
+                }
+            }
+        }
+    } catch (_) {
+        // Offline or GitHub unreachable — use local/env fallback
+    }
+
+    if (forceUpdate) {
+        latestVersion = '1.0.1';
+    }
+
+    // Semantic version comparison
+    const isNewer = (latest, current) => {
+        const lParts = latest.split('.').map(n => parseInt(n, 10) || 0);
+        const cParts = current.split('.').map(n => parseInt(n, 10) || 0);
+        for (let i = 0; i < Math.max(lParts.length, cParts.length); i++) {
+            const l = lParts[i] || 0;
+            const c = cParts[i] || 0;
+            if (l > c) return true;
+            if (l < c) return false;
+        }
+        return false;
+    };
+
+    const updateAvailable = forceUpdate || isNewer(latestVersion, currentVersion);
 
     const protocol = req.headers['x-forwarded-proto'] || req.protocol;
     const host = req.get('host');
@@ -378,20 +431,38 @@ app.get('/api/check-update', (req, res) => {
         currentVersion,
         latestVersion,
         updateAvailable,
-        downloadUrl: process.env.UPDATE_DOWNLOAD_URL || `${baseUrl}/api/download-update${downloadQuery}`,
-        releaseNotes: 'Version ' + latestVersion + ': Enhanced proctoring stability, UI performance optimizations, and security patches.'
+        downloadUrl: process.env.UPDATE_DOWNLOAD_URL || githubDownloadUrl || `${baseUrl}/api/download-update${downloadQuery}`,
+        releaseNotes
     });
 });
 
 app.get('/api/download-update', (req, res) => {
     const isAdmin = req.query.role === 'admin' || req.query.app === 'admin' || req.query.role === 'Administrator';
-    const installerName = isAdmin ? 'The Verity Admin Setup.exe' : 'The Verity Setup 1.0.0.exe';
-    const installerPath = path.resolve(__dirname, '../dist', installerName);
-    if (fs.existsSync(installerPath)) {
-        res.download(installerPath, installerName);
-    } else {
-        res.redirect('https://github.com/belheroth/Verity/releases/latest');
+    
+    // Look for installer in multiple potential local build output locations
+    const candidateDirs = [
+        path.resolve(__dirname, isAdmin ? '../release/Admin' : '../release/Users'),
+        path.resolve(__dirname, '../dist'),
+        path.resolve(__dirname, '../release')
+    ];
+
+    for (const dir of candidateDirs) {
+        if (fs.existsSync(dir)) {
+            try {
+                const files = fs.readdirSync(dir);
+                const installerFile = files.find(f => {
+                    const lower = f.toLowerCase();
+                    return lower.endsWith('.exe') && (isAdmin ? lower.includes('admin') : !lower.includes('admin'));
+                });
+                if (installerFile) {
+                    return res.download(path.join(dir, installerFile), installerFile);
+                }
+            } catch (_) {}
+        }
     }
+
+    // Fallback: redirect to GitHub Releases page
+    res.redirect('https://github.com/belheroth/Verity/releases/latest');
 });
 
 app.get('/health', async (req, res) => {
@@ -2367,15 +2438,15 @@ app.get('/proctor-logs/:assignmentId', authenticateToken, requireRole('Teacher',
         if (classroomId && classroomId !== 'none' && classroomId !== 'undefined' && classroomId !== 'default') {
             logs = await db.all(
                 `SELECT * FROM proctor_session_logs 
-                 WHERE (assignment_id = ? OR CAST(assignment_id AS TEXT) = ? OR assignment_id = 'none' OR assignment_id = 'default') 
-                   AND (classroom_id = ? OR CAST(classroom_id AS TEXT) = ? OR classroom_id = 'none' OR classroom_id = 'default' OR classroom_id IS NULL) 
+                 WHERE (assignment_id = ? OR CAST(assignment_id AS TEXT) = ?) 
+                   AND (classroom_id = ? OR CAST(classroom_id AS TEXT) = ? OR classroom_id IS NULL) 
                  ORDER BY id ASC`,
                 assignmentId, assignmentId, classroomId, classroomId
             ).catch(() => []);
         } else {
             logs = await db.all(
                 `SELECT * FROM proctor_session_logs 
-                 WHERE assignment_id = ? OR CAST(assignment_id AS TEXT) = ? OR assignment_id = 'none' OR assignment_id = 'default'
+                 WHERE assignment_id = ? OR CAST(assignment_id AS TEXT) = ?
                  ORDER BY id ASC`,
                 assignmentId, assignmentId
             ).catch(() => []);
@@ -3663,15 +3734,15 @@ io.on('connection', (socket) => {
             if (cIdStr && cIdStr !== 'none' && cIdStr !== 'undefined' && cIdStr !== 'default') {
                 dbLogs = await db.all(
                     `SELECT * FROM proctor_session_logs 
-                     WHERE (assignment_id = ? OR CAST(assignment_id AS TEXT) = ? OR assignment_id = 'none' OR assignment_id = 'default') 
-                       AND (classroom_id = ? OR CAST(classroom_id AS TEXT) = ? OR classroom_id = 'none' OR classroom_id = 'default' OR classroom_id IS NULL) 
+                     WHERE (assignment_id = ? OR CAST(assignment_id AS TEXT) = ?) 
+                       AND (classroom_id = ? OR CAST(classroom_id AS TEXT) = ? OR classroom_id IS NULL) 
                      ORDER BY id ASC`,
                     aIdStr, aIdStr, cIdStr, cIdStr
                 ).catch(() => []);
             } else {
                 dbLogs = await db.all(
                     `SELECT * FROM proctor_session_logs 
-                     WHERE assignment_id = ? OR CAST(assignment_id AS TEXT) = ? OR assignment_id = 'none' OR assignment_id = 'default'
+                     WHERE assignment_id = ? OR CAST(assignment_id AS TEXT) = ?
                      ORDER BY id ASC`,
                     aIdStr, aIdStr
                 ).catch(() => []);
@@ -4514,8 +4585,6 @@ io.on('connection', (socket) => {
                 assignmentId
             };
             io.to(roomName).emit('teacher_receive_alert', alertPayload);
-            // Broadcast to all connected clients so teachers in Live Monitoring receive it regardless of room string nuances
-            socket.broadcast.emit('teacher_receive_alert', alertPayload);
         }
 
         try {
@@ -4868,20 +4937,23 @@ app.post('/audit-logs', authenticateToken, async (req, res) => {
                 ).catch(() => {});
             } catch (_) {}
 
-            // Broadcast directly to instructors in Live Monitoring
-            io.emit('teacher_receive_alert', {
-                id: Date.now(),
-                studentId: user,
-                studentName: user,
-                name: user,
-                action: actionText,
-                message: actionText,
-                time: timeText,
-                color: colorVal,
-                isCrash,
-                classroomId: cId,
-                assignmentId: aId
-            });
+            // Broadcast directly to instructors in Live Monitoring for this specific activity
+            if (aId && aId !== 'none' && aId !== 'default') {
+                const targetRoom = `classroom:${cId}:assignment:${aId}`;
+                io.to(targetRoom).emit('teacher_receive_alert', {
+                    id: Date.now(),
+                    studentId: user,
+                    studentName: user,
+                    name: user,
+                    action: actionText,
+                    message: actionText,
+                    time: timeText,
+                    color: colorVal,
+                    isCrash,
+                    classroomId: cId,
+                    assignmentId: aId
+                });
+            }
 
             // Emit live real-time update to all admin sessions
             io.emit('admin_security_alert', {

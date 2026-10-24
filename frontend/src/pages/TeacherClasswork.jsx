@@ -107,6 +107,10 @@ export default function TeacherClasswork({
       .then(data => {
         if (!data) return;
         const serverList = (Array.isArray(data) ? data : (data.classrooms || [])).filter(c => !isPhantomClassroom(c));
+        if (serverList.length === 0) {
+          const cached = getCachedClassrooms(currentUser, 'teacher').filter(c => !isPhantomClassroom(c));
+          if (cached.length > 0) return;
+        }
         const teacherClasses = serverList.filter(c => {
           const emailStr = (c.instructor_email || c.instructorEmail || '').toLowerCase();
           const matchesEmail = Boolean(currentUser?.email && emailStr && emailStr === currentUser.email.toLowerCase());
@@ -116,7 +120,7 @@ export default function TeacherClasswork({
           return matchesEmail || matchesName || (!emailStr && !nameStr);
         });
         const sortedTeacherClasses = sortClassroomsAlphabetically(teacherClasses);
-        if (sortedTeacherClasses.length > 0 || classrooms.length === 0) {
+        if (sortedTeacherClasses.length > 0) {
           setClassrooms(sortedTeacherClasses);
           saveCachedClassrooms(sortedTeacherClasses, currentUser, 'teacher');
         }
@@ -224,22 +228,25 @@ export default function TeacherClasswork({
       const saved = localStorage.getItem(storageKey);
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) {
+        if (Array.isArray(parsed) && parsed.length > 0) {
           setClasswork(parsed.filter(item => !isLegacyHardcoded(item)));
         }
-      } else {
-        setClasswork([]);
       }
-    } catch {
-      setClasswork([]);
-    }
+    } catch {}
 
     apiFetch(`${import.meta.env.VITE_API_URL}/classwork/${classroomId}`)
       .then(res => res.json())
       .then(data => {
         if (cancelled) return;
-        if (Array.isArray(data.classwork)) {
-          setClasswork(data.classwork.filter(item => !isLegacyHardcoded(item)));
+        if (Array.isArray(data.classwork) && data.classwork.length > 0) {
+          const filtered = data.classwork.filter(item => !isLegacyHardcoded(item));
+          setClasswork(filtered);
+          try {
+            localStorage.setItem(storageKey, JSON.stringify(filtered));
+          } catch {}
+          if (window.electronAPI?.localDB?.cacheClasswork) {
+            window.electronAPI.localDB.cacheClasswork(classroomId, filtered).catch(() => {});
+          }
         }
       })
       .catch(() => { /* offline — fall back to localStorage copy */ })
@@ -248,6 +255,16 @@ export default function TeacherClasswork({
   }, [classroomId, storageKey]);
 
   useEffect(() => {
+    // If classwork is empty but we have cached items in localStorage, do NOT overwrite cache!
+    if (classwork.length === 0) {
+      try {
+        const existing = localStorage.getItem(storageKey);
+        if (existing) {
+          const parsed = JSON.parse(existing);
+          if (Array.isArray(parsed) && parsed.length > 0) return;
+        }
+      } catch {}
+    }
     localStorage.setItem(storageKey, JSON.stringify(classwork));
     if (hydrated.current) {
       if (socket) {

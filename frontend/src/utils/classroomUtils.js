@@ -343,8 +343,15 @@ export const getCachedClassrooms = (user, role = 'student') => {
 /**
  * Persists classrooms to localStorage under both stable id and email keys.
  */
-export const saveCachedClassrooms = (classrooms, user, role = 'student') => {
+export const saveCachedClassrooms = (classrooms, user, role = 'student', allowEmpty = false) => {
   if (typeof window === 'undefined' || !window.localStorage || !Array.isArray(classrooms)) return;
+  // If classrooms is empty and not explicitly allowed, do not wipe existing valid cache (e.g. offline fallback)
+  if (classrooms.length === 0 && !allowEmpty) {
+    const existing = getCachedClassrooms(user, role);
+    if (existing.length > 0) {
+      return; // Preserve existing cached classrooms!
+    }
+  }
   const isTeacher = role === 'teacher' || role === 'Teacher' || role === 'instructor' || role === 'Instructor';
   const prefix = isTeacher ? 'verity_teacher_classrooms' : 'verity_student_classrooms';
   const sorted = sortClassroomsAlphabetically(classrooms);

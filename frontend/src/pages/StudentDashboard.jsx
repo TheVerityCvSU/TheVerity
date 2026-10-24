@@ -483,8 +483,20 @@ export default function StudentDashboard({ currentUser, onLogout, onEnterClassro
         if (res.ok && active) {
           const data = await res.json();
           const serverList = (Array.isArray(data) ? data : (data.classrooms || [])).filter(c => c && c.name && !isPhantomClassroom(c));
+          
+          // Never wipe out cached classrooms if server returns an empty list (e.g. offline local fallback)
+          if (serverList.length === 0) {
+            const cached = getCachedClassrooms(currentUser, 'student').filter(c => !isPhantomClassroom(c));
+            if (cached.length > 0) {
+              return; // Keep existing cached classrooms
+            }
+          }
+
           const sortedList = sortClassroomsAlphabetically(serverList);
           setClassrooms(prev => {
+            if (sortedList.length === 0 && Array.isArray(prev) && prev.length > 0) {
+              return prev; // Never wipe out existing classrooms
+            }
             const archivedMap = new Map((prev || []).map(p => [String(p.id), !!p.archived]));
             const merged = sortedList.map(c => ({
               ...c,
@@ -550,7 +562,11 @@ export default function StudentDashboard({ currentUser, onLogout, onEnterClassro
         const parsed = JSON.parse(raw);
         if (Array.isArray(parsed) && parsed.length > 0) {
           const userClassrooms = getCachedClassrooms(currentUser, 'student').filter(c => !isPhantomClassroom(c));
-          return parsed.filter(item => userClassrooms.some(c => String(c.id) === String(item.classroom_id || item.classId)));
+          if (userClassrooms.length > 0) {
+            const filtered = parsed.filter(item => userClassrooms.some(c => String(c.id) === String(item.classroom_id || item.classId)));
+            return filtered.length > 0 ? filtered : parsed;
+          }
+          return parsed;
         }
       }
     } catch {}
@@ -563,7 +579,11 @@ export default function StudentDashboard({ currentUser, onLogout, onEnterClassro
         const parsed = JSON.parse(raw);
         if (Array.isArray(parsed) && parsed.length > 0) {
           const userClassrooms = getCachedClassrooms(currentUser, 'student').filter(c => !isPhantomClassroom(c));
-          return parsed.filter(item => userClassrooms.some(c => String(c.id) === String(item.classroom_id || item.classId)));
+          if (userClassrooms.length > 0) {
+            const filtered = parsed.filter(item => userClassrooms.some(c => String(c.id) === String(item.classroom_id || item.classId)));
+            return filtered.length > 0 ? filtered : parsed;
+          }
+          return parsed;
         }
       }
     } catch {}
@@ -577,24 +597,29 @@ export default function StudentDashboard({ currentUser, onLogout, onEnterClassro
       const rawAct = localStorage.getItem(getActivitiesStorageKey(currentUser));
       if (rawAct) {
         const parsed = JSON.parse(rawAct);
-        if (Array.isArray(parsed)) {
-          setUpcomingActivities(parsed.filter(item => userClassrooms.some(c => String(c.id) === String(item.classroom_id || item.classId))));
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          if (userClassrooms.length > 0) {
+            const filtered = parsed.filter(item => userClassrooms.some(c => String(c.id) === String(item.classroom_id || item.classId)));
+            setUpcomingActivities(filtered.length > 0 ? filtered : parsed);
+          } else {
+            setUpcomingActivities(parsed);
+          }
         }
-      } else {
-        setUpcomingActivities([]);
       }
       const rawCw = localStorage.getItem(getClassworkStorageKey(currentUser));
       if (rawCw) {
         const parsed = JSON.parse(rawCw);
-        if (Array.isArray(parsed)) {
-          setAllClasswork(parsed.filter(item => userClassrooms.some(c => String(c.id) === String(item.classroom_id || item.classId))));
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          if (userClassrooms.length > 0) {
+            const filtered = parsed.filter(item => userClassrooms.some(c => String(c.id) === String(item.classroom_id || item.classId)));
+            setAllClasswork(filtered.length > 0 ? filtered : parsed);
+          } else {
+            setAllClasswork(parsed);
+          }
         }
-      } else {
-        setAllClasswork([]);
       }
     } catch {
-      setUpcomingActivities([]);
-      setAllClasswork([]);
+      // Preserve existing state if parse fails
     }
   }, [currentUser]);
   const [dashboardStats, setDashboardStats] = useState({ done: 0, dueSoon: 0, miss: 0 });
@@ -607,6 +632,13 @@ export default function StudentDashboard({ currentUser, onLogout, onEnterClassro
     }
   });
 
+  const displayedUpcomingActivities = useMemo(() => {
+    if (!Array.isArray(upcomingActivities) || upcomingActivities.length === 0) return [];
+    if (!Array.isArray(classrooms) || classrooms.length === 0) return upcomingActivities;
+    const filtered = upcomingActivities.filter(act => classrooms.some(c => String(c.id) === String(act.classroom_id || act.classId)));
+    return filtered.length > 0 ? filtered : upcomingActivities;
+  }, [upcomingActivities, classrooms]);
+
   useEffect(() => {
     let active = true;
     
@@ -616,7 +648,14 @@ export default function StudentDashboard({ currentUser, onLogout, onEnterClassro
         if (res.ok && active) {
           const data = await res.json();
           if (data && Array.isArray(data.classwork)) {
-            const classList = Array.isArray(classrooms) ? classrooms : [];
+            // If data.classwork is empty (offline local fallback), do NOT wipe existing cached activities!
+            if (data.classwork.length === 0) {
+              return;
+            }
+
+            const classList = (Array.isArray(classrooms) && classrooms.length > 0)
+              ? classrooms
+              : getCachedClassrooms(currentUser, 'student').filter(c => !isPhantomClassroom(c));
             const isLegacyHardcoded = (item) => (item?.id === 1 || item?.id === 2) && (item?.title?.startsWith('Activity 1:') || item?.title?.startsWith('Activity 2:'));
             
             // Strictly filter classwork for student's enrolled classes
@@ -625,47 +664,51 @@ export default function StudentDashboard({ currentUser, onLogout, onEnterClassro
                 classList.length === 0 || classList.some(c => String(c.id) === String(item.classroom_id || item.classId))
               )
             );
-            setAllClasswork(enrolled);
-            try {
-              localStorage.setItem(getClassworkStorageKey(currentUser), JSON.stringify(enrolled));
-            } catch {}
 
-            // Sort activities: nearest deadline first, followed by activities without deadline
-            const sortedActivities = [...enrolled].sort((a, b) => {
-              if (a.dueDate && b.dueDate) return new Date(a.dueDate) - new Date(b.dueDate);
-              if (a.dueDate) return -1;
-              if (b.dueDate) return 1;
-              return new Date(b.posted || b.id || 0) - new Date(a.posted || a.id || 0);
-            });
-            setUpcomingActivities(sortedActivities);
-            try {
-              localStorage.setItem(getActivitiesStorageKey(currentUser), JSON.stringify(sortedActivities));
-            } catch {}
+            const activitiesToSave = enrolled.length > 0 ? enrolled : (data.classwork.length > 0 ? data.classwork.filter(item => !item.archived && !isLegacyHardcoded(item)) : []);
+            if (activitiesToSave.length > 0) {
+              setAllClasswork(activitiesToSave);
+              try {
+                localStorage.setItem(getClassworkStorageKey(currentUser), JSON.stringify(activitiesToSave));
+              } catch {}
 
-            // Calculate stats using submissions
-            try {
-              const subRes = await apiFetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/student/submissions`);
-              if (subRes.ok && active) {
-                const subData = await subRes.json();
-                const submittedAssignmentIds = new Set((subData.submissions || []).map(s => String(s.assignment_id)));
-                let done = 0, dueSoon = 0, miss = 0;
-                const now = new Date();
-                sortedActivities.forEach(cw => {
-                  if (submittedAssignmentIds.has(String(cw.id))) {
-                    done++;
-                  } else {
-                    const due = cw.dueDate ? new Date(cw.dueDate) : null;
-                    if (due && due < now) {
-                      miss++;
+              // Sort activities: nearest deadline first, followed by activities without deadline
+              const sortedActivities = [...activitiesToSave].sort((a, b) => {
+                if (a.dueDate && b.dueDate) return new Date(a.dueDate) - new Date(b.dueDate);
+                if (a.dueDate) return -1;
+                if (b.dueDate) return 1;
+                return new Date(b.posted || b.id || 0) - new Date(a.posted || a.id || 0);
+              });
+              setUpcomingActivities(sortedActivities);
+              try {
+                localStorage.setItem(getActivitiesStorageKey(currentUser), JSON.stringify(sortedActivities));
+              } catch {}
+
+              // Calculate stats using submissions
+              try {
+                const subRes = await apiFetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/student/submissions`);
+                if (subRes.ok && active) {
+                  const subData = await subRes.json();
+                  const submittedAssignmentIds = new Set((subData.submissions || []).map(s => String(s.assignment_id)));
+                  let done = 0, dueSoon = 0, miss = 0;
+                  const now = new Date();
+                  sortedActivities.forEach(cw => {
+                    if (submittedAssignmentIds.has(String(cw.id))) {
+                      done++;
                     } else {
-                      dueSoon++;
+                      const due = cw.dueDate ? new Date(cw.dueDate) : null;
+                      if (due && due < now) {
+                        miss++;
+                      } else {
+                        dueSoon++;
+                      }
                     }
-                  }
-                });
-                setDashboardStats({ done, dueSoon, miss });
+                  });
+                  setDashboardStats({ done, dueSoon, miss });
+                }
+              } catch (e) {
+                console.warn('Failed to fetch submissions for stats', e);
               }
-            } catch (e) {
-              console.warn('Failed to fetch submissions for stats', e);
             }
           }
         }
@@ -706,13 +749,14 @@ export default function StudentDashboard({ currentUser, onLogout, onEnterClassro
   // Compute all available video lessons strictly for student's active enrolled classrooms
   const videoLessons = useMemo(() => {
     const list = [];
-    const classList = Array.isArray(activeClassrooms) ? activeClassrooms : [];
-    if (classList.length === 0) return []; // Not in any active classroom = no video lessons!
+    const classList = (Array.isArray(activeClassrooms) && activeClassrooms.length > 0)
+      ? activeClassrooms
+      : getCachedClassrooms(currentUser, 'student').filter(c => !isPhantomClassroom(c) && !c.archived);
 
     allClasswork.forEach(item => {
-      // Must strictly belong to an active enrolled classroom
+      // Must belong to an active enrolled classroom if classes are available
       const classObj = classList.find(c => String(c.id) === String(item.classroom_id || item.classId));
-      if (!classObj) return;
+      if (classList.length > 0 && !classObj) return;
 
       if (getLessonType(item) === 'video') {
         const videoAttachment = item.attachments?.find(a => 
@@ -731,7 +775,7 @@ export default function StudentDashboard({ currentUser, onLogout, onEnterClassro
         list.push({
           id: String(item.id),
           title,
-          subject: (classObj.name || classObj.subject || 'COURSE').toUpperCase(),
+          subject: (classObj?.name || classObj?.subject || 'COURSE').toUpperCase(),
           duration: formatVideoTimestamp(item.duration) || (src?.includes('1792768564903_HCI_Lesson_1_ITEC_80') ? '52:21' : null) || '52:21',
           src,
           item,
@@ -741,7 +785,7 @@ export default function StudentDashboard({ currentUser, onLogout, onEnterClassro
     });
 
     return list;
-  }, [allClasswork, activeClassrooms]);
+  }, [allClasswork, activeClassrooms, currentUser]);
 
   // Track seen state in localStorage per user
   const [seenVideoMap, setSeenVideoMap] = useState({});
@@ -1412,11 +1456,10 @@ export default function StudentDashboard({ currentUser, onLogout, onEnterClassro
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
                   {loadingActivities ? (
                     <div style={{ color: textMuted, fontSize: '0.9rem', textAlign: 'center', padding: '20px' }}>Loading tasks...</div>
-                  ) : upcomingActivities.filter(act => (classrooms || []).some(c => String(c.id) === String(act.classroom_id || act.classId))).length === 0 ? (
+                  ) : displayedUpcomingActivities.length === 0 ? (
                     <div style={{ color: textMuted, fontSize: '0.9rem', textAlign: 'center', padding: '20px' }}>No upcoming tasks!</div>
                   ) : (
-                    upcomingActivities
-                      .filter(act => (classrooms || []).some(c => String(c.id) === String(act.classroom_id || act.classId)))
+                    displayedUpcomingActivities
                       .slice(0, 5)
                       .map((act) => {
                       const d = act.dueDate ? new Date(act.dueDate) : null;
@@ -1426,7 +1469,7 @@ export default function StudentDashboard({ currentUser, onLogout, onEnterClassro
                       const isToday = hasValidDate && d.getDate() === now.getDate() && d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
                       const isTomorrow = hasValidDate && new Date(now.getTime() + 86400000).getDate() === d.getDate() && new Date(now.getTime() + 86400000).getMonth() === d.getMonth();
                       const label = hasValidDate ? (isToday ? 'Today' : (isTomorrow ? 'Tomorrow' : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }))) : 'Assigned';
-                      const classObj = classrooms.find(c => String(c.id) === String(act.classroom_id || act.classId));
+                      const classObj = (classrooms || []).find(c => String(c.id) === String(act.classroom_id || act.classId));
                       const courseName = classObj ? (classObj.name || 'Course') : 'Course';
                       const initial = courseName.charAt(0).toUpperCase();
                       const bgCol = classObj?.theme?.color || '#059669';
