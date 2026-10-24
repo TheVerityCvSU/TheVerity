@@ -4,32 +4,31 @@ const fs = require('fs');
 const { fork, spawn } = require('child_process');
 const { initStartupVmDetection, getVmStatus, getCachedVmStatusSync } = require('./electron/vm-detect.cjs');
 
-// Run VM detection immediately at startup
+// I-check agad pagka-start kung naka-VM para iwas daya sa exam
 initStartupVmDetection(console.log);
 
 let mainWindow;
 let serverProcess = null;
-let hudProcess = null; // native keyboard-hook helper
+let hudProcess = null; // helper para sa native keyboard hook (harang sa windows key at alt-tab)
 let lockdownActive = false;
 
-// The native helper blocks the Windows key while this file exists. The file's
-// TEMPORARY presence (not absence) is the "locked" signal, so any stray file
-// left on a crash automatically keeps lockdown ON until the app is closed —
-// which is the safe failure mode for an exam proctor.
+// Pag andito tong .verity-lock file, ibig sabihin naka-block si Windows key.
+// Yung presence neto yung signal na "locked" si student.
+// Kahit mag-crash yung app, safe pa rin kasi naka-lock pa rin hanggang ma-exit nang maayos.
 let lockFilePath = null;
 
 function startKeyboardHook() {
-  if (!app.isPackaged) return; // dev mode: don't hijack the developer's keyboard
+  if (!app.isPackaged) return; // pag dev mode wag muna i-hook baka ma-lock sarili nating keyboard habang nagko-code haha
   const exePath = path.join(process.resourcesPath, 'native', 'KioskLockHook.exe');
   lockFilePath = path.join(app.getPath('userData'), '.verity-lock');
   if (!fs.existsSync(exePath)) {
     console.error('[main] KioskLockHook.exe not found at', exePath);
     return;
   }
-  setLockedFile(false); // make sure a fresh launch starts unlocked
+  setLockedFile(false); // panigurado lang na pag fresh launch, unlocked muna para di maipit
   hudProcess = spawn(exePath, [lockFilePath], { detached: true });
   hudProcess.on('error', (err) => console.error('[main] hook error:', err));
-  hudProcess.unref(); // don't keep the app alive for it
+  hudProcess.unref(); // unref para di mag-hang yung buong app dahil lang sa background process na to
   console.log('[main] Keyboard hook started');
 }
 
@@ -52,14 +51,13 @@ function killKeyboardHook() {
   if (hudProcess && hudProcess.exitCode === null) {
     try { hudProcess.kill(); } catch (_) {}
   }
-  // Clear the lock file so the next launch starts unilocked.
+  // Burahin yung lock file para pagbukas sa susunod, normal at unlocked ulit.
   setLockedFile(false);
 }
 
 function seedDatabase(dataDir) {
-  // Merge seed users into the runtime database so that the built-in accounts
-  // (admin@verity.com / admin, etc.) are always present alongside any accounts
-  // the user created in earlier runs.
+  // Eto pang-seed ng default accounts (tulad ng admin@verity.com / admin) para laging
+  // meron kahit bagong install, sabay merge sa mga dati nang nagawang accounts.
   const dbPath = path.join(dataDir, 'database.json');
   const seedPath = app.isPackaged
     ? path.join(process.resourcesPath, 'database.json')
@@ -67,7 +65,7 @@ function seedDatabase(dataDir) {
 
   let current = { users: [], classwork: {}, classrooms: [], securityFlags: {} };
   if (fs.existsSync(dbPath)) {
-    try { current = JSON.parse(fs.readFileSync(dbPath, 'utf-8')); } catch { /* corrupt */ }
+    try { current = JSON.parse(fs.readFileSync(dbPath, 'utf-8')); } catch { /* pag sira or corrupt yung json, ignore lang */ }
   }
   let seedData = { users: [] };
   try { seedData = JSON.parse(fs.readFileSync(seedPath, 'utf-8')); } catch {}
@@ -92,10 +90,9 @@ function seedDatabase(dataDir) {
 }
 
 function startServer() {
-  // The server is bundled by esbuild into a single CJS file with all requires
-  // inlined, so it needs no node_modules at runtime. We fork it from
-  // extraResources (outside ASAR) and pass DATA_DIR so database.json and
-  // uploads/ land in a writable location.
+  // Naka-bundle na yung server via esbuild para isang CJS file na lang at walang kailangan na node_modules.
+  // I-fork natin galing sa resources tapos ipasa yung DATA_DIR para sa writable location mapunta
+  // yung database.json tsaka uploads folder.
   const serverPath = app.isPackaged
     ? path.join(process.resourcesPath, 'dist-server', 'server-bundle.cjs')
     : path.join(__dirname, 'dist-server', 'server-bundle.cjs');
@@ -124,10 +121,10 @@ function stopServer() {
   }
 }
 
-// Shortcuts we swallow while a student is locked in.
+// Mga bawal pindutin ni student habang ongoing yung exam / lockdown
 const LOCKED_SHORTCUTS = [
   'Alt+Tab',
-  'Super',            // Windows key
+  'Super',            // Windows key (para di makapag-start menu)
   'Super+D',
   'Super+Tab',
   'CommandOrControl+W',
@@ -139,7 +136,7 @@ function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
-    kiosk: false, // start unlocked — only students get locked down (after login)
+    kiosk: false, // simula muna sa unlocked window — sa exam lang ila-lockdown pag naka-login na
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       nodeIntegration: false,
@@ -148,27 +145,26 @@ function createWindow() {
   });
 
   if (app.isPackaged) {
-    // Production: load the Vite build output.
+    // Production build: load yung index.html galing sa dist folder
     mainWindow.loadFile(path.join(__dirname, 'dist', 'index.html'));
   } else {
-    // Development: load the live Vite dev server.
+    // Dev mode: kukunin sa live Vite dev server (localhost:5173)
     mainWindow.loadURL('http://localhost:5173');
   }
 
-  // If a locked-down student somehow loses then regains focus, re-assert kiosk.
+  // Pag biglang lumipat or nawala yung focus tapos bumalik, pilitin ulit mag-kiosk mode
   mainWindow.on('focus', () => {
     if (lockdownActive) mainWindow.setKiosk(true);
   });
 
-  // Alt+Tab can't be reliably blocked on Windows, so instead we yank focus
-  // straight back the moment the window loses it while locked down. The short
-  // delay lets our OWN child windows (dialogs, menus) take focus first — if one
-  // of them is focused we leave it alone so its buttons stay clickable.
+  // Hirap i-block ni Alt+Tab sa Windows, kaya pag nag-blur (lumipat ng window si student),
+  // hihilahin natin agad pabalik yung focus dito sa app! May kaunting delay para kung sarili
+  // nating dialog or popup yung binuksan, clickable pa rin yung buttons.
   mainWindow.on('blur', () => {
     if (!lockdownActive) return;
     setTimeout(() => {
       if (!lockdownActive) return;
-      if (BrowserWindow.getFocusedWindow()) return; // a window of ours has focus
+      if (BrowserWindow.getFocusedWindow()) return; // sarili nating popup/window yung naka-focus, hayaan lang muna
       if (mainWindow.isMinimized()) mainWindow.restore();
       mainWindow.show();
       mainWindow.focus();
@@ -176,7 +172,7 @@ function createWindow() {
     }, 120);
   });
 
-  // Don't let a locked-down student minimize out of the way.
+  // Bawal mag-minimize si student para lumusot, ibalik agad sa harap
   mainWindow.on('minimize', (e) => {
     if (lockdownActive) {
       e.preventDefault();
@@ -185,7 +181,7 @@ function createWindow() {
     }
   });
 
-  // Block close while locked down (Alt+F4 etc.).
+  // Harangin yung pag-close (tulad ng Alt+F4) habang naka-lockdown pa
   mainWindow.on('close', (e) => {
     if (lockdownActive) e.preventDefault();
   });
@@ -198,13 +194,13 @@ function enableLockdown() {
   mainWindow.setAlwaysOnTop(true, 'screen-saver');
   mainWindow.setVisibleOnAllWorkspaces(true);
   mainWindow.focus();
-  // Engage the native keyboard hook.
+  // Paandarin na yung native keyboard hook para bawal ang Windows key
   setLockedFile(true);
   for (const accel of LOCKED_SHORTCUTS) {
     try {
-      globalShortcut.register(accel, () => {}); // swallow
+      globalShortcut.register(accel, () => {}); // kainin lang yung shortcut para walang mangyari
     } catch (_) {
-      // some accelerators aren't registrable on every platform; ignore
+      // baka di pwede sa ibang OS yung shortcut kaya ignore lang para di mag-crash
     }
   }
 }
@@ -217,24 +213,24 @@ function disableLockdown() {
     mainWindow.setVisibleOnAllWorkspaces(false);
     mainWindow.setKiosk(false);
   }
-  // Release the native keyboard hook.
+  // Bitawan na yung native hook at ibalik sa normal
   setLockedFile(false);
 }
 
 app.whenReady().then(() => {
   if (app.isPackaged) {
-    // Production: start the backend server + native keyboard hook, then open
-    // the window after a short delay to give the server time to bind its port.
+    // Production mode: paandarin muna yung backend server tsaka keyboard hook,
+    // tapos sandaling delay bago buksan yung window para sigurado naka-bind na si server sa port.
     startServer();
     startKeyboardHook();
     setTimeout(createWindow, 1500);
   } else {
-    // Development: the server is already running via `npm run dev`.
+    // Dev mode: bukas na agad yung window kasi tumatakbo na si server sa npm run dev
     createWindow();
   }
 });
 
-// --- IPC from the renderer (React) ---
+// --- Eto yung mga tawag galing sa frontend / React UI via IPC ---
 ipcMain.on('enable-lockdown', () => {
   console.log('[main] enable-lockdown received');
   enableLockdown();
@@ -253,7 +249,7 @@ ipcMain.handle('get-cached-vm-status', () => {
 });
 
 ipcMain.on('close-app', () => {
-  disableLockdown(); // make sure the close handler lets us quit
+  disableLockdown(); // tanggalin muna lockdown para payagan tayo mag-quit nang maayos
   app.quit();
 });
 

@@ -1783,31 +1783,6 @@ export default function TeacherView({
             </>
           )}
 
-          {/* Mode Switcher: Hidden in Live Monitoring per request */}
-          {onSwitchMode && mode !== 'live' && (
-            <button
-              onClick={() => onSwitchMode('live')}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '6px',
-                padding: isMobile ? '6px 8px' : '7px 12px',
-                backgroundColor: isDark ? 'rgba(239, 68, 68, 0.15)' : '#fee2e2',
-                color: '#ef4444',
-                border: '1px solid rgba(239, 68, 68, 0.3)',
-                borderRadius: '8px',
-                cursor: 'pointer',
-                fontWeight: '700',
-                fontSize: '0.82rem',
-                transition: 'all 0.15s ease'
-              }}
-              title="Switch to Live Monitoring Page"
-            >
-              <Monitor size={14} />
-              {!isMobile && <span>Live Monitoring</span>}
-            </button>
-          )}
-
           {/* Settings Button */}
           <button
             onClick={() => setShowSettingsModal(true)}
