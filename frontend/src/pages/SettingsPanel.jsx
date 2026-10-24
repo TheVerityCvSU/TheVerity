@@ -544,6 +544,15 @@ function CheckUpdateField({ isDark, role }) {
   const [updateInfo, setUpdateInfo] = useState(null);
   const [isDownloading, setIsDownloading] = useState(false);
   const [downloadStarted, setDownloadStarted] = useState(false);
+  const [clientAppVersion, setClientAppVersion] = useState(() => import.meta.env.VITE_APP_VERSION || '1.0.0');
+
+  useEffect(() => {
+    if (window.electronAPI?.getAppVersion) {
+      window.electronAPI.getAppVersion().then(v => {
+        if (v) setClientAppVersion(v);
+      }).catch(() => {});
+    }
+  }, []);
 
   const handleCheckUpdate = async (e) => {
     // Allows Shift or Alt click to test the update available flow
@@ -553,6 +562,7 @@ function CheckUpdateField({ isDark, role }) {
     try {
       const query = new URLSearchParams();
       if (role) query.append('role', role);
+      if (clientAppVersion) query.append('clientVersion', clientAppVersion);
       if (force) query.append('force', 'true');
       const res = await apiFetch(`/api/check-update?${query.toString()}`);
       if (res && res.ok) {
@@ -640,7 +650,7 @@ function CheckUpdateField({ isDark, role }) {
           flexShrink: 0
         }}>
           <span>Current Version:</span>
-          <span style={{ color: '#10b981', fontWeight: '700' }}>v{updateInfo?.currentVersion || '1.0.0'}</span>
+          <span style={{ color: '#10b981', fontWeight: '700' }}>v{updateInfo?.currentVersion || clientAppVersion || '1.0.0'}</span>
         </div>
       </div>
 

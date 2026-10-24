@@ -61,6 +61,49 @@ export const getLocalApiUrl = () => {
 
 export const LOCAL_API_URL = getLocalApiUrl();
 
+/**
+ * Resolves the socket URL for the code execution/compiler engine.
+ * Priority:
+ * 1. If a custom server URL is saved in localStorage (e.g. Teacher LAN IP), use it.
+ * 2. In Electron desktop app, or when offline / cloud is down, or on localhost / private network:
+ *    ALWAYS use the local embedded server (http://localhost:3001 or LAN IP).
+ * 3. On hosted web (with internet): use Cloud URL.
+ */
+export const getCompilerSocketUrl = () => {
+  if (typeof window !== 'undefined') {
+    const custom = localStorage.getItem('verity_cloud_url');
+    if (custom && custom.trim() && !custom.includes('vercel.app')) {
+      const cleanCustom = custom.trim().replace(/\/$/, '');
+      try {
+        const parsed = new URL(cleanCustom.startsWith('http') ? cleanCustom : `http://${cleanCustom}`);
+        if (isPrivateHost(parsed.hostname)) {
+          return cleanCustom;
+        }
+      } catch (_) {}
+    }
+  }
+
+  const isElectron = typeof window !== 'undefined' && (
+    Boolean(window.electronAPI) ||
+    Boolean(window.location && isPrivateHost(window.location.hostname)) ||
+    (navigator.userAgent && navigator.userAgent.includes('TheVerity'))
+  );
+
+  const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
+  const isWebHosted = typeof window !== 'undefined' &&
+                      window.location &&
+                      !isPrivateHost(window.location.hostname) &&
+                      !isElectron;
+
+  // In Electron desktop app, or when offline / cloud is down, or on localhost / LAN:
+  // always compile using the local engine!
+  if (isElectron || !isOnline || isCloudDown || !isWebHosted) {
+    return getLocalApiUrl();
+  }
+
+  return getCloudUrl();
+};
+
 // Tracking state
 let isCloudDown = false;
 const statusListeners = new Set();

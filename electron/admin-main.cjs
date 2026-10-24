@@ -164,7 +164,7 @@ function startServer() {
 
     logStartup(`[admin-main] Forking server process: ${serverPath}`);
     serverProcess = fork(serverPath, [], {
-      env: { ...process.env, ...parsedEnv, DATA_DIR: dataDir, NODE_ENV: 'production', IS_ADMIN_APP: 'true' },
+      env: { ...process.env, ...parsedEnv, DATA_DIR: dataDir, NODE_ENV: 'production', IS_ADMIN_APP: 'true', APP_VERSION: app.getVersion() },
       silent: true,
     });
     serverProcess.stdout.on('data', (d) => {
@@ -451,6 +451,10 @@ ipcMain.on('close-google-auth', () => {
 
 ipcMain.handle('check-google-auth-status', () => {
   return !!(googleAuthWindow && !googleAuthWindow.isDestroyed());
+});
+
+ipcMain.handle('get-app-version', () => {
+  return app.getVersion();
 });
 
 ipcMain.handle('check-vm-status', async () => {

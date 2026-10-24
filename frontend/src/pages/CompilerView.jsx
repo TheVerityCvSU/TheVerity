@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { openDotnetSetup } from '../utils/dotnetHelper';
+import { getCompilerSocketUrl, getLocalApiUrl } from '../utils/api';
 
 const DEFAULT_CSHARP = 'using System;\n\nclass Program {\n    static void Main(string[] args) {\n        Console.WriteLine("Hello, World!");\n    }\n}';
 
@@ -199,7 +200,8 @@ export default function CompilerView() {
 
     try {
       const { io } = await import('socket.io-client');
-      const socketUrl = (import.meta.env.VITE_API_URL || import.meta.env.VITE_SOCKET_URL || 'http://localhost:3001').replace(/\/$/, '');
+      const primaryUrl = getCompilerSocketUrl();
+      const localUrl = getLocalApiUrl();
       const token = localStorage.getItem('verity_token') || localStorage.getItem('token');
       let storedUser = null;
       try {
@@ -207,7 +209,10 @@ export default function CompilerView() {
         if (u) storedUser = JSON.parse(u);
       } catch (_) {}
 
-      const socket = io(socketUrl, {
+      let currentUrl = primaryUrl;
+      let hasSwitchedToLocal = (primaryUrl === localUrl);
+
+      const socket = io(currentUrl, {
         timeout: 5000,
         transports: ['websocket', 'polling'],
         auth: { token }
@@ -253,7 +258,15 @@ export default function CompilerView() {
       });
 
       socket.on('connect_error', () => {
-        addLine(`Error: Local compiler server unreachable at ${socketUrl}.`, 'err');
+        if (!hasSwitchedToLocal && socket.io && socket.io.uri !== localUrl) {
+          hasSwitchedToLocal = true;
+          currentUrl = localUrl;
+          console.warn(`[CompilerView] Compiler at ${socket.io.uri} unreachable. Falling back to local compiler at ${localUrl}...`);
+          socket.io.uri = localUrl;
+          socket.connect();
+          return;
+        }
+        addLine(`Error: Local compiler server unreachable at ${currentUrl}. Please ensure The Verity local server is running on port 3001.`, 'err');
         cleanupRun();
       });
 
@@ -303,7 +316,8 @@ export default function CompilerView() {
 
     try {
       const { io } = await import('socket.io-client');
-      const socketUrl = (import.meta.env.VITE_API_URL || import.meta.env.VITE_SOCKET_URL || 'http://localhost:3001').replace(/\/$/, '');
+      const primaryUrl = getCompilerSocketUrl();
+      const localUrl = getLocalApiUrl();
       const token = localStorage.getItem('verity_token') || localStorage.getItem('token');
       let storedUser = null;
       try {
@@ -311,7 +325,9 @@ export default function CompilerView() {
         if (u) storedUser = JSON.parse(u);
       } catch (_) {}
 
-      const socket = io(socketUrl, {
+      let hasSwitchedToLocal = (primaryUrl === localUrl);
+
+      const socket = io(primaryUrl, {
         timeout: 5000,
         transports: ['websocket', 'polling'],
         auth: { token }
@@ -354,6 +370,13 @@ export default function CompilerView() {
       });
 
       socket.on('connect_error', () => {
+        if (!hasSwitchedToLocal && socket.io && socket.io.uri !== localUrl) {
+          hasSwitchedToLocal = true;
+          console.warn(`[CompilerView] Test runner at ${socket.io.uri} unreachable. Falling back to local compiler at ${localUrl}...`);
+          socket.io.uri = localUrl;
+          socket.connect();
+          return;
+        }
         clearTimeout(testTimeout);
         cleanupTests();
       });

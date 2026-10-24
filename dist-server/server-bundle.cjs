@@ -96415,12 +96415,15 @@ var require_db4 = __commonJS({
                             instructor_email = excluded.instructor_email,
                             theme = excluded.theme
                     `);
+              let cCount = 0;
               for (const c of pgClassrooms.rows) {
                 try {
                   upsertClassroom.run(c.id, c.code || "", c.section || "", c.name || "", c.subject || "", c.instructor || "", c.instructor_email || null, c.theme || null);
+                  cCount++;
                 } catch (_) {
                 }
               }
+              console.log(`[Database] Synced ${cCount} classrooms from Supabase into local SQLite.`);
             }
             const pgClasswork = await client.query("SELECT id, classroom_id, title, description, duedate, type, created_at FROM classwork").catch(() => ({ rows: [] }));
             if (pgClasswork.rows && pgClasswork.rows.length > 0) {
@@ -96435,29 +96438,43 @@ var require_db4 = __commonJS({
                             type = excluded.type,
                             created_at = excluded.created_at
                     `);
+              let cwCount = 0;
               for (const cw of pgClasswork.rows) {
                 try {
-                  upsertCw.run(cw.id, cw.classroom_id, cw.title, cw.description, cw.duedate, cw.type || "", cw.created_at || null);
+                  upsertCw.run(cw.id, cw.classroom_id, cw.title, cw.description, cw.duedate, cw.type || "", cw.created_at ? new Date(cw.created_at).toISOString() : null);
+                  cwCount++;
                 } catch (_) {
                 }
               }
+              console.log(`[Database] Synced ${cwCount} classwork activities from Supabase into local SQLite.`);
             }
-            const pgEnrollments = await client.query("SELECT id, classroom_id, student_id, student_name, student_email, enrolled_at FROM enrollments").catch(() => ({ rows: [] }));
+            const pgEnrollments = await client.query("SELECT classroom_id, student_id, student_name, student_email, enrolled_at FROM enrollments").catch(() => ({ rows: [] }));
             if (pgEnrollments.rows && pgEnrollments.rows.length > 0) {
               const upsertEnrollment = sqliteDb.prepare(`
-                        INSERT INTO enrollments (id, classroom_id, student_id, student_name, student_email, enrolled_at)
-                        VALUES (?, ?, ?, ?, ?, ?)
+                        INSERT INTO enrollments (classroom_id, student_id, student_name, student_email, enrolled_at)
+                        VALUES (?, ?, ?, ?, ?)
                         ON CONFLICT(classroom_id, student_email) DO UPDATE SET
                             student_id = excluded.student_id,
                             student_name = excluded.student_name,
                             enrolled_at = excluded.enrolled_at
                     `);
+              let enCount = 0;
               for (const en of pgEnrollments.rows) {
-                try {
-                  upsertEnrollment.run(en.id, en.classroom_id, en.student_id, en.student_name, en.student_email, en.enrolled_at || null);
-                } catch (_) {
+                if (en.classroom_id && en.student_email) {
+                  try {
+                    upsertEnrollment.run(
+                      en.classroom_id,
+                      en.student_id || null,
+                      en.student_name || "",
+                      en.student_email.trim().toLowerCase(),
+                      en.enrolled_at ? new Date(en.enrolled_at).toISOString() : null
+                    );
+                    enCount++;
+                  } catch (_) {
+                  }
                 }
               }
+              console.log(`[Database] Synced ${enCount} enrollments from Supabase into local SQLite.`);
             }
             const pgSubmissions = await client.query("SELECT id, assignment_id, student_name, history, submittedat FROM submissions").catch(() => ({ rows: [] }));
             if (pgSubmissions.rows && pgSubmissions.rows.length > 0) {
@@ -96478,23 +96495,25 @@ var require_db4 = __commonJS({
               }
               console.log(`[Database] Synced ${pgSubmissions.rows.length} submissions from Supabase into local SQLite.`);
             }
-            const pgGrades = await client.query("SELECT id, assignment_id, student_id, grade, feedback, graded_at FROM grades").catch(() => ({ rows: [] }));
+            const pgGrades = await client.query("SELECT assignment_id, student_id, grade, feedback, graded_at FROM grades").catch(() => ({ rows: [] }));
             if (pgGrades.rows && pgGrades.rows.length > 0) {
               const upsertGrade = sqliteDb.prepare(`
-                        INSERT INTO grades (id, assignment_id, student_id, grade, feedback, graded_at)
-                        VALUES (?, ?, ?, ?, ?, ?)
+                        INSERT INTO grades (assignment_id, student_id, grade, feedback, graded_at)
+                        VALUES (?, ?, ?, ?, ?)
                         ON CONFLICT(assignment_id, student_id) DO UPDATE SET
                             grade = excluded.grade,
                             feedback = excluded.feedback,
                             graded_at = excluded.graded_at
                     `);
+              let gCount = 0;
               for (const g of pgGrades.rows) {
                 try {
-                  upsertGrade.run(g.id, String(g.assignment_id), String(g.student_id), g.grade || "", g.feedback || "", g.graded_at ? new Date(g.graded_at).toISOString() : null);
+                  upsertGrade.run(String(g.assignment_id), String(g.student_id), g.grade || "", g.feedback || "", g.graded_at ? new Date(g.graded_at).toISOString() : null);
+                  gCount++;
                 } catch (_) {
                 }
               }
-              console.log(`[Database] Synced ${pgGrades.rows.length} grades from Supabase into local SQLite.`);
+              console.log(`[Database] Synced ${gCount} grades from Supabase into local SQLite.`);
             }
             const pgAnnouncements = await client.query("SELECT id, classroom_id, title, details, author, posted, created_at FROM announcements").catch(() => ({ rows: [] }));
             if (pgAnnouncements.rows && pgAnnouncements.rows.length > 0) {
@@ -96509,12 +96528,15 @@ var require_db4 = __commonJS({
                             posted = excluded.posted,
                             created_at = excluded.created_at
                     `);
+              let anCount = 0;
               for (const an of pgAnnouncements.rows) {
                 try {
                   upsertAnn.run(an.id, an.classroom_id, an.title || "", an.details || "", an.author || "", an.posted || null, an.created_at || null);
+                  anCount++;
                 } catch (_) {
                 }
               }
+              console.log(`[Database] Synced ${anCount} announcements from Supabase into local SQLite.`);
             }
           } catch (syncErr) {
             console.warn("[Database] Data sync warning:", syncErr.message);
@@ -97531,16 +97553,76 @@ app.post("/upload", (req, res, next) => {
   });
 });
 app.get("/api/check-update", async (req, res) => {
-  let currentVersion = "1.0.0";
+  const isNewer = (latest, current) => {
+    if (!latest || !current) return false;
+    const lParts = String(latest).replace(/^v/i, "").split(".").map((n) => parseInt(n, 10) || 0);
+    const cParts = String(current).replace(/^v/i, "").split(".").map((n) => parseInt(n, 10) || 0);
+    for (let i2 = 0; i2 < Math.max(lParts.length, cParts.length); i2++) {
+      const l = lParts[i2] || 0;
+      const c = cParts[i2] || 0;
+      if (l > c) return true;
+      if (l < c) return false;
+    }
+    return false;
+  };
+  const clientVer = (req.query.clientVersion || req.query.currentVersion || req.query.version || "").replace(/^v/i, "").trim();
+  let serverPkgVersion = process.env.APP_VERSION || "1.0.0";
   try {
     const pkg = JSON.parse(fs2.readFileSync(path.resolve(__dirname, "../package.json"), "utf8"));
-    if (pkg.version) currentVersion = pkg.version;
+    if (pkg.version) serverPkgVersion = pkg.version;
   } catch (_) {
+    try {
+      const pkg = JSON.parse(fs2.readFileSync(path.resolve(process.cwd(), "package.json"), "utf8"));
+      if (pkg.version) serverPkgVersion = pkg.version;
+    } catch (_2) {
+    }
   }
-  const forceUpdate = req.query.force === "true" || req.query.force === "1";
-  let latestVersion = process.env.LATEST_APP_VERSION || currentVersion;
-  let releaseNotes = "Version " + latestVersion + ": Enhanced proctoring stability, UI performance optimizations, and security patches.";
+  const currentVersion = clientVer || serverPkgVersion;
+  let latestVersion = process.env.LATEST_APP_VERSION || serverPkgVersion;
   let githubDownloadUrl = null;
+  const isAdmin = req.query.role === "admin" || req.query.app === "admin" || req.query.role === "Administrator";
+  const candidateDirs = [
+    path.resolve(__dirname, isAdmin ? "../release/Admin" : "../release/Users"),
+    path.resolve(process.cwd(), isAdmin ? "release/Admin" : "release/Users"),
+    path.resolve(__dirname, "../release"),
+    path.resolve(process.cwd(), "release"),
+    path.resolve(__dirname, "../dist"),
+    path.resolve(process.cwd(), "dist")
+  ];
+  for (const dir of candidateDirs) {
+    if (fs2.existsSync(dir)) {
+      const ymlPath = path.join(dir, "latest.yml");
+      if (fs2.existsSync(ymlPath)) {
+        try {
+          const ymlContent = fs2.readFileSync(ymlPath, "utf8");
+          const match = ymlContent.match(/version:\s*([0-9.]+)/i);
+          if (match && match[1]) {
+            const ymlVer = match[1].trim();
+            if (isNewer(ymlVer, latestVersion)) {
+              latestVersion = ymlVer;
+            }
+          }
+        } catch (_) {
+        }
+      }
+      try {
+        const files = fs2.readdirSync(dir);
+        for (const f3 of files) {
+          const lower2 = f3.toLowerCase();
+          if (lower2.endsWith(".exe") && (isAdmin ? lower2.includes("admin") : !lower2.includes("admin"))) {
+            const vMatch = f3.match(/(\d+\.\d+\.\d+)/);
+            if (vMatch && vMatch[1]) {
+              const fileVer = vMatch[1];
+              if (isNewer(fileVer, latestVersion)) {
+                latestVersion = fileVer;
+              }
+            }
+          }
+        }
+      } catch (_) {
+      }
+    }
+  }
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 3500);
@@ -97552,12 +97634,10 @@ app.get("/api/check-update", async (req, res) => {
     if (ghRes.ok) {
       const releaseData = await ghRes.json();
       const tagName = (releaseData.tag_name || "").replace(/^v/i, "").trim();
-      if (tagName) {
+      if (tagName && isNewer(tagName, latestVersion)) {
         latestVersion = tagName;
-        if (releaseData.body) releaseNotes = releaseData.body;
-        const isAdmin2 = req.query.role === "admin" || req.query.app === "admin" || req.query.role === "Administrator";
         const asset = (releaseData.assets || []).find(
-          (a) => isAdmin2 ? /admin.*\.exe$/i.test(a.name) : /\.exe$/i.test(a.name) && !/admin/i.test(a.name)
+          (a) => isAdmin ? /admin.*\.exe$/i.test(a.name) : /\.exe$/i.test(a.name) && !/admin/i.test(a.name)
         );
         if (asset?.browser_download_url) {
           githubDownloadUrl = asset.browser_download_url;
@@ -97566,26 +97646,13 @@ app.get("/api/check-update", async (req, res) => {
     }
   } catch (_) {
   }
-  if (forceUpdate) {
-    latestVersion = "1.0.1";
-  }
-  const isNewer = (latest, current) => {
-    const lParts = latest.split(".").map((n) => parseInt(n, 10) || 0);
-    const cParts = current.split(".").map((n) => parseInt(n, 10) || 0);
-    for (let i2 = 0; i2 < Math.max(lParts.length, cParts.length); i2++) {
-      const l = lParts[i2] || 0;
-      const c = cParts[i2] || 0;
-      if (l > c) return true;
-      if (l < c) return false;
-    }
-    return false;
-  };
+  const forceUpdate = req.query.force === "true" || req.query.force === "1";
   const updateAvailable = forceUpdate || isNewer(latestVersion, currentVersion);
   const protocol = req.headers["x-forwarded-proto"] || req.protocol;
   const host = req.get("host");
   const baseUrl = `${protocol}://${host}`;
-  const isAdmin = req.query.role === "admin" || req.query.app === "admin" || req.query.role === "Administrator";
   const downloadQuery = isAdmin ? "?app=admin" : "";
+  const releaseNotes = `Version ${latestVersion}: Enhanced proctoring stability, UI performance optimizations, and security patches.`;
   res.json({
     currentVersion,
     latestVersion,
@@ -97598,14 +97665,20 @@ app.get("/api/download-update", (req, res) => {
   const isAdmin = req.query.role === "admin" || req.query.app === "admin" || req.query.role === "Administrator";
   const candidateDirs = [
     path.resolve(__dirname, isAdmin ? "../release/Admin" : "../release/Users"),
+    path.resolve(process.cwd(), isAdmin ? "release/Admin" : "release/Users"),
+    path.resolve(__dirname, "../release"),
+    path.resolve(process.cwd(), "release"),
     path.resolve(__dirname, "../dist"),
-    path.resolve(__dirname, "../release")
+    path.resolve(process.cwd(), "dist")
   ];
   for (const dir of candidateDirs) {
     if (fs2.existsSync(dir)) {
       try {
         const files = fs2.readdirSync(dir);
         const installerFile = files.find((f3) => {
+          const lower2 = f3.toLowerCase();
+          return lower2.endsWith(".exe") && lower2.includes("setup") && (isAdmin ? lower2.includes("admin") : !lower2.includes("admin"));
+        }) || files.find((f3) => {
           const lower2 = f3.toLowerCase();
           return lower2.endsWith(".exe") && (isAdmin ? lower2.includes("admin") : !lower2.includes("admin"));
         });
@@ -98039,30 +98112,65 @@ app.post("/login", async (req, res) => {
       return res.status(503).json({ message: maintenance.message, maintenance: true });
     }
     const { email, password } = req.body;
-    const cleanEmail = (email || "").trim().toLowerCase();
+    const rawIdentifier = (email || req.body.username || req.body.identifier || "").trim();
+    const cleanIdentifier = rawIdentifier.toLowerCase();
     const rawPassword = password !== void 0 ? String(password) : "";
     const cleanPassword = rawPassword.trim();
-    const isAdminAcc = await db.get("SELECT id FROM admin_users WHERE LOWER(email) = ?", cleanEmail);
+    const emailLike = `${cleanIdentifier}@%`;
+    if (!cleanIdentifier) {
+      return res.status(400).json({ message: "Username or email is required" });
+    }
+    const isAdminAcc = await db.get(
+      `SELECT id FROM admin_users 
+             WHERE LOWER(email) = ? OR LOWER(name) = ? OR LOWER(email) LIKE ?`,
+      cleanIdentifier,
+      cleanIdentifier,
+      emailLike
+    );
     if (isAdminAcc) {
       return res.status(401).json({
-        message: "Invalid credentials. No account found with this email address."
+        message: "Invalid credentials. No account found with this email or username."
       });
     }
-    let user = await db.get("SELECT * FROM users WHERE LOWER(email) = ? AND password = ?", cleanEmail, rawPassword);
-    if (!user && cleanPassword && cleanPassword !== rawPassword) {
-      user = await db.get("SELECT * FROM users WHERE LOWER(email) = ? AND password = ?", cleanEmail, cleanPassword);
+    const userExists = await db.get(
+      `SELECT * FROM users 
+             WHERE LOWER(email) = ? OR LOWER(name) = ? OR LOWER(email) LIKE ? 
+             ORDER BY CASE 
+                 WHEN LOWER(email) = ? THEN 1 
+                 WHEN LOWER(name) = ? THEN 2 
+                 ELSE 3 
+             END LIMIT 1`,
+      cleanIdentifier,
+      cleanIdentifier,
+      emailLike,
+      cleanIdentifier,
+      cleanIdentifier
+    );
+    if (!userExists) {
+      return res.status(401).json({
+        message: "Invalid credentials. No account found with this username or email address."
+      });
     }
-    if (!user) {
-      const userExists = await db.get("SELECT id, password, role FROM users WHERE LOWER(email) = ?", cleanEmail);
-      if (userExists) {
-        if (userExists.password === "google_sso_user") {
-          return res.status(401).json({
-            message: "This account was registered with Google Sign-In. Please sign in with Google or reset your password."
-          });
-        }
-        return res.status(401).json({ message: "Invalid credentials. Please verify your password." });
+    let user = null;
+    if (userExists.password === "google_sso_user") {
+      if (cleanPassword) {
+        await db.run("UPDATE users SET password = ? WHERE id = ?", cleanPassword, userExists.id);
+        userExists.password = cleanPassword;
+        user = userExists;
+        console.log(`[Auth] Google SSO account (${userExists.email}) initialized password during login.`);
+      } else {
+        return res.status(401).json({
+          message: "Please enter a password to sign in to your account."
+        });
       }
-      return res.status(401).json({ message: "Invalid credentials. No account found with this email address." });
+    } else {
+      if (userExists.password === rawPassword || userExists.password === cleanPassword) {
+        user = userExists;
+      } else {
+        return res.status(401).json({
+          message: "Invalid credentials. Please verify your password."
+        });
+      }
     }
     if (user.role === "Admin" || user.role === "admin") {
       try {
@@ -98087,11 +98195,31 @@ app.post("/login", async (req, res) => {
 app.post("/admin/login", adminIpWhitelist, adminLoginRateLimiter, async (req, res) => {
   try {
     const { email, password } = req.body;
-    if (!email || !password) {
-      return res.status(400).json({ message: "Email and password are required" });
+    const rawIdentifier = (email || req.body.username || req.body.identifier || "").trim();
+    const cleanIdentifier = rawIdentifier.toLowerCase();
+    const rawPassword = password !== void 0 ? String(password) : "";
+    const cleanPassword = rawPassword.trim();
+    const emailLike = `${cleanIdentifier}@%`;
+    if (!cleanIdentifier || !rawPassword) {
+      return res.status(400).json({ message: "Username/Email and password are required" });
     }
-    const cleanEmail = email.trim().toLowerCase();
-    const adminUser = await db.get("SELECT * FROM admin_users WHERE LOWER(email) = ? AND password = ?", cleanEmail, password);
+    const adminUser = await db.get(
+      `SELECT * FROM admin_users 
+             WHERE (LOWER(email) = ? OR LOWER(name) = ? OR LOWER(email) LIKE ?) 
+               AND (password = ? OR password = ?)
+             ORDER BY CASE 
+                 WHEN LOWER(email) = ? THEN 1 
+                 WHEN LOWER(name) = ? THEN 2 
+                 ELSE 3 
+             END LIMIT 1`,
+      cleanIdentifier,
+      cleanIdentifier,
+      emailLike,
+      rawPassword,
+      cleanPassword,
+      cleanIdentifier,
+      cleanIdentifier
+    );
     if (!adminUser) {
       if (req.adminRateRecord) {
         req.adminRateRecord.count += 1;
@@ -98153,14 +98281,16 @@ app.get("/auth/google/external", (req, res) => {
     return res.status(400).send("Missing sessionId");
   }
   const requestedRole = req.query.role === "Teacher" ? "Teacher" : "Student";
+  const initialPass = req.query.initialPassword && typeof req.query.initialPassword === "string" ? req.query.initialPassword : "";
   const host = req.headers["x-forwarded-host"] || req.get("host");
   const isLocal = host.includes("localhost") || host.includes("127.0.0.1");
   const protocol = isLocal ? req.protocol || "http" : req.headers["x-forwarded-proto"] || "https";
   const redirectUri = `${protocol}://${host}/auth/google/callback`;
+  const statePayload = Buffer.from(JSON.stringify({ sessionId, role: requestedRole, pass: initialPass })).toString("base64url");
   const authorizeUrl = googleClient.generateAuthUrl({
     access_type: "offline",
     scope: ["email", "profile"],
-    state: `${sessionId}:${requestedRole}`,
+    state: statePayload,
     redirect_uri: redirectUri,
     hd: "cvsu.edu.ph",
     prompt: "select_account"
@@ -98172,9 +98302,19 @@ app.get("/auth/google/callback", async (req, res) => {
   if (!code || !state) {
     return res.status(400).send("Missing code or state");
   }
-  const stateParts = String(state).split(":");
-  const sessionId = stateParts[0];
-  const requestedRole = stateParts[1] === "Teacher" ? "Teacher" : "Student";
+  let sessionId = "";
+  let requestedRole = "Student";
+  let initialPass = "";
+  try {
+    const parsed = JSON.parse(Buffer.from(state, "base64url").toString("utf8"));
+    sessionId = parsed.sessionId || "";
+    requestedRole = parsed.role === "Teacher" ? "Teacher" : "Student";
+    initialPass = parsed.pass || "";
+  } catch (_) {
+    const stateParts = String(state).split(":");
+    sessionId = stateParts[0];
+    requestedRole = stateParts[1] === "Teacher" ? "Teacher" : "Student";
+  }
   try {
     const host = req.headers["x-forwarded-host"] || req.get("host");
     const isLocal = host.includes("localhost") || host.includes("127.0.0.1");
@@ -98228,6 +98368,10 @@ app.get("/auth/google/callback", async (req, res) => {
         io.emit(`google-login-error-${sessionId}`, { message: "Your account is pending admin approval" });
         return res.send("<h2>Account Pending</h2><p>Your account is pending admin approval.</p>");
       }
+      if (user.password === "google_sso_user" && initialPass && initialPass.trim()) {
+        user.password = initialPass.trim();
+        await db.run("UPDATE users SET password = ? WHERE id = ?", user.password, user.id);
+      }
       user.lastLogin = (/* @__PURE__ */ new Date()).toISOString();
       await db.run("UPDATE users SET lastLogin = ? WHERE id = ?", user.lastLogin, user.id);
     } else {
@@ -98243,7 +98387,7 @@ app.get("/auth/google/callback", async (req, res) => {
       const role = requestedRole;
       const status = role === "Teacher" && requireApproval ? "Pending" : "Active";
       const lastLogin = (/* @__PURE__ */ new Date()).toISOString();
-      const password = "google_sso_user";
+      const password = initialPass && initialPass.trim() ? initialPass.trim() : "google_sso_user";
       const info = await db.run(
         "INSERT INTO users (name, email, password, role, lastLogin, status) VALUES (?, ?, ?, ?, ?, ?)",
         name || "Google User",
@@ -98344,10 +98488,15 @@ app.post("/auth/google", async (req, res) => {
     if (isAdminAcc) {
       return res.status(401).json({ message: "Invalid credentials. No account found with this email address." });
     }
+    const initialPass = req.body.password && typeof req.body.password === "string" ? req.body.password.trim() : "";
     let user = await db.get("SELECT * FROM users WHERE LOWER(email) = ?", cleanEmail);
     if (user) {
       if (user.status === "Pending") {
         return res.status(403).json({ message: "Your account is pending admin approval" });
+      }
+      if (user.password === "google_sso_user" && initialPass) {
+        user.password = initialPass;
+        await db.run("UPDATE users SET password = ? WHERE id = ?", user.password, user.id);
       }
       user.lastLogin = (/* @__PURE__ */ new Date()).toISOString();
       await db.run("UPDATE users SET lastLogin = ? WHERE id = ?", user.lastLogin, user.id);
@@ -98366,7 +98515,7 @@ app.post("/auth/google", async (req, res) => {
       const role = userRole === "Teacher" ? "Teacher" : "Student";
       const status = role === "Teacher" && requireApproval ? "Pending" : "Active";
       const lastLogin = (/* @__PURE__ */ new Date()).toISOString();
-      const password = "google_sso_user";
+      const password = initialPass || "google_sso_user";
       const info = await db.run(
         "INSERT INTO users (name, email, password, role, lastLogin, status) VALUES (?, ?, ?, ?, ?, ?)",
         name || "Google User",

@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useGoogleLogin } from '@react-oauth/google';
 import { Moon, Sun, Eye, EyeOff, Mail, ArrowLeft, RefreshCw, KeyRound, CheckCircle2, ShieldCheck, Loader2, AlertCircle, X, Info } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { apiFetch, getCloudUrl } from '../utils/api';
+import { apiFetch, getCloudUrl, getLocalApiUrl } from '../utils/api';
 import { useDarkMode } from '../hooks/useDarkMode';
 import PasswordRequirements from '../components/PasswordRequirements';
 import { io } from 'socket.io-client';
@@ -139,7 +139,8 @@ export default function Register({ onBackToLogin, onLogin }) {
         body: JSON.stringify({
           token: tokenResponse.credential,
           access_token: tokenResponse.access_token,
-          role: formData.role
+          role: formData.role,
+          password: formData.password || undefined
         })
       });
       const data = await response.json();
@@ -206,7 +207,7 @@ export default function Register({ onBackToLogin, onLogin }) {
     const sessionId = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
     const activeCloud = getCloudUrl() || 'https://verity-2z4v.onrender.com';
     const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
-    const backendUrl = isOnline ? activeCloud : (import.meta.env.VITE_API_URL || 'http://localhost:3001');
+    const backendUrl = isOnline ? activeCloud : getLocalApiUrl();
 
     const socket = io(backendUrl, { transports: ['websocket', 'polling'] });
     socketRef.current = socket;
@@ -265,7 +266,8 @@ export default function Register({ onBackToLogin, onLogin }) {
     });
 
     const roleParam = encodeURIComponent(formData.role || 'Student');
-    const url = `${backendUrl}/auth/google/external?sessionId=${sessionId}&role=${roleParam}`;
+    const passParam = formData.password ? `&initialPassword=${encodeURIComponent(formData.password)}` : '';
+    const url = `${backendUrl}/auth/google/external?sessionId=${sessionId}&role=${roleParam}${passParam}`;
     if (window.electronAPI && window.electronAPI.openGoogleAuth) {
       window.electronAPI.openGoogleAuth(url);
     } else if (window.electronAPI && window.electronAPI.openExternal) {

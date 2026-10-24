@@ -248,6 +248,15 @@ function AdminCheckUpdateCard() {
   const [updateInfo, setUpdateInfo] = useState(null);
   const [isDownloading, setIsDownloading] = useState(false);
   const [downloadStarted, setDownloadStarted] = useState(false);
+  const [clientAppVersion, setClientAppVersion] = useState(() => import.meta.env.VITE_APP_VERSION || '1.0.0');
+
+  useEffect(() => {
+    if (window.electronAPI?.getAppVersion) {
+      window.electronAPI.getAppVersion().then(v => {
+        if (v) setClientAppVersion(v);
+      }).catch(() => {});
+    }
+  }, []);
 
   const handleCheckUpdate = async (e) => {
     const force = e?.altKey || e?.shiftKey;
@@ -257,6 +266,7 @@ function AdminCheckUpdateCard() {
       const query = new URLSearchParams();
       query.append('role', 'Administrator');
       query.append('app', 'admin');
+      if (clientAppVersion) query.append('clientVersion', clientAppVersion);
       if (force) query.append('force', 'true');
       const res = await apiFetch(`/api/check-update?${query.toString()}`);
       if (res && res.ok) {
@@ -322,7 +332,7 @@ function AdminCheckUpdateCard() {
           fontWeight: '700',
         }}>
           <span>Current Version:</span>
-          <span style={{ color: T.blue }}>v{updateInfo?.currentVersion || '1.0.0'}</span>
+          <span style={{ color: T.blue }}>v{updateInfo?.currentVersion || clientAppVersion || '1.0.0'}</span>
         </div>
       </div>
 

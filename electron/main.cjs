@@ -208,7 +208,7 @@ function startServer() {
 
     logStartup(`[main] Forking server process: ${serverPath}`);
     serverProcess = fork(serverPath, [], {
-      env: { ...process.env, ...parsedEnv, DATA_DIR: dataDir, NODE_ENV: 'production' },
+      env: { ...process.env, ...parsedEnv, DATA_DIR: dataDir, NODE_ENV: 'production', APP_VERSION: app.getVersion() },
       silent: true,
     });
     serverProcess.stdout.on('data', (d) => {
@@ -611,6 +611,10 @@ ipcMain.on('enable-lockdown', (event, options) => {
 ipcMain.on('disable-lockdown', () => {
   logStartup('[main] disable-lockdown received');
   disableLockdown();
+});
+
+ipcMain.handle('get-app-version', () => {
+  return app.getVersion();
 });
 
 ipcMain.handle('get-display-count', () => {

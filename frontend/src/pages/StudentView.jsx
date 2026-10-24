@@ -3,7 +3,7 @@ import { motion } from 'framer-motion';
 import { io } from 'socket.io-client';
 import Editor from '@monaco-editor/react';
 import { ArrowLeft, Save, Play, Square, Settings, TerminalSquare, Check, AlertTriangle, Trash2, Moon, Sun, X, Link2, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, PanelLeftClose, PanelLeft, BookOpen, CheckSquare, Plus, CheckCircle2, XCircle, PlayCircle, Loader2, Maximize2, Minimize2 } from 'lucide-react';
-import { apiFetch } from '../utils/api';
+import { apiFetch, getCompilerSocketUrl, getLocalApiUrl } from '../utils/api';
 import localStore from '../services/localStore';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { useMediaQuery } from '../hooks/useMediaQuery';
@@ -585,9 +585,10 @@ export default function StudentView({ socket, currentUser, username, assignment,
     const token = localStorage.getItem('verity_token') || localStorage.getItem('token');
 
     try {
-      const socketEndpoint = (import.meta.env.VITE_SOCKET_URL || import.meta.env.VITE_API_URL || 'http://localhost:3001').replace(/\/$/, '');
+      const socketEndpoint = getCompilerSocketUrl();
+      const localFallback = getLocalApiUrl();
       const local = io(socketEndpoint, {
-        timeout: 2500,
+        timeout: 3000,
         reconnectionAttempts: 5,
         reconnectionDelay: 2000,
         auth: { token }
@@ -605,6 +606,12 @@ export default function StudentView({ socket, currentUser, username, assignment,
       });
 
       local.on('connect_error', () => {
+        if (local.io && local.io.uri !== localFallback) {
+          console.warn(`[StudentView] Compiler socket at ${local.io.uri} unreachable. Switching to local server at ${localFallback}...`);
+          local.io.uri = localFallback;
+          local.connect();
+          return;
+        }
         if (isSubscribed) setLocalSocket(null);
       });
 

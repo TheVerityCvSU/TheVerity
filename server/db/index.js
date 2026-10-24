@@ -495,11 +495,14 @@ async function initPostgres(connStr = cleanedUrl) {
                             instructor_email = excluded.instructor_email,
                             theme = excluded.theme
                     `);
+                    let cCount = 0;
                     for (const c of pgClassrooms.rows) {
                         try {
                             upsertClassroom.run(c.id, c.code || '', c.section || '', c.name || '', c.subject || '', c.instructor || '', c.instructor_email || null, c.theme || null);
+                            cCount++;
                         } catch (_) {}
                     }
+                    console.log(`[Database] Synced ${cCount} classrooms from Supabase into local SQLite.`);
                 }
 
                 // 4. Sync classwork / exams
@@ -516,29 +519,43 @@ async function initPostgres(connStr = cleanedUrl) {
                             type = excluded.type,
                             created_at = excluded.created_at
                     `);
+                    let cwCount = 0;
                     for (const cw of pgClasswork.rows) {
                         try {
-                            upsertCw.run(cw.id, cw.classroom_id, cw.title, cw.description, cw.duedate, cw.type || '', cw.created_at || null);
+                            upsertCw.run(cw.id, cw.classroom_id, cw.title, cw.description, cw.duedate, cw.type || '', cw.created_at ? new Date(cw.created_at).toISOString() : null);
+                            cwCount++;
                         } catch (_) {}
                     }
+                    console.log(`[Database] Synced ${cwCount} classwork activities from Supabase into local SQLite.`);
                 }
 
-                // 5. Sync enrollments
-                const pgEnrollments = await client.query('SELECT id, classroom_id, student_id, student_name, student_email, enrolled_at FROM enrollments').catch(() => ({ rows: [] }));
+                // 5. Sync enrollments (do NOT insert id to prevent UNIQUE constraint collisions on autoincrement PK)
+                const pgEnrollments = await client.query('SELECT classroom_id, student_id, student_name, student_email, enrolled_at FROM enrollments').catch(() => ({ rows: [] }));
                 if (pgEnrollments.rows && pgEnrollments.rows.length > 0) {
                     const upsertEnrollment = sqliteDb.prepare(`
-                        INSERT INTO enrollments (id, classroom_id, student_id, student_name, student_email, enrolled_at)
-                        VALUES (?, ?, ?, ?, ?, ?)
+                        INSERT INTO enrollments (classroom_id, student_id, student_name, student_email, enrolled_at)
+                        VALUES (?, ?, ?, ?, ?)
                         ON CONFLICT(classroom_id, student_email) DO UPDATE SET
                             student_id = excluded.student_id,
                             student_name = excluded.student_name,
                             enrolled_at = excluded.enrolled_at
                     `);
+                    let enCount = 0;
                     for (const en of pgEnrollments.rows) {
-                        try {
-                            upsertEnrollment.run(en.id, en.classroom_id, en.student_id, en.student_name, en.student_email, en.enrolled_at || null);
-                        } catch (_) {}
+                        if (en.classroom_id && en.student_email) {
+                            try {
+                                upsertEnrollment.run(
+                                    en.classroom_id,
+                                    en.student_id || null,
+                                    en.student_name || '',
+                                    en.student_email.trim().toLowerCase(),
+                                    en.enrolled_at ? new Date(en.enrolled_at).toISOString() : null
+                                );
+                                enCount++;
+                            } catch (_) {}
+                        }
                     }
+                    console.log(`[Database] Synced ${enCount} enrollments from Supabase into local SQLite.`);
                 }
 
                 // 6. Sync student submissions (activities & code)
@@ -561,23 +578,25 @@ async function initPostgres(connStr = cleanedUrl) {
                     console.log(`[Database] Synced ${pgSubmissions.rows.length} submissions from Supabase into local SQLite.`);
                 }
 
-                // 7. Sync grades
-                const pgGrades = await client.query('SELECT id, assignment_id, student_id, grade, feedback, graded_at FROM grades').catch(() => ({ rows: [] }));
+                // 7. Sync grades (do NOT insert id to prevent UNIQUE constraint collisions on autoincrement PK)
+                const pgGrades = await client.query('SELECT assignment_id, student_id, grade, feedback, graded_at FROM grades').catch(() => ({ rows: [] }));
                 if (pgGrades.rows && pgGrades.rows.length > 0) {
                     const upsertGrade = sqliteDb.prepare(`
-                        INSERT INTO grades (id, assignment_id, student_id, grade, feedback, graded_at)
-                        VALUES (?, ?, ?, ?, ?, ?)
+                        INSERT INTO grades (assignment_id, student_id, grade, feedback, graded_at)
+                        VALUES (?, ?, ?, ?, ?)
                         ON CONFLICT(assignment_id, student_id) DO UPDATE SET
                             grade = excluded.grade,
                             feedback = excluded.feedback,
                             graded_at = excluded.graded_at
                     `);
+                    let gCount = 0;
                     for (const g of pgGrades.rows) {
                         try {
-                            upsertGrade.run(g.id, String(g.assignment_id), String(g.student_id), g.grade || '', g.feedback || '', g.graded_at ? new Date(g.graded_at).toISOString() : null);
+                            upsertGrade.run(String(g.assignment_id), String(g.student_id), g.grade || '', g.feedback || '', g.graded_at ? new Date(g.graded_at).toISOString() : null);
+                            gCount++;
                         } catch (_) {}
                     }
-                    console.log(`[Database] Synced ${pgGrades.rows.length} grades from Supabase into local SQLite.`);
+                    console.log(`[Database] Synced ${gCount} grades from Supabase into local SQLite.`);
                 }
 
                 // 8. Sync announcements
@@ -594,11 +613,14 @@ async function initPostgres(connStr = cleanedUrl) {
                             posted = excluded.posted,
                             created_at = excluded.created_at
                     `);
+                    let anCount = 0;
                     for (const an of pgAnnouncements.rows) {
                         try {
                             upsertAnn.run(an.id, an.classroom_id, an.title || '', an.details || '', an.author || '', an.posted || null, an.created_at || null);
+                            anCount++;
                         } catch (_) {}
                     }
+                    console.log(`[Database] Synced ${anCount} announcements from Supabase into local SQLite.`);
                 }
             } catch (syncErr) {
                 console.warn('[Database] Data sync warning:', syncErr.message);

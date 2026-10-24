@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useGoogleLogin } from '@react-oauth/google';
 import { Moon, Sun, Loader2, Construction, AlertTriangle, Eye, EyeOff } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { apiFetch, getCloudUrl } from '../utils/api';
+import { apiFetch, getCloudUrl, getLocalApiUrl } from '../utils/api';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { io } from 'socket.io-client';
 import { isDesktopWebBrowser } from '../utils/deviceUtils';
@@ -228,7 +228,7 @@ export default function Login({ onLogin, onGoToRegister }) {
     const sessionId = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
     const activeCloud = getCloudUrl() || 'https://verity-2z4v.onrender.com';
     const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
-    const backendUrl = isOnline ? activeCloud : (import.meta.env.VITE_API_URL || 'http://localhost:3001');
+    const backendUrl = isOnline ? activeCloud : getLocalApiUrl();
     
     const socket = io(backendUrl, { transports: ['websocket', 'polling'] });
     socketRef.current = socket;
@@ -310,7 +310,7 @@ export default function Login({ onLogin, onGoToRegister }) {
       const response = await apiFetch('/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password })
+        body: JSON.stringify({ email, password, username: email, identifier: email })
       });
 
       const data = await response.json();
@@ -322,7 +322,7 @@ export default function Login({ onLogin, onGoToRegister }) {
       }
 
       if (response.ok) {
-        persistRememberedAccount(email);
+        persistRememberedAccount(data.user?.email || email);
         onLogin(data.user, data.token);
       } else {
         setError(data.message || 'Invalid login credentials');
@@ -562,9 +562,10 @@ export default function Login({ onLogin, onGoToRegister }) {
             initial={{ opacity: 0, x: -12 }}
             animate={{ opacity: 1, x: 0 }}
             transition={{ delay: 0.05, duration: 0.3, ease: 'easeOut' }}
-            type="email"
-            placeholder="Email"
+            type="text"
+            placeholder="Username or Email"
             required
+            autoComplete="username"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             style={{

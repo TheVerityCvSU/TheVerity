@@ -10,6 +10,7 @@ if (isAdminApp) {
 
 contextBridge.exposeInMainWorld('electronAPI', {
   isAdminApp,
+  getAppVersion: () => ipcRenderer.invoke('get-app-version'),
   closeApp: () => ipcRenderer.send('close-app'),
   enableLockdown: (options) => ipcRenderer.send('enable-lockdown', options),
   disableLockdown: () => ipcRenderer.send('disable-lockdown'),
