@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, globalShortcut, ipcMain, shell, session, protocol, net, dialog } = require('electron');
+const { app, BrowserWindow, Menu, globalShortcut, ipcMain, shell, session, protocol, net, dialog, clipboard } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -628,6 +628,15 @@ ipcMain.handle('check-vm-status', async () => {
 
 ipcMain.handle('get-cached-vm-status', () => {
   return getCachedVmStatusSync();
+});
+
+ipcMain.handle('clear-clipboard', () => {
+  try {
+    clipboard.clear();
+    return true;
+  } catch (_) {
+    return false;
+  }
 });
 
 ipcMain.on('close-app', () => {

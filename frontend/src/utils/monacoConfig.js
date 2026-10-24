@@ -20,6 +20,11 @@ self.MonacoEnvironment = {
   },
 };
 
+import { registerMonacoSnippets } from './monacoSnippets.js';
+
 loader.config({ monaco });
+
+// Register C# snippets and keywords globally for all editor instances
+registerMonacoSnippets(monaco);
 
 export default monaco;

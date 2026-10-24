@@ -8,6 +8,7 @@ import {
 import { useDarkMode } from '../hooks/useDarkMode';
 import { openDotnetSetup } from '../utils/dotnetHelper';
 import { getCompilerSocketUrl, getLocalApiUrl } from '../utils/api';
+import { registerMonacoSnippets } from '../utils/monacoSnippets.js';
 
 const DEFAULT_CSHARP = 'using System;\n\nclass Program {\n    static void Main(string[] args) {\n        Console.WriteLine("Hello, World!");\n    }\n}';
 
@@ -734,6 +735,7 @@ export default function CompilerView() {
               theme={isDark ? 'vs-dark' : 'light'}
             onMount={(editor, monaco) => {
               editorRef.current = editor;
+              registerMonacoSnippets(monaco);
               if (monaco.languages.typescript) {
                 monaco.languages.typescript.javascriptDefaults.setDiagnosticsOptions({ noSemanticValidation: true, noSyntaxValidation: true });
                 monaco.languages.typescript.typescriptDefaults.setDiagnosticsOptions({ noSemanticValidation: true, noSyntaxValidation: true });
@@ -759,6 +761,20 @@ export default function CompilerView() {
               readOnly: false,
               domReadOnly: false,
               fontFamily: '"Consolas", "Courier New", monospace',
+              // Monaco Snippets & IntelliSense
+              snippetSuggestions: 'top',
+              tabCompletion: 'on',
+              quickSuggestions: { other: true, comments: false, strings: false },
+              suggestOnTriggerCharacters: true,
+              acceptSuggestionOnEnter: 'on',
+              wordBasedSuggestions: 'currentDocument',
+              suggest: {
+                snippetsPreventQuickSuggestions: false,
+                localityBonus: true,
+                showSnippets: true,
+                showWords: true,
+                showKeywords: true
+              }
             }}
           />
           </div>

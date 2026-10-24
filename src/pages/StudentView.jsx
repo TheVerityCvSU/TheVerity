@@ -101,10 +101,10 @@ export default function StudentView({ socket, username, assignment, onBack }) {
     editor.onDidPaste((e) => {
       const pastedText = editor.getModel().getValueInRange(e.range);
       const key = normalize(pastedText);
-      // Pasting back something copied from inside the app (editor or terminal) is
-      // allowed — only flag content that came from outside.
+      // Pasting back something copied from inside the app is allowed
       if (!key || copiedInternallyRef.current.has(key)) return;
-      addProctorLog("Paste a code", "#ef4444");
+      editor.trigger('keyboard', 'undo', null);
+      addProctorLog("Strict Clipboard: External Paste Blocked", "#ef4444");
     });
   };
 

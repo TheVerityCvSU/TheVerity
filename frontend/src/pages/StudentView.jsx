@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import { io } from 'socket.io-client';
 import Editor from '@monaco-editor/react';
-import { ArrowLeft, Save, Play, Square, Settings, TerminalSquare, Check, AlertTriangle, Trash2, Moon, Sun, X, Link2, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, PanelLeftClose, PanelLeft, BookOpen, CheckSquare, Plus, CheckCircle2, XCircle, PlayCircle, Loader2, Maximize2, Minimize2 } from 'lucide-react';
+import { ArrowLeft, Save, Play, Square, Settings, TerminalSquare, Check, AlertTriangle, Trash2, Moon, Sun, X, Link2, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, PanelLeftClose, PanelLeft, BookOpen, CheckSquare, Plus, CheckCircle2, XCircle, PlayCircle, Loader2, Maximize2, Minimize2, Monitor, MonitorX, ShieldAlert } from 'lucide-react';
 import { apiFetch, getCompilerSocketUrl, getLocalApiUrl } from '../utils/api';
 import localStore from '../services/localStore';
 import { useDarkMode } from '../hooks/useDarkMode';
@@ -14,6 +14,7 @@ import VideoAttachment from '../components/VideoAttachment';
 import AttachmentCard from '../components/AttachmentCard';
 import { openDotnetSetup } from '../utils/dotnetHelper';
 import { isDesktopWebBrowser } from '../utils/deviceUtils';
+import { registerMonacoSnippets } from '../utils/monacoSnippets.js';
 
 // Strip whitespace so editor auto-indent on paste doesn't cause false mismatches.
 const normalize = (text) => (text || "").replace(/\s+/g, '');
@@ -1536,26 +1537,33 @@ export default function StudentView({ socket, currentUser, username, assignment,
     return () => socket.off('instruction_update');
   }, [socket]);
 
-  // Capture copies/cuts made inside the terminal (output text or the input box)
-  // so the student can paste terminal content into the editor without a warning.
+  // Remember anything copied or cut anywhere inside the Verity IDE (editor, terminal, instructions, extra files)
+  // so internal IDE copy-paste works smoothly, while external clipboard text is strictly blocked.
   useEffect(() => {
-    const el = terminalBodyRef.current;
-    if (!el) return;
-    const captureTerminalCopy = () => {
-      let text = (window.getSelection && window.getSelection().toString()) || "";
+    const captureAnyInternalCopy = () => {
+      let text = "";
+      if (editorRef.current) {
+        const sel = editorRef.current.getSelection();
+        if (sel && !sel.isEmpty()) {
+          text = editorRef.current.getModel()?.getValueInRange(sel) || "";
+        }
+      }
+      if (!text && window.getSelection) {
+        text = window.getSelection().toString() || "";
+      }
       const active = document.activeElement;
-      if (active && active.tagName === 'INPUT' && typeof active.selectionStart === 'number') {
-        const sel = active.value.substring(active.selectionStart, active.selectionEnd);
-        if (sel) text = sel;
+      if (!text && active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA') && typeof active.selectionStart === 'number') {
+        text = active.value.substring(active.selectionStart, active.selectionEnd) || "";
       }
       const key = normalize(text);
       if (key) copiedInternallyRef.current.add(key);
     };
-    el.addEventListener('copy', captureTerminalCopy);
-    el.addEventListener('cut', captureTerminalCopy);
+
+    window.addEventListener('copy', captureAnyInternalCopy, true);
+    window.addEventListener('cut', captureAnyInternalCopy, true);
     return () => {
-      el.removeEventListener('copy', captureTerminalCopy);
-      el.removeEventListener('cut', captureTerminalCopy);
+      window.removeEventListener('copy', captureAnyInternalCopy, true);
+      window.removeEventListener('cut', captureAnyInternalCopy, true);
     };
   }, []);
 
@@ -1609,6 +1617,9 @@ export default function StudentView({ socket, currentUser, username, assignment,
     editorRef.current = editor;
     monacoRef.current = monaco;
 
+    // Register C# snippets and keywords in Monaco
+    registerMonacoSnippets(monaco);
+
     if (editor) {
       editor.updateOptions({
         readOnly: submitted,
@@ -1624,7 +1635,7 @@ export default function StudentView({ socket, currentUser, username, assignment,
       });
     }
 
-    // Remember anything the student copies/cuts from within the editor itself
+    // Capture internal copy/cut from within Monaco editor itself
     const captureInternalCopy = () => {
       const selection = editor.getSelection();
       if (!selection || selection.isEmpty()) return;
@@ -1632,12 +1643,59 @@ export default function StudentView({ socket, currentUser, username, assignment,
       const key = normalize(selectedText);
       if (key) copiedInternallyRef.current.add(key);
     };
+
     const editorDom = editor.getDomNode();
     if (editorDom) {
-      editorDom.addEventListener('copy', captureInternalCopy);
-      editorDom.addEventListener('cut', captureInternalCopy);
+      editorDom.addEventListener('copy', captureInternalCopy, true);
+      editorDom.addEventListener('cut', captureInternalCopy, true);
+
+      // ANTI-CHEAT VECTOR: Intercept DOM paste event in capture phase before text touches Monaco model
+      const handleEditorDomPaste = (e) => {
+        if (submitted) {
+          e.preventDefault();
+          e.stopPropagation();
+          e.stopImmediatePropagation();
+          return false;
+        }
+        const pastedText = e.clipboardData?.getData('text/plain') || '';
+        const key = normalize(pastedText);
+        if (!key) return; // Allow empty paste
+
+        // If the text was copied internally inside the IDE, allow it
+        if (copiedInternallyRef.current.has(key)) return;
+
+        // Otherwise it originated OUTSIDE the IDE -> BLOCK IT!
+        e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+
+        addProctorLog("Strict Clipboard: External Paste Blocked", "#ef4444");
+        if (window.electronAPI?.clearClipboard) {
+          window.electronAPI.clearClipboard().catch(() => {});
+        }
+        return false;
+      };
+      editorDom.addEventListener('paste', handleEditorDomPaste, true);
+
+      // ANTI-CHEAT VECTOR: Block dragging & dropping external text into Monaco editor
+      const handleEditorDrop = (e) => {
+        const droppedText = e.dataTransfer?.getData('text/plain') || '';
+        const key = normalize(droppedText);
+        if (key && !copiedInternallyRef.current.has(key)) {
+          e.preventDefault();
+          e.stopPropagation();
+          e.stopImmediatePropagation();
+          addProctorLog("Strict Clipboard: External Drop Blocked", "#ef4444");
+          return false;
+        }
+      };
+      editorDom.addEventListener('drop', handleEditorDrop, true);
+      editorDom.addEventListener('dragover', (e) => {
+        if (submitted) e.preventDefault();
+      }, true);
     }
 
+    // Secondary defense-in-depth: Monaco-level paste interception
     editor.onDidPaste((e) => {
       if (submitted) {
         editor.trigger('keyboard', 'undo', null);
@@ -1645,14 +1703,14 @@ export default function StudentView({ socket, currentUser, username, assignment,
       }
       const pastedText = editor.getModel().getValueInRange(e.range);
       const key = normalize(pastedText);
-      // Pasting back something copied from inside the app (editor or terminal) is allowed
+      // Pasting back something copied from inside the app is allowed
       if (!key || copiedInternallyRef.current.has(key)) return;
 
-      if (kioskRulesRef.current.strictClipboardBlocking) {
-        editor.trigger('keyboard', 'undo', null);
-        addProctorLog("Strict Clipboard: External Paste Blocked", "#ef4444");
-      } else {
-        addProctorLog("Paste a code", "#ef4444");
+      // Text originated outside the IDE -> immediately undo and flag
+      editor.trigger('keyboard', 'undo', null);
+      addProctorLog("Strict Clipboard: External Paste Blocked", "#ef4444");
+      if (window.electronAPI?.clearClipboard) {
+        window.electronAPI.clearClipboard().catch(() => {});
       }
     });
   };
@@ -2811,7 +2869,24 @@ export default function StudentView({ socket, currentUser, username, assignment,
               readOnly: submitted,
               domReadOnly: submitted,
               readOnlyMessage: { value: 'Work submitted — editing is disabled.' },
-              contextmenu: !submitted
+              contextmenu: !submitted,
+              // Monaco Snippets & IntelliSense
+              snippetSuggestions: 'top',
+              tabCompletion: 'on',
+              quickSuggestions: { other: true, comments: false, strings: false },
+              suggestOnTriggerCharacters: true,
+              acceptSuggestionOnEnter: 'on',
+              wordBasedSuggestions: 'currentDocument',
+              suggest: {
+                snippetsPreventQuickSuggestions: false,
+                localityBonus: true,
+                showSnippets: true,
+                showWords: true,
+                showKeywords: true
+              },
+              // Anti-cheat protections
+              dragAndDrop: false,
+              dropIntoEditor: { enabled: false }
             }}
           />
           </div>
@@ -3051,6 +3126,18 @@ export default function StudentView({ socket, currentUser, username, assignment,
                     value={inputValue}
                     onChange={(e) => setInputValue(e.target.value)}
                     onKeyDown={handleTerminalInput}
+                    onPaste={(e) => {
+                      const pasted = e.clipboardData?.getData('text/plain') || '';
+                      const key = normalize(pasted);
+                      if (key && !copiedInternallyRef.current.has(key)) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        addProctorLog("Strict Clipboard: External Paste in Terminal Blocked", "#ef4444");
+                        if (window.electronAPI?.clearClipboard) {
+                          window.electronAPI.clearClipboard().catch(() => {});
+                        }
+                      }
+                    }}
                     autoFocus={!submitted}
                     disabled={submitted}
                     style={{
@@ -3748,8 +3835,8 @@ export default function StudentView({ socket, currentUser, username, assignment,
       {/* MULTIPLE MONITORS MODAL */}
       {multiMonitorDetected && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 99998, backgroundColor: 'rgba(15, 23, 42, 0.92)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#ffffff', padding: '30px', textAlign: 'center' }}>
-          <div style={{ width: '70px', height: '70px', borderRadius: '50%', backgroundColor: '#d97706', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '20px' }}>
-            <span style={{ fontSize: '36px' }}>🖥️</span>
+          <div style={{ width: '76px', height: '76px', borderRadius: '22px', backgroundColor: 'rgba(217, 119, 6, 0.18)', border: '1px solid rgba(217, 119, 6, 0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '20px', boxShadow: '0 8px 25px rgba(217, 119, 6, 0.25)' }}>
+            <Monitor size={38} color="#fbbf24" strokeWidth={2.2} />
           </div>
           <h2 style={{ fontSize: '1.8rem', fontWeight: 'bold', marginBottom: '12px', color: '#fbbf24' }}>Multiple Displays Detected</h2>
           <p style={{ fontSize: '1rem', maxWidth: '480px', color: '#cbd5e1', lineHeight: 1.5 }}>
@@ -3761,8 +3848,8 @@ export default function StudentView({ socket, currentUser, username, assignment,
       {/* VIRTUAL MACHINE DETECTED BLOCKING MODAL */}
       {vmDetected && kioskRules.blockVirtualMachine !== false && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 99999, backgroundColor: 'rgba(15, 23, 42, 0.96)', backdropFilter: 'blur(10px)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#ffffff', padding: '30px', textAlign: 'center' }}>
-          <div style={{ width: '80px', height: '80px', borderRadius: '50%', backgroundColor: '#dc2626', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '20px', boxShadow: '0 0 35px rgba(220, 38, 38, 0.6)' }}>
-            <span style={{ fontSize: '40px' }}>🚫</span>
+          <div style={{ width: '80px', height: '80px', borderRadius: '24px', backgroundColor: 'rgba(220, 38, 38, 0.18)', border: '1px solid rgba(220, 38, 38, 0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '20px', boxShadow: '0 8px 30px rgba(220, 38, 38, 0.35)' }}>
+            <ShieldAlert size={42} color="#f87171" strokeWidth={2.2} />
           </div>
           <h2 style={{ fontSize: '2rem', fontWeight: 'bold', marginBottom: '12px', color: '#f87171' }}>Virtual Machine Detected — Exam Blocked</h2>
           <p style={{ fontSize: '1.05rem', maxWidth: '580px', color: '#e2e8f0', lineHeight: 1.6, marginBottom: '20px' }}>
@@ -3807,8 +3894,8 @@ export default function StudentView({ socket, currentUser, username, assignment,
       {/* DESKTOP WEB BROWSER BLOCKING MODAL */}
       {isDesktopWeb && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 99999, backgroundColor: 'rgba(15, 23, 42, 0.96)', backdropFilter: 'blur(10px)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#ffffff', padding: '30px', textAlign: 'center' }}>
-          <div style={{ width: '80px', height: '80px', borderRadius: '50%', backgroundColor: '#dc2626', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '20px', boxShadow: '0 0 35px rgba(220, 38, 38, 0.6)' }}>
-            <span style={{ fontSize: '40px' }}>🖥️</span>
+          <div style={{ width: '80px', height: '80px', borderRadius: '24px', backgroundColor: 'rgba(220, 38, 38, 0.18)', border: '1px solid rgba(220, 38, 38, 0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '20px', boxShadow: '0 8px 30px rgba(220, 38, 38, 0.35)' }}>
+            <MonitorX size={42} color="#f87171" strokeWidth={2.2} />
           </div>
           <h2 style={{ fontSize: '2rem', fontWeight: 'bold', marginBottom: '12px', color: '#f87171' }}>The Verity.exe Desktop Application Required</h2>
           <p style={{ fontSize: '1.05rem', maxWidth: '580px', color: '#e2e8f0', lineHeight: 1.6, marginBottom: '20px' }}>
