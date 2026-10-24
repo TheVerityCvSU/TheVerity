@@ -8,11 +8,11 @@ export default function ClassroomSettings({ classroom, onClose, onUpdate, role =
   const styles = getStyles(isDark);
 
   const [formData, setFormData] = useState({
-    name: classroom.name || '',
-    description: classroom.description || '',
-    section: classroom.section || '',
-    subject: classroom.subject || '',
-    code: classroom.code || ''
+    name: classroom?.name || '',
+    description: classroom?.description || '',
+    section: classroom?.section || '',
+    subject: classroom?.subject || '',
+    code: classroom?.code || ''
   });
 
   const [general, setGeneral] = useState({
@@ -37,7 +37,7 @@ export default function ClassroomSettings({ classroom, onClose, onUpdate, role =
   };
 
   const handleCopyCode = () => {
-    const currentCode = formData.code || classroom.code || '';
+    const currentCode = formData.code || classroom?.code || '';
     if (currentCode) {
       navigator.clipboard.writeText(currentCode);
       setCopiedCode(true);
@@ -48,7 +48,7 @@ export default function ClassroomSettings({ classroom, onClose, onUpdate, role =
   const handleSave = () => {
     if (onUpdate) {
       onUpdate({
-        ...classroom,
+        ...(classroom || {}),
         ...formData
       });
     }

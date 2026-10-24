@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useLayoutEffect, useRef, useMemo } from 'react';
 import JoditEditor from 'jodit-react';
 import ProfileMenu from './ProfileMenu';
+import ClassroomSettings from './ClassroomSettings';
 import { 
   Calendar, ClipboardList, Settings, User, MoreVertical, ArrowLeft, X, Link2, 
   Image, Video, Monitor, Menu, Home, Archive, Edit3, Maximize2, Copy, Check, 
@@ -13,7 +14,7 @@ import { apiFetch } from '../utils/api';
 import Skeleton from '../components/Skeleton';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { useMediaQuery } from '../hooks/useMediaQuery';
-import { isPhantomClassroom, mergeClassroomsPreservingOrder, THEME_PRESETS, getClassroomTheme, saveClassroomTheme, getClassroomStorageKey, getCachedClassrooms, saveCachedClassrooms, sortClassroomsAlphabetically } from '../utils/classroomUtils';
+import { isPhantomClassroom, mergeClassroomsPreservingOrder, THEME_PRESETS, getClassroomTheme, saveClassroomTheme, getClassroomStorageKey, getCachedClassrooms, saveCachedClassrooms, sortClassroomsAlphabetically, getLessonType } from '../utils/classroomUtils';
 import ImagePreviewModal from '../components/ImagePreviewModal';
 import AddLinkModal from '../components/AddLinkModal';
 import VideoPreviewModal from '../components/VideoPreviewModal';
@@ -364,6 +365,27 @@ export default function TeacherClasswork({
   const [isClassCodeModalOpen, setIsClassCodeModalOpen] = useState(false);
   const [isClassInfoModalOpen, setIsClassInfoModalOpen] = useState(false);
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
+  const [currentClassroom, setCurrentClassroom] = useState(classroom);
+  useEffect(() => {
+    if (classroom) setCurrentClassroom(classroom);
+  }, [classroom]);
+
+  const handleUpdateClassroom = async (updated) => {
+    const merged = { ...(currentClassroom || classroom), ...updated };
+    setCurrentClassroom(merged);
+    try {
+      await apiFetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/classrooms`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ classrooms: [merged] })
+      });
+      if (socket) {
+        socket.emit('classrooms_updated');
+      }
+    } catch (err) {
+      console.error('Failed to update classroom settings:', err);
+    }
+  };
   const [codeCopied, setCodeCopied] = useState(false);
   
   const [allowManageStudents, setAllowManageStudents] = useState(true);
@@ -1340,14 +1362,10 @@ export default function TeacherClasswork({
 
   const getMaterialIcon = (item) => {
     if (item.activityType === 'Material') {
-      const att = item.attachments?.[0];
-      if (att) {
-        if (att.type === 'video') return Video;
-        if (att.type === 'image') return Image;
-        if (att.type === 'document') return FileText;
-        if (att.type === 'link') return Link2;
-      }
-      return BookOpen;
+      const lessonType = getLessonType(item);
+      if (lessonType === 'video') return Video;
+      if (lessonType === 'link') return Link2;
+      return FileText;
     }
     return ClipboardList;
   };
@@ -1789,13 +1807,18 @@ export default function TeacherClasswork({
                           setExpandedId(item.id);
                         };
 
-                        const badgeText = isMaterial ? 'Material' : (item.activityType || 'Classwork');
-                        const badgeColor = isMaterial ? (isDark ? '#38bdf8' : '#0284c7') : ui.accentText;
+                        const lessonType = isMaterial ? getLessonType(item) : null;
+                        const badgeText = isMaterial
+                          ? (lessonType === 'video' ? 'Video Lesson' : lessonType === 'link' ? 'Link Resource' : 'Material')
+                          : (item.activityType || 'Classwork');
+                        const badgeColor = isMaterial
+                          ? (lessonType === 'video' ? (isDark ? '#fbbf24' : '#d97706') : lessonType === 'link' ? (isDark ? '#38bdf8' : '#0284c7') : (isDark ? '#34d399' : '#059669'))
+                          : ui.accentText;
                         const iconBg = isMaterial
-                          ? (isDark ? 'rgba(56, 189, 248, 0.12)' : '#e0f2fe')
+                          ? (lessonType === 'video' ? (isDark ? 'rgba(245, 158, 11, 0.15)' : '#fef3c7') : lessonType === 'link' ? (isDark ? 'rgba(56, 189, 248, 0.15)' : '#e0f2fe') : (isDark ? 'rgba(16, 185, 129, 0.15)' : '#dcfce7'))
                           : (isDark ? 'rgba(52, 211, 153, 0.12)' : '#ecfdf5');
                         const iconColor = isMaterial
-                          ? (isDark ? '#38bdf8' : '#0284c7')
+                          ? (lessonType === 'video' ? (isDark ? '#fbbf24' : '#d97706') : lessonType === 'link' ? (isDark ? '#38bdf8' : '#0284c7') : (isDark ? '#34d399' : '#059669'))
                           : ui.accentText;
 
                         return (
@@ -2004,14 +2027,9 @@ export default function TeacherClasswork({
                                     })()}
                                   </div>
 
-                                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                    <span style={{ color: '#10b981', fontWeight: '700', fontSize: '0.82rem', backgroundColor: isDark ? 'rgba(16, 185, 129, 0.12)' : '#ecfdf5', padding: '3px 8px', borderRadius: '6px', border: isDark ? '1px solid rgba(16, 185, 129, 0.2)' : '1px solid #d1fae5', flexShrink: 0 }}>
-                                      {item.activityType || 'Assignment'}
-                                    </span>
-                                    <span style={{ color: isDark ? '#f5f5f5' : '#1e293b', fontSize: '1.05rem', fontWeight: '700', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                      {item.title}
-                                    </span>
-                                  </div>
+                                  <span style={{ color: isDark ? '#f5f5f5' : '#1e293b', fontSize: '1.05rem', fontWeight: '700', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                    {item.title}
+                                  </span>
                                 </div>
 
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexShrink: 0 }}>
@@ -2157,6 +2175,7 @@ export default function TeacherClasswork({
                                   alignItems: isMobile ? 'stretch' : 'center',
                                   padding: isMobile ? '14px 20px' : '16px 28px'
                                 }}>
+                                  {/* Button para sa activity details at grading */}
                                   <button
                                     style={{
                                       ...styles.viewGradingBtn,
@@ -2179,37 +2198,66 @@ export default function TeacherClasswork({
                                   >
                                     <ClipboardList size={16} /> View Activity & Grading
                                   </button>
-                                  <button
-                                    style={{
-                                      ...styles.liveMonitorBtn,
-                                      width: isMobile ? '100%' : 'auto',
-                                      justifyContent: 'center'
-                                    }}
-                                    className="btn-anim"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      try {
-                                        sessionStorage.setItem(`verity_teacher_classwork_tab_${classroom?.id || 'default'}`, activeTab);
-                                        sessionStorage.setItem('verity_teacher_classwork_tab_active', activeTab);
-                                      } catch {}
-                                      onStartMonitoring && onStartMonitoring(item);
-                                    }}
-                                    title="Open live proctoring & monitoring"
-                                  >
-                                    <Monitor size={16} /> Live Monitoring {Number(activeActivityCounts[String(item.id)]) > 0 ? `(${activeActivityCounts[String(item.id)]} Active)` : ''}
-                                    {Number(activeActivityCounts[String(item.id)]) > 0 && (
-                                      <span
-                                        style={{
-                                          width: '8px',
-                                          height: '8px',
-                                          borderRadius: '50%',
-                                          backgroundColor: '#ffffff',
-                                          boxShadow: '0 0 6px #ffffff',
-                                          marginLeft: '4px'
-                                        }}
-                                      />
-                                    )}
-                                  </button>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', width: isMobile ? '100%' : 'auto' }}>
+                                    {/* Button para sa VCR Replay playback */}
+                                    <button
+                                      style={{
+                                        ...styles.viewGradingBtn,
+                                        backgroundColor: isDark ? 'rgba(168, 85, 247, 0.12)' : '#f5f3ff',
+                                        borderColor: isDark ? 'rgba(168, 85, 247, 0.35)' : '#ddd6fe',
+                                        color: isDark ? '#c084fc' : '#7c3aed',
+                                        boxShadow: isDark
+                                          ? '0 0 12px rgba(168, 85, 247, 0.12)'
+                                          : '0 1px 3px rgba(168, 85, 247, 0.10)',
+                                        width: isMobile ? '100%' : 'auto',
+                                        justifyContent: 'center'
+                                      }}
+                                      className="btn-anim"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        try {
+                                          sessionStorage.setItem(`verity_teacher_classwork_tab_${classroom?.id || 'default'}`, activeTab);
+                                          sessionStorage.setItem('verity_teacher_classwork_tab_active', activeTab);
+                                        } catch {}
+                                        onOpenPlayback && onOpenPlayback(item, null);
+                                      }}
+                                      title="Open VCR replay & student recordings"
+                                    >
+                                      <PlayCircle size={16} /> Replay Playback
+                                    </button>
+                                    {/* Button para sa Live Monitoring */}
+                                    <button
+                                      style={{
+                                        ...styles.liveMonitorBtn,
+                                        width: isMobile ? '100%' : 'auto',
+                                        justifyContent: 'center'
+                                      }}
+                                      className="btn-anim"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        try {
+                                          sessionStorage.setItem(`verity_teacher_classwork_tab_${classroom?.id || 'default'}`, activeTab);
+                                          sessionStorage.setItem('verity_teacher_classwork_tab_active', activeTab);
+                                        } catch {}
+                                        onStartMonitoring && onStartMonitoring(item);
+                                      }}
+                                      title="Open live proctoring & monitoring"
+                                    >
+                                      <Monitor size={16} /> Live Monitoring {Number(activeActivityCounts[String(item.id)]) > 0 ? `(${activeActivityCounts[String(item.id)]} Active)` : ''}
+                                      {Number(activeActivityCounts[String(item.id)]) > 0 && (
+                                        <span
+                                          style={{
+                                            width: '8px',
+                                            height: '8px',
+                                            borderRadius: '50%',
+                                            backgroundColor: '#ffffff',
+                                            boxShadow: '0 0 6px #ffffff',
+                                            marginLeft: '4px'
+                                          }}
+                                        />
+                                      )}
+                                    </button>
+                                  </div>
                                 </div>
                                   </div>
                                 </motion.div>
@@ -2243,12 +2291,10 @@ export default function TeacherClasswork({
                   </div>
                   <div style={{ ...styles.list, padding: '0 0 40px 0' }}>
                     {visibleMaterials.length === 0 ? (
-                      <div style={{ padding: '40px 0', textAlign: 'center', color: isDark ? '#a3a3a3' : '#94a3b8' }}>
-                        <div style={{ marginBottom: '16px' }}>
-                          <FileText size={48} color={isDark ? '#525252' : '#94a3b8'} style={{ margin: '0 auto' }} />
-                        </div>
-                        <p style={{ margin: '0 0 12px 0', fontSize: '1.1rem', fontWeight: '600', color: isDark ? '#e5e5e5' : '#334155' }}>No materials uploaded yet</p>
-                        <p style={{ margin: 0, fontSize: '0.9rem' }}>Use the Create button to upload syllabus, readings, and reference documents.</p>
+                      <div style={{ textAlign: 'center', padding: '40px 20px', color: isDark ? '#a3a3a3' : '#94a3b8' }}>
+                        <FileText size={48} color={isDark ? '#4A4A4A' : '#cbd5e1'} style={{ margin: '0 auto 12px auto', display: 'block' }} />
+                        <p style={{ margin: 0, fontSize: '1rem', fontWeight: '600' }}>No materials uploaded yet</p>
+                        <p style={{ margin: '6px 0 0 0', fontSize: '0.85rem' }}>Use the Create button to upload syllabus, readings, and reference documents.</p>
                       </div>
                     ) : (
                       visibleMaterials.map((item) => {
@@ -2287,17 +2333,24 @@ export default function TeacherClasswork({
                                 }}
                               >
                                 <div style={{ display: 'flex', alignItems: 'center', minWidth: 0 }}>
-                                  {/* Icon Container */}
-                                  <div style={{ width: '36px', height: '36px', borderRadius: '10px', backgroundColor: isDark ? 'rgba(16, 185, 129, 0.12)' : '#dcfce7', border: isDark ? '1px solid rgba(16, 185, 129, 0.25)' : 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#10b981', marginRight: '16px', flexShrink: 0 }}>
-                                    {(() => {
-                                      let type = 'file';
-                                      if (item.attachments && item.attachments.length > 0) type = item.attachments[0].type;
-                                      if (type === 'video') return <Video size={18} />;
-                                      if (type === 'image') return <Image size={18} />;
-                                      if (type === 'link') return <Link2 size={18} />;
-                                      return <FileText size={18} />;
-                                    })()}
-                                  </div>
+                                  {/* Icon Container: Video, Document, or Link */}
+                                  {(() => {
+                                    const lessonType = getLessonType(item);
+                                    let bg = isDark ? 'rgba(16, 185, 129, 0.12)' : '#dcfce7';
+                                    let color = '#10b981';
+                                    if (lessonType === 'video') {
+                                      bg = isDark ? 'rgba(245, 158, 11, 0.15)' : '#fef3c7';
+                                      color = isDark ? '#fbbf24' : '#d97706';
+                                    } else if (lessonType === 'link') {
+                                      bg = isDark ? 'rgba(56, 189, 248, 0.15)' : '#e0f2fe';
+                                      color = isDark ? '#38bdf8' : '#0284c7';
+                                    }
+                                    return (
+                                      <div style={{ width: '36px', height: '36px', borderRadius: '10px', backgroundColor: bg, border: isDark ? `1px solid ${color}40` : 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', color: color, marginRight: '16px', flexShrink: 0 }}>
+                                        {lessonType === 'video' ? <Video size={18} /> : lessonType === 'link' ? <Link2 size={18} /> : <FileText size={18} />}
+                                      </div>
+                                    );
+                                  })()}
 
                                   <span style={{ color: isDark ? '#f5f5f5' : '#1e293b', fontSize: '1.05rem', fontWeight: '700', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                                     {item.title}
@@ -2358,19 +2411,16 @@ export default function TeacherClasswork({
                                 >
                                   <div style={styles.detailCard}>
                                     <div style={styles.detailHeaderBar}>
-                                  {(() => {
-                                    let type = 'file';
-                                    if (item.attachments && item.attachments.length > 0) type = item.attachments[0].type;
-                                    const props = { size: 30, color: isDark ? '#10b981' : '#4b5563' };
-                                    if (type === 'video') return <Video {...props} />;
-                                    if (type === 'image') return <Image {...props} />;
-                                    if (type === 'link') return <Link2 {...props} />;
-                                    return <FileText {...props} />;
-                                  })()}
-                                  <div>
-                                    <div style={styles.detailTitle}>{item.title}</div>
-                                  </div>
-                                </div>
+                                      {(() => {
+                                        const lessonType = getLessonType(item);
+                                        if (lessonType === 'video') return <Video size={30} color={isDark ? '#fbbf24' : '#d97706'} />;
+                                        if (lessonType === 'link') return <Link2 size={30} color={isDark ? '#38bdf8' : '#0284c7'} />;
+                                        return <FileText size={30} color={isDark ? '#10b981' : '#059669'} />;
+                                      })()}
+                                      <div>
+                                        <div style={styles.detailTitle}>{item.title}</div>
+                                      </div>
+                                    </div>
 
                                 <div style={styles.detailBody}>
                                   <div style={{ ...styles.detailLeft, flex: '1 1 100%' }}>
@@ -3028,52 +3078,12 @@ export default function TeacherClasswork({
 
       {/* ═══ MODAL: CLASSROOM SETTINGS (Gear Icon) ═══ */}
       {isSettingsModalOpen && (
-        <div style={styles.modalOverlay} onClick={() => setIsSettingsModalOpen(false)}>
-          <div style={{ ...styles.modalCard, maxWidth: '500px' }} onClick={(e) => e.stopPropagation()}>
-            <div style={styles.modalHeader}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <Settings size={22} color="#10b981" />
-                <h3 style={{ margin: 0, color: isDark ? '#E8EAED' : '#1e293b', fontSize: '1.2rem' }}>Classroom Settings</h3>
-              </div>
-              <button onClick={() => setIsSettingsModalOpen(false)} style={styles.closeModalBtn}>
-                <X size={20} />
-              </button>
-            </div>
-
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', marginTop: '16px' }}>
-              <div>
-                <label style={styles.fieldLabel}>Class details</label>
-                <div style={{ padding: '12px', backgroundColor: isDark ? '#383838' : '#f8fafc', borderRadius: '10px', border: isDark ? '1px solid #4A4A4A' : '1px solid #e2e8f0', marginTop: '6px' }}>
-                  <div style={{ fontWeight: '700', color: isDark ? '#E8EAED' : '#1e293b' }}>{classroom?.name || 'Classroom'}</div>
-                  <div style={{ fontSize: '0.85rem', color: isDark ? '#a3a3a3' : '#64748b' }}>Section: {classroom?.section || 'None'} • Subject: {classroom?.subject || 'General'}</div>
-                </div>
-              </div>
-
-              <div>
-                <label style={styles.fieldLabel}>Invite code</label>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px', backgroundColor: isDark ? '#383838' : '#f8fafc', borderRadius: '10px', border: isDark ? '1px solid #4A4A4A' : '1px solid #e2e8f0', marginTop: '6px' }}>
-                  <div>
-                    <span style={{ fontSize: '0.78rem', color: isDark ? '#a3a3a3' : '#64748b', display: 'block' }}>Class code</span>
-                    <strong style={{ fontSize: '1.1rem', color: '#10b981', letterSpacing: '0.05em' }}>{classCode}</strong>
-                  </div>
-                  <button
-                    onClick={() => copyToClipboard(classCode)}
-                    style={{ padding: '6px 12px', backgroundColor: isDark ? '#323232' : 'white', border: isDark ? '1px solid #4A4A4A' : '1px solid #cbd5e1', borderRadius: '6px', fontSize: '0.8rem', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', color: isDark ? '#E8EAED' : '#1e293b' }}
-                  >
-                    {codeCopied ? <Check size={14} color="#10b981" /> : <Copy size={14} />}
-                    {codeCopied ? 'Copied' : 'Copy'}
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '20px' }}>
-              <button onClick={() => setIsSettingsModalOpen(false)} style={styles.saveGradeBtn}>
-                Done
-              </button>
-            </div>
-          </div>
-        </div>
+        <ClassroomSettings
+          classroom={currentClassroom || classroom}
+          onClose={() => setIsSettingsModalOpen(false)}
+          onUpdate={handleUpdateClassroom}
+          role="teacher"
+        />
       )}
 
       {/* ═══ MODAL: BULK GRADING FOR SUBMITTED STUDENTS ═══ */}

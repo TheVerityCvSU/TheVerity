@@ -177,6 +177,113 @@ app.use('/uploads', (req, res, next) => {
     }
 }));
 
+let ffmpegStaticPath = null;
+try {
+    ffmpegStaticPath = require('ffmpeg-static');
+} catch (_) {}
+
+/**
+ * Automatically extracts a lightweight thumbnail image (_thumb.jpg) and
+ * compresses uploaded videos with faststart streaming headers so they are lightweight.
+ */
+function processVideoUpload(targetPath) {
+    if (!ffmpegStaticPath || !fs.existsSync(targetPath)) return;
+    const ext = path.extname(targetPath).toLowerCase();
+    if (!['.mp4', '.webm', '.mov', '.mkv', '.avi'].includes(ext)) return;
+
+    const baseNoExt = targetPath.slice(0, -ext.length);
+    const thumbPath = `${baseNoExt}_thumb.jpg`;
+    const tempOptPath = `${baseNoExt}_opt.mp4`;
+
+    // 1. Generate lightweight thumbnail image (~30KB) at 3s
+    try {
+        const thumbArgs = [
+            '-y',
+            '-ss', '00:00:03',
+            '-i', targetPath,
+            '-vframes', '1',
+            '-vf', "scale='min(640,iw)':-2",
+            '-q:v', '3',
+            thumbPath
+        ];
+        const thumbProc = spawn(ffmpegStaticPath, thumbArgs);
+        thumbProc.on('error', (err) => console.warn('[Video Thumb] Error:', err.message));
+    } catch (e) {
+        console.warn('[Video Thumb] Failed to spawn thumbnail generation:', e.message);
+    }
+
+    // 2. Compress large video (> 15 MB) to make it lightweight
+    try {
+        const stats = fs.statSync(targetPath);
+        if (stats.size > 15 * 1024 * 1024) {
+            const compressArgs = [
+                '-y',
+                '-i', targetPath,
+                '-vf', "scale='min(1280,iw)':-2",
+                '-c:v', 'h264_nvenc',
+                '-preset', 'p4',
+                '-cq', '28',
+                '-b:v', '350k',
+                '-maxrate', '500k',
+                '-bufsize', '800k',
+                '-c:a', 'aac',
+                '-b:a', '64k',
+                '-movflags', '+faststart',
+                tempOptPath
+            ];
+
+            const compProc = spawn(ffmpegStaticPath, compressArgs);
+            compProc.on('close', (code) => {
+                if (code === 0 && fs.existsSync(tempOptPath)) {
+                    const optStats = fs.statSync(tempOptPath);
+                    if (optStats.size > 0 && optStats.size < stats.size) {
+                        try {
+                            fs.renameSync(tempOptPath, targetPath);
+                            console.log(`[Video Compression] Compressed ${path.basename(targetPath)} from ${(stats.size / 1024 / 1024).toFixed(1)}MB to ${(optStats.size / 1024 / 1024).toFixed(1)}MB`);
+                        } catch (renErr) {
+                            console.warn('[Video Compression] Rename failed:', renErr.message);
+                        }
+                    } else {
+                        try { fs.unlinkSync(tempOptPath); } catch (_) {}
+                    }
+                } else {
+                    // Fallback to libx264 if nvenc is unavailable
+                    try {
+                        const fallbackArgs = [
+                            '-y',
+                            '-i', targetPath,
+                            '-vf', "scale='min(1280,iw)':-2",
+                            '-c:v', 'libx264',
+                            '-crf', '28',
+                            '-preset', 'veryfast',
+                            '-c:a', 'aac',
+                            '-b:a', '64k',
+                            '-movflags', '+faststart',
+                            tempOptPath
+                        ];
+                        const fallbackProc = spawn(ffmpegStaticPath, fallbackArgs);
+                        fallbackProc.on('close', (fCode) => {
+                            if (fCode === 0 && fs.existsSync(tempOptPath)) {
+                                try {
+                                    fs.renameSync(tempOptPath, targetPath);
+                                    console.log(`[Video Compression] Compressed ${path.basename(targetPath)} (CPU fallback)`);
+                                } catch (_) {}
+                            } else {
+                                try { fs.unlinkSync(tempOptPath); } catch (_) {}
+                            }
+                        });
+                    } catch (_) {}
+                }
+            });
+            compProc.on('error', () => {
+                try { if (fs.existsSync(tempOptPath)) fs.unlinkSync(tempOptPath); } catch (_) {}
+            });
+        }
+    } catch (e) {
+        console.warn('[Video Compression] Failed:', e.message);
+    }
+}
+
 // Raw binary upload endpoint (ideal for large videos like MP4, WebM, MOV without base64 overhead)
 app.post('/upload-raw', (req, res) => {
     const rawFilename = req.query.filename || req.headers['x-filename'] || 'file.mp4';
@@ -197,7 +304,13 @@ app.post('/upload-raw', (req, res) => {
     writeStream.on('finish', () => {
         const host = req.get('host');
         const protocol = req.headers['x-forwarded-proto'] || req.protocol;
-        res.status(201).json({ url: `${protocol}://${host}/uploads/${unique}` });
+        processVideoUpload(targetPath);
+        const isVideo = ['.mp4', '.webm', '.mov', '.mkv', '.avi'].includes(ext);
+        const baseNoExt = unique.slice(0, -ext.length);
+        res.status(201).json({ 
+            url: `${protocol}://${host}/uploads/${unique}`,
+            thumbnailUrl: isVideo ? `${protocol}://${host}/uploads/${baseNoExt}_thumb.jpg` : null
+        });
     });
 
     writeStream.on('error', (err) => {
@@ -236,10 +349,17 @@ app.post('/upload', (req, res, next) => {
     // Build a safe, unique filename.
     const safeName = (filename || 'file').replace(/[^a-zA-Z0-9._-]/g, '_');
     const unique = `${Date.now()}_${safeName}`;
-    fs.writeFileSync(path.join(UPLOADS_DIR, unique), buffer);
+    const targetPath = path.join(UPLOADS_DIR, unique);
+    fs.writeFileSync(targetPath, buffer);
+    processVideoUpload(targetPath);
     const host = req.get('host');
     const protocol = req.headers['x-forwarded-proto'] || req.protocol;
-    res.status(201).json({ url: `${protocol}://${host}/uploads/${unique}` });
+    const isVideo = ['.mp4', '.webm', '.mov', '.mkv', '.avi'].includes(ext);
+    const baseNoExt = unique.slice(0, -ext.length);
+    res.status(201).json({ 
+        url: `${protocol}://${host}/uploads/${unique}`,
+        thumbnailUrl: isVideo ? `${protocol}://${host}/uploads/${baseNoExt}_thumb.jpg` : null
+    });
 });
 
 app.get('/api/check-update', (req, res) => {
@@ -3531,8 +3651,24 @@ io.on('connection', (socket) => {
             socket.emit('teacher_past_warnings', dbLogs);
         }
 
+        // Tanggalin ang submitted students para di lumabas sa live monitoring
+        let submittedRows = [];
+        try {
+            submittedRows = await db.all(
+                `SELECT LOWER(student_name) as sname FROM submissions WHERE assignment_id = ? OR CAST(assignment_id AS TEXT) = ?`,
+                aIdStr, aIdStr
+            ).catch(() => []);
+        } catch (_) {}
+        const submittedSet = new Set((submittedRows || []).map(r => r.sname));
+
         for (const [key, student] of Object.entries(activeStudents)) {
-            if (!student || student.isLive === false || student.status === 'Offline') continue;
+            if (!student || student.isLive === false || student.status === 'Offline' || student.status === 'Submitted' || student.submitted) continue;
+            const curName = String(student.name || student.studentName || '').trim().toLowerCase();
+            const curId = String(student.id || student.studentId || '').trim().toLowerCase();
+            if (submittedSet.has(curName) || submittedSet.has(curId)) {
+                delete activeStudents[key];
+                continue;
+            }
             if (key.startsWith(filterKey + ':') || (aIdStr !== 'none' && key.startsWith(`none:${aIdStr}:`))) {
                 socket.emit('teacher_update_code', {
                     ...student,
@@ -3542,13 +3678,29 @@ io.on('connection', (socket) => {
         }
     });
 
-    socket.on('teacher_request_sync', ({ classroomId, assignmentId }) => {
+    socket.on('teacher_request_sync', async ({ classroomId, assignmentId }) => {
         const cIdStr = String(classroomId || 'none');
         const aIdStr = String(assignmentId || 'none');
         const filterKey = `${cIdStr}:${aIdStr}`;
 
+        // I-sync lang ang mga live students, bawal ang submitted
+        let submittedRows = [];
+        try {
+            submittedRows = await db.all(
+                `SELECT LOWER(student_name) as sname FROM submissions WHERE assignment_id = ? OR CAST(assignment_id AS TEXT) = ?`,
+                aIdStr, aIdStr
+            ).catch(() => []);
+        } catch (_) {}
+        const submittedSet = new Set((submittedRows || []).map(r => r.sname));
+
         for (const [key, student] of Object.entries(activeStudents)) {
-            if (!student || student.isLive === false || student.status === 'Offline') continue;
+            if (!student || student.isLive === false || student.status === 'Offline' || student.status === 'Submitted' || student.submitted) continue;
+            const curName = String(student.name || student.studentName || '').trim().toLowerCase();
+            const curId = String(student.id || student.studentId || '').trim().toLowerCase();
+            if (submittedSet.has(curName) || submittedSet.has(curId)) {
+                delete activeStudents[key];
+                continue;
+            }
             if (key.startsWith(filterKey + ':') || (aIdStr !== 'none' && key.startsWith(`none:${aIdStr}:`))) {
                 socket.emit('teacher_update_code', {
                     ...student,
@@ -4095,15 +4247,28 @@ io.on('connection', (socket) => {
         }
     });
 
-    const handleStudentActivity = (data) => {
+    const handleStudentActivity = async (data) => {
         if (!data || (!data.studentId && !data.name)) return;
+        if (data.submitted) return;
         const studentId = String(data.studentId || data.name);
         const studentName = String(data.name || data.studentName || studentId).trim();
         const classroomId = data.classroomId != null ? String(data.classroomId) : 'none';
         const assignmentId = data.assignmentId != null ? String(data.assignmentId) : 'none';
         const studentKey = `${classroomId}:${assignmentId}:${studentId}`;
+
+        // Bawal mag-appear sa live monitoring kapag submitted na
+        try {
+            const alreadySubmitted = await db.get(
+                `SELECT id FROM submissions WHERE (assignment_id = ? OR CAST(assignment_id AS TEXT) = ?) AND (LOWER(student_name) = ? OR LOWER(student_name) = ?)`,
+                assignmentId, assignmentId, studentName.toLowerCase(), studentId.toLowerCase()
+            );
+            if (alreadySubmitted) {
+                delete activeStudents[studentKey];
+                return;
+            }
+        } catch (_) {}
         
-        // Remove student from any previous activity so they don't linger in other activity monitoring
+        // Alisin sa lumang activity para di mag-duplicate
         removeStudentFromPreviousActivities(studentId, studentName, studentKey);
 
         const roomName = `classroom:${classroomId}:assignment:${assignmentId}`;
@@ -4213,6 +4378,23 @@ io.on('connection', (socket) => {
             };
 
             const studentKey = `${classroomId}:${assignmentId}:${studentId}`;
+
+            // Kung submitted na, i-record lang ang warning sa logs pero bawal sa live
+            try {
+                const alreadySubmitted = await db.get(
+                    `SELECT id FROM submissions WHERE (assignment_id = ? OR CAST(assignment_id AS TEXT) = ?) AND (LOWER(student_name) = ? OR LOWER(student_name) = ?)`,
+                    assignmentId, assignmentId, studentName.toLowerCase(), studentId.toLowerCase()
+                );
+                if (alreadySubmitted) {
+                    delete activeStudents[studentKey];
+                    await db.run(
+                        'INSERT INTO proctor_session_logs (classroom_id, assignment_id, student_id, student_name, action, message, time, color) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+                        classroomId, assignmentId, studentId, studentName, newLog.action, newLog.message, newLog.time, newLog.color
+                    ).catch(() => {});
+                    return;
+                }
+            } catch (_) {}
+
             const existing = activeStudents[studentKey] || {
                 studentId,
                 name: studentName,
@@ -4345,12 +4527,11 @@ io.on('connection', (socket) => {
     });
 
     socket.on('submit_exam', async (data) => {
-        if (!socket.user) return;
-        const authenticatedName = socket.user.name || socket.user.email || 'Unknown';
-        const authenticatedId = socket.user.id || data.studentId;
+        if (!data) return;
+        const authenticatedName = socket.user?.name || socket.user?.email || data.studentName || data.studentId || 'Unknown';
+        const authenticatedId = socket.user?.id || data.studentId || authenticatedName;
         const classroomId = data.classroomId || 'none';
         const assignmentId = data.assignmentId != null ? String(data.assignmentId) : 'unassigned';
-        const studentKey = `${classroomId}:${assignmentId}:${authenticatedId}`;
         
         const strictWarnings = await getTreatWarningsAsErrors();
         const payload = { 
@@ -4359,16 +4540,30 @@ io.on('connection', (socket) => {
             studentId: authenticatedId,
             strictWarningsEnforced: strictWarnings
         };
-        delete activeStudents[studentKey];
-        delete activeStudents[`${classroomId}:${assignmentId}:${authenticatedName}`];
-        delete activeStudents[`${classroomId}:${assignmentId}:${authenticatedId}`];
+
+        // Tanggalin si student sa active roster at i-notify si teacher
+        const targetId = String(data.studentId || authenticatedId || '');
+        const targetName = String(data.studentName || authenticatedName || '').trim().toLowerCase();
+
+        for (const [key, student] of Object.entries(activeStudents)) {
+            if (!student) continue;
+            const curId = String(student.studentId || student.id || '');
+            const curName = String(student.name || student.studentName || '').trim().toLowerCase();
+            if (
+                (targetId && (curId === targetId || key.endsWith(`:${targetId}`))) ||
+                (targetName && (curName === targetName || key.endsWith(`:${targetName}`)))
+            ) {
+                delete activeStudents[key];
+            }
+        }
+        removeStudentFromPreviousActivities(targetId, targetName);
         removeStudentFromPreviousActivities(authenticatedId, authenticatedName);
         broadcastActiveActivities();
 
         const roomName = `classroom:${classroomId}:assignment:${assignmentId}`;
         socket.to(roomName).emit('teacher_receive_submission', payload);
-        socket.to(roomName).emit('teacher_student_left', { studentId: authenticatedName, studentIdNum: authenticatedId, reason: 'submitted', assignmentId, classroomId });
-        io.emit('teacher_student_left', { studentId: authenticatedName, studentIdNum: authenticatedId, reason: 'submitted', assignmentId, classroomId });
+        socket.to(roomName).emit('teacher_student_left', { studentId: targetId, studentName: authenticatedName, studentIdNum: authenticatedId, reason: 'submitted', assignmentId, classroomId });
+        io.emit('teacher_student_left', { studentId: targetId, studentName: authenticatedName, studentIdNum: authenticatedId, reason: 'submitted', assignmentId, classroomId });
 
         try {
             await db.run('DELETE FROM submissions WHERE assignment_id = ? AND student_name = ?', assignmentId, authenticatedName);

@@ -381,3 +381,208 @@ export const migrateUserClassroomsOnEmailChange = (oldEmail, newEmail, userId) =
     }
   });
 };
+
+/**
+ * Resolves the lesson/material format: 'video' | 'link' | 'document'
+ * Inspects explicit materialType, attachments, embedded content, and titles.
+ */
+export const getLessonType = (item) => {
+  if (!item) return 'document';
+
+  // 1. Explicit property
+  const explicit = String(item.materialType || item.lessonType || item.format || '').trim().toLowerCase();
+  if (explicit === 'video' || explicit === 'youtube') return 'video';
+  if (explicit === 'link' || explicit === 'url') return 'link';
+  if (explicit === 'document' || explicit === 'doc' || explicit === 'file' || explicit === 'pdf') return 'document';
+
+  // 2. Inspect attachments array
+  const attachments = Array.isArray(item.attachments) ? item.attachments : [];
+
+  const hasVideo = attachments.some((a) => {
+    const t = String(a?.type || '').toLowerCase();
+    const u = String(a?.url || '').toLowerCase();
+    const n = String(a?.name || '').toLowerCase();
+    return (
+      t === 'video' ||
+      t === 'youtube' ||
+      u.includes('youtube.com') ||
+      u.includes('youtu.be') ||
+      u.includes('vimeo.com') ||
+      /\.(mp4|webm|mov|m4v|mkv|avi)(\?|$)/i.test(u) ||
+      /\.(mp4|webm|mov|m4v|mkv|avi)$/i.test(n)
+    );
+  });
+  if (hasVideo) return 'video';
+
+  const hasLink = attachments.some((a) => {
+    const t = String(a?.type || '').toLowerCase();
+    const u = String(a?.url || '').toLowerCase();
+    return t === 'link' || t === 'url' || /^https?:\/\//i.test(u);
+  });
+
+  const hasDoc = attachments.some((a) => {
+    const t = String(a?.type || '').toLowerCase();
+    const u = String(a?.url || '').toLowerCase();
+    const n = String(a?.name || '').toLowerCase();
+    return (
+      t === 'document' ||
+      t === 'file' ||
+      t === 'pdf' ||
+      t === 'doc' ||
+      t === 'image' ||
+      /\.(pdf|docx?|txt|pptx?|xlsx?|rtf|epub|png|jpe?g|gif|webp)(\?|$)/i.test(u) ||
+      /\.(pdf|docx?|txt|pptx?|xlsx?|rtf|epub|png|jpe?g|gif|webp)$/i.test(n)
+    );
+  });
+
+  if (hasDoc && !hasLink) return 'document';
+  if (hasLink && !hasDoc) return 'link';
+  if (hasLink) return 'link';
+  if (hasDoc) return 'document';
+
+  // 3. Inspect details / HTML content
+  const details = String(item.details || item.instruction || '').toLowerCase();
+  if (
+    details.includes('<video') ||
+    details.includes('youtube.com/embed') ||
+    details.includes('youtube.com/watch') ||
+    details.includes('youtu.be/') ||
+    details.includes('vimeo.com/')
+  ) {
+    return 'video';
+  }
+  if (details.includes('<iframe') && (details.includes('video') || details.includes('player'))) {
+    return 'video';
+  }
+  if (details.includes('<a href=') && !details.includes('<img')) {
+    return 'link';
+  }
+
+  // 4. Inspect title / topic keywords
+  const title = String(item.title || item.topic || '').toLowerCase();
+  if (
+    title.includes('video') ||
+    title.includes('recording') ||
+    title.includes('lecture') ||
+    title.includes('watch') ||
+    title.includes('webinar')
+  ) {
+    return 'video';
+  }
+  if (
+    title.includes('link') ||
+    title.includes('url') ||
+    title.includes('website') ||
+    title.includes('portal')
+  ) {
+    return 'link';
+  }
+  if (
+    title.includes('doc') ||
+    title.includes('pdf') ||
+    title.includes('reading') ||
+    title.includes('syllabus') ||
+    title.includes('handout') ||
+    title.includes('notes') ||
+    title.includes('guide')
+  ) {
+    return 'document';
+  }
+
+  // Default fallback for lessons/materials: document
+  return 'document';
+};
+
+/**
+ * Cleans a video filename or raw title into a human-readable title.
+ * Strips file extensions, timestamp prefixes, splits camelCase, and cleans delimiters.
+ */
+export const cleanVideoFilename = (filename) => {
+  if (!filename || typeof filename !== 'string') return '';
+  // Strip file extension
+  let name = filename.replace(/\.(mp4|webm|mov|m4v|mkv|avi|flv|wmv)$/i, '');
+  // Strip leading upload timestamp prefix (e.g. 1792768564903_ or 1792768564903-)
+  name = name.replace(/^\d{10,}[-_]/, '');
+  // If camelCase / PascalCase without spaces/underscores (e.g. BigBuckBunny -> Big Buck Bunny)
+  if (!name.includes(' ') && !name.includes('_') && !name.includes('-')) {
+    name = name.replace(/([a-z])([A-Z])/g, '$1 $2');
+  }
+  // Replace underscores and consecutive hyphens with space
+  name = name.replace(/[-_]+/g, ' ').trim();
+  return name;
+};
+
+/**
+ * Checks if a title is a generic placeholder or obsolete hardcoded mockup string.
+ */
+export const isGenericPlaceholder = (title) => {
+  if (!title || typeof title !== 'string') return true;
+  return /^(methods\s*&\s*parameters|methods\s*and\s*parameters|untitled|sample\s*video|c#\s*programming)$/i.test(title.trim());
+};
+
+/**
+ * Checks if a filename is overly generic (e.g., "video", "lesson", "output").
+ */
+export const isGenericFilename = (title) => {
+  if (!title || typeof title !== 'string') return true;
+  return /^(video|output|recording|lesson|sample|material|file|mov\s*bbb)$/i.test(title.trim());
+};
+
+/**
+ * Resolves the genuine title of a video lesson, prioritizing specific video filenames
+ * or meaningful activity titles while guaranteeing that placeholder strings like
+ * "Methods & parameters" are never displayed.
+ */
+export const extractVideoTitle = (src, videoAttachment, itemTitle) => {
+  // 1. Video attachment name / title if available
+  const attachmentName = videoAttachment?.name || videoAttachment?.title;
+  if (attachmentName) {
+    const clean = cleanVideoFilename(attachmentName);
+    if (clean && !isGenericFilename(clean) && !isGenericPlaceholder(clean)) {
+      return clean;
+    }
+  }
+
+  // 2. Video src URL filename if available
+  if (src && typeof src === 'string') {
+    try {
+      const pathname = src.split('?')[0].split('#')[0];
+      const rawFilename = pathname.substring(pathname.lastIndexOf('/') + 1);
+      if (rawFilename && rawFilename.includes('.')) {
+        const clean = cleanVideoFilename(decodeURIComponent(rawFilename));
+        if (clean && !isGenericFilename(clean) && !isGenericPlaceholder(clean)) {
+          return clean;
+        }
+      }
+    } catch {}
+  }
+
+  // 3. Activity / Classwork item title if descriptive
+  if (itemTitle && typeof itemTitle === 'string') {
+    const trimmed = itemTitle.trim();
+    if (trimmed && !isGenericPlaceholder(trimmed) && !/^(lesson|material|activity)$/i.test(trimmed)) {
+      return trimmed;
+    }
+  }
+
+  // 4. Fallback to cleaned filename even if generic
+  if (attachmentName) {
+    const clean = cleanVideoFilename(attachmentName);
+    if (clean && !isGenericPlaceholder(clean)) return clean;
+  }
+  if (src && typeof src === 'string') {
+    try {
+      const pathname = src.split('?')[0].split('#')[0];
+      const rawFilename = pathname.substring(pathname.lastIndexOf('/') + 1);
+      const clean = cleanVideoFilename(decodeURIComponent(rawFilename));
+      if (clean && !isGenericPlaceholder(clean)) return clean;
+    } catch {}
+  }
+
+  // 5. Fallback to item title if present and not placeholder
+  if (itemTitle && typeof itemTitle === 'string' && !isGenericPlaceholder(itemTitle)) {
+    return itemTitle.trim();
+  }
+
+  return 'Video Lesson';
+};

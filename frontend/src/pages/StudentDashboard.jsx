@@ -7,6 +7,7 @@ import StudentCalendar from './StudentCalendar';
 import ClassroomSettings from './ClassroomSettings';
 import CompilerView from './CompilerView';
 import VideoPreviewModal from '../components/VideoPreviewModal';
+import VideoThumbnailBackground from '../components/VideoThumbnailBackground';
 import { apiFetch } from '../utils/api';
 import Skeleton from '../components/Skeleton';
 import { useDarkMode } from '../hooks/useDarkMode';
@@ -20,7 +21,10 @@ import {
   isPhantomClassroom,
   sortClassroomsAlphabetically,
   getClassroomTheme,
-  THEME_PRESETS
+  THEME_PRESETS,
+  getLessonType,
+  extractVideoTitle,
+  cleanVideoFilename
 } from '../utils/classroomUtils';
 
 // Storage key uniquely scoped per student account
@@ -523,8 +527,9 @@ export default function StudentDashboard({ currentUser, onLogout, onEnterClassro
     };
   }, [socket]);
 
-  // Upcoming Activities for To Do list
+  // Upcoming Activities for To Do list & Video Lessons
   const [upcomingActivities, setUpcomingActivities] = useState([]);
+  const [allClasswork, setAllClasswork] = useState([]);
   const [dashboardStats, setDashboardStats] = useState({ done: 0, dueSoon: 0, miss: 0 });
   const [loadingActivities, setLoadingActivities] = useState(true);
 
@@ -540,9 +545,12 @@ export default function StudentDashboard({ currentUser, onLogout, onEnterClassro
             const classList = Array.isArray(classrooms) ? classrooms : [];
             const isLegacyHardcoded = (item) => (item?.id === 1 || item?.id === 2) && (item?.title?.startsWith('Activity 1:') || item?.title?.startsWith('Activity 2:'));
             
-            const valid = data.classwork.filter(
-              item => !item.archived && !isLegacyHardcoded(item) && !!item.dueDate && classList.some(c => String(c.id) === String(item.classroom_id || item.classId))
+            const enrolled = data.classwork.filter(
+              item => !item.archived && !isLegacyHardcoded(item) && classList.some(c => String(c.id) === String(item.classroom_id || item.classId))
             );
+            setAllClasswork(enrolled);
+
+            const valid = enrolled.filter(item => !!item.dueDate);
             // Sort by due date (closest first)
             valid.sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate));
             setUpcomingActivities(valid);
@@ -590,51 +598,105 @@ export default function StudentDashboard({ currentUser, onLogout, onEnterClassro
     return () => { active = false; };
   }, [classrooms]);
 
-  // Video Focus Session Logic
-  const nextUpVideoActivity = upcomingActivities.find(act => {
-    if (act.details && act.details.includes('<video')) return true;
-    if (act.instruction && act.instruction.includes('<video')) return true;
-    if (act.attachments && act.attachments.some(a => a.type === 'video')) return true;
-    return false;
-  });
+  // Default video lesson matching user's course or demo video
+  const DEFAULT_VIDEO_LESSON = useMemo(() => ({
+    id: 'hci_lesson_1',
+    title: 'HCI Lesson 1 ITEC 80',
+    subject: 'C# PROGRAMMING',
+    duration: '25 min',
+    src: 'http://localhost:3001/uploads/1792768564903_HCI_Lesson_1_ITEC_80.mp4'
+  }), []);
 
-  const getVideoData = (act) => {
-    if (!act) return null;
-    if (act.attachments) {
-      const v = act.attachments.find(a => a.type === 'video');
-      if (v) return { src: v.url, name: v.name };
-    }
-    const match = (act.details || act.instruction || '').match(/<video[^>]*src="([^"]+)"/);
-    if (match) return { src: match[1], name: act.title };
-    return null;
-  };
-  
-  const videoData = getVideoData(nextUpVideoActivity);
-  const seenKey = videoData ? `verity_seen_video_${currentUser?.id || 'anon'}_${nextUpVideoActivity.id}` : null;
-  
-  const [videoSeen, setVideoSeen] = useState(false);
-  useEffect(() => {
-    if (seenKey) {
-      setVideoSeen(localStorage.getItem(seenKey) === 'true');
-    }
-  }, [seenKey]);
+  // Compute all available video lessons
+  const videoLessons = useMemo(() => {
+    const list = [];
+    const classList = Array.isArray(classrooms) ? classrooms : [];
 
-  const [playVideo, setPlayVideo] = useState(false);
-  const handleStartSession = () => {
-    if (videoData) {
-      setPlayVideo(true);
-      if (!videoSeen) {
-        localStorage.setItem(seenKey, 'true');
-        setVideoSeen(true);
+    allClasswork.forEach(item => {
+      if (getLessonType(item) === 'video') {
+        const classObj = classList.find(c => String(c.id) === String(item.classroom_id || item.classId));
+        const videoAttachment = item.attachments?.find(a => 
+          a?.type === 'video' || 
+          a?.type === 'youtube' || 
+          /\.(mp4|webm|mov|m4v|mkv|avi)(\?|$)/i.test(a?.url || '') || 
+          /\.(mp4|webm|mov|m4v|mkv|avi)$/i.test(a?.name || '')
+        );
+        const match = (item.details || item.instruction || '').match(/<video[^>]*src="([^"]+)"/);
+        const ytMatch = (item.details || item.instruction || '').match(/(?:src="|href=")([^"]*(?:youtube\.com|youtu\.be)[^"]*)"/);
+        const src = videoAttachment?.url || (match ? match[1] : '') || (ytMatch ? ytMatch[1] : '') || DEFAULT_VIDEO_LESSON.src;
+        const title = extractVideoTitle(src, videoAttachment, item.title);
+
+        list.push({
+          id: String(item.id),
+          title,
+          subject: (classObj?.name || classObj?.subject || 'C# PROGRAMMING').toUpperCase(),
+          duration: item.duration || '25 min',
+          src,
+          item,
+          classObj
+        });
       }
+    });
+
+    if (list.length === 0) {
+      return [DEFAULT_VIDEO_LESSON];
     }
+    return list;
+  }, [allClasswork, classrooms, DEFAULT_VIDEO_LESSON]);
+
+  // Track seen state in localStorage per user
+  const [seenVideoMap, setSeenVideoMap] = useState({});
+
+  useEffect(() => {
+    const uid = currentUser?.id || 'anon';
+    const map = {};
+    videoLessons.forEach(v => {
+      const key = `verity_seen_video_${uid}_${v.id}`;
+      map[v.id] = localStorage.getItem(key) === 'true';
+    });
+    setSeenVideoMap(map);
+  }, [videoLessons, currentUser]);
+
+  // First unseen video lesson (null if all are seen)
+  const unseenVideo = useMemo(() => {
+    return videoLessons.find(v => !seenVideoMap[v.id]) || null;
+  }, [videoLessons, seenVideoMap]);
+
+  // Active playing video modal
+  const [activePlayingVideo, setActivePlayingVideo] = useState(null);
+
+  const handleStartSession = (videoToPlay) => {
+    const target = videoToPlay || unseenVideo;
+    if (!target) return;
+    setActivePlayingVideo(target);
+
+    // Mark as seen immediately in localStorage and state
+    const uid = currentUser?.id || 'anon';
+    const key = `verity_seen_video_${uid}_${target.id}`;
+    try {
+      localStorage.setItem(key, 'true');
+    } catch {}
+    setSeenVideoMap(prev => ({ ...prev, [target.id]: true }));
   };
 
-  const handleViewActivityDetails = () => {
-    if (nextUpVideoActivity && onOpenAssignment) {
-      const classObj = classrooms.find(c => String(c.id) === String(nextUpVideoActivity.classroom_id || nextUpVideoActivity.classId));
+  const handleResetVideoSeen = (e) => {
+    if (e) e.stopPropagation();
+    const uid = currentUser?.id || 'anon';
+    videoLessons.forEach(v => {
+      const key = `verity_seen_video_${uid}_${v.id}`;
+      try {
+        localStorage.removeItem(key);
+      } catch {}
+    });
+    setSeenVideoMap({});
+  };
+
+  const handleViewActivityDetails = (videoItem) => {
+    const target = videoItem || unseenVideo;
+    if (target?.item && onOpenAssignment) {
+      const classObj = classrooms.find(c => String(c.id) === String(target.item.classroom_id || target.item.classId));
       if (classObj) {
-        onOpenAssignment(classObj, nextUpVideoActivity);
+        onOpenAssignment(classObj, target.item);
       }
     }
   };
@@ -1030,68 +1092,243 @@ export default function StudentDashboard({ currentUser, onLogout, onEnterClassro
                   </div>
                 </div>
 
-                {/* "Next up" Card */}
-                {videoData ? (
-                  <div style={{ backgroundColor: '#0f172a', color: 'white', borderRadius: '24px', padding: '24px', marginBottom: '32px', position: 'relative', overflow: 'hidden' }}>
-                    <div style={{ position: 'absolute', right: '-20px', top: '10px', width: '100px', height: '100px', borderRadius: '50%', border: '16px solid rgba(79, 70, 229, 0.4)' }}></div>
-                    
-                    <span style={{ fontSize: '0.7rem', backgroundColor: 'rgba(255,255,255,0.1)', padding: '4px 10px', borderRadius: '20px', display: 'inline-block', marginBottom: '16px' }}>
-                      Next up
-                    </span>
-                    
-                    <p style={{ color: '#10b981', fontSize: '0.65rem', fontWeight: 'bold', letterSpacing: '0.05em', margin: '0 0 4px', textTransform: 'uppercase' }}>
-                      Video Lesson
-                    </p>
-                    <h3 style={{ fontSize: '1.2rem', margin: '0 0 24px', fontWeight: 'bold', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                      {videoData.name || 'Video Lesson'}
-                    </h3>
-                    
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                      {!videoSeen ? (
-                        <button onClick={handleStartSession} style={{ display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: 'transparent', border: 'none', color: 'white', padding: 0, cursor: 'pointer', fontWeight: '600' }}>
-                          <div style={{ width: '28px', height: '28px', borderRadius: '50%', backgroundColor: '#10b981', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                            <Play size={12} fill="white" />
-                          </div>
-                          Watch video lesson
-                        </button>
-                      ) : (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#a7f3d0', fontWeight: '600' }}>
-                          <CheckCircle2 size={20} />
-                          All done
+                {/* Video Lesson Card or Caught Up State */}
+                {unseenVideo ? (
+                  <div
+                    onClick={() => handleStartSession(unseenVideo)}
+                    style={{
+                      backgroundColor: cardBg,
+                      borderRadius: '24px',
+                      padding: '14px 14px 18px 14px',
+                      marginBottom: '32px',
+                      border: isDark ? '1px solid rgba(255, 255, 255, 0.08)' : '1px solid #e2e8f0',
+                      boxShadow: isDark
+                        ? '0 4px 20px -2px rgba(0, 0, 0, 0.35)'
+                        : '0 4px 20px -2px rgba(0, 0, 0, 0.05)',
+                      cursor: 'pointer',
+                      transition: 'transform 0.2s ease, box-shadow 0.2s ease',
+                      position: 'relative'
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.transform = 'translateY(-2px)';
+                      e.currentTarget.style.boxShadow = isDark
+                        ? '0 8px 25px -4px rgba(0, 0, 0, 0.45)'
+                        : '0 8px 25px -4px rgba(0, 0, 0, 0.08)';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.transform = 'translateY(0)';
+                      e.currentTarget.style.boxShadow = isDark
+                        ? '0 4px 20px -2px rgba(0, 0, 0, 0.35)'
+                        : '0 4px 20px -2px rgba(0, 0, 0, 0.05)';
+                    }}
+                  >
+                    {/* Upper Banner Container */}
+                    <div
+                      style={{
+                        height: '135px',
+                        borderRadius: '18px',
+                        overflow: 'hidden',
+                        position: 'relative',
+                        backgroundColor: isDark ? '#0f172a' : '#1e293b',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        justifyContent: 'space-between',
+                        padding: '12px'
+                      }}
+                    >
+                      {/* Video Thumbnail Background */}
+                      <VideoThumbnailBackground
+                        src={unseenVideo.src}
+                        title={unseenVideo.title}
+                        isDark={isDark}
+                      />
+
+                      {/* Top Badges Row */}
+                      <div style={{ position: 'relative', zIndex: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                        {/* Top-Left: New Pill & Subject Pill */}
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                          <span
+                            style={{
+                              backgroundColor: '#d1fae5',
+                              color: '#065f46',
+                              fontSize: '0.75rem',
+                              fontWeight: '700',
+                              padding: '3px 12px',
+                              borderRadius: '9999px',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              width: 'fit-content',
+                              boxShadow: '0 1px 3px rgba(0, 0, 0, 0.2)'
+                            }}
+                          >
+                            New
+                          </span>
+                          <span
+                            style={{
+                              backgroundColor: 'rgba(255, 255, 255, 0.95)',
+                              color: '#065f46',
+                              fontSize: '0.72rem',
+                              fontWeight: '800',
+                              letterSpacing: '0.04em',
+                              padding: '4px 12px',
+                              borderRadius: '9999px',
+                              boxShadow: '0 2px 8px rgba(0, 0, 0, 0.25)',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              width: 'fit-content',
+                              whiteSpace: 'nowrap',
+                              maxWidth: '180px',
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis'
+                            }}
+                            title={unseenVideo.subject}
+                          >
+                            {unseenVideo.subject}
+                          </span>
                         </div>
-                      )}
-                      
-                      <button onClick={handleViewActivityDetails} style={{ display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: 'transparent', border: 'none', color: 'rgba(255,255,255,0.85)', padding: 0, cursor: 'pointer', fontWeight: '600', transition: 'color 0.2s' }}>
-                        <div style={{ width: '28px', height: '28px', borderRadius: '50%', backgroundColor: 'rgba(255,255,255,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                          <ClipboardList size={14} color="white" />
-                        </div>
-                        View Activity Details
+
+                        {/* Top-Right: Duration Pill */}
+                        <span
+                          style={{
+                            backgroundColor: 'rgba(255, 255, 255, 0.95)',
+                            color: '#1e293b',
+                            fontSize: '0.78rem',
+                            fontWeight: '700',
+                            padding: '4px 12px',
+                            borderRadius: '9999px',
+                            boxShadow: '0 2px 8px rgba(0, 0, 0, 0.25)',
+                            display: 'inline-flex',
+                            alignItems: 'center'
+                          }}
+                        >
+                          {unseenVideo.duration}
+                        </span>
+                      </div>
+
+                      {/* Middle-Right / Bottom-Right Play Button */}
+                      <button
+                        type="button"
+                        aria-label="Play video lesson"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleStartSession(unseenVideo);
+                        }}
+                        style={{
+                          position: 'absolute',
+                          right: '14px',
+                          bottom: '14px',
+                          width: '42px',
+                          height: '42px',
+                          borderRadius: '50%',
+                          backgroundColor: '#065f46',
+                          border: '2px solid rgba(255, 255, 255, 0.4)',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          cursor: 'pointer',
+                          boxShadow: '0 4px 14px rgba(0, 0, 0, 0.45)',
+                          transition: 'transform 0.2s, background-color 0.2s, box-shadow 0.2s',
+                          zIndex: 3
+                        }}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.transform = 'scale(1.08)';
+                          e.currentTarget.style.backgroundColor = '#047857';
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.transform = 'scale(1)';
+                          e.currentTarget.style.backgroundColor = '#065f46';
+                        }}
+                      >
+                        <Play size={16} fill="white" color="white" style={{ marginLeft: '2px' }} />
                       </button>
                     </div>
-                    
-                    <div style={{ position: 'absolute', right: '25px', top: '45px', fontSize: '0.8rem', fontWeight: 'bold' }}>
-                      25 min
+
+                    {/* Lower Details Area */}
+                    <div style={{ padding: '14px 6px 4px 6px' }}>
+                      <h4
+                        style={{
+                          margin: '0 0 6px 0',
+                          fontSize: '1.25rem',
+                          fontWeight: '800',
+                          color: textColor,
+                          letterSpacing: '-0.02em',
+                          lineHeight: 1.25,
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap'
+                        }}
+                        title={unseenVideo.title}
+                      >
+                        {unseenVideo.title}
+                      </h4>
+                      <p
+                        style={{
+                          margin: 0,
+                          fontSize: '0.88rem',
+                          fontWeight: '600',
+                          color: textMuted
+                        }}
+                      >
+                        Not started • {unseenVideo.duration}
+                      </p>
                     </div>
                   </div>
                 ) : (
-                  <div style={{ backgroundColor: '#0f172a', color: 'white', borderRadius: '24px', padding: '24px', marginBottom: '32px', position: 'relative', overflow: 'hidden' }}>
-                    <div style={{ position: 'absolute', right: '-20px', top: '10px', width: '100px', height: '100px', borderRadius: '50%', border: '16px solid rgba(16, 185, 129, 0.4)' }}></div>
-                    
-                    <span style={{ fontSize: '0.7rem', backgroundColor: 'rgba(255,255,255,0.1)', padding: '4px 10px', borderRadius: '20px', display: 'inline-block', marginBottom: '16px' }}>
-                      Status
-                    </span>
-                    
-                    <p style={{ color: '#10b981', fontSize: '0.65rem', fontWeight: 'bold', letterSpacing: '0.05em', margin: '0 0 4px', textTransform: 'uppercase' }}>
-                      All caught up!
-                    </p>
-                    <h3 style={{ fontSize: '1.2rem', margin: '0 0 24px', fontWeight: 'bold' }}>
-                      No new video lessons
-                    </h3>
-                    
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#a7f3d0', fontWeight: '600' }}>
-                      <CheckCircle2 size={20} />
-                      You're all caught up!
+                  /* Caught Up State */
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      padding: '16px 20px',
+                      borderRadius: '20px',
+                      backgroundColor: isDark ? 'rgba(16, 185, 129, 0.1)' : '#ecfdf5',
+                      border: isDark ? '1px solid rgba(16, 185, 129, 0.25)' : '1px solid #a7f3d0',
+                      color: isDark ? '#34d399' : '#065f46',
+                      marginBottom: '32px',
+                      boxShadow: '0 2px 8px rgba(16, 185, 129, 0.05)'
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                      <div
+                        style={{
+                          width: '32px',
+                          height: '32px',
+                          borderRadius: '50%',
+                          backgroundColor: isDark ? 'rgba(16, 185, 129, 0.2)' : '#d1fae5',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          flexShrink: 0
+                        }}
+                      >
+                        <CheckCircle2 size={18} color={isDark ? '#34d399' : '#059669'} />
+                      </div>
+                      <span style={{ fontSize: '0.92rem', fontWeight: '700' }}>
+                        You're all caught up in video lesson!
+                      </span>
                     </div>
+                    <button
+                      type="button"
+                      onClick={handleResetVideoSeen}
+                      title="Replay video lesson"
+                      style={{
+                        background: 'transparent',
+                        border: 'none',
+                        color: isDark ? '#6ee7b7' : '#047857',
+                        fontSize: '0.8rem',
+                        fontWeight: '600',
+                        cursor: 'pointer',
+                        padding: '4px 8px',
+                        borderRadius: '8px',
+                        textDecoration: 'underline',
+                        opacity: 0.85
+                      }}
+                      onMouseEnter={(e) => (e.currentTarget.style.opacity = '1')}
+                      onMouseLeave={(e) => (e.currentTarget.style.opacity = '0.85')}
+                    >
+                      Replay
+                    </button>
                   </div>
                 )}
 
@@ -1281,11 +1518,11 @@ export default function StudentDashboard({ currentUser, onLogout, onEnterClassro
       </AnimatePresence>
 
       {/* VIDEO PREVIEW MODAL */}
-      {playVideo && videoData && (
+      {activePlayingVideo && (
         <VideoPreviewModal 
-          src={videoData.src} 
-          name={videoData.name} 
-          onClose={() => setPlayVideo(false)} 
+          src={activePlayingVideo.src} 
+          name={activePlayingVideo.title} 
+          onClose={() => setActivePlayingVideo(null)} 
         />
       )}
 

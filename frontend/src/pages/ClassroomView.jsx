@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useLayoutEffect, useRef, useMemo } from 'react';
 import ProfileMenu from './ProfileMenu';
+import ClassroomSettings from './ClassroomSettings';
 import { 
   Calendar, ClipboardList, Settings, MessageSquare, FileText, PlayCircle, MoreVertical, ArrowLeft, X, Link2, 
-  Menu, Home, Archive, Info, Users, BookOpen, ChevronRight, CheckCircle2, TerminalSquare, Plus, Code2, Award, Clock, ArrowUpRight, ArrowRight
+  Menu, Home, Archive, Info, Users, BookOpen, ChevronRight, CheckCircle2, TerminalSquare, Plus, Code2, Award, Clock, ArrowUpRight, ArrowRight,
+  Video
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { apiFetch } from '../utils/api';
@@ -10,7 +12,7 @@ import Skeleton from '../components/Skeleton';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { useSidebarNav } from '../hooks/useSidebarNav';
 import { useMediaQuery } from '../hooks/useMediaQuery';
-import { THEME_PRESETS, getClassroomTheme, saveClassroomTheme, getClassroomStorageKey, getCachedClassrooms, saveCachedClassrooms, sortClassroomsAlphabetically } from '../utils/classroomUtils';
+import { THEME_PRESETS, getClassroomTheme, saveClassroomTheme, getClassroomStorageKey, getCachedClassrooms, saveCachedClassrooms, sortClassroomsAlphabetically, getLessonType } from '../utils/classroomUtils';
 import ImagePreviewModal from '../components/ImagePreviewModal';
 import VideoPreviewModal from '../components/VideoPreviewModal';
 import IframePreviewModal from '../components/IframePreviewModal';
@@ -110,6 +112,7 @@ export default function ClassroomView({
   const [previewVideo, setPreviewVideo] = useState(null);
   const [previewIframe, setPreviewIframe] = useState(null);
   const [isFadingOut, setIsFadingOut] = useState(false);
+  const [isClassroomSettingsOpen, setIsClassroomSettingsOpen] = useState(false);
 
   const handleInstructionClick = (e) => {
     const anchor = e.target.closest('a');
@@ -889,7 +892,7 @@ export default function ClassroomView({
             );
           })}
 
-          <button onClick={() => onNavigateView && onNavigateView('settings')} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '10px', borderRadius: '50px', backgroundColor: 'transparent', color: textMuted, border: 'none', cursor: 'pointer', marginLeft: '8px' }}>
+          <button onClick={() => setIsClassroomSettingsOpen(true)} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '10px', borderRadius: '50px', backgroundColor: 'transparent', color: textMuted, border: 'none', cursor: 'pointer', marginLeft: '8px' }}>
             <Settings size={20} />
             <span style={{ marginLeft: '8px', fontWeight: '600', fontSize: '0.9rem' }}>Settings</span>
           </button>
@@ -965,10 +968,13 @@ export default function ClassroomView({
 
           {/* Middle row */}
           <div style={{ position: 'relative', zIndex: 1, padding: '0 32px' }}>
-             <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px' }}>
-               <div style={{ backgroundColor: '#dcfce7', color: '#065f46', padding: '4px 12px', borderRadius: '50px', fontSize: '0.75rem', fontWeight: 'bold' }}>{classroom?.code || 'CS101'}</div>
-               <span style={{ color: 'white', fontSize: '0.9rem' }}>{classroom?.section || 'Section A'}</span>
-             </div>
+             {(classroom?.section || classroom?.subject) && (
+               <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '10px' }}>
+                 <span style={{ color: 'white', fontSize: '0.95rem', opacity: 0.9, fontWeight: '500' }}>
+                   {classroom?.section || classroom?.subject}
+                 </span>
+               </div>
+             )}
              <h1 style={{ color: 'white', fontSize: '2.5rem', fontWeight: 'bold', margin: 0 }}>{classroom?.name || 'C# Programming'}</h1>
           </div>
 
@@ -1046,52 +1052,18 @@ export default function ClassroomView({
                    .hide-scroll::-webkit-scrollbar { display: none; }
                  `}} />
                   {upcomingItems.length === 0 ? (
-                    <div style={{ 
+                    <div style={{
                       width: '100%',
-                      backgroundColor: cardBg, 
-                      borderRadius: '16px', 
-                      padding: '20px 24px', 
-                      border: isDark ? '1px solid #333' : '1px solid #e5e7eb', 
-                      display: 'flex', 
-                      alignItems: 'center', 
-                      justifyContent: 'space-between',
-                      gap: '16px',
-                      ...isDark ? {} : { boxShadow: '0 2px 8px rgba(0,0,0,0.03)' }
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '10px',
+                      color: isDark ? '#34d399' : '#059669',
+                      padding: '4px 0'
                     }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
-                        <div style={{ width: '38px', height: '38px', borderRadius: '10px', backgroundColor: isDark ? 'rgba(16, 185, 129, 0.15)' : '#dcfce7', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#10b981', flexShrink: 0 }}>
-                          <CheckCircle2 size={20} />
-                        </div>
-                        <div>
-                          <div style={{ fontWeight: '600', color: isDark ? '#f5f5f5' : '#1e293b', fontSize: '0.95rem' }}>
-                            {visibleClasswork.length > 0 ? "All activities completed!" : "No pending work"}
-                          </div>
-                          <div style={{ fontSize: '0.8rem', color: textMuted, marginTop: '2px' }}>
-                            {visibleClasswork.length > 0 ? "You've submitted all assigned activities for this class." : "No activities assigned yet for this class."}
-                          </div>
-                        </div>
-                      </div>
-                      {visibleClasswork.length > 0 && (
-                        <button
-                          onClick={() => handleTabChange('classwork')}
-                          style={{
-                            background: isDark ? '#242a2b' : '#f1f5f9',
-                            border: isDark ? '1px solid #383e40' : '1px solid #cbd5e1',
-                            color: isDark ? '#e5e5e5' : '#334155',
-                            padding: '7px 14px',
-                            borderRadius: '8px',
-                            fontSize: '0.8rem',
-                            fontWeight: '600',
-                            cursor: 'pointer',
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '6px',
-                            flexShrink: 0
-                          }}
-                        >
-                          View work <ChevronRight size={14} />
-                        </button>
-                      )}
+                      <CheckCircle2 size={20} color={isDark ? '#34d399' : '#10b981'} />
+                      <span style={{ fontWeight: '600', color: isDark ? '#f5f5f5' : '#1e293b', fontSize: '0.95rem' }}>
+                        {visibleClasswork.length > 0 ? "You're all caught up!" : "No pending work"}
+                      </span>
                     </div>
                   ) : (
                    upcomingItems.map(item => (
@@ -1163,13 +1135,13 @@ export default function ClassroomView({
                  {visibleMaterials.length === 0 ? (
                    <div style={{ 
                      gridColumn: '1 / -1', 
-                     backgroundColor: cardBg, 
-                     borderRadius: '16px', 
-                     padding: '24px 20px', 
-                     border: isDark ? '1px solid #333' : '1px solid #e5e7eb', 
+                     backgroundColor: 'transparent', 
+                     borderRadius: '12px', 
+                     padding: '12px 6px', 
+                     border: 'none', 
                      display: 'flex', 
                      alignItems: 'center', 
-                     gap: '14px', 
+                     gap: '12px', 
                      color: textMuted, 
                      fontSize: '0.88rem', 
                      fontStyle: 'italic' 
@@ -1178,49 +1150,19 @@ export default function ClassroomView({
                      <span>No learning materials uploaded yet for this class.</span>
                    </div>
                  ) : unseenMaterials.length === 0 ? (
-                   <div style={{ 
-                     gridColumn: '1 / -1', 
-                     backgroundColor: cardBg, 
-                     borderRadius: '16px', 
-                     padding: '20px 24px', 
-                     border: isDark ? '1px solid #333' : '1px solid #e5e7eb', 
-                     display: 'flex', 
-                     alignItems: 'center', 
-                     justifyContent: 'space-between',
-                     gap: '14px', 
-                     color: textMuted, 
-                     fontSize: '0.88rem',
-                     ...isDark ? {} : { boxShadow: '0 2px 8px rgba(0,0,0,0.03)' }
-                   }}>
-                     <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
-                       <div style={{ width: '38px', height: '38px', borderRadius: '10px', backgroundColor: isDark ? 'rgba(16, 185, 129, 0.15)' : '#dcfce7', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#10b981', flexShrink: 0 }}>
-                         <CheckCircle2 size={20} />
-                       </div>
-                       <div>
-                         <div style={{ fontWeight: '600', color: isDark ? '#f5f5f5' : '#1e293b', fontSize: '0.95rem' }}>You're all caught up!</div>
-                         <div style={{ fontSize: '0.8rem', color: textMuted, marginTop: '2px' }}>All learning materials have been viewed. You can review them anytime in the library.</div>
-                       </div>
-                     </div>
-                     <button
-                       onClick={() => handleTabChange('materials')}
-                       style={{
-                         background: isDark ? '#242a2b' : '#f1f5f9',
-                         border: isDark ? '1px solid #383e40' : '1px solid #cbd5e1',
-                         color: isDark ? '#e5e5e5' : '#334155',
-                         padding: '7px 14px',
-                         borderRadius: '8px',
-                         fontSize: '0.8rem',
-                         fontWeight: '600',
-                         cursor: 'pointer',
-                         display: 'flex',
-                         alignItems: 'center',
-                         gap: '6px',
-                         flexShrink: 0
-                       }}
-                     >
-                       View in library <ChevronRight size={14} />
-                     </button>
-                   </div>
+                    <div style={{
+                      gridColumn: '1 / -1',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '10px',
+                      color: isDark ? '#34d399' : '#059669',
+                      padding: '4px 0'
+                    }}>
+                      <CheckCircle2 size={20} color={isDark ? '#34d399' : '#10b981'} />
+                      <span style={{ fontWeight: '600', color: isDark ? '#f5f5f5' : '#1e293b', fontSize: '0.95rem' }}>
+                        You're all caught up!
+                      </span>
+                    </div>
                  ) : (
                    unseenMaterials.slice(0, 6).map((item) => {
                      const hasVideo = item.attachments?.some(a => a?.type?.toLowerCase()?.includes('video') || a?.type === 'youtube');
@@ -1231,18 +1173,19 @@ export default function ClassroomView({
                      let iconBg = '#dcfce7';
                      let iconColor = '#059669';
 
-                     if (hasVideo) {
-                       iconNode = <PlayCircle size={20} />;
-                       iconBg = '#fef3c7';
-                       iconColor = '#d97706';
-                     } else if (hasCode) {
-                       iconNode = <TerminalSquare size={20} />;
-                       iconBg = '#e0f2fe';
-                       iconColor = '#0284c7';
-                     } else if (hasLink) {
+                     const lessonType = getLessonType(item);
+                     if (lessonType === 'video') {
+                       iconNode = <Video size={20} />;
+                       iconBg = isDark ? 'rgba(245, 158, 11, 0.15)' : '#fef3c7';
+                       iconColor = isDark ? '#fbbf24' : '#d97706';
+                     } else if (lessonType === 'link') {
                        iconNode = <Link2 size={20} />;
-                       iconBg = '#e0f2fe';
-                       iconColor = '#0284c7';
+                       iconBg = isDark ? 'rgba(56, 189, 248, 0.15)' : '#e0f2fe';
+                       iconColor = isDark ? '#38bdf8' : '#0284c7';
+                     } else {
+                       iconNode = <FileText size={20} />;
+                       iconBg = isDark ? 'rgba(16, 185, 129, 0.15)' : '#dcfce7';
+                       iconColor = isDark ? '#34d399' : '#059669';
                      }
 
                      const attCount = item.attachments?.length || 0;
@@ -1259,17 +1202,23 @@ export default function ClassroomView({
                            handleTabChange('materials');
                          }}
                          style={{ 
-                           backgroundColor: cardBg, 
-                           borderRadius: '16px', 
-                           padding: '16px 18px', 
-                           border: isDark ? '1px solid #333' : '1px solid #e5e7eb', 
+                           backgroundColor: 'transparent', 
+                           border: 'none', 
+                           boxShadow: 'none', 
+                           borderRadius: '12px', 
+                           padding: '8px 10px', 
                            display: 'flex', 
                            alignItems: 'center', 
                            gap: '14px',
                            cursor: 'pointer',
-                           transition: 'all 0.2s ease',
-                           userSelect: 'none',
-                           ...isDark ? {} : { boxShadow: '0 2px 8px rgba(0,0,0,0.03)' }
+                           transition: 'background-color 0.2s ease, transform 0.15s ease',
+                           userSelect: 'none'
+                         }}
+                         onMouseEnter={(e) => {
+                           e.currentTarget.style.backgroundColor = isDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.04)';
+                         }}
+                         onMouseLeave={(e) => {
+                           e.currentTarget.style.backgroundColor = 'transparent';
                          }}
                        >
                          <div style={{ width: '40px', height: '40px', borderRadius: '10px', backgroundColor: iconBg, display: 'flex', alignItems: 'center', justifyContent: 'center', color: iconColor, flexShrink: 0 }}>
@@ -1625,12 +1574,10 @@ export default function ClassroomView({
                     {loadingAssignments ? (
                       Array.from({ length: 3 }).map((_, i) => <Skeleton.AssignmentRow key={i} />)
                     ) : visibleMaterials.length === 0 ? (
-                      <div style={{ padding: '40px 0', textAlign: 'center', color: isDark ? '#a3a3a3' : '#94a3b8' }}>
-                        <div style={{ marginBottom: '16px' }}>
-                          <FileText size={48} color={isDark ? '#525252' : '#94a3b8'} style={{ margin: '0 auto' }} />
-                        </div>
-                        <p style={{ margin: '0 0 12px 0', fontSize: '1.1rem', fontWeight: '600', color: isDark ? '#e5e5e5' : '#334155' }}>No materials available</p>
-                        <p style={{ margin: 0, fontSize: '0.9rem' }}>Check back later once your instructor uploads course resources.</p>
+                      <div style={{ textAlign: 'center', padding: '40px 20px', color: isDark ? '#a3a3a3' : '#94a3b8' }}>
+                        <FileText size={48} color={isDark ? '#404040' : '#cbd5e1'} style={{ margin: '0 auto 12px auto', display: 'block' }} />
+                        <p style={{ margin: 0, fontSize: '1rem', fontWeight: '600', color: isDark ? '#f5f5f5' : 'inherit' }}>No materials available</p>
+                        <p style={{ margin: '6px 0 0 0', fontSize: '0.85rem', color: isDark ? '#737373' : 'inherit' }}>Check back later once your instructor uploads course resources.</p>
                       </div>
                     ) : (
                       visibleMaterials.map((item) => {
@@ -1670,10 +1617,24 @@ export default function ClassroomView({
                                 }}
                               >
                                 <div style={{ display: 'flex', alignItems: 'center' }}>
-                                  {/* Icon Container */}
-                                  <div style={{ width: '36px', height: '36px', borderRadius: '10px', backgroundColor: isDark ? 'rgba(16, 185, 129, 0.12)' : '#dcfce7', border: isDark ? '1px solid rgba(16, 185, 129, 0.25)' : 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#10b981', marginRight: '16px', flexShrink: 0 }}>
-                                    <FileText size={18} />
-                                  </div>
+                                  {/* Icon Container: Video, Document, or Link */}
+                                  {(() => {
+                                    const lessonType = getLessonType(item);
+                                    let bg = isDark ? 'rgba(16, 185, 129, 0.12)' : '#dcfce7';
+                                    let color = '#10b981';
+                                    if (lessonType === 'video') {
+                                      bg = isDark ? 'rgba(245, 158, 11, 0.15)' : '#fef3c7';
+                                      color = isDark ? '#fbbf24' : '#d97706';
+                                    } else if (lessonType === 'link') {
+                                      bg = isDark ? 'rgba(56, 189, 248, 0.15)' : '#e0f2fe';
+                                      color = isDark ? '#38bdf8' : '#0284c7';
+                                    }
+                                    return (
+                                      <div style={{ width: '36px', height: '36px', borderRadius: '10px', backgroundColor: bg, border: isDark ? `1px solid ${color}40` : 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', color: color, marginRight: '16px', flexShrink: 0 }}>
+                                        {lessonType === 'video' ? <Video size={18} /> : lessonType === 'link' ? <Link2 size={18} /> : <FileText size={18} />}
+                                      </div>
+                                    );
+                                  })()}
                                   
                                   <span style={{ color: isDark ? '#f5f5f5' : '#1e293b', fontSize: '1.05rem', fontWeight: '700' }}>{item.title}</span>
                                 </div>
@@ -1708,7 +1669,12 @@ export default function ClassroomView({
                                 >
                                   <div style={styles.detailCard}>
                                     <div style={styles.detailHeaderBar}>
-                                      <FileText size={30} color={isDark ? '#10b981' : '#4b5563'} />
+                                      {(() => {
+                                        const lessonType = getLessonType(item);
+                                        if (lessonType === 'video') return <Video size={30} color={isDark ? '#fbbf24' : '#d97706'} />;
+                                        if (lessonType === 'link') return <Link2 size={30} color={isDark ? '#38bdf8' : '#0284c7'} />;
+                                        return <FileText size={30} color={isDark ? '#10b981' : '#059669'} />;
+                                      })()}
                                       <div>
                                         <div style={styles.detailTitle}>{item.title}</div>
                                       </div>
@@ -1871,6 +1837,14 @@ export default function ClassroomView({
         onSuccess={() => setRefreshStudentsKey(k => k + 1)}
         isDark={isDark}
       />
+
+      {isClassroomSettingsOpen && (
+        <ClassroomSettings
+          classroom={classroom}
+          onClose={() => setIsClassroomSettingsOpen(false)}
+          role="student"
+        />
+      )}
 
       {/* MOBILE BOTTOM NAVIGATION */}
       {isMobile && (

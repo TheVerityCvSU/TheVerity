@@ -53,6 +53,7 @@ export default function CompilerView() {
   // Terminal resize (drag handle)
   const [termH, setTermH]               = useState(DEFAULT_TERMINAL_H);
   const [termCollapsed, setTermCollapsed] = useState(false);
+  const [isResizingTerminal, setIsResizingTerminal] = useState(false);
   const isDraggingRef = useRef(false);
   const startYRef     = useRef(0);
   const startHRef     = useRef(DEFAULT_TERMINAL_H);
@@ -375,27 +376,56 @@ export default function CompilerView() {
 
   // Drag-to-resize terminal
   const onDividerDown = (e) => {
-    if (termCollapsed) return;
+    e.preventDefault();
     isDraggingRef.current = true;
-    startYRef.current  = e.clientY;
-    startHRef.current  = termH;
+    setIsResizingTerminal(true);
+
+    const clientY = e.clientY ?? e.touches?.[0]?.clientY ?? 0;
+    startYRef.current = clientY;
+
+    // Immediately un-collapse so drag visually updates in real time
+    let curHeight = termH;
+    if (termCollapsed) {
+      curHeight = 36;
+      setTermCollapsed(false);
+    }
+    startHRef.current = curHeight;
+    setTermH(curHeight);
+
     document.body.style.cursor     = 'row-resize';
     document.body.style.userSelect = 'none';
 
     const onMove = (ev) => {
       if (!isDraggingRef.current) return;
-      const delta = startYRef.current - ev.clientY;
-      setTermH(Math.max(MIN_TERMINAL_H, Math.min(startHRef.current + delta, 520)));
+      const currentY = ev.clientY ?? ev.touches?.[0]?.clientY;
+      if (currentY === undefined) return;
+      const delta = startYRef.current - currentY;
+      const minHeight = 60;
+      const maxHeight = Math.max(minHeight, Math.round(window.innerHeight * 0.85));
+      setTermH(Math.max(minHeight, Math.min(startHRef.current + delta, maxHeight)));
+      if (editorRef.current) {
+        editorRef.current.layout();
+      }
     };
     const onUp = () => {
       isDraggingRef.current = false;
+      setIsResizingTerminal(false);
       document.body.style.cursor     = '';
       document.body.style.userSelect = '';
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
+      window.removeEventListener('touchmove', onMove);
+      window.removeEventListener('touchend', onUp);
+      setTimeout(() => {
+        if (editorRef.current) {
+          editorRef.current.layout();
+        }
+      }, 50);
     };
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
+    window.addEventListener('touchmove', onMove, { passive: false });
+    window.addEventListener('touchend', onUp);
   };
 
   // ── Colors ── (exactly matches StudentView)
@@ -670,7 +700,7 @@ export default function CompilerView() {
         </div>
 
         {/* Monaco Editor */}
-        <div style={{ flex: 1, minHeight: 0, position: 'relative' }}>
+        <div style={{ flex: 1, minHeight: 0, position: 'relative', pointerEvents: isResizingTerminal ? 'none' : 'auto' }}>
           <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, width: '100%', height: '100%' }}>
             <Editor
               height="100%"
@@ -712,24 +742,45 @@ export default function CompilerView() {
         </div>
       </div>
 
+      {/* Full-screen invisible drag overlay to prevent iframe / Monaco pointer interception */}
+      {isResizingTerminal && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 99999,
+            cursor: 'row-resize',
+            backgroundColor: 'transparent',
+            userSelect: 'none',
+          }}
+        />
+      )}
+
       {/* ══ RESIZE HANDLE (matches StudentView resizeHandle) ═══ */}
       <div
         onMouseDown={onDividerDown}
+        onTouchStart={onDividerDown}
         style={{
-          height: '6px', flexShrink: 0,
-          backgroundColor: handleBg,
-          borderTop: `1px solid ${handleBdr}`,
-          borderBottom: `1px solid ${handleBdr}`,
-          cursor: termCollapsed ? 'default' : 'row-resize',
+          height: '10px',
+          flexShrink: 0,
+          zIndex: 15,
+          cursor: 'row-resize',
+          touchAction: 'none',
+          backgroundColor: isResizingTerminal ? '#10b981' : (isDark ? '#262626' : '#e5e7eb'),
+          borderTop: isResizingTerminal ? '1px solid #10b981' : `1px solid ${handleBdr}`,
+          borderBottom: isResizingTerminal ? '1px solid #10b981' : `1px solid ${handleBdr}`,
+          boxShadow: isResizingTerminal ? '0 0 10px rgba(16, 185, 129, 0.45)' : 'none',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           userSelect: 'none',
-          transition: 'background-color 0.15s ease',
+          transition: 'background-color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease',
         }}
+        title="Drag up or down to resize terminal"
       >
         <div style={{
-          width: '36px', height: '2px',
-          backgroundColor: isDark ? '#555555' : '#9ca3af',
-          borderRadius: '2px',
+          width: '48px',
+          height: '4px',
+          borderRadius: '4px',
+          backgroundColor: isResizingTerminal ? '#ffffff' : (isDark ? '#555555' : '#9ca3af'),
         }} />
       </div>
 
@@ -741,18 +792,32 @@ export default function CompilerView() {
         flexShrink: 0,
         overflow: 'hidden',
         height: termCollapsed ? '36px' : `${termH}px`,
-        minHeight: termCollapsed ? '36px' : `${MIN_TERMINAL_H}px`,
-        maxHeight: '75vh',
-        transition: 'height 0.15s ease',
+        minHeight: termCollapsed ? '36px' : '60px',
+        maxHeight: '85vh',
+        transition: isResizingTerminal ? 'none' : 'height 0.15s ease',
       }}>
         {/* Terminal header */}
-        <div style={{
-          height: '36px', minHeight: '36px', flexShrink: 0,
-          backgroundColor: termHdrBg,
-          borderBottom: termCollapsed ? 'none' : termHdrBdr,
-          padding: '0 14px',
-          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        }}>
+        <div
+          onMouseDown={(e) => {
+            if (e.target.closest('button') || e.target.closest('input')) return;
+            onDividerDown(e);
+          }}
+          onTouchStart={(e) => {
+            if (e.target.closest('button') || e.target.closest('input')) return;
+            onDividerDown(e);
+          }}
+          onDoubleClick={() => setTermCollapsed(p => !p)}
+          style={{
+            height: '36px', minHeight: '36px', flexShrink: 0,
+            backgroundColor: termHdrBg,
+            borderBottom: termCollapsed ? 'none' : termHdrBdr,
+            padding: '0 14px',
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            cursor: 'row-resize',
+            userSelect: 'none',
+          }}
+          title="Drag up or down to resize, double-click to toggle"
+        >
           {/* Left: TABS */}
           <div style={{ display: 'flex', alignItems: 'center', height: '100%' }}>
             <button

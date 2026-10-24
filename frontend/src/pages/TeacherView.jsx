@@ -36,7 +36,8 @@ export default function TeacherView({
   initialStudent,
   onBack,
   onLogout,
-  mode = 'live'
+  mode = 'live',
+  onSwitchMode
 }) {
   const { isDark, toggle: toggleDarkMode } = useDarkMode();
 
@@ -161,6 +162,11 @@ export default function TeacherView({
   const playTimerRef = useRef(null);
   const animFrameRef = useRef(null);
   const stepTimingRef = useRef(null);
+  const progressLineRef = useRef(null);
+  const progressThumbRef = useRef(null);
+  const smoothProgressRef = useRef(0);
+  const currentIdxRef = useRef(0);
+  const currentAnimTimeRef = useRef(0);
 
   const [notifSettings, setNotifSettings] = useState({
     soundAlerts: true,
@@ -191,9 +197,14 @@ export default function TeacherView({
     };
   }, []);
 
-  // Load submissions from backend and localStorage (only for playback mode)
+  // I-track ang submitted students para hiwalay sa Live
+  const [submittedStudentNames, setSubmittedStudentNames] = useState(() => new Set());
+  const submittedStudentNamesRef = useRef(submittedStudentNames);
+  submittedStudentNamesRef.current = submittedStudentNames;
+
+  // Kuhanin ang submissions sa backend at localStorage
   useEffect(() => {
-    if (!assignment?.id || mode === 'live') return;
+    if (!assignment?.id) return;
 
     apiFetch(
       `${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/submissions/${assignment.id}`
@@ -201,78 +212,90 @@ export default function TeacherView({
       .then((res) => res.json())
       .then((data) => {
         const subs = Array.isArray(data?.submissions) ? data.submissions : [];
-        setStudents((prev) => {
-          const next = { ...prev };
-          subs.forEach((s) => {
-            const sName = s.student_name || s.studentName || 'Unknown';
-            const hist = Array.isArray(s.history) ? s.history : [];
-            const finalCode =
-              s.finalCode || (hist.length > 0 ? hist[hist.length - 1]?.code : '') || '';
-            const existing = next[sName] || {};
-            const combinedHist =
-              hist.length > 0
-                ? hist
-                : existing.codeHistory || [{ time: Date.now(), code: finalCode }];
-            next[sName] = {
-              ...existing,
-              id: sName,
-              name: sName,
-              status: (mode === 'live' && existing.status === 'Live') ? 'Live' : 'Submitted',
-              code: finalCode || existing.code || '',
-              codeHistory: combinedHist,
-              logs: existing.logs || []
-            };
-          });
-          return next;
+        const newSubmittedSet = new Set();
+        subs.forEach((s) => {
+          const sName = String(s.student_name || s.studentName || '').trim().toLowerCase();
+          const sId = String(s.student_id || s.studentId || '').trim().toLowerCase();
+          if (sName) newSubmittedSet.add(sName);
+          if (sId) newSubmittedSet.add(sId);
         });
-      })
-      .catch(() => {});
 
-    try {
-      const cId = classroom?.id ?? 'default';
-      const aId = assignment.id;
-      for (let i = 0; i < localStorage.length; i++) {
-        const key = localStorage.key(i);
-        if (
-          key &&
-          (key.startsWith(`verity_sub_${cId}_${aId}_`) ||
-            key.startsWith(`verity_sub_default_${aId}_`))
-        ) {
-          const val = JSON.parse(localStorage.getItem(key));
-          if (val && (val.studentName || val.studentId)) {
-            const sName = val.studentName || val.studentId;
-            const hist =
-              Array.isArray(val.codeHistory) && val.codeHistory.length > 0
-                ? val.codeHistory
-                : [{ time: Date.now(), code: val.finalCode || '' }];
-            setStudents((prev) => {
-              const existing = prev[sName] || {};
-              const longerHist =
-                val.codeHistory &&
-                val.codeHistory.length > (existing.codeHistory?.length || 0)
-                  ? val.codeHistory
-                  : existing.codeHistory || hist;
-              return {
-                ...prev,
-                [sName]: {
-                  ...existing,
-                  id: sName,
-                  name: sName,
-                  status: (mode === 'live' && existing.status === 'Live') ? 'Live' : 'Submitted',
-                  code:
-                    val.finalCode ||
-                    existing.code ||
-                    (longerHist.length > 0 ? longerHist[longerHist.length - 1]?.code : ''),
-                  codeHistory: longerHist,
-                  logs: existing.logs || []
-                }
+        // I-check din ang submissions sa local storage
+        try {
+          const cId = classroom?.id ?? 'default';
+          const aId = assignment.id;
+          for (let i = 0; i < localStorage.length; i++) {
+            const key = localStorage.key(i);
+            if (
+              key &&
+              (key.startsWith(`verity_sub_${cId}_${aId}_`) ||
+                key.startsWith(`verity_sub_default_${aId}_`))
+            ) {
+              const val = JSON.parse(localStorage.getItem(key));
+              if (val && (val.studentName || val.studentId)) {
+                const sName = String(val.studentName || '').trim().toLowerCase();
+                const sId = String(val.studentId || '').trim().toLowerCase();
+                if (sName) newSubmittedSet.add(sName);
+                if (sId) newSubmittedSet.add(sId);
+              }
+            }
+          }
+        } catch {}
+
+        setSubmittedStudentNames(newSubmittedSet);
+
+        if (mode === 'live') {
+          // Tanggalin sa live monitoring kapag submitted na si student
+          setStudents((prev) => {
+            const next = { ...prev };
+            let changed = false;
+            for (const [k, s] of Object.entries(next)) {
+              const curName = String(s.name || s.studentName || '').trim().toLowerCase();
+              const curId = String(s.id || s.studentId || '').trim().toLowerCase();
+              const kStr = String(k).trim().toLowerCase();
+              if (
+                newSubmittedSet.has(curName) ||
+                newSubmittedSet.has(curId) ||
+                newSubmittedSet.has(kStr) ||
+                s.status === 'Submitted'
+              ) {
+                delete next[k];
+                changed = true;
+              }
+            }
+            return changed ? next : prev;
+          });
+        } else {
+          // Sa replay mode, i-load ang submissions para ma-play
+          setStudents((prev) => {
+            const next = { ...prev };
+            subs.forEach((s) => {
+              const sName = s.student_name || s.studentName || 'Unknown';
+              const hist = Array.isArray(s.history) ? s.history : [];
+              const finalCode =
+                s.finalCode || (hist.length > 0 ? hist[hist.length - 1]?.code : '') || '';
+              const existing = next[sName] || {};
+              const combinedHist =
+                hist.length > 0
+                  ? hist
+                  : existing.codeHistory || [{ time: Date.now(), code: finalCode }];
+              next[sName] = {
+                ...existing,
+                id: sName,
+                name: sName,
+                status: 'Submitted',
+                isLive: false,
+                code: finalCode || existing.code || '',
+                codeHistory: combinedHist,
+                logs: existing.logs || []
               };
             });
-          }
+            return next;
+          });
         }
-      }
-    } catch {}
-  }, [assignment?.id, classroom?.id]);
+      })
+      .catch(() => {});
+  }, [assignment?.id, classroom?.id, mode]);
 
   // Load session proctor warning logs
   useEffect(() => {
@@ -355,15 +378,35 @@ export default function TeacherView({
   }, [initialStudent, classroom?.id, assignment?.id]);
 
   useEffect(() => {
-    const liveKeys = Object.keys(students).filter((k) => students[k] && students[k].isLive !== false && students[k].status !== 'Offline');
-    if (liveKeys.length > 0) {
-      if (!selectedStudentId || !students[selectedStudentId] || students[selectedStudentId].status === 'Offline') {
-        setSelectedStudentId(liveKeys[0]);
+    if (mode === 'live') {
+      const liveKeys = Object.keys(students).filter((k) => {
+        const s = students[k];
+        if (!s || s.isLive === false || s.status === 'Offline' || s.status === 'Submitted') return false;
+        const sNameLower = String(s.name || s.studentName || '').trim().toLowerCase();
+        const sIdLower = String(s.id || s.studentId || '').trim().toLowerCase();
+        const kLower = String(k).trim().toLowerCase();
+        return !submittedStudentNames.has(sNameLower) && !submittedStudentNames.has(sIdLower) && !submittedStudentNames.has(kLower);
+      });
+      if (liveKeys.length > 0) {
+        const currentStudent = students[selectedStudentId];
+        const curName = String(currentStudent?.name || currentStudent?.studentName || '').trim().toLowerCase();
+        const curId = String(currentStudent?.id || currentStudent?.studentId || selectedStudentId || '').trim().toLowerCase();
+        const isCurrentValid = currentStudent && currentStudent.status === 'Live' && !submittedStudentNames.has(curName) && !submittedStudentNames.has(curId);
+        if (!isCurrentValid) {
+          setSelectedStudentId(liveKeys[0]);
+        }
+      } else {
+        setSelectedStudentId(null);
       }
-    } else if (selectedStudentId && (!students[selectedStudentId] || students[selectedStudentId].status === 'Offline')) {
-      setSelectedStudentId(null);
+    } else {
+      const validKeys = Object.keys(students).filter((k) => students[k] && (students[k].status === 'Submitted' || students[k].status === 'Graded' || (Array.isArray(students[k].codeHistory) && students[k].codeHistory.length > 0) || Boolean(students[k].code || students[k].finalCode)));
+      if (validKeys.length > 0) {
+        if (!selectedStudentId || !students[selectedStudentId]) {
+          setSelectedStudentId(validKeys[0]);
+        }
+      }
     }
-  }, [students, selectedStudentId]);
+  }, [students, selectedStudentId, mode, submittedStudentNames]);
 
   // Load backend grades
   useEffect(() => {
@@ -418,10 +461,14 @@ export default function TeacherView({
   const assignmentInstruction = assignment?.details || '';
 
   useEffect(() => {
+    if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
+    if (playTimerRef.current) clearTimeout(playTimerRef.current);
     setPlaybackIndex(-1);
     setIsPlaying(false);
     setEvalOutput('');
-  }, [selectedStudentId]);
+    currentAnimTimeRef.current = 0;
+    smoothProgressRef.current = 0;
+  }, [selectedStudentId, mode]);
 
   useEffect(() => {
     if (assignmentInstruction && socket) {
@@ -483,10 +530,44 @@ export default function TeacherView({
         }
         const studentId = String(data.studentId || data.id || data.name || '');
         const studentName = String(data.name || data.studentName || studentId || 'Student').trim();
+        const studentIdLower = studentId.toLowerCase();
+        const studentNameLower = studentName.toLowerCase();
 
         const incomingLogs = Array.isArray(data.logs) ? data.logs : [];
         if (incomingLogs.length > 0) {
           mergeWarningLogs(incomingLogs);
+        }
+
+        // If in live mode and student has submitted or is in submitted set, REMOVE them and do not add
+        if (mode === 'live') {
+          const isSubmitted =
+            data.status === 'Submitted' ||
+            Boolean(data.submitted) ||
+            submittedStudentNamesRef.current.has(studentNameLower) ||
+            submittedStudentNamesRef.current.has(studentIdLower);
+
+          if (isSubmitted) {
+            setStudents((prev) => {
+              const next = { ...prev };
+              let changed = false;
+              for (const [k, s] of Object.entries(next)) {
+                const curId = String(s.id || s.studentId || '').trim().toLowerCase();
+                const curName = String(s.name || s.studentName || '').trim().toLowerCase();
+                const kStr = String(k).trim().toLowerCase();
+                if (
+                  curId === studentIdLower ||
+                  curName === studentNameLower ||
+                  kStr === studentIdLower ||
+                  kStr === studentNameLower
+                ) {
+                  delete next[k];
+                  changed = true;
+                }
+              }
+              return changed ? next : prev;
+            });
+            return;
+          }
         }
 
         setStudents((prev) => {
@@ -591,6 +672,19 @@ export default function TeacherView({
 
         // Merge into persistent session warnings immediately
         mergeWarningLogs([newLog]);
+
+        if (mode === 'live') {
+          const isSubmitted =
+            data.status === 'Submitted' ||
+            Boolean(data.submitted) ||
+            submittedStudentNamesRef.current.has(studentName.toLowerCase()) ||
+            submittedStudentNamesRef.current.has(studentId.toLowerCase());
+
+          if (isSubmitted) {
+            // Still merge warning into persistent session logs, but DO NOT re-add to live roster
+            return;
+          }
+        }
 
         setStudents((prev) => {
           const sKey =
@@ -716,7 +810,7 @@ export default function TeacherView({
           return;
         }
 
-        // When student leaves workspace or switches activity, remove them from active live monitoring roster
+        // Pag umalis o lumipat si student, tanggalin sa live roster
         const targetId = String(studentId || '');
         const targetName = String(studentName || '').trim().toLowerCase();
 
@@ -748,29 +842,68 @@ export default function TeacherView({
     }
 
     socket.on('teacher_receive_submission', (data) => {
-      const sName = data.studentName || data.studentId;
-      const sId = data.studentId || data.studentName;
-      setStudents((prev) => {
-        const sKey =
-          Object.keys(prev).find(
-            (k) => prev[k].id === sId || prev[k].name === sName || k === sName || k === sId
-          ) || sName;
-        const existing = prev[sKey] || { id: sId, name: sName, code: '', logs: [] };
-        return {
-          ...prev,
-          [sKey]: {
-            ...existing,
-            id: sId,
-            studentId: sId,
-            name: sName,
-            studentName: sName,
-            status: 'Submitted',
-            isLive: false,
-            code: data.finalCode || data.code || existing.code,
-            codeHistory: data.codeHistory || existing.codeHistory || []
-          }
-        };
+      const sName = String(data.studentName || data.studentId || '').trim();
+      const sId = String(data.studentId || data.studentName || '').trim();
+      const sNameLower = sName.toLowerCase();
+      const targetId = sId.toLowerCase();
+
+      // I-save agad sa submitted list
+      setSubmittedStudentNames((prev) => {
+        const next = new Set(prev);
+        if (sNameLower) next.add(sNameLower);
+        if (targetId) next.add(targetId);
+        return next;
       });
+
+      // Tanggalin agad sa live monitoring kapag nag-submit
+      if (mode === 'live') {
+        setStudents((prev) => {
+          const next = { ...prev };
+          for (const [k, s] of Object.entries(next)) {
+            const curId = String(s.id || s.studentId || '').trim().toLowerCase();
+            const curName = String(s.name || s.studentName || '').trim().toLowerCase();
+            const kStr = String(k).trim().toLowerCase();
+
+            if (
+              (targetId && (curId === targetId || kStr === targetId)) ||
+              (sNameLower && (curName === sNameLower || kStr === sNameLower))
+            ) {
+              delete next[k];
+            }
+          }
+          return next;
+        });
+
+        setSelectedStudentId((prev) => {
+          const prevStr = String(prev || '').trim().toLowerCase();
+          if (prevStr === targetId || prevStr === sNameLower) {
+            return null;
+          }
+          return prev;
+        });
+      } else {
+        setStudents((prev) => {
+          const sKey =
+            Object.keys(prev).find(
+              (k) => prev[k].id === sId || prev[k].name === sName || k === sName || k === sId
+            ) || sName;
+          const existing = prev[sKey] || { id: sId, name: sName, code: '', logs: [] };
+          return {
+            ...prev,
+            [sKey]: {
+              ...existing,
+              id: sId,
+              studentId: sId,
+              name: sName,
+              studentName: sName,
+              status: 'Submitted',
+              isLive: false,
+              code: data.finalCode || data.code || existing.code,
+              codeHistory: data.codeHistory || existing.codeHistory || []
+            }
+          };
+        });
+      }
 
       if (notifSettingsRef.current.notifyOnSubmission) {
         setToast({
@@ -865,18 +998,30 @@ export default function TeacherView({
     };
   }, [socket]);
 
-  const activeStudent =
-    students[selectedStudentId] ||
-    Object.values(students).find(
-      (s) =>
-        s.id === selectedStudentId ||
-        s.studentId === selectedStudentId ||
-        s.name === selectedStudentId
-    ) || {
-      name: 'Waiting for students...',
-      code: '// No student selected',
-      logs: []
-    };
+  const activeStudent = useMemo(() => {
+    let s =
+      students[selectedStudentId] ||
+      Object.values(students).find(
+        (st) =>
+          st.id === selectedStudentId ||
+          st.studentId === selectedStudentId ||
+          st.name === selectedStudentId
+      );
+    if (mode === 'live' && s) {
+      const sNameLower = String(s.name || s.studentName || '').trim().toLowerCase();
+      const sIdLower = String(s.id || s.studentId || '').trim().toLowerCase();
+      if (submittedStudentNames.has(sNameLower) || submittedStudentNames.has(sIdLower) || s.status === 'Submitted') {
+        s = null;
+      }
+    }
+    return (
+      s || {
+        name: mode === 'live' ? 'Waiting for students...' : 'Select a student submission',
+        code: mode === 'live' ? '// No student currently live' : '// Select a student to replay their session',
+        logs: []
+      }
+    );
+  }, [students, selectedStudentId, mode, submittedStudentNames]);
 
   const allLogs = useMemo(() => {
     const logs = [];
@@ -1003,49 +1148,150 @@ export default function TeacherView({
     }
   }
 
-  // VCR playback logic
+  // Precompute cumulative playback timeline so the scrubber can glide smoothly without stopping
+  const cumulativeTimes = useMemo(() => {
+    if (!history || history.length < 2) return [0];
+    const times = [0];
+    for (let i = 0; i < history.length - 1; i++) {
+      const rawGap = (history[i + 1].time || 0) - (history[i].time || 0);
+      // Continuous natural pacing: regular typing glides in ~60-90ms, pauses glide in ~150-280ms (never frozen or stopped)
+      const stepDuration = rawGap > 0
+        ? Math.min(Math.max(rawGap * 0.35, 60), 280)
+        : 75;
+      times.push(times[i] + stepDuration);
+    }
+    return times;
+  }, [history]);
+
+  const totalPlaybackDuration = cumulativeTimes[cumulativeTimes.length - 1] || 1;
+
+  // VCR playback logic - ultra-smooth continuous glide
   useEffect(() => {
-    if (!isPlaying) return;
+    if (!isPlaying) {
+      if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
+      if (playTimerRef.current) clearTimeout(playTimerRef.current);
+      return;
+    }
     if (!hasPlayback || history.length < 2) {
       setIsPlaying(false);
       return;
     }
 
-    const startI =
-      playbackIndex < 0 || playbackIndex >= history.length - 1 ? 0 : playbackIndex;
-    setPlaybackIndex(startI);
+    const maxIndex = Math.max(history.length - 1, 1);
+    let currentAnimTime = currentAnimTimeRef.current;
+    if (
+      currentAnimTime < 0 ||
+      currentAnimTime >= totalPlaybackDuration ||
+      (playbackIndex >= 0 && Math.abs(currentAnimTime - (cumulativeTimes[playbackIndex] || 0)) > 2000)
+    ) {
+      const startIdx = playbackIndex < 0 || playbackIndex >= maxIndex ? 0 : playbackIndex;
+      currentAnimTime = cumulativeTimes[startIdx] || 0;
+    }
+    currentAnimTimeRef.current = currentAnimTime;
 
-    const step = (idx) => {
-      if (idx >= history.length - 1) {
+    let lastFrameTimestamp = performance.now();
+    currentIdxRef.current = playbackIndex < 0 ? 0 : playbackIndex;
+
+    const animate = (now) => {
+      const delta = now - lastFrameTimestamp;
+      lastFrameTimestamp = now;
+
+      // Continuously glide forward with elapsed frame time
+      currentAnimTime += delta;
+      currentAnimTimeRef.current = currentAnimTime;
+
+      if (currentAnimTime >= totalPlaybackDuration) {
+        smoothProgressRef.current = 100;
+        currentAnimTimeRef.current = totalPlaybackDuration;
+        if (progressLineRef.current) progressLineRef.current.style.width = '100%';
+        if (progressThumbRef.current) progressThumbRef.current.style.left = '100%';
+        setPlaybackIndex(maxIndex);
         setIsPlaying(false);
         return;
       }
-      const gap = (history[idx + 1].time || 0) - (history[idx].time || 0);
-      const delay = Math.min(Math.max(gap, 40), 800);
-      playTimerRef.current = setTimeout(() => {
-        setPlaybackIndex(idx + 1);
-        step(idx + 1);
-      }, delay);
+
+      // Linear progress across total playback duration for silky glide
+      const progressPercent = Math.min(Math.max((currentAnimTime / totalPlaybackDuration) * 100, 0), 100);
+      smoothProgressRef.current = progressPercent;
+
+      // Update progress bar and thumb directly on every animation frame (60/120fps)
+      if (progressLineRef.current) {
+        progressLineRef.current.style.width = `${progressPercent}%`;
+      }
+      if (progressThumbRef.current) {
+        progressThumbRef.current.style.left = `${progressPercent}%`;
+      }
+
+      // Scan for the keystroke snapshot at currentAnimTime
+      let idx = 0;
+      while (idx < cumulativeTimes.length - 1 && cumulativeTimes[idx + 1] <= currentAnimTime) {
+        idx++;
+      }
+      idx = Math.min(idx, maxIndex);
+
+      // If we crossed a keystroke boundary, update Monaco editor
+      if (idx !== currentIdxRef.current) {
+        currentIdxRef.current = idx;
+        setPlaybackIndex(idx);
+      }
+
+      animFrameRef.current = requestAnimationFrame(animate);
     };
-    step(startI);
+
+    animFrameRef.current = requestAnimationFrame(animate);
 
     return () => {
-      if (playTimerRef.current) clearTimeout(playTimerRef.current);
       if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
+      if (playTimerRef.current) clearTimeout(playTimerRef.current);
     };
-  }, [isPlaying]);
+  }, [isPlaying, hasPlayback, history, cumulativeTimes, totalPlaybackDuration]);
 
   const togglePlay = () => {
     if (!isPlaying) {
-      if (playbackIndex >= history.length - 1 || playbackIndex < 0) {
+      const maxIndex = Math.max(history.length - 1, 1);
+      if (
+        playbackIndex >= maxIndex ||
+        currentAnimTimeRef.current >= totalPlaybackDuration ||
+        playbackIndex < 0
+      ) {
         setPlaybackIndex(0);
+        currentIdxRef.current = 0;
+        currentAnimTimeRef.current = 0;
+        smoothProgressRef.current = 0;
+        if (progressLineRef.current) progressLineRef.current.style.width = '0%';
+        if (progressThumbRef.current) progressThumbRef.current.style.left = '0%';
       }
       setIsPlaying(true);
     } else {
-      if (playTimerRef.current) clearTimeout(playTimerRef.current);
       if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
       setIsPlaying(false);
     }
+  };
+
+  const handleScrub = (targetTime) => {
+    if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
+    if (playTimerRef.current) clearTimeout(playTimerRef.current);
+    setIsPlaying(false);
+
+    const clampedTime = Math.min(Math.max(targetTime, 0), totalPlaybackDuration);
+    currentAnimTimeRef.current = clampedTime;
+
+    const maxIndex = Math.max(history.length - 1, 0);
+    let idx = 0;
+    while (idx < cumulativeTimes.length - 1 && cumulativeTimes[idx + 1] <= clampedTime) {
+      idx++;
+    }
+    idx = Math.min(idx, maxIndex);
+
+    currentIdxRef.current = idx;
+    setPlaybackIndex(idx);
+
+    const percent = totalPlaybackDuration > 0
+      ? Math.min(Math.max((clampedTime / totalPlaybackDuration) * 100, 0), 100)
+      : 0;
+    smoothProgressRef.current = percent;
+    if (progressLineRef.current) progressLineRef.current.style.width = `${percent}%`;
+    if (progressThumbRef.current) progressThumbRef.current.style.left = `${percent}%`;
   };
 
   const handleEvaluate = () => {
@@ -1109,22 +1355,38 @@ export default function TeacherView({
     }
   };
 
-  // Filtered student list for search (in live mode, only students actively doing the activity)
+  // I-filter ang list: sa live mode, active coders lang at bawal ang submitted
   const visibleStudents = useMemo(() => {
     let list = Object.values(students);
     if (mode === 'live') {
-      list = list.filter((s) => s && s.isLive !== false && s.status !== 'Offline');
+      list = list.filter((s) => {
+        if (!s) return false;
+        const sNameLower = String(s.name || s.studentName || '').trim().toLowerCase();
+        const sIdLower = String(s.id || s.studentId || '').trim().toLowerCase();
+        if (submittedStudentNames.has(sNameLower) || submittedStudentNames.has(sIdLower)) {
+          return false;
+        }
+        return s.isLive !== false && s.status === 'Live' && s.status !== 'Submitted' && s.status !== 'Offline';
+      });
+    } else {
+      list = list.filter((s) => s && (s.status === 'Submitted' || s.status === 'Graded' || (Array.isArray(s.codeHistory) && s.codeHistory.length > 0) || Boolean(s.code || s.finalCode)));
     }
     if (!studentSearch.trim()) return list;
     const q = studentSearch.toLowerCase();
     return list.filter((s) => String(s.name || s.studentName || s.id || '').toLowerCase().includes(q));
-  }, [students, studentSearch, mode]);
+  }, [students, studentSearch, mode, submittedStudentNames]);
 
   const liveStudentCount = useMemo(() => {
-    return Object.values(students).filter(
-      (s) => s && s.isLive !== false && s.status !== 'Offline'
-    ).length;
-  }, [students]);
+    return Object.values(students).filter((s) => {
+      if (!s) return false;
+      const sNameLower = String(s.name || s.studentName || '').trim().toLowerCase();
+      const sIdLower = String(s.id || s.studentId || '').trim().toLowerCase();
+      if (submittedStudentNames.has(sNameLower) || submittedStudentNames.has(sIdLower)) {
+        return false;
+      }
+      return s.isLive !== false && s.status === 'Live' && s.status !== 'Submitted' && s.status !== 'Offline';
+    }).length;
+  }, [students, submittedStudentNames]);
 
   const activeStudentCount = useMemo(() => {
     return liveStudentCount;
@@ -1230,7 +1492,7 @@ export default function TeacherView({
 
 
           {/* Breadcrumb info */}
-          <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
               <span
                 style={{
@@ -1242,11 +1504,11 @@ export default function TeacherView({
                   whiteSpace: 'nowrap'
                 }}
               >
-                {assignment?.title || 'Live Proctoring Session'}
+                {assignment?.title || (mode === 'live' ? 'Live Proctoring Session' : 'Replay & Submissions')}
               </span>
 
               {/* Status Indicator */}
-              {mode === 'live' && (
+              {mode === 'live' ? (
                 <span
                   style={{
                     display: 'inline-flex',
@@ -1271,7 +1533,26 @@ export default function TeacherView({
                       backgroundColor: '#ef4444'
                     }}
                   />
-                  LIVE
+                  LIVE MONITORING
+                </span>
+              ) : (
+                <span
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '5px',
+                    padding: '2px 8px',
+                    borderRadius: '9999px',
+                    backgroundColor: isDark ? 'rgba(168, 85, 247, 0.15)' : '#f3e8ff',
+                    color: isDark ? '#c084fc' : '#7e22ce',
+                    fontSize: '0.72rem',
+                    fontWeight: '700',
+                    letterSpacing: '0.04em',
+                    flexShrink: 0
+                  }}
+                >
+                  <PlayCircle size={12} />
+                  VCR REPLAY
                 </span>
               )}
             </div>
@@ -1408,6 +1689,44 @@ export default function TeacherView({
                 {activeStudent.status === 'Graded' ? 'Grade: Done' : 'Grade'}
               </button>
             </>
+          )}
+
+          {/* Mode Switcher: Lipat agad between Live Monitoring at Replay */}
+          {onSwitchMode && (
+            <button
+              onClick={() => onSwitchMode(mode === 'live' ? 'playback' : 'live')}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                padding: isMobile ? '6px 8px' : '7px 12px',
+                backgroundColor: mode === 'live'
+                  ? (isDark ? 'rgba(168, 85, 247, 0.15)' : '#f3e8ff')
+                  : (isDark ? 'rgba(239, 68, 68, 0.15)' : '#fee2e2'),
+                color: mode === 'live'
+                  ? (isDark ? '#c084fc' : '#7e22ce')
+                  : '#ef4444',
+                border: `1px solid ${mode === 'live' ? 'rgba(168, 85, 247, 0.3)' : 'rgba(239, 68, 68, 0.3)'}`,
+                borderRadius: '8px',
+                cursor: 'pointer',
+                fontWeight: '700',
+                fontSize: '0.82rem',
+                transition: 'all 0.15s ease'
+              }}
+              title={mode === 'live' ? 'Switch to Replay & Submissions Page' : 'Switch to Live Monitoring Page'}
+            >
+              {mode === 'live' ? (
+                <>
+                  <PlayCircle size={14} />
+                  {!isMobile && <span>Replay & Submissions</span>}
+                </>
+              ) : (
+                <>
+                  <Monitor size={14} />
+                  {!isMobile && <span>Live Monitoring</span>}
+                </>
+              )}
+            </button>
           )}
 
           {/* Settings Button */}
@@ -1602,7 +1921,7 @@ export default function TeacherView({
                   >
                     <Users size={14} />
                     <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      Student
+                      {mode === 'live' ? `Live (${visibleStudents.length})` : `Submissions (${visibleStudents.length})`}
                     </span>
                   </button>
 
@@ -1725,7 +2044,11 @@ export default function TeacherView({
                     fontSize: '0.85rem'
                   }}
                 >
-                  {studentSearch ? 'No matching students found' : 'Waiting for students to join...'}
+                  {studentSearch
+                    ? 'No matching students found'
+                    : mode === 'live'
+                    ? 'No students currently active in live workspace. Students will appear here when they start coding.'
+                    : 'No submitted student recordings yet.'}
                 </div>
               ) : (
                 visibleStudents.map((student) => {
@@ -1992,7 +2315,14 @@ export default function TeacherView({
           {hasPlayback && terminalMode !== 'maximized' && (() => {
             const maxIndex = Math.max(history.length - 1, 1);
             const currIndex = playbackIndex < 0 ? history.length - 1 : playbackIndex;
-            const progressPercent = Math.min(Math.max((currIndex / maxIndex) * 100, 0), 100);
+            const progressPercent = playbackIndex < 0
+              ? 100
+              : (totalPlaybackDuration > 0
+                  ? Math.min(Math.max(((cumulativeTimes[currIndex] ?? 0) / totalPlaybackDuration) * 100, 0), 100)
+                  : 0);
+            const displayPercent = isPlaying && typeof smoothProgressRef.current === 'number'
+              ? smoothProgressRef.current
+              : progressPercent;
 
             return (
               <div
@@ -2067,23 +2397,25 @@ export default function TeacherView({
                   >
                     {/* Active Progress Line */}
                     <div
+                      ref={progressLineRef}
                       style={{
                         position: 'absolute',
                         left: 0,
                         top: 0,
                         bottom: 0,
-                        width: `${progressPercent}%`,
+                        width: `${displayPercent}%`,
                         backgroundColor: '#ef4444',
                         borderRadius: '9999px',
-                        transition: isPlaying ? 'width 60ms linear' : 'none'
+                        transition: 'none'
                       }}
                     />
 
-                    {/* Circle Thumb: precisely anchored at progressPercent */}
+                    {/* Circle Thumb: precisely anchored at displayPercent */}
                     <div
+                      ref={progressThumbRef}
                       style={{
                         position: 'absolute',
-                        left: `${progressPercent}%`,
+                        left: `${displayPercent}%`,
                         top: '50%',
                         transform: 'translate(-50%, -50%)',
                         width: '13px',
@@ -2093,7 +2425,7 @@ export default function TeacherView({
                         boxShadow: '0 0 5px rgba(0,0,0,0.35)',
                         pointerEvents: 'none',
                         zIndex: 2,
-                        transition: isPlaying ? 'left 60ms linear' : 'none'
+                        transition: 'none'
                       }}
                     />
                   </div>
@@ -2102,16 +2434,16 @@ export default function TeacherView({
                   <input
                     type="range"
                     min="0"
-                    max={maxIndex}
-                    step="1"
-                    value={currIndex}
-                    onChange={(e) => {
-                      if (playTimerRef.current) clearTimeout(playTimerRef.current);
-                      if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
-                      setIsPlaying(false);
-                      const v = parseInt(e.target.value, 10);
-                      setPlaybackIndex(v);
-                    }}
+                    max={totalPlaybackDuration}
+                    step="any"
+                    value={
+                      isPlaying && typeof currentAnimTimeRef.current === 'number'
+                        ? currentAnimTimeRef.current
+                        : (playbackIndex < 0
+                            ? totalPlaybackDuration
+                            : (cumulativeTimes[currIndex] ?? 0))
+                    }
+                    onChange={(e) => handleScrub(parseFloat(e.target.value))}
                     style={{
                       position: 'absolute',
                       left: 0,

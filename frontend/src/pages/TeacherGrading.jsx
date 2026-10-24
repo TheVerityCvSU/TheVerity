@@ -654,9 +654,6 @@ export default function TeacherGrading({
                   </h1>
 
                   <div style={styles.heroMetaRow}>
-                    <span style={styles.metaBadgeEmerald}>
-                      {assignment?.activityType || 'Activity'}
-                    </span>
                     <span style={styles.metaBadgeGray}>
                       <Award size={13} /> {maxPoints} Points
                     </span>

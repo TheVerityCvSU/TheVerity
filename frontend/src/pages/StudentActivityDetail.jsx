@@ -429,13 +429,21 @@ export default function StudentActivityDetail({
     }).catch(() => {});
 
     if (socket) {
+      socket.emit('student_leave_workspace', {
+        assignmentId,
+        classroomId,
+        studentId,
+        name: safeUsername,
+        reason: 'submitted'
+      });
       socket.emit('submit_exam', {
         studentName: safeUsername,
         studentId: studentId,
         assignmentId: assignmentId,
         finalCode: currentCode,
         classroomId: classroomId,
-        codeHistory: resolvedHistory
+        codeHistory: resolvedHistory,
+        submitted: true
       });
     }
 
@@ -972,9 +980,6 @@ export default function StudentActivityDetail({
                   <h3 style={{ margin: 0, fontSize: '1.15rem', fontWeight: '700', color: isDark ? '#f3f4f6' : '#0f172a' }}>
                     Submit Activity
                   </h3>
-                  <div style={{ fontSize: '0.8rem', color: isDark ? '#9ca3af' : '#64748b', marginTop: '2px' }}>
-                    {assignment?.title || 'Classroom Activity'}
-                  </div>
                 </div>
               </div>
               <button
@@ -997,7 +1002,7 @@ export default function StudentActivityDetail({
             </div>
 
             <p style={{ margin: 0, fontSize: '0.9rem', lineHeight: 1.55, color: isDark ? '#d1d5db' : '#334155' }}>
-              Are you ready to submit your work for this activity? Once submitted, your solution will be handed in to your instructor for grading.
+              Are you ready to submit your work for this activity?
             </p>
 
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '6px' }}>

@@ -306,6 +306,8 @@ export default function App() {
     const isTeacher = role === 'Teacher';
     switch (screen) {
       case 'teacher_proctoring':
+      case 'teacher_live_monitoring':
+      case 'teacher_playback':
         return proctoringReturnScreen || 'teacher_grading';
       case 'teacher_grading':
         return 'teacher_classwork';
@@ -1108,7 +1110,7 @@ export default function App() {
                   navigateTo('teacher_dashboard');
                 }}
                 onStartMonitoring={(assignment) => {
-                  navigateTo('teacher_proctoring', {
+                  navigateTo('teacher_live_monitoring', {
                     assignment,
                     student: null,
                     proctoringMode: 'live',
@@ -1123,7 +1125,7 @@ export default function App() {
                 }}
                 currentUser={currentUser}
                 onOpenPlayback={(assignment, student) => {
-                  navigateTo('teacher_proctoring', {
+                  navigateTo('teacher_playback', {
                     assignment,
                     student,
                     proctoringMode: 'playback',
@@ -1150,7 +1152,7 @@ export default function App() {
                   navigateTo('teacher_dashboard');
                 }}
                 onOpenPlayback={(assignment, student) => {
-                  navigateTo('teacher_proctoring', {
+                  navigateTo('teacher_playback', {
                     assignment,
                     student,
                     proctoringMode: 'playback',
@@ -1158,7 +1160,7 @@ export default function App() {
                   });
                 }}
                 onStartMonitoring={(assignment, student) => {
-                  navigateTo('teacher_proctoring', {
+                  navigateTo('teacher_live_monitoring', {
                     assignment,
                     student: student || null,
                     proctoringMode: 'live',
@@ -1170,7 +1172,8 @@ export default function App() {
             </ProtectedRoute>
           )}
 
-          {currentScreen === 'teacher_proctoring' && (
+          {/* Screen para sa Live Monitoring at Replay Playback */}
+          {(currentScreen === 'teacher_proctoring' || currentScreen === 'teacher_live_monitoring' || currentScreen === 'teacher_playback') && (
             <ProtectedRoute currentUser={currentUser} setCurrentScreen={setCurrentScreen}>
               <TeacherView
                 socket={socket}
@@ -1178,9 +1181,16 @@ export default function App() {
                 assignment={activeAssignment}
                 classroom={activeClassroom}
                 initialStudent={selectedStudentForPlayback}
-                mode={proctoringMode}
+                mode={currentScreen === 'teacher_playback' ? 'playback' : (currentScreen === 'teacher_live_monitoring' ? 'live' : proctoringMode)}
+                onSwitchMode={(newMode) => {
+                  setProctoringMode(newMode);
+                  setCurrentScreen(newMode === 'playback' ? 'teacher_playback' : 'teacher_live_monitoring');
+                  try {
+                    localStorage.setItem('verity_proctoring_mode', newMode);
+                  } catch {}
+                }}
                 onBack={() => {
-                  if (proctoringMode === 'playback') {
+                  if (proctoringMode === 'playback' || currentScreen === 'teacher_playback') {
                     setSelectedStudentForPlayback(null);
                   }
                   handleBack(proctoringReturnScreen || 'teacher_grading');
@@ -1193,12 +1203,12 @@ export default function App() {
             </ProtectedRoute>
           )}
 
-          {/* Fallback for unknown screens */}
-          {currentUser && !['student_dashboard', 'classroom_view', 'student_activity_detail', 'student_workspace', 'sandbox_workspace', 'admin_dashboard', 'teacher_dashboard', 'teacher_classwork', 'teacher_grading', 'teacher_proctoring'].includes(currentScreen) && (
+          {/* Fallback kapag hindi kilala ang screen */}
+          {currentUser && !['student_dashboard', 'classroom_view', 'student_activity_detail', 'student_workspace', 'sandbox_workspace', 'admin_dashboard', 'teacher_dashboard', 'teacher_classwork', 'teacher_grading', 'teacher_proctoring', 'teacher_live_monitoring', 'teacher_playback'].includes(currentScreen) && (
             <NotFound />
           )}
 
-          {/* Final fallback - if nothing matches, show login screen to prevent white screen */}
+          {/* Login fallback para iwas white screen */}
           {!currentUser && !['login', 'register', 'admin_login'].includes(currentScreen) && (
             (typeof window !== 'undefined' && (window.location.pathname.startsWith('/admin') || Boolean(window.IS_ADMIN_APP))) ? (
               <AdminLogin

@@ -718,36 +718,69 @@ export default function StudentView({ socket, currentUser, username, assignment,
   const isDraggingRef = useRef(false);
   const startYRef = useRef(0);
   const startHeightRef = useRef(240);
+  const [isResizingTerminal, setIsResizingTerminal] = useState(false);
 
   const handleDividerMouseDown = (e) => {
     e.preventDefault();
     isDraggingRef.current = true;
-    startYRef.current = e.clientY;
-    startHeightRef.current = terminalHeight;
+    setIsResizingTerminal(true);
+
+    const clientY = e.clientY ?? e.touches?.[0]?.clientY ?? 0;
+    startYRef.current = clientY;
+
+    // Immediately un-collapse and un-maximize so drag visually updates in real time
+    let curHeight = terminalHeight;
+    if (isTerminalCollapsed) {
+      curHeight = 38;
+      setIsTerminalCollapsed(false);
+      try { localStorage.setItem('verity_terminal_collapsed', 'false'); } catch {}
+    }
+    if (isTerminalMaximized) {
+      curHeight = Math.round(window.innerHeight * 0.5);
+      setIsTerminalMaximized(false);
+    }
+    startHeightRef.current = curHeight;
+    setTerminalHeight(curHeight);
+
     document.body.style.cursor = 'row-resize';
     document.body.style.userSelect = 'none';
 
     const handleMouseMove = (moveEvent) => {
       if (!isDraggingRef.current) return;
-      const deltaY = startYRef.current - moveEvent.clientY;
-      const newHeight = Math.max(100, Math.min(startHeightRef.current + deltaY, window.innerHeight * 0.75));
+      const currentY = moveEvent.clientY ?? moveEvent.touches?.[0]?.clientY;
+      if (currentY === undefined) return;
+      const deltaY = startYRef.current - currentY;
+      const minHeight = 60;
+      const maxHeight = Math.max(minHeight, Math.round(window.innerHeight * 0.85));
+      const newHeight = Math.max(minHeight, Math.min(startHeightRef.current + deltaY, maxHeight));
       setTerminalHeight(newHeight);
+      if (editorRef.current) {
+        editorRef.current.layout();
+      }
     };
 
     const handleMouseUp = () => {
       isDraggingRef.current = false;
+      setIsResizingTerminal(false);
       document.body.style.cursor = '';
       document.body.style.userSelect = '';
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
+      window.removeEventListener('touchmove', handleMouseMove);
+      window.removeEventListener('touchend', handleMouseUp);
       setTerminalHeight((finalHeight) => {
         try { localStorage.setItem('verity_terminal_height', String(finalHeight)); } catch {}
         return finalHeight;
       });
+      setTimeout(() => {
+        if (editorRef.current) editorRef.current.layout();
+      }, 30);
     };
 
-    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mousemove', handleMouseMove, { passive: false });
     window.addEventListener('mouseup', handleMouseUp);
+    window.addEventListener('touchmove', handleMouseMove, { passive: false });
+    window.addEventListener('touchend', handleMouseUp);
   };
 
   // Instruction sidebar resizable width & height state
@@ -1006,9 +1039,8 @@ export default function StudentView({ socket, currentUser, username, assignment,
   // Tell the server we left the workspace ONLY when actually unmounting,
   // and make sure current keystroke history is flushed to persistent storage.
   useEffect(() => {
-    isExitingCleanlyRef.current = false;
-
     return () => {
+      isExitingCleanlyRef.current = true;
       const { curAId, curCId, curSId, curSName } = leaveInfoRef.current;
       if (codeHistoryRef.current && codeHistoryRef.current.length > 0) {
         persistHistory(codeHistoryRef.current, codeRef.current);
@@ -1023,12 +1055,14 @@ export default function StudentView({ socket, currentUser, username, assignment,
       }
       try {
         const sKey = `verity_active_session_${curCId}_${curAId}_${curSId}`;
+        const tabSessionId = sessionStorage.getItem('verity_tab_session_id') || '';
         localStorage.setItem(sKey, JSON.stringify({
           studentId: curSId,
           assignmentId: curAId,
           classroomId: curCId,
+          tabId: tabSessionId,
           lastHeartbeat: Date.now(),
-          cleanExit: isExitingCleanlyRef.current
+          cleanExit: true
         }));
       } catch (_) {}
     };
@@ -1038,9 +1072,9 @@ export default function StudentView({ socket, currentUser, username, assignment,
   // so pasting that same text back into the editor doesn't get flagged.
   const copiedInternallyRef = useRef(new Set());
 
-  // 1. INSTANTLY ANNOUNCE PRESENCE TO TEACHER ON LOAD AND MAINTAIN REAL-TIME HEARTBEAT
+  // 1. I-announce ang presence ni student at i-maintain ang heartbeat
   const emitPresence = useCallback(() => {
-    if (!socket) return;
+    if (!socket || submitted) return;
     const currentCodeVal = codeRef.current || code;
     const payload = {
       studentId: studentActualId,
@@ -1058,7 +1092,7 @@ export default function StudentView({ socket, currentUser, username, assignment,
 
     socket.emit('student_enter_activity', payload);
     socket.emit('student_typing', payload);
-  }, [socket, studentActualId, studentDisplayName, currentUser, classroom?.id, classroomId, assignment?.id, assignmentId, code]);
+  }, [socket, submitted, studentActualId, studentDisplayName, currentUser, classroom?.id, classroomId, assignment?.id, assignmentId, code]);
 
   useEffect(() => {
     const currentCodeVal = codeRef.current || code;
@@ -1078,15 +1112,15 @@ export default function StudentView({ socket, currentUser, username, assignment,
       return initial;
     });
 
-    // Immediate presence broadcast
+    // I-broadcast agad ang presence
     emitPresence();
 
-    // Re-announce presence on socket connect / reconnect
+    // I-reconnect ang presence pag nag-reconnect ang socket
     if (socket) {
       socket.on('connect', emitPresence);
     }
 
-    // Keep live monitoring warm with periodic heartbeat
+    // Heartbeat para manatiling active sa live monitoring
     const heartbeatTimer = setInterval(emitPresence, 8000);
 
     return () => {
@@ -1097,10 +1131,12 @@ export default function StudentView({ socket, currentUser, username, assignment,
     };
   }, [socket, emitPresence]);
 
-  // 2. PROCTORING ALERTS & CRASH DETECTOR
+  // 2. Proctoring alerts at crash detector
   const lastTabExitLogRef = useRef(0);
 
   const addProctorLog = (message, color = '#ef4444', customDesc = null, isCrash = false) => {
+    // Bawal mag-log o mag-alert kung submitted na
+    if (submitted) return;
     const timeString = new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }).toLowerCase();
     const actionStr = (message || '').toLowerCase();
     const detectedCrash = isCrash || actionStr.includes('crash');
@@ -1189,14 +1225,33 @@ export default function StudentView({ socket, currentUser, username, assignment,
     const sId = studentActualId || 'student';
     const sessionKey = `verity_active_session_${cId}_${aId}_${sId}`;
 
+    // Get or assign a persistent tab session identifier
+    let tabSessionId = '';
+    try {
+      tabSessionId = sessionStorage.getItem('verity_tab_session_id') || '';
+      if (!tabSessionId) {
+        tabSessionId = `tab_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+        sessionStorage.setItem('verity_tab_session_id', tabSessionId);
+      }
+    } catch (_) {}
+
     // 1. Detect if the previous session exited unexpectedly due to crash / abnormal termination
     try {
       const priorSessionRaw = localStorage.getItem(sessionKey);
       if (priorSessionRaw) {
         const prior = JSON.parse(priorSessionRaw);
-        if (prior && prior.cleanExit === false && (Date.now() - (prior.lastHeartbeat || 0) < 24 * 60 * 60 * 1000)) {
+        const timeSinceHeartbeat = Date.now() - (prior.lastHeartbeat || 0);
+        const isSameTab = Boolean(tabSessionId && prior.tabId === tabSessionId);
+        const isQuickNav = timeSinceHeartbeat < 25000; // <25s is normal page navigation or refresh, not a dead process
+
+        // An abnormal termination (process kill / browser crash) ONLY applies if:
+        // - prior.cleanExit is explicitly false AND
+        // - it's NOT the same tab (which is still alive and actively running) AND
+        // - it's NOT a quick in-app navigation or page reload (<25s) AND
+        // - heartbeat is within 24 hours
+        if (prior && prior.cleanExit === false && !isSameTab && !isQuickNav && timeSinceHeartbeat < 24 * 60 * 60 * 1000) {
           const lastCrashLogTime = Number(sessionStorage.getItem(`verity_last_crash_log_${aId}`) || 0);
-          if (Date.now() - lastCrashLogTime > 10000) {
+          if (Date.now() - lastCrashLogTime > 15000) {
             sessionStorage.setItem(`verity_last_crash_log_${aId}`, String(Date.now()));
             addProctorLog(
               'System Crash',
@@ -1234,6 +1289,7 @@ export default function StudentView({ socket, currentUser, username, assignment,
           studentId: sId,
           assignmentId: aId,
           classroomId: cId,
+          tabId: tabSessionId,
           lastHeartbeat: Date.now(),
           cleanExit: false
         }));
@@ -1242,9 +1298,31 @@ export default function StudentView({ socket, currentUser, username, assignment,
     recordHeartbeat();
     const heartbeatTimer = setInterval(recordHeartbeat, 4000);
 
-    // 3. Global runtime error listeners to capture uncaught errors as crashes, not Alt Tab
+    // 3. Mark clean exit on browser back / popstate navigation
+    const handlePopState = () => {
+      isExitingCleanlyRef.current = true;
+      try {
+        localStorage.setItem(sessionKey, JSON.stringify({
+          studentId: sId,
+          assignmentId: aId,
+          classroomId: cId,
+          tabId: tabSessionId,
+          lastHeartbeat: Date.now(),
+          cleanExit: true
+        }));
+      } catch (_) {}
+    };
+    window.addEventListener('popstate', handlePopState);
+
+    // 4. Global runtime error listeners to capture uncaught errors as crashes, not Alt Tab
     const handleRuntimeError = (event) => {
-      if (event?.message && (event.message.includes('ResizeObserver') || event.message.includes('Script error'))) {
+      if (isExitingCleanlyRef.current) return;
+      if (event?.message && (
+        event.message.includes('ResizeObserver') ||
+        event.message.includes('Script error') ||
+        event.message.includes('Canceled') ||
+        event.message.includes('aborted')
+      )) {
         return;
       }
       window.verityCrashTime = Date.now();
@@ -1258,8 +1336,15 @@ export default function StudentView({ socket, currentUser, username, assignment,
     };
 
     const handleUnhandledRejection = (event) => {
+      if (isExitingCleanlyRef.current) return;
       const reason = event?.reason?.message || event?.reason || 'Unhandled Promise Rejection';
-      if (String(reason).includes('ResizeObserver')) return;
+      const reasonStr = String(reason);
+      if (
+        reasonStr.includes('ResizeObserver') ||
+        reasonStr.includes('Canceled') ||
+        reasonStr.includes('aborted') ||
+        reasonStr.includes('disposed')
+      ) return;
       window.verityCrashTime = Date.now();
       addProctorLog(
         'System Crash',
@@ -1275,8 +1360,20 @@ export default function StudentView({ socket, currentUser, username, assignment,
 
     return () => {
       clearInterval(heartbeatTimer);
+      window.removeEventListener('popstate', handlePopState);
       window.removeEventListener('error', handleRuntimeError);
       window.removeEventListener('unhandledrejection', handleUnhandledRejection);
+      // Mark clean exit on effect cleanup / component unmount
+      try {
+        localStorage.setItem(sessionKey, JSON.stringify({
+          studentId: sId,
+          assignmentId: aId,
+          classroomId: cId,
+          tabId: tabSessionId,
+          lastHeartbeat: Date.now(),
+          cleanExit: true
+        }));
+      } catch (_) {}
     };
   }, [classroom?.id, classroomId, assignment?.id, assignmentId, studentActualId, assignment?.title]);
 
@@ -1788,16 +1885,26 @@ export default function StudentView({ socket, currentUser, username, assignment,
       })
     }).catch(() => {});
 
-    // Broadcast to live teacher monitoring via socket
-    socket.emit('submit_exam', {
-      studentName: safeUsername,
-      studentId: studentId,
-      assignmentId: assignment?.id ?? null,
-      finalCode: code,
-      logs: proctorLogs,
-      codeHistory: subHistory,
-      classroomId: classroom?.id,
-    });
+    // I-notify si teacher at tanggalin si student sa live roster
+    if (socket) {
+      socket.emit('student_leave_workspace', {
+        assignmentId: assignment?.id ?? aId,
+        classroomId: classroom?.id,
+        studentId: studentId,
+        name: safeUsername,
+        reason: 'submitted'
+      });
+      socket.emit('submit_exam', {
+        studentName: safeUsername,
+        studentId: studentId,
+        assignmentId: assignment?.id ?? null,
+        finalCode: code,
+        logs: proctorLogs,
+        codeHistory: subHistory,
+        classroomId: classroom?.id,
+        submitted: true
+      });
+    }
 
     try {
       window.dispatchEvent(new CustomEvent('verity:submission-updated', {
@@ -2298,11 +2405,13 @@ export default function StudentView({ socket, currentUser, username, assignment,
                   });
                 }
                 try {
+                  const tabSessionId = sessionStorage.getItem('verity_tab_session_id') || '';
                   const sKey = `verity_active_session_${cId}_${aId}_${sId}`;
                   localStorage.setItem(sKey, JSON.stringify({
                     studentId: sId,
                     assignmentId: aId,
                     classroomId: cId,
+                    tabId: tabSessionId,
                     lastHeartbeat: Date.now(),
                     cleanExit: true
                   }));
@@ -2528,7 +2637,7 @@ export default function StudentView({ socket, currentUser, username, assignment,
           </div>
 
           {/* ── Monaco Editor ──────────────────────────────────── */}
-          <div style={{ flex: 1, minHeight: 0 }}>
+          <div style={{ flex: 1, minHeight: 0, pointerEvents: isResizingTerminal ? 'none' : 'auto' }}>
           <Editor
             height="100%"
             language="csharp"
@@ -2587,31 +2696,75 @@ export default function StudentView({ socket, currentUser, username, assignment,
           </div>
         </div>
 
+        {isResizingTerminal && (
+          <div
+            style={{
+              position: 'fixed',
+              inset: 0,
+              zIndex: 99999,
+              cursor: 'row-resize',
+              userSelect: 'none'
+            }}
+          />
+        )}
+
         <div
           style={{
             ...styles.resizeHandle,
-            ...(isDark ? { backgroundColor: '#262626', borderTop: '1px solid #3c3c3c', borderBottom: '1px solid #262626' } : {})
+            height: '10px',
+            position: 'relative',
+            zIndex: 15,
+            cursor: 'row-resize',
+            touchAction: 'none',
+            backgroundColor: isResizingTerminal ? '#10b981' : (isDark ? '#262626' : '#e5e7eb'),
+            borderTop: isResizingTerminal ? '1px solid #10b981' : (isDark ? '1px solid #3c3c3c' : '1px solid #d1d5db'),
+            borderBottom: isResizingTerminal ? '1px solid #10b981' : (isDark ? '1px solid #262626' : '1px solid #e5e7eb'),
+            boxShadow: isResizingTerminal ? '0 0 10px rgba(16, 185, 129, 0.45)' : 'none',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            userSelect: 'none',
+            transition: 'background-color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease'
           }}
           onMouseDown={handleDividerMouseDown}
-          title="Drag up or down to resize terminal height"
+          onTouchStart={handleDividerMouseDown}
+          title="Drag up or down to resize terminal"
         >
           <div style={{
             ...styles.resizeHandleGrip,
-            ...(isDark ? { backgroundColor: '#555555' } : {})
+            width: '48px',
+            height: '4px',
+            borderRadius: '4px',
+            backgroundColor: isResizingTerminal ? '#ffffff' : (isDark ? '#555555' : '#9ca3af')
           }} />
         </div>
 
         <div style={{
           ...styles.terminalWrapper,
           height: isTerminalCollapsed ? '38px' : isTerminalMaximized ? '100%' : `${terminalHeight}px`,
+          minHeight: isTerminalCollapsed ? '38px' : '60px',
+          transition: isResizingTerminal ? 'none' : 'height 0.15s ease',
           ...(isTerminalMaximized ? { flex: 1 } : {}),
           ...(isDark ? { backgroundColor: '#1e1e1e', borderTop: '1px solid #3c3c3c' } : {})
         }}>
           {/* TABS HEADER: TERMINAL vs TEST CASES */}
-          <div style={{
-            ...styles.terminalHeader,
-            ...(isDark ? { backgroundColor: '#262626', borderBottom: '1px solid #3c3c3c' } : {})
-          }}>
+          <div
+            onMouseDown={(e) => {
+              if (e.target.closest('button') || e.target.closest('input')) return;
+              handleDividerMouseDown(e);
+            }}
+            onTouchStart={(e) => {
+              if (e.target.closest('button') || e.target.closest('input')) return;
+              handleDividerMouseDown(e);
+            }}
+            onDoubleClick={toggleTerminalCollapse}
+            style={{
+              ...styles.terminalHeader,
+              cursor: 'row-resize',
+              ...(isDark ? { backgroundColor: '#262626', borderBottom: '1px solid #3c3c3c' } : {})
+            }}
+            title="Drag up or down to resize, double-click to toggle"
+          >
             <div style={{ display: 'flex', alignItems: 'center', height: '100%' }}>
               <button
                 type="button"
@@ -3262,9 +3415,6 @@ export default function StudentView({ socket, currentUser, username, assignment,
                   <h3 style={{ margin: 0, fontSize: '1.15rem', fontWeight: '700', color: isDark ? '#f3f4f6' : '#0f172a' }}>
                     Submit Activity
                   </h3>
-                  <div style={{ fontSize: '0.8rem', color: isDark ? '#9ca3af' : '#64748b', marginTop: '2px' }}>
-                    {assignment?.title || 'Classroom Activity'}
-                  </div>
                 </div>
               </div>
               <button
@@ -3302,28 +3452,9 @@ export default function StudentView({ socket, currentUser, username, assignment,
               </div>
             ) : (
               <p style={{ margin: 0, fontSize: '0.9rem', lineHeight: 1.55, color: isDark ? '#d1d5db' : '#334155' }}>
-                Are you ready to submit your work? Once submitted, your workspace will be locked and handed in to your instructor for evaluation.
+                Are you ready to submit your work?
               </p>
             )}
-
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                padding: '10px 14px',
-                backgroundColor: isDark ? '#1a1a1a' : '#f8fafc',
-                borderRadius: '10px',
-                border: isDark ? '1px solid #333' : '1px solid #e2e8f0',
-                fontSize: '0.82rem',
-                color: isDark ? '#9ca3af' : '#64748b',
-              }}
-            >
-              <span>Code Buffer:</span>
-              <span style={{ fontWeight: '600', color: isDark ? '#e5e7eb' : '#1f2937' }}>
-                {(code || '').split('\n').length} lines (C#)
-              </span>
-            </div>
 
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '6px' }}>
               <button
