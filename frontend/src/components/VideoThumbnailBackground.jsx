@@ -153,6 +153,22 @@ export default function VideoThumbnailBackground({
         />
       ) : null}
 
+      {/* Offscreen metadata probe to detect true video duration even when using lightweight static image thumbnail */}
+      {onDurationLoaded && src && activeThumbImage && (
+        <video
+          src={`${src}#t=1`}
+          muted
+          playsInline
+          preload="metadata"
+          onLoadedMetadata={(e) => {
+            if (e.target.duration && !isNaN(e.target.duration) && e.target.duration > 0) {
+              onDurationLoaded(e.target.duration);
+            }
+          }}
+          style={{ display: 'none' }}
+        />
+      )}
+
       {/* Modern gradient scrim / overlay to keep badges and play button ultra-readable */}
       <div
         style={{

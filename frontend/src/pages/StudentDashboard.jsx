@@ -24,6 +24,7 @@ import {
   THEME_PRESETS,
   getLessonType,
   extractVideoTitle,
+  formatVideoTimestamp,
   cleanVideoFilename
 } from '../utils/classroomUtils';
 
@@ -527,11 +528,46 @@ export default function StudentDashboard({ currentUser, onLogout, onEnterClassro
     };
   }, [socket]);
 
-  // Upcoming Activities for To Do list & Video Lessons
-  const [upcomingActivities, setUpcomingActivities] = useState([]);
-  const [allClasswork, setAllClasswork] = useState([]);
+  // Scoped localStorage cache keys for instant render of To Do / activity list
+  const getActivitiesStorageKey = (user) => {
+    const id = user?.id || user?.email || 'anon';
+    return `verity_cached_upcoming_activities_${id}`;
+  };
+  const getClassworkStorageKey = (user) => {
+    const id = user?.id || user?.email || 'anon';
+    return `verity_cached_classwork_${id}`;
+  };
+
+  // Instant local cache hydration so activities pop up immediately
+  const [upcomingActivities, setUpcomingActivities] = useState(() => {
+    try {
+      const raw = localStorage.getItem(getActivitiesStorageKey(currentUser));
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {}
+    return [];
+  });
+  const [allClasswork, setAllClasswork] = useState(() => {
+    try {
+      const raw = localStorage.getItem(getClassworkStorageKey(currentUser));
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {}
+    return [];
+  });
   const [dashboardStats, setDashboardStats] = useState({ done: 0, dueSoon: 0, miss: 0 });
-  const [loadingActivities, setLoadingActivities] = useState(true);
+  const [loadingActivities, setLoadingActivities] = useState(() => {
+    try {
+      const raw = localStorage.getItem(getActivitiesStorageKey(currentUser));
+      return !raw;
+    } catch {
+      return true;
+    }
+  });
 
   useEffect(() => {
     let active = true;
@@ -545,15 +581,28 @@ export default function StudentDashboard({ currentUser, onLogout, onEnterClassro
             const classList = Array.isArray(classrooms) ? classrooms : [];
             const isLegacyHardcoded = (item) => (item?.id === 1 || item?.id === 2) && (item?.title?.startsWith('Activity 1:') || item?.title?.startsWith('Activity 2:'));
             
+            // Server already filters classwork for student's enrolled classes
             const enrolled = data.classwork.filter(
-              item => !item.archived && !isLegacyHardcoded(item) && classList.some(c => String(c.id) === String(item.classroom_id || item.classId))
+              item => !item.archived && !isLegacyHardcoded(item) && (
+                classList.length === 0 || classList.some(c => String(c.id) === String(item.classroom_id || item.classId))
+              )
             );
             setAllClasswork(enrolled);
+            try {
+              localStorage.setItem(getClassworkStorageKey(currentUser), JSON.stringify(enrolled));
+            } catch {}
 
-            const valid = enrolled.filter(item => !!item.dueDate);
-            // Sort by due date (closest first)
-            valid.sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate));
-            setUpcomingActivities(valid);
+            // Sort activities: nearest deadline first, followed by activities without deadline
+            const sortedActivities = [...enrolled].sort((a, b) => {
+              if (a.dueDate && b.dueDate) return new Date(a.dueDate) - new Date(b.dueDate);
+              if (a.dueDate) return -1;
+              if (b.dueDate) return 1;
+              return new Date(b.posted || b.id || 0) - new Date(a.posted || a.id || 0);
+            });
+            setUpcomingActivities(sortedActivities);
+            try {
+              localStorage.setItem(getActivitiesStorageKey(currentUser), JSON.stringify(sortedActivities));
+            } catch {}
 
             // Calculate stats using submissions
             try {
@@ -563,12 +612,12 @@ export default function StudentDashboard({ currentUser, onLogout, onEnterClassro
                 const submittedAssignmentIds = new Set((subData.submissions || []).map(s => String(s.assignment_id)));
                 let done = 0, dueSoon = 0, miss = 0;
                 const now = new Date();
-                valid.forEach(cw => {
+                sortedActivities.forEach(cw => {
                   if (submittedAssignmentIds.has(String(cw.id))) {
                     done++;
                   } else {
-                    const due = new Date(cw.dueDate);
-                    if (due < now) {
+                    const due = cw.dueDate ? new Date(cw.dueDate) : null;
+                    if (due && due < now) {
                       miss++;
                     } else {
                       dueSoon++;
@@ -589,23 +638,41 @@ export default function StudentDashboard({ currentUser, onLogout, onEnterClassro
       }
     };
     
-    if (classrooms.length > 0) {
-      fetchAllActivities();
-    } else {
-      setLoadingActivities(false);
-    }
+    fetchAllActivities();
     
     return () => { active = false; };
-  }, [classrooms]);
+  }, [classrooms, currentUser]);
 
-  // Default video lesson matching user's course or demo video
+  // Default video lesson matching user's course or demo video (real timestamp: 52:21)
   const DEFAULT_VIDEO_LESSON = useMemo(() => ({
     id: 'hci_lesson_1',
     title: 'HCI Lesson 1 ITEC 80',
     subject: 'C# PROGRAMMING',
-    duration: '25 min',
-    src: 'http://localhost:3001/uploads/1792768564903_HCI_Lesson_1_ITEC_80.mp4'
+    duration: '52:21',
+    src: `${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/uploads/1792768564903_HCI_Lesson_1_ITEC_80.mp4`
   }), []);
+
+  // Real video durations map dynamically resolved from video files
+  const [videoDurations, setVideoDurations] = useState(() => {
+    try {
+      const saved = localStorage.getItem('verity_video_durations');
+      return saved ? JSON.parse(saved) : {};
+    } catch {
+      return {};
+    }
+  });
+
+  const handleVideoDurationLoaded = (videoSrc, durationInSec) => {
+    const formatted = formatVideoTimestamp(durationInSec);
+    if (formatted && videoSrc) {
+      setVideoDurations(prev => {
+        if (prev[videoSrc] === formatted) return prev;
+        const updated = { ...prev, [videoSrc]: formatted };
+        try { localStorage.setItem('verity_video_durations', JSON.stringify(updated)); } catch {}
+        return updated;
+      });
+    }
+  };
 
   // Compute all available video lessons
   const videoLessons = useMemo(() => {
@@ -630,7 +697,7 @@ export default function StudentDashboard({ currentUser, onLogout, onEnterClassro
           id: String(item.id),
           title,
           subject: (classObj?.name || classObj?.subject || 'C# PROGRAMMING').toUpperCase(),
-          duration: item.duration || '25 min',
+          duration: formatVideoTimestamp(item.duration) || (src?.includes('1792768564903_HCI_Lesson_1_ITEC_80') ? '52:21' : null) || '52:21',
           src,
           item,
           classObj
@@ -661,6 +728,20 @@ export default function StudentDashboard({ currentUser, onLogout, onEnterClassro
   const unseenVideo = useMemo(() => {
     return videoLessons.find(v => !seenVideoMap[v.id]) || null;
   }, [videoLessons, seenVideoMap]);
+
+  // Real timestamp of the video lesson (replaces fixed 25 min)
+  const currentVideoDuration = useMemo(() => {
+    if (!unseenVideo) return '52:21';
+    if (unseenVideo.src && videoDurations[unseenVideo.src]) {
+      return videoDurations[unseenVideo.src];
+    }
+    const formatted = formatVideoTimestamp(unseenVideo.duration);
+    if (formatted) return formatted;
+    if (unseenVideo.src?.includes('1792768564903_HCI_Lesson_1_ITEC_80')) {
+      return '52:21';
+    }
+    return unseenVideo.duration && unseenVideo.duration !== '25 min' ? unseenVideo.duration : '52:21';
+  }, [unseenVideo, videoDurations]);
 
   // Active playing video modal
   const [activePlayingVideo, setActivePlayingVideo] = useState(null);
@@ -1141,6 +1222,7 @@ export default function StudentDashboard({ currentUser, onLogout, onEnterClassro
                         src={unseenVideo.src}
                         title={unseenVideo.title}
                         isDark={isDark}
+                        onDurationLoaded={(durationInSec) => handleVideoDurationLoaded(unseenVideo.src, durationInSec)}
                       />
 
                       {/* Top Badges Row */}
@@ -1201,7 +1283,7 @@ export default function StudentDashboard({ currentUser, onLogout, onEnterClassro
                             alignItems: 'center'
                           }}
                         >
-                          {unseenVideo.duration}
+                          {currentVideoDuration}
                         </span>
                       </div>
 
@@ -1269,7 +1351,7 @@ export default function StudentDashboard({ currentUser, onLogout, onEnterClassro
                           color: textMuted
                         }}
                       >
-                        Not started • {unseenVideo.duration}
+                        Not started • {currentVideoDuration}
                       </p>
                     </div>
                   </div>
@@ -1342,21 +1424,31 @@ export default function StudentDashboard({ currentUser, onLogout, onEnterClassro
                     <div style={{ color: textMuted, fontSize: '0.9rem', textAlign: 'center', padding: '20px' }}>No upcoming tasks!</div>
                   ) : (
                     upcomingActivities.slice(0, 5).map((act) => {
-                      const d = new Date(act.dueDate);
-                      const time = d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+                      const d = act.dueDate ? new Date(act.dueDate) : null;
+                      const hasValidDate = d && !isNaN(d.getTime());
+                      const time = hasValidDate ? d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false }) : '--:--';
                       const now = new Date();
-                      const isToday = d.getDate() === now.getDate() && d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
-                      const isTomorrow = new Date(now.getTime() + 86400000).getDate() === d.getDate() && new Date(now.getTime() + 86400000).getMonth() === d.getMonth();
-                      const label = isToday ? 'Today' : (isTomorrow ? 'Tomorrow' : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }));
+                      const isToday = hasValidDate && d.getDate() === now.getDate() && d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+                      const isTomorrow = hasValidDate && new Date(now.getTime() + 86400000).getDate() === d.getDate() && new Date(now.getTime() + 86400000).getMonth() === d.getMonth();
+                      const label = hasValidDate ? (isToday ? 'Today' : (isTomorrow ? 'Tomorrow' : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }))) : 'Assigned';
                       const classObj = classrooms.find(c => String(c.id) === String(act.classroom_id || act.classId));
                       const courseName = classObj ? (classObj.name || 'Course') : 'Course';
                       const initial = courseName.charAt(0).toUpperCase();
                       const bgCol = classObj?.theme?.color || '#059669';
 
+                      const handleOpenTask = () => {
+                        if (classObj && onOpenAssignment) {
+                          onOpenAssignment(classObj, act);
+                        } else if (classObj) {
+                          handleEnterClassroom(classObj);
+                        }
+                      };
+
                       return (
                         <div 
                           key={act.id} 
-                          onClick={() => classObj && handleEnterClassroom(classObj)}
+                          onClick={handleOpenTask}
+                          title={`Open ${act.title}`}
                           style={{ display: 'flex', gap: '16px', alignItems: 'center', cursor: 'pointer', padding: '8px', borderRadius: '12px', margin: '-8px', transition: 'background-color 0.2s' }}
                           onMouseOver={(e) => e.currentTarget.style.backgroundColor = isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.03)'}
                           onMouseOut={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
