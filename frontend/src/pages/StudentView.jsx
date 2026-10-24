@@ -13,6 +13,7 @@ import IframePreviewModal from '../components/IframePreviewModal';
 import VideoAttachment from '../components/VideoAttachment';
 import AttachmentCard from '../components/AttachmentCard';
 import { openDotnetSetup } from '../utils/dotnetHelper';
+import { isDesktopWebBrowser } from '../utils/deviceUtils';
 
 // Strip whitespace so editor auto-indent on paste doesn't cause false mismatches.
 const normalize = (text) => (text || "").replace(/\s+/g, '');
@@ -34,7 +35,18 @@ export default function StudentView({ socket, currentUser, username, assignment,
       : (currentUser?.email || studentDisplayName);
   const studentId = studentActualId;
   const assignmentId = assignment?.id != null ? String(assignment.id) : 'none';
-  const classroomId = classroom?.id != null ? String(classroom.id) : 'none';
+  const rawClassroomId =
+    classroom?.id ??
+    classroom?.classroom_id ??
+    classroom?.code ??
+    assignment?.classroom_id ??
+    assignment?.classroomId ??
+    assignment?.classId ??
+    assignment?.classroom?.id ??
+    null;
+  const classroomId = rawClassroomId != null && rawClassroomId !== '' && rawClassroomId !== 'none'
+    ? String(rawClassroomId)
+    : 'none';
 
   const getSubKeys = () => [
     `verity_sub_${classroomId}_${assignmentId}_${studentId}`,
@@ -265,13 +277,37 @@ export default function StudentView({ socket, currentUser, username, assignment,
     sessionTimeout: '30m',
     cognitivePauseThreshold: 45,
     enforceSingleMonitor: false,
-    disableWindowsKeyAltTab: true
+    disableWindowsKeyAltTab: true,
+    blockVirtualMachine: true
   });
   const kioskRulesRef = useRef(kioskRules);
   useEffect(() => { kioskRulesRef.current = kioskRules; }, [kioskRules]);
 
   const [multiMonitorDetected, setMultiMonitorDetected] = useState(false);
+  const [vmDetected, setVmDetected] = useState(false);
+  const [vmReasons, setVmReasons] = useState([]);
+  const [isDesktopWeb, setIsDesktopWeb] = useState(() => isDesktopWebBrowser());
   const [idleWarning, setIdleWarning] = useState(false);
+
+  // Real-time DevTools and viewport resize monitor in exam workspace
+  useEffect(() => {
+    if (window.electronAPI) return;
+
+    const checkEnvironment = () => {
+      const isDesktop = isDesktopWebBrowser();
+      setIsDesktopWeb(prev => prev !== isDesktop ? isDesktop : prev);
+    };
+
+    window.addEventListener('resize', checkEnvironment);
+    window.addEventListener('orientationchange', checkEnvironment);
+    const timer = setInterval(checkEnvironment, 600);
+
+    return () => {
+      window.removeEventListener('resize', checkEnvironment);
+      window.removeEventListener('orientationchange', checkEnvironment);
+      clearInterval(timer);
+    };
+  }, []);
   const lastActivityRef = useRef(Date.now());
   const cognitivePauseTimerRef = useRef(null);
   const hasLoggedPauseRef = useRef(false);
@@ -366,6 +402,49 @@ export default function StudentView({ socket, currentUser, username, assignment,
     const interval = setInterval(checkMonitors, 3000);
     return () => clearInterval(interval);
   }, [kioskRules.enforceSingleMonitor]);
+
+  // Virtual Machine (VM) detection & enforcement
+  useEffect(() => {
+    if (kioskRules.blockVirtualMachine === false) {
+      setVmDetected(false);
+      return;
+    }
+
+    let isMounted = true;
+    const checkVm = async () => {
+      if (window.electronAPI && typeof window.electronAPI.checkVmStatus === 'function') {
+        try {
+          const res = await window.electronAPI.checkVmStatus();
+          if (!isMounted) return;
+          if (res && res.isVm) {
+            setVmDetected(true);
+            setVmReasons(res.reasons || []);
+            if (socket && typeof socket.emit === 'function') {
+              const studentName = currentUser?.name || currentUser?.email || 'Student';
+              const studentIdVal = currentUser?.id || currentUser?.email || studentName;
+              socket.emit('proctor_alert', {
+                studentId: studentIdVal,
+                name: studentName,
+                email: currentUser?.email || '',
+                action: 'Virtual Machine Detected',
+                desc: `VM Detected during exam: ${(res.reasons && res.reasons[0]) || 'Virtualized environment detected'}`,
+                color: '#ef4444'
+              });
+            }
+          } else {
+            setVmDetected(false);
+          }
+        } catch (_) {}
+      }
+    };
+
+    checkVm();
+    const interval = setInterval(checkVm, 10000);
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
+  }, [kioskRules.blockVirtualMachine, socket, currentUser]);
 
   // Idle session timeout enforcement
   useEffect(() => {
@@ -627,7 +706,7 @@ export default function StudentView({ socket, currentUser, username, assignment,
   };
 
   const handleRunTestCase = (targetCase = null) => {
-    if (submitted) return;
+    if (submitted || isDesktopWeb || (vmDetected && kioskRules.blockVirtualMachine !== false)) return;
     const caseToRun = targetCase || testCases.find(tc => tc.id === activeTestCaseId) || testCases[0];
     if (!caseToRun) return;
 
@@ -657,7 +736,7 @@ export default function StudentView({ socket, currentUser, username, assignment,
   };
 
   const handleRunAllTestCases = () => {
-    if (submitted || !testCases || testCases.length === 0) return;
+    if (submitted || isDesktopWeb || (vmDetected && kioskRules.blockVirtualMachine !== false) || !testCases || testCases.length === 0) return;
 
     setBottomTab('testcases');
     setIsRunningTests(true);
@@ -991,7 +1070,7 @@ export default function StudentView({ socket, currentUser, username, assignment,
         email: currentUser?.email || '',
         avatar: currentUser?.avatar || '',
         code: currentCode,
-        classroomId: classroom?.id || classroomId,
+        classroomId: (classroom?.id != null ? String(classroom.id) : null) || (classroomId !== 'none' ? classroomId : null) || 'none',
         assignmentId: assignment?.id || assignmentId,
         logs: proctorLogsRef.current || proctorLogs
       });
@@ -1084,7 +1163,7 @@ export default function StudentView({ socket, currentUser, username, assignment,
       email: currentUser?.email || '',
       avatar: currentUser?.avatar || '',
       code: currentCodeVal,
-      classroomId: classroom?.id || classroomId,
+      classroomId: (classroom?.id != null ? String(classroom.id) : null) || (classroomId !== 'none' ? classroomId : null) || 'none',
       assignmentId: assignment?.id || assignmentId,
       logs: proctorLogsRef.current || proctorLogs,
       timestamp: Date.now()
@@ -1568,7 +1647,7 @@ export default function StudentView({ socket, currentUser, username, assignment,
             name: studentDisplayName,
             studentName: studentDisplayName,
             output: newOutput,
-            classroomId: classroom?.id || classroomId,
+            classroomId: (classroom?.id != null ? String(classroom.id) : null) || (classroomId !== 'none' ? classroomId : null) || 'none',
             assignmentId: assignment?.id || assignmentId
           });
         }
@@ -1768,6 +1847,16 @@ export default function StudentView({ socket, currentUser, username, assignment,
 
   const handleRunCode = () => {
     if (submitted) return;
+    if (isDesktopWeb) {
+      setBottomTab('terminal');
+      setOutput("⚠️ ACCESS DENIED: Running exams in a desktop web browser is prohibited in the Computer Laboratory.\nPlease launch The Verity using The Verity.exe desktop application.\n");
+      return;
+    }
+    if (vmDetected && kioskRules.blockVirtualMachine !== false) {
+      setBottomTab('terminal');
+      setOutput("⚠️ ACCESS DENIED: Exam code execution is prohibited inside a Virtual Machine.\nPlease exit and run The Verity on a physical host computer.\n");
+      return;
+    }
     setBottomTab('terminal');
     updateEditorMarkers([]);
     setIsRunning(true);
@@ -1831,6 +1920,14 @@ export default function StudentView({ socket, currentUser, username, assignment,
     setProgramStarted(false);
   };  const handleSubmit = () => {
     if (submitted) return;
+    if (isDesktopWeb) {
+      alert("Submission blocked: Desktop web browser cannot be used in the Computer Laboratory. Please launch The Verity.exe desktop application.");
+      return;
+    }
+    if (vmDetected && kioskRules.blockVirtualMachine !== false) {
+      alert("Submission is blocked: Running The Verity inside a Virtual Machine is not permitted during exams.");
+      return;
+    }
     setShowSubmitModal(true);
   };
 
@@ -2675,7 +2772,7 @@ export default function StudentView({ socket, currentUser, username, assignment,
                   email: currentUser?.email || '',
                   avatar: currentUser?.avatar || '',
                   code: newCode,
-                  classroomId: classroom?.id || classroomId,
+                  classroomId: (classroom?.id != null ? String(classroom.id) : null) || (classroomId !== 'none' ? classroomId : null) || 'none',
                   assignmentId: assignment?.id || assignmentId,
                   logs: proctorLogsRef.current || proctorLogs
                 });
@@ -3634,6 +3731,86 @@ export default function StudentView({ socket, currentUser, username, assignment,
           <p style={{ fontSize: '1rem', maxWidth: '480px', color: '#cbd5e1', lineHeight: 1.5 }}>
             Verity Kiosk Enforcement policy requires a single active monitor during exams. Please disconnect secondary monitors to continue.
           </p>
+        </div>
+      )}
+
+      {/* VIRTUAL MACHINE DETECTED BLOCKING MODAL */}
+      {vmDetected && kioskRules.blockVirtualMachine !== false && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 99999, backgroundColor: 'rgba(15, 23, 42, 0.96)', backdropFilter: 'blur(10px)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#ffffff', padding: '30px', textAlign: 'center' }}>
+          <div style={{ width: '80px', height: '80px', borderRadius: '50%', backgroundColor: '#dc2626', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '20px', boxShadow: '0 0 35px rgba(220, 38, 38, 0.6)' }}>
+            <span style={{ fontSize: '40px' }}>🚫</span>
+          </div>
+          <h2 style={{ fontSize: '2rem', fontWeight: 'bold', marginBottom: '12px', color: '#f87171' }}>Virtual Machine Detected — Exam Blocked</h2>
+          <p style={{ fontSize: '1.05rem', maxWidth: '580px', color: '#e2e8f0', lineHeight: 1.6, marginBottom: '20px' }}>
+            The Verity Exam Integrity System has detected that this session is running inside a <strong>Virtual Machine (VM)</strong>. Taking exams or executing code within virtualized environments is strictly prohibited.
+          </p>
+          {vmReasons.length > 0 && (
+            <div style={{ maxWidth: '580px', width: '100%', backgroundColor: 'rgba(255, 255, 255, 0.05)', border: '1px solid rgba(248, 113, 113, 0.3)', borderRadius: '10px', padding: '14px 18px', marginBottom: '24px', textAlign: 'left' }}>
+              <div style={{ fontSize: '0.85rem', fontWeight: 600, color: '#fca5a5', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                Hardware & Driver Indicators:
+              </div>
+              <ul style={{ margin: 0, paddingLeft: '20px', fontSize: '0.85rem', color: '#cbd5e1', lineHeight: 1.5 }}>
+                {vmReasons.slice(0, 4).map((r, i) => (
+                  <li key={i}>{r}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+          <button
+            onClick={() => {
+              if (typeof onBack === 'function') onBack();
+            }}
+            style={{
+              backgroundColor: '#dc2626',
+              color: '#ffffff',
+              border: 'none',
+              borderRadius: '8px',
+              padding: '12px 28px',
+              fontSize: '1rem',
+              fontWeight: 600,
+              cursor: 'pointer',
+              boxShadow: '0 4px 14px rgba(220, 38, 38, 0.4)',
+              transition: 'all 0.2s ease'
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = '#b91c1c'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = '#dc2626'; }}
+          >
+            Exit Exam Workspace
+          </button>
+        </div>
+      )}
+
+      {/* DESKTOP WEB BROWSER BLOCKING MODAL */}
+      {isDesktopWeb && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 99999, backgroundColor: 'rgba(15, 23, 42, 0.96)', backdropFilter: 'blur(10px)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#ffffff', padding: '30px', textAlign: 'center' }}>
+          <div style={{ width: '80px', height: '80px', borderRadius: '50%', backgroundColor: '#dc2626', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '20px', boxShadow: '0 0 35px rgba(220, 38, 38, 0.6)' }}>
+            <span style={{ fontSize: '40px' }}>🖥️</span>
+          </div>
+          <h2 style={{ fontSize: '2rem', fontWeight: 'bold', marginBottom: '12px', color: '#f87171' }}>The Verity.exe Desktop Application Required</h2>
+          <p style={{ fontSize: '1.05rem', maxWidth: '580px', color: '#e2e8f0', lineHeight: 1.6, marginBottom: '20px' }}>
+            Taking exams or executing code in a standard desktop web browser is strictly prohibited in the Computer Laboratory. All laboratory and desktop computer examinations must be conducted through the official <strong>The Verity.exe</strong> desktop application for kiosk lockdown and exam security.
+          </p>
+          <button
+            onClick={() => {
+              if (typeof onBack === 'function') onBack();
+            }}
+            style={{
+              backgroundColor: '#dc2626',
+              color: '#ffffff',
+              border: 'none',
+              borderRadius: '8px',
+              padding: '12px 28px',
+              fontSize: '1rem',
+              fontWeight: 600,
+              cursor: 'pointer',
+              boxShadow: '0 4px 14px rgba(220, 38, 38, 0.4)',
+              transition: 'all 0.2s ease'
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = '#b91c1c'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = '#dc2626'; }}
+          >
+            Exit Exam Workspace
+          </button>
         </div>
       )}
     </motion.div>

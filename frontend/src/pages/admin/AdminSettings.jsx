@@ -200,6 +200,7 @@ const DEFAULT_SETTINGS = {
     strictClipboardBlocking: true,
     enforceSingleMonitor: false,
     disableWindowsKeyAltTab: true,
+    blockVirtualMachine: true,
   },
   examDefaults: {
     treatWarningsAsErrors: false,
@@ -544,6 +545,12 @@ function KioskSecurityTab({ data, onChange, direction }) {
               onToggle={() => update('enforceSingleMonitor', !data.enforceSingleMonitor)}
               label="Enforce Single Monitor Only"
               subtext="Exam will not start if the system detects a second monitor (HDMI/VGA) connected."
+            />
+            <Toggle
+              on={data.blockVirtualMachine ?? true}
+              onToggle={() => update('blockVirtualMachine', data.blockVirtualMachine === undefined ? false : !data.blockVirtualMachine)}
+              label="Block Virtual Machine (VM) Environments"
+              subtext="Exams cannot be started or executed inside VMware, VirtualBox, Hyper-V, or QEMU."
             />
             <Toggle
               on={data.strictClipboardBlocking}

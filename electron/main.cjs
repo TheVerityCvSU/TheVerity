@@ -5,6 +5,7 @@ const os = require('os');
 const { pathToFileURL } = require('url');
 const { fork, spawn } = require('child_process');
 const { initLocalDb, localDbAPI } = require('./local-db.cjs');
+const { initStartupVmDetection, getVmStatus, getCachedVmStatusSync } = require('./vm-detect.cjs');
 
 // Persistent diagnostic and startup logging
 const logFile = path.join(os.tmpdir(), 'the-verity-startup.log');
@@ -22,6 +23,9 @@ logStartup(`[main] Executable: ${process.execPath}`);
 logStartup(`[main] isPackaged: ${app.isPackaged}, Platform: ${process.platform}, Arch: ${process.arch}`);
 logStartup(`[main] Argv: ${JSON.stringify(process.argv)}`);
 logStartup('========================================================');
+
+// Startup Virtual Machine (VM) detection check
+initStartupVmDetection(logStartup);
 
 // Immediate process-level crash guards
 process.on('uncaughtException', (err) => {
@@ -612,6 +616,14 @@ ipcMain.on('disable-lockdown', () => {
 ipcMain.handle('get-display-count', () => {
   const { screen } = require('electron');
   return screen.getAllDisplays().length;
+});
+
+ipcMain.handle('check-vm-status', async () => {
+  return await getVmStatus();
+});
+
+ipcMain.handle('get-cached-vm-status', () => {
+  return getCachedVmStatusSync();
 });
 
 ipcMain.on('close-app', () => {

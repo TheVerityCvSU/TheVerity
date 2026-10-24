@@ -22,6 +22,8 @@ import { subscribeConnectionStatus, getConnectionStatus, getCloudUrl, apiFetch }
 import { saveClassroomTheme } from './utils/classroomUtils';
 import { notifyUserListeners } from './hooks/useCurrentUser';
 import { useMediaQuery } from './hooks/useMediaQuery';
+import { isDesktopWebBrowser, isMobileDevice, isDevToolsOrEmulation } from './utils/deviceUtils';
+import ComLabWebBlocker from './components/ComLabWebBlocker';
 
 // Connect to Backend (Cloud-first with local offline fallback)
 const isWebHosted = typeof window !== 'undefined' &&
@@ -81,6 +83,64 @@ export const isRunningInAdminMode = () => {
 export default function App() {
   const isAdminApp = isRunningInAdminMode();
   const isMobile = useMediaQuery('(max-width: 768px)');
+  const [isDesktopWeb, setIsDesktopWeb] = useState(() => isDesktopWebBrowser());
+
+  // Real-time DevTools and viewport resize monitor
+  useEffect(() => {
+    if (window.electronAPI) return;
+
+    const checkEnvironment = () => {
+      const isDesktop = isDesktopWebBrowser();
+      setIsDesktopWeb(prev => prev !== isDesktop ? isDesktop : prev);
+    };
+
+    window.addEventListener('resize', checkEnvironment);
+    window.addEventListener('orientationchange', checkEnvironment);
+    const timer = setInterval(checkEnvironment, 600);
+
+    return () => {
+      window.removeEventListener('resize', checkEnvironment);
+      window.removeEventListener('orientationchange', checkEnvironment);
+      clearInterval(timer);
+    };
+  }, []);
+
+  // Prevent F12, DevTools shortcuts, and right-click inspection on web browser
+  useEffect(() => {
+    if (window.electronAPI) return;
+
+    const handleKeyDown = (e) => {
+      if (e.key === 'F12' || e.keyCode === 123) {
+        e.preventDefault();
+        e.stopPropagation();
+        return false;
+      }
+      if (e.ctrlKey && e.shiftKey && ['I', 'i', 'J', 'j', 'C', 'c'].includes(e.key)) {
+        e.preventDefault();
+        e.stopPropagation();
+        return false;
+      }
+      if (e.ctrlKey && (e.key === 'U' || e.key === 'u')) {
+        e.preventDefault();
+        e.stopPropagation();
+        return false;
+      }
+    };
+
+    const handleContextMenu = (e) => {
+      if (!isMobileDevice()) {
+        e.preventDefault();
+        return false;
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown, true);
+    window.addEventListener('contextmenu', handleContextMenu, true);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown, true);
+      window.removeEventListener('contextmenu', handleContextMenu, true);
+    };
+  }, []);
 
   // 1. INITIALIZE STATE FROM LOCAL STORAGE
   const [currentScreen, setCurrentScreen] = useState(() => {
@@ -653,6 +713,24 @@ export default function App() {
   const lockDown = () => window.electronAPI?.enableLockdown?.();
   const releaseLockdown = () => window.electronAPI?.disableLockdown?.();
 
+  const verifyEnvironmentBeforeExam = async () => {
+    if (isDesktopWebBrowser()) {
+      alert('🚫 Desktop Web Browser Blocked\n\nIn the Computer Laboratory or on desktop/laptop computers, all exams and coding activities must be conducted using the official "The Verity.exe" desktop application for kiosk lockdown and exam integrity.\n\nWeb access is strictly reserved for mobile phones.\n\nPlease close this browser and launch The Verity (.exe).');
+      return false;
+    }
+
+    if (window.electronAPI && typeof window.electronAPI.checkVmStatus === 'function') {
+      try {
+        const vmStatus = await window.electronAPI.checkVmStatus();
+        if (vmStatus && vmStatus.isVm) {
+          alert('🚫 Virtual Machine Detected\n\nRunning The Verity inside a Virtual Machine (VMware, VirtualBox, Hyper-V, QEMU, etc.) is strictly prohibited during exams.\n\nPlease launch The Verity directly on your physical operating system.');
+          return false;
+        }
+      } catch (_) {}
+    }
+    return true;
+  };
+
   // Re-assert lockdown on app reload if a student session was restored from
   // localStorage (otherwise a refresh would drop them out of kiosk mode).
   useEffect(() => {
@@ -980,98 +1058,110 @@ export default function App() {
           )}
 
           {/* --- STUDENT ROUTES (Protected) --- */}
-          {currentScreen === 'student_dashboard' && (
-            <ProtectedRoute currentUser={currentUser} setCurrentScreen={setCurrentScreen}>
-              <StudentDashboard
-                socket={socket}
-                currentUser={currentUser}
-                onLogout={handleLogout}
-                onEnterClassroom={(classroom) => {
-                  navigateTo('classroom_view', { classroom });
-                }}
-                onOpenAssignment={(classroom, task) => {
-                  navigateTo('student_activity_detail', { classroom, assignment: task, workspaceReturnScreen: 'student_dashboard' });
-                }}
-                onOpenSandbox={() => navigateTo('sandbox_workspace')}
-              />
-            </ProtectedRoute>
-          )}
+          {currentUser?.role === 'Student' && isDesktopWeb ? (
+            <ComLabWebBlocker currentUser={currentUser} onLogout={handleLogout} />
+          ) : (
+            <>
+              {currentScreen === 'student_dashboard' && (
+                <ProtectedRoute currentUser={currentUser} setCurrentScreen={setCurrentScreen}>
+                  <StudentDashboard
+                    socket={socket}
+                    currentUser={currentUser}
+                    onLogout={handleLogout}
+                    onEnterClassroom={(classroom) => {
+                      navigateTo('classroom_view', { classroom });
+                    }}
+                    onOpenAssignment={(classroom, task) => {
+                      navigateTo('student_activity_detail', { classroom, assignment: task, workspaceReturnScreen: 'student_dashboard' });
+                    }}
+                    onOpenSandbox={() => navigateTo('sandbox_workspace')}
+                  />
+                </ProtectedRoute>
+              )}
 
-          {currentScreen === 'classroom_view' && (
-            <ProtectedRoute currentUser={currentUser} setCurrentScreen={setCurrentScreen}>
-              <ClassroomView
-                key={activeClassroom?.id ? `student_class_${activeClassroom.id}` : 'classroom_view'}
-                onEnterClassroom={(classroom) => {
-                  setActiveClassroom(classroom);
-                  navigateTo('classroom_view', { classroom, force: true });
-                }}
-                socket={socket}
-                currentUser={currentUser}
-                classroom={activeClassroom}
-                onLogout={handleLogout}
-                onBack={() => handleBack('student_dashboard')}
-                onNavigateView={(view) => {
-                  localStorage.setItem('verity_student_view', view);
-                  navigateTo('student_dashboard');
-                }}
-                onOpenAssignment={(task) => {
-                  navigateTo('student_activity_detail', { assignment: task, workspaceReturnScreen: 'classroom_view' });
-                }}
-                onStartAssignment={(task) => {
-                  navigateTo('student_workspace', { assignment: task, workspaceReturnScreen: 'classroom_view' });
-                }}
-              />
-            </ProtectedRoute>
-          )}
+              {currentScreen === 'classroom_view' && (
+                <ProtectedRoute currentUser={currentUser} setCurrentScreen={setCurrentScreen}>
+                  <ClassroomView
+                    key={activeClassroom?.id ? `student_class_${activeClassroom.id}` : 'classroom_view'}
+                    onEnterClassroom={(classroom) => {
+                      setActiveClassroom(classroom);
+                      navigateTo('classroom_view', { classroom, force: true });
+                    }}
+                    socket={socket}
+                    currentUser={currentUser}
+                    classroom={activeClassroom}
+                    onLogout={handleLogout}
+                    onBack={() => handleBack('student_dashboard')}
+                    onNavigateView={(view) => {
+                      localStorage.setItem('verity_student_view', view);
+                      navigateTo('student_dashboard');
+                    }}
+                    onOpenAssignment={(task) => {
+                      navigateTo('student_activity_detail', { assignment: task, classroom: activeClassroom || task.classroom, workspaceReturnScreen: 'classroom_view' });
+                    }}
+                    onStartAssignment={async (task) => {
+                      const allowed = await verifyEnvironmentBeforeExam();
+                      if (!allowed) return;
+                      navigateTo('student_workspace', { assignment: task, classroom: activeClassroom || task.classroom, workspaceReturnScreen: 'classroom_view' });
+                    }}
+                  />
+                </ProtectedRoute>
+              )}
 
-          {currentScreen === 'student_activity_detail' && (
-            <ProtectedRoute currentUser={currentUser} setCurrentScreen={setCurrentScreen}>
-              <StudentActivityDetail
-                socket={socket}
-                currentUser={currentUser}
-                classroom={activeClassroom}
-                assignment={activeAssignment}
-                onBack={() => handleBack(workspaceReturnScreen === 'student_dashboard' ? 'student_dashboard' : 'classroom_view')}
-                onNavigateView={(view) => {
-                  localStorage.setItem('verity_student_view', view);
-                  navigateTo('student_dashboard');
-                }}
-                onStartCoding={() => {
-                  navigateTo('student_workspace', {
-                    workspaceReturnScreen: 'student_activity_detail'
-                  });
-                }}
-                onEnterClassroom={(classroom) => {
-                  navigateTo('classroom_view', { classroom });
-                }}
-                onLogout={handleLogout}
-              />
-            </ProtectedRoute>
-          )}
+              {currentScreen === 'student_activity_detail' && (
+                <ProtectedRoute currentUser={currentUser} setCurrentScreen={setCurrentScreen}>
+                  <StudentActivityDetail
+                    socket={socket}
+                    currentUser={currentUser}
+                    classroom={activeClassroom}
+                    assignment={activeAssignment}
+                    onBack={() => handleBack(workspaceReturnScreen === 'student_dashboard' ? 'student_dashboard' : 'classroom_view')}
+                    onNavigateView={(view) => {
+                      localStorage.setItem('verity_student_view', view);
+                      navigateTo('student_dashboard');
+                    }}
+                    onStartCoding={async () => {
+                      const allowed = await verifyEnvironmentBeforeExam();
+                      if (!allowed) return;
+                      navigateTo('student_workspace', {
+                        assignment: activeAssignment,
+                        classroom: activeClassroom || activeAssignment?.classroom,
+                        workspaceReturnScreen: 'student_activity_detail'
+                      });
+                    }}
+                    onEnterClassroom={(classroom) => {
+                      navigateTo('classroom_view', { classroom });
+                    }}
+                    onLogout={handleLogout}
+                  />
+                </ProtectedRoute>
+              )}
 
-          {currentScreen === 'student_workspace' && (
-            <ProtectedRoute currentUser={currentUser} setCurrentScreen={setCurrentScreen}>
-              <StudentView
-                socket={socket}
-                currentUser={currentUser}
-                username={currentUser?.name}
-                assignment={activeAssignment}
-                classroom={activeClassroom}
-                onBack={() => handleBack(workspaceReturnScreen || 'classroom_view')}
-              />
-            </ProtectedRoute>
-          )}
+              {currentScreen === 'student_workspace' && (
+                <ProtectedRoute currentUser={currentUser} setCurrentScreen={setCurrentScreen}>
+                  <StudentView
+                    socket={socket}
+                    currentUser={currentUser}
+                    username={currentUser?.name}
+                    assignment={activeAssignment}
+                    classroom={activeClassroom}
+                    onBack={() => handleBack(workspaceReturnScreen || 'classroom_view')}
+                  />
+                </ProtectedRoute>
+              )}
 
-          {currentScreen === 'sandbox_workspace' && (
-            <ProtectedRoute currentUser={currentUser} setCurrentScreen={setCurrentScreen}>
-              <StudentView
-                socket={socket}
-                currentUser={currentUser}
-                username={currentUser?.name}
-                isSandbox={true}
-                onBack={() => handleBack('student_dashboard')}
-              />
-            </ProtectedRoute>
+              {currentScreen === 'sandbox_workspace' && (
+                <ProtectedRoute currentUser={currentUser} setCurrentScreen={setCurrentScreen}>
+                  <StudentView
+                    socket={socket}
+                    currentUser={currentUser}
+                    username={currentUser?.name}
+                    isSandbox={true}
+                    onBack={() => handleBack('student_dashboard')}
+                  />
+                </ProtectedRoute>
+              )}
+            </>
           )}
 
           {/* --- ADMIN ROUTES (Protected) --- */}
@@ -1087,6 +1177,7 @@ export default function App() {
               <TeacherDashboard
                 currentUser={currentUser}
                 onLogout={handleLogout}
+                socket={socket}
                 onEnterClassroom={(classroom) => {
                   navigateTo('teacher_classwork', { classroom });
                 }}

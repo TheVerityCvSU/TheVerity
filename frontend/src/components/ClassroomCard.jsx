@@ -15,7 +15,8 @@ export default function ClassroomCard({
   onSettings,
   onDelete,
   isArchived = false,
-  role = 'Teacher'
+  role = 'Teacher',
+  activeCount = 0
 }) {
   const { isDark } = useDarkMode();
   const [menuOpen, setMenuOpen] = useState(false);
@@ -88,6 +89,28 @@ export default function ClassroomCard({
       }}
       onClick={() => onEnter && onEnter(classroom)}
     >
+      {/* Live activity green notification dot aligned with the card corner */}
+      {Number(activeCount) > 0 && (
+        <span
+          title={`${activeCount} student${Number(activeCount) > 1 ? 's' : ''} currently working on an activity in this classroom`}
+          style={{
+            position: 'absolute',
+            top: '-3px',
+            right: '-3px',
+            width: '14px',
+            height: '14px',
+            borderRadius: '50%',
+            backgroundColor: '#10b981',
+            boxShadow: isDark
+              ? '0 0 0 2.5px #1e1e1e, 0 0 12px #10b981'
+              : '0 0 0 2.5px #ffffff, 0 0 12px #10b981',
+            animation: 'live-pulse 1.8s infinite',
+            zIndex: 40,
+            pointerEvents: 'auto'
+          }}
+        />
+      )}
+
       {/* ═══ TOP BANNER HEADER ═══ */}
       <div
         style={{

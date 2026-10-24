@@ -6,6 +6,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   closeApp: () => ipcRenderer.send('close-app'),
   enableLockdown: () => {},
   disableLockdown: () => {},
+  checkVmStatus: () => ipcRenderer.invoke('check-vm-status'),
+  getCachedVmStatus: () => ipcRenderer.invoke('get-cached-vm-status'),
   openExternal: (url) => ipcRenderer.send('open-external', url),
   openGoogleAuth: (url) => ipcRenderer.send('open-google-auth', url),
   closeGoogleAuth: () => ipcRenderer.send('close-google-auth'),

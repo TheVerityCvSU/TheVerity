@@ -105,7 +105,7 @@ const getCardColSpan = (idx, total, isMobile) => {
   return cardThemes[idx % cardThemes.length].colSpan;
 };
 
-const TeacherCourseCard = ({ classroom, onClick, onSettings, onArchive, onUnarchive, onDelete, isArchived, index, initial, animate, transition, colSpan }) => {
+const TeacherCourseCard = ({ classroom, onClick, onSettings, onArchive, onUnarchive, onDelete, isArchived, index, initial, animate, transition, colSpan, activeCount = 0 }) => {
   const { isDark } = useDarkMode();
   const [menuOpen, setMenuOpen] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -177,6 +177,28 @@ const TeacherCourseCard = ({ classroom, onClick, onSettings, onArchive, onUnarch
         opacity: isArchived ? 0.75 : 1
       }}
     >
+      {/* ═══ Live activity green notification dot aligned with the card corner ═══ */}
+      {Number(activeCount) > 0 && (
+        <span
+          title={`${activeCount} student${Number(activeCount) > 1 ? 's' : ''} currently working on an activity in this classroom`}
+          style={{
+            position: 'absolute',
+            top: '-3px',
+            right: '-3px',
+            width: '14px',
+            height: '14px',
+            borderRadius: '50%',
+            backgroundColor: '#10b981',
+            boxShadow: isDark
+              ? '0 0 0 2.5px #18181b, 0 0 12px #10b981'
+              : '0 0 0 2.5px #ffffff, 0 0 12px #10b981',
+            animation: 'live-pulse 1.8s infinite',
+            zIndex: 40,
+            pointerEvents: 'auto'
+          }}
+        />
+      )}
+
       {/* ═══ Background banner illustration layer ═══ */}
       <div
         style={{
@@ -232,6 +254,8 @@ const TeacherCourseCard = ({ classroom, onClick, onSettings, onArchive, onUnarch
               <span>{classroom.code || `C${classroom.id}`}</span>
               {copied ? <Check size={12} strokeWidth={2.8} /> : <Copy size={11} strokeWidth={2} />}
             </button>
+
+
           </div>
           
           <div ref={menuRef} style={{ position: 'relative' }}>
@@ -395,7 +419,7 @@ const TeacherCourseCard = ({ classroom, onClick, onSettings, onArchive, onUnarch
   );
 };
 
-export default function TeacherDashboard({ currentUser, onLogout, onEnterClassroom }) {
+export default function TeacherDashboard({ currentUser, onLogout, onEnterClassroom, socket }) {
   const { isDark } = useDarkMode();
   const [activeView, setActiveView] = useState(() => localStorage.getItem('verity_teacher_view') || 'classrooms');
   const [slideDirection, setSlideDirection] = useState(1);
@@ -599,6 +623,44 @@ export default function TeacherDashboard({ currentUser, onLogout, onEnterClassro
   const [loadingClassrooms, setLoadingClassrooms] = useState(
     () => getCachedClassrooms(currentUser, 'teacher').length === 0
   );
+
+  // Real-time active activities tracking per classroom
+  const [activeClassroomCounts, setActiveClassroomCounts] = useState({});
+
+  useEffect(() => {
+    const handleActiveUpdate = (data) => {
+      if (data && data.classroomCounts) {
+        setActiveClassroomCounts(data.classroomCounts);
+      }
+    };
+
+    if (socket) {
+      socket.on('active_activities_update', handleActiveUpdate);
+      socket.emit('get_active_activities');
+    }
+
+    const fetchActive = () => {
+      const url = `${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/active-activities`;
+      apiFetch(url)
+        .then(res => res.ok ? res.json() : null)
+        .then(data => {
+          if (data && data.classroomCounts) {
+            setActiveClassroomCounts(data.classroomCounts);
+          }
+        })
+        .catch(() => {});
+    };
+
+    fetchActive();
+    const activeInterval = setInterval(fetchActive, 4000);
+
+    return () => {
+      if (socket) {
+        socket.off('active_activities_update', handleActiveUpdate);
+      }
+      clearInterval(activeInterval);
+    };
+  }, [socket]);
 
   const [allowDelete, setAllowDelete] = useState(false);
 
@@ -1060,6 +1122,12 @@ export default function TeacherDashboard({ currentUser, onLogout, onEnterClassro
                           onUnarchive={handleUnarchiveClass}
                           onDelete={(allowDelete || currentUser?.role === 'Admin') ? handleDeleteClass : undefined}
                           isArchived={true}
+                          activeCount={Number(
+                            activeClassroomCounts[String(cls.id)] ||
+                            activeClassroomCounts[String(cls.code || '').toLowerCase()] ||
+                            activeClassroomCounts[String(cls.code || '')] ||
+                            0
+                          )}
                         />
                       </motion.div>
                     );
@@ -1214,6 +1282,12 @@ export default function TeacherDashboard({ currentUser, onLogout, onEnterClassro
                         }}
                         onDelete={(allowDelete || currentUser?.role === 'Admin') ? handleDeleteClass : undefined}
                         isArchived={false}
+                        activeCount={Number(
+                            activeClassroomCounts[String(cls.id)] ||
+                            activeClassroomCounts[String(cls.code || '').toLowerCase()] ||
+                            activeClassroomCounts[String(cls.code || '')] ||
+                            0
+                          )}
                       />
                     </motion.div>
                   );

@@ -2243,19 +2243,7 @@ export default function TeacherClasswork({
                                       }}
                                       title="Open live proctoring & monitoring"
                                     >
-                                      <Monitor size={16} /> Live Monitoring {Number(activeActivityCounts[String(item.id)]) > 0 ? `(${activeActivityCounts[String(item.id)]} Active)` : ''}
-                                      {Number(activeActivityCounts[String(item.id)]) > 0 && (
-                                        <span
-                                          style={{
-                                            width: '8px',
-                                            height: '8px',
-                                            borderRadius: '50%',
-                                            backgroundColor: '#ffffff',
-                                            boxShadow: '0 0 6px #ffffff',
-                                            marginLeft: '4px'
-                                          }}
-                                        />
-                                      )}
+                                      <Monitor size={16} /> Live Monitoring
                                     </button>
                                   </div>
                                 </div>

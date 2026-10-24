@@ -13,6 +13,8 @@
     "clean": "node clean.js",
     "clean:users": "node clean.js users",
     "clean:admin": "node clean.js admin",
+    "start": "node server/server.js",
+    "server": "node --watch server/server.js",
     "dev": "concurrently \"cd frontend && vite\" \"node --watch server/server.js\"",
     "build": "npm --prefix frontend run build",
     "build:server": "esbuild server/server.js --bundle --platform=node --outfile=dist-server/server-bundle.cjs --external:better-sqlite3 --external:node:sqlite",

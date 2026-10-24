@@ -14,6 +14,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   enableLockdown: (options) => ipcRenderer.send('enable-lockdown', options),
   disableLockdown: () => ipcRenderer.send('disable-lockdown'),
   getDisplayCount: () => ipcRenderer.invoke('get-display-count'),
+  checkVmStatus: () => ipcRenderer.invoke('check-vm-status'),
+  getCachedVmStatus: () => ipcRenderer.invoke('get-cached-vm-status'),
   openExternal: (url) => ipcRenderer.send('open-external', url),
   openGoogleAuth: (url) => ipcRenderer.send('open-google-auth', url),
   closeGoogleAuth: () => ipcRenderer.send('close-google-auth'),

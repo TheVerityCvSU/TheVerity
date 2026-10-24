@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { apiFetch, getCloudUrl } from '../utils/api';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { io } from 'socket.io-client';
+import { isDesktopWebBrowser } from '../utils/deviceUtils';
 
 export default function Login({ onLogin, onGoToRegister }) {
   const { isDark, toggle } = useDarkMode();
@@ -24,6 +25,26 @@ export default function Login({ onLogin, onGoToRegister }) {
     }
   });
 
+  const [isDesktopWeb, setIsDesktopWeb] = useState(() => isDesktopWebBrowser());
+
+  useEffect(() => {
+    if (window.electronAPI) return;
+
+    const checkEnvironment = () => {
+      const isDesktop = isDesktopWebBrowser();
+      setIsDesktopWeb(prev => prev !== isDesktop ? isDesktop : prev);
+    };
+
+    window.addEventListener('resize', checkEnvironment);
+    window.addEventListener('orientationchange', checkEnvironment);
+    const timer = setInterval(checkEnvironment, 600);
+
+    return () => {
+      window.removeEventListener('resize', checkEnvironment);
+      window.removeEventListener('orientationchange', checkEnvironment);
+      clearInterval(timer);
+    };
+  }, []);
   const socketRef = useRef(null);
   const authTimeoutRef = useRef(null);
   const authWindowRef = useRef(null);
@@ -508,6 +529,34 @@ export default function Login({ onLogin, onGoToRegister }) {
             </motion.div>
           )}
         </AnimatePresence>
+
+        {isDesktopWeb && (
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'flex-start',
+              gap: '10px',
+              backgroundColor: isDark ? 'rgba(239, 68, 68, 0.12)' : '#fef2f2',
+              border: isDark ? '1px solid rgba(239, 68, 68, 0.3)' : '1px solid #fecaca',
+              borderRadius: '10px',
+              padding: '10px 14px',
+              marginBottom: '16px',
+              textAlign: 'left',
+              fontSize: '0.82rem',
+              lineHeight: 1.45,
+              color: isDark ? '#fca5a5' : '#b91c1c',
+            }}
+          >
+            <span style={{ fontSize: '18px', lineHeight: 1 }}>🖥️</span>
+            <div>
+              <strong style={{ display: 'block', marginBottom: '2px', color: isDark ? '#f87171' : '#dc2626' }}>
+                Computer Laboratory Notice:
+              </strong>
+              Students on desktop/laboratory computers must use <strong>The Verity.exe</strong>. Web access is restricted to mobile phones only.
+            </div>
+          </div>
+        )}
+
         <form onSubmit={handleLogin} style={styles.form}>
           <motion.input
             initial={{ opacity: 0, x: -12 }}

@@ -30,6 +30,27 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { getStudentGrade, isStudentGraded } from '../utils/gradeUtils';
 
+
+const formatStudentName = (name) => {
+  if (!name) return 'Student';
+  const str = String(name).trim();
+  if (str.includes('@')) {
+    const prefix = str.split('@')[0];
+    return prefix.charAt(0).toUpperCase() + prefix.slice(1);
+  }
+  return str
+    .split(/\s+/)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+    .join(' ');
+};
+
+const toSentenceCase = (str) => {
+  if (!str) return '';
+  const s = String(str).trim();
+  if (!s) return '';
+  return s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
+};
+
 export default function TeacherView({
   socket,
   currentUser,
@@ -742,13 +763,15 @@ export default function TeacherView({
         );
 
         const cleanAction = isCrash
-          ? 'System Crash'
+          ? 'System crash'
           : (actionText.toLowerCase().includes('alt') || actionText.toLowerCase().includes('tab') || actionText.toLowerCase().includes('blur'))
-          ? 'Alt Tab'
-          : actionText;
+          ? 'Alt tab'
+          : toSentenceCase(actionText);
+
+        const formattedStudentName = formatStudentName(studentName);
 
         setToast({
-          message: `alert: ${studentName} - ${cleanAction}`,
+          message: `Alert: ${formattedStudentName} - ${cleanAction}`,
           type: isCrash ? 'error' : 'warning',
           isAlert: true
         });
@@ -908,8 +931,9 @@ export default function TeacherView({
       }
 
       if (notifSettingsRef.current.notifyOnSubmission) {
+        const sName = formatStudentName(data.studentName || data.studentId || 'A student');
         setToast({
-          message: `${data.studentName || data.studentId || 'A student'} submitted their exam.`,
+          message: `${sName} submitted their exam.`,
           type: 'success'
         });
         setTimeout(() => setToast(null), 3500);
@@ -1693,41 +1717,28 @@ export default function TeacherView({
             </>
           )}
 
-          {/* Mode Switcher: Lipat agad between Live Monitoring at Replay */}
-          {onSwitchMode && (
+          {/* Mode Switcher: Hidden in Live Monitoring per request */}
+          {onSwitchMode && mode !== 'live' && (
             <button
-              onClick={() => onSwitchMode(mode === 'live' ? 'playback' : 'live')}
+              onClick={() => onSwitchMode('live')}
               style={{
                 display: 'flex',
                 alignItems: 'center',
                 gap: '6px',
                 padding: isMobile ? '6px 8px' : '7px 12px',
-                backgroundColor: mode === 'live'
-                  ? (isDark ? 'rgba(168, 85, 247, 0.15)' : '#f3e8ff')
-                  : (isDark ? 'rgba(239, 68, 68, 0.15)' : '#fee2e2'),
-                color: mode === 'live'
-                  ? (isDark ? '#c084fc' : '#7e22ce')
-                  : '#ef4444',
-                border: `1px solid ${mode === 'live' ? 'rgba(168, 85, 247, 0.3)' : 'rgba(239, 68, 68, 0.3)'}`,
+                backgroundColor: isDark ? 'rgba(239, 68, 68, 0.15)' : '#fee2e2',
+                color: '#ef4444',
+                border: '1px solid rgba(239, 68, 68, 0.3)',
                 borderRadius: '8px',
                 cursor: 'pointer',
                 fontWeight: '700',
                 fontSize: '0.82rem',
                 transition: 'all 0.15s ease'
               }}
-              title={mode === 'live' ? 'Switch to Replay & Submissions Page' : 'Switch to Live Monitoring Page'}
+              title="Switch to Live Monitoring Page"
             >
-              {mode === 'live' ? (
-                <>
-                  <PlayCircle size={14} />
-                  {!isMobile && <span>Replay & Submissions</span>}
-                </>
-              ) : (
-                <>
-                  <Monitor size={14} />
-                  {!isMobile && <span>Live Monitoring</span>}
-                </>
-              )}
+              <Monitor size={14} />
+              {!isMobile && <span>Live Monitoring</span>}
             </button>
           )}
 
@@ -3014,7 +3025,7 @@ export default function TeacherView({
               zIndex: 99999
             }}
           >
-            {toast.message}
+            {toast.message ? toast.message.charAt(0).toUpperCase() + toast.message.slice(1) : ''}
           </motion.div>
         )}
       </AnimatePresence>

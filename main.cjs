@@ -2,6 +2,10 @@ const { app, BrowserWindow, globalShortcut, ipcMain } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { fork, spawn } = require('child_process');
+const { initStartupVmDetection, getVmStatus, getCachedVmStatusSync } = require('./electron/vm-detect.cjs');
+
+// Run VM detection immediately at startup
+initStartupVmDetection(console.log);
 
 let mainWindow;
 let serverProcess = null;
@@ -238,6 +242,14 @@ ipcMain.on('enable-lockdown', () => {
 ipcMain.on('disable-lockdown', () => {
   console.log('[main] disable-lockdown received');
   disableLockdown();
+});
+
+ipcMain.handle('check-vm-status', async () => {
+  return await getVmStatus();
+});
+
+ipcMain.handle('get-cached-vm-status', () => {
+  return getCachedVmStatusSync();
 });
 
 ipcMain.on('close-app', () => {

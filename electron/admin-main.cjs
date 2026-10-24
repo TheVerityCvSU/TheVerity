@@ -6,6 +6,7 @@ const os = require('os');
 const { pathToFileURL } = require('url');
 const { fork } = require('child_process');
 const { initLocalDb, localDbAPI } = require('./local-db.cjs');
+const { initStartupVmDetection, getVmStatus, getCachedVmStatusSync } = require('./vm-detect.cjs');
 
 // Persistent diagnostic and startup logging
 const logFile = path.join(os.tmpdir(), 'the-verity-admin-startup.log');
@@ -23,6 +24,9 @@ logStartup(`[admin-main] Executable: ${process.execPath}`);
 logStartup(`[admin-main] isPackaged: ${app.isPackaged}, Platform: ${process.platform}, Arch: ${process.arch}`);
 logStartup(`[admin-main] Argv: ${JSON.stringify(process.argv)}`);
 logStartup('========================================================');
+
+// Startup Virtual Machine (VM) detection check
+initStartupVmDetection(logStartup);
 
 // Immediate process-level crash guards
 process.on('uncaughtException', (err) => {
@@ -447,6 +451,14 @@ ipcMain.on('close-google-auth', () => {
 
 ipcMain.handle('check-google-auth-status', () => {
   return !!(googleAuthWindow && !googleAuthWindow.isDestroyed());
+});
+
+ipcMain.handle('check-vm-status', async () => {
+  return await getVmStatus();
+});
+
+ipcMain.handle('get-cached-vm-status', () => {
+  return getCachedVmStatusSync();
 });
 
 // IPC Handler for client-side local database

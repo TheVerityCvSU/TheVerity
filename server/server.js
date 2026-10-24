@@ -3411,7 +3411,8 @@ async function getKioskSettings() {
         cognitivePauseThreshold: 45,
         strictClipboardBlocking: true,
         enforceSingleMonitor: false,
-        disableWindowsKeyAltTab: true
+        disableWindowsKeyAltTab: true,
+        blockVirtualMachine: true
     };
     try {
         const row = await db.get("SELECT value FROM system_settings WHERE key = 'global_config'");
@@ -3443,15 +3444,35 @@ function getActiveActivitiesMap(targetClassroomId = null) {
     return counts;
 }
 
+function getActiveClassroomsMap() {
+    const classroomCounts = {};
+    for (const student of Object.values(activeStudents)) {
+        if (!student || !student.assignmentId || student.assignmentId === 'none' || student.assignmentId === 'unassigned') continue;
+        if (student.isLive === false || student.status === 'Offline' || student.status === 'Submitted') continue;
+        if (student.classroomId && student.classroomId !== 'none' && student.classroomId !== 'unassigned') {
+            const cId = String(student.classroomId);
+            classroomCounts[cId] = (classroomCounts[cId] || 0) + 1;
+            classroomCounts[cId.toLowerCase()] = (classroomCounts[cId.toLowerCase()] || 0) + 1;
+            if (student.classCode) {
+                const code = String(student.classCode);
+                classroomCounts[code] = (classroomCounts[code] || 0) + 1;
+                classroomCounts[code.toLowerCase()] = (classroomCounts[code.toLowerCase()] || 0) + 1;
+            }
+        }
+    }
+    return classroomCounts;
+}
+
 function broadcastActiveActivities() {
     const allCounts = {};
+    const classroomCounts = getActiveClassroomsMap();
     for (const student of Object.values(activeStudents)) {
         if (!student || !student.assignmentId || student.assignmentId === 'none' || student.assignmentId === 'unassigned') continue;
         if (student.isLive === false || student.status === 'Offline' || student.status === 'Submitted') continue;
         const aId = String(student.assignmentId);
         allCounts[aId] = (allCounts[aId] || 0) + 1;
     }
-    io.emit('active_activities_update', { counts: allCounts });
+    io.emit('active_activities_update', { counts: allCounts, classroomCounts });
 }
 
 function removeStudentFromPreviousActivities(studentId, studentName, excludeKey = null) {
@@ -3500,7 +3521,8 @@ function removeStudentFromPreviousActivities(studentId, studentName, excludeKey 
 app.get('/active-activities', (req, res) => {
     try {
         const counts = getActiveActivitiesMap(req.query.classroomId);
-        res.status(200).json({ counts });
+        const classroomCounts = getActiveClassroomsMap();
+        res.status(200).json({ counts, classroomCounts });
     } catch (e) {
         res.status(500).json({ message: e.message });
     }
@@ -3510,7 +3532,10 @@ io.on('connection', (socket) => {
     console.log('🟢 Student Workspace Connected: ' + socket.id);
 
     socket.on('get_active_activities', (data) => {
-        socket.emit('active_activities_update', { counts: getActiveActivitiesMap(data?.classroomId) });
+        socket.emit('active_activities_update', { 
+            counts: getActiveActivitiesMap(data?.classroomId),
+            classroomCounts: getActiveClassroomsMap()
+        });
     });
 
     socket.on('teacher_leave', (data) => {
@@ -4258,8 +4283,35 @@ io.on('connection', (socket) => {
         if (data.submitted) return;
         const studentId = String(data.studentId || data.name);
         const studentName = String(data.name || data.studentName || studentId).trim();
-        const classroomId = data.classroomId != null ? String(data.classroomId) : 'none';
-        const assignmentId = data.assignmentId != null ? String(data.assignmentId) : 'none';
+        let classroomId = data.classroomId != null && data.classroomId !== 'default' ? String(data.classroomId) : 'none';
+        const assignmentId = data.assignmentId != null && data.assignmentId !== 'default' ? String(data.assignmentId) : 'none';
+
+        if ((!classroomId || classroomId === 'none' || classroomId === 'unassigned') && assignmentId !== 'none') {
+            try {
+                const foundCw = await db.get(
+                    `SELECT classroom_id FROM classwork WHERE id = ? OR CAST(id AS TEXT) = ?`,
+                    assignmentId, assignmentId
+                );
+                if (foundCw && foundCw.classroom_id != null) {
+                    classroomId = String(foundCw.classroom_id);
+                }
+            } catch (_) {}
+        }
+
+        let classCode = null;
+        if (classroomId && classroomId !== 'none') {
+            try {
+                const clsRow = await db.get(
+                    `SELECT id, code FROM classrooms WHERE id = ? OR CAST(id AS TEXT) = ? OR LOWER(code) = ?`,
+                    classroomId, classroomId, classroomId.toLowerCase()
+                );
+                if (clsRow) {
+                    classroomId = String(clsRow.id);
+                    classCode = clsRow.code ? String(clsRow.code) : null;
+                }
+            } catch (_) {}
+        }
+
         const studentKey = `${classroomId}:${assignmentId}:${studentId}`;
 
         // Bawal mag-appear sa live monitoring kapag submitted na
@@ -4315,9 +4367,11 @@ io.on('connection', (socket) => {
             name: studentName,
             studentName,
             classroomId,
+            classCode: classCode || existing.classCode || null,
             assignmentId,
             logs: mergedLogs,
             status: 'Live',
+            isLive: true,
             lastActive: Date.now()
         };
 
@@ -5073,8 +5127,8 @@ function start(port = process.env.PORT || 3001) {
             console.log(`  Local Machine:     http://localhost:${p}`);
             if (lanIps.length > 0) {
                 lanIps.forEach(ip => {
-                    console.log(`  LAN (ComLab Web):  http://${ip}:${p}`);
-                    console.log(`  LAN (Vite Dev):    http://${ip}:5173`);
+                    console.log(`  ComLab Student PCs: Connect via The Verity.exe (Server: http://${ip}:${p})`);
+                    console.log(`  Mobile / Phone Web: http://${ip}:${p} (Phones only)`);
                 });
             }
             console.log('--------------------------------------------------------');

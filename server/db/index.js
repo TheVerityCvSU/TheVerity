@@ -433,21 +433,175 @@ async function initPostgres(connStr = cleanedUrl) {
         // Synchronize active Postgres users with local SQLite so offline cache matches the primary database
         if (sqliteDb) {
             try {
-                const pgUsers = await client.query('SELECT id, name, email, role, status FROM users').catch(() => ({ rows: [] }));
+                // 1. Sync regular users (Teachers & Students) with passwords for offline login
+                const pgUsers = await client.query('SELECT id, name, email, password, role, status, lastlogin, avatar FROM users').catch(() => ({ rows: [] }));
                 if (pgUsers.rows && pgUsers.rows.length > 0) {
-                    const updateSqlite = sqliteDb.prepare(
-                        'UPDATE users SET email = ?, name = COALESCE(NULLIF(?, \'\'), name), role = COALESCE(NULLIF(?, \'\'), role), status = COALESCE(NULLIF(?, \'\'), status) WHERE id = ? OR LOWER(email) = LOWER(?)'
-                    );
+                    const upsertUser = sqliteDb.prepare(`
+                        INSERT INTO users (id, name, email, password, role, status, lastLogin, avatar)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(email) DO UPDATE SET
+                            name = excluded.name,
+                            password = excluded.password,
+                            role = excluded.role,
+                            status = excluded.status,
+                            lastLogin = excluded.lastLogin,
+                            avatar = excluded.avatar
+                    `);
                     for (const u of pgUsers.rows) {
                         if (u.email) {
                             try {
-                                updateSqlite.run(u.email, u.name || '', u.role || '', u.status || '', u.id, u.email);
+                                upsertUser.run(u.id, u.name || '', u.email, u.password || '', u.role || 'Student', u.status || 'Active', u.lastlogin || null, u.avatar || null);
+                            } catch (_) {}
+                        }
+                    }
+                    console.log(`[Database] Synced ${pgUsers.rows.length} users from Supabase into local SQLite.`);
+                }
+
+                // 2. Sync admin users
+                const pgAdmins = await client.query('SELECT id, name, email, password, role, status, lastlogin, avatar FROM admin_users').catch(() => ({ rows: [] }));
+                if (pgAdmins.rows && pgAdmins.rows.length > 0) {
+                    const upsertAdmin = sqliteDb.prepare(`
+                        INSERT INTO admin_users (id, name, email, password, role, status, lastLogin, avatar)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(email) DO UPDATE SET
+                            name = excluded.name,
+                            password = excluded.password,
+                            role = excluded.role,
+                            status = excluded.status,
+                            lastLogin = excluded.lastLogin,
+                            avatar = excluded.avatar
+                    `);
+                    for (const a of pgAdmins.rows) {
+                        if (a.email) {
+                            try {
+                                upsertAdmin.run(a.id, a.name || '', a.email, a.password || '', a.role || 'Admin', a.status || 'Active', a.lastlogin || null, a.avatar || null);
                             } catch (_) {}
                         }
                     }
                 }
+
+                // 3. Sync classrooms
+                const pgClassrooms = await client.query('SELECT id, code, section, name, subject, instructor, instructor_email, theme FROM classrooms').catch(() => ({ rows: [] }));
+                if (pgClassrooms.rows && pgClassrooms.rows.length > 0) {
+                    const upsertClassroom = sqliteDb.prepare(`
+                        INSERT INTO classrooms (id, code, section, name, subject, instructor, instructor_email, theme)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(id) DO UPDATE SET
+                            code = excluded.code,
+                            section = excluded.section,
+                            name = excluded.name,
+                            subject = excluded.subject,
+                            instructor = excluded.instructor,
+                            instructor_email = excluded.instructor_email,
+                            theme = excluded.theme
+                    `);
+                    for (const c of pgClassrooms.rows) {
+                        try {
+                            upsertClassroom.run(c.id, c.code || '', c.section || '', c.name || '', c.subject || '', c.instructor || '', c.instructor_email || null, c.theme || null);
+                        } catch (_) {}
+                    }
+                }
+
+                // 4. Sync classwork / exams
+                const pgClasswork = await client.query('SELECT id, classroom_id, title, description, duedate, type, created_at FROM classwork').catch(() => ({ rows: [] }));
+                if (pgClasswork.rows && pgClasswork.rows.length > 0) {
+                    const upsertCw = sqliteDb.prepare(`
+                        INSERT INTO classwork (id, classroom_id, title, description, dueDate, type, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(id) DO UPDATE SET
+                            classroom_id = excluded.classroom_id,
+                            title = excluded.title,
+                            description = excluded.description,
+                            dueDate = excluded.dueDate,
+                            type = excluded.type,
+                            created_at = excluded.created_at
+                    `);
+                    for (const cw of pgClasswork.rows) {
+                        try {
+                            upsertCw.run(cw.id, cw.classroom_id, cw.title, cw.description, cw.duedate, cw.type || '', cw.created_at || null);
+                        } catch (_) {}
+                    }
+                }
+
+                // 5. Sync enrollments
+                const pgEnrollments = await client.query('SELECT id, classroom_id, student_id, student_name, student_email, enrolled_at FROM enrollments').catch(() => ({ rows: [] }));
+                if (pgEnrollments.rows && pgEnrollments.rows.length > 0) {
+                    const upsertEnrollment = sqliteDb.prepare(`
+                        INSERT INTO enrollments (id, classroom_id, student_id, student_name, student_email, enrolled_at)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(classroom_id, student_email) DO UPDATE SET
+                            student_id = excluded.student_id,
+                            student_name = excluded.student_name,
+                            enrolled_at = excluded.enrolled_at
+                    `);
+                    for (const en of pgEnrollments.rows) {
+                        try {
+                            upsertEnrollment.run(en.id, en.classroom_id, en.student_id, en.student_name, en.student_email, en.enrolled_at || null);
+                        } catch (_) {}
+                    }
+                }
+
+                // 6. Sync student submissions (activities & code)
+                const pgSubmissions = await client.query('SELECT id, assignment_id, student_name, history, submittedat FROM submissions').catch(() => ({ rows: [] }));
+                if (pgSubmissions.rows && pgSubmissions.rows.length > 0) {
+                    const upsertSub = sqliteDb.prepare(`
+                        INSERT INTO submissions (id, assignment_id, student_name, history, submittedAt)
+                        VALUES (?, ?, ?, ?, ?)
+                        ON CONFLICT(id) DO UPDATE SET
+                            assignment_id = excluded.assignment_id,
+                            student_name = excluded.student_name,
+                            history = excluded.history,
+                            submittedAt = excluded.submittedAt
+                    `);
+                    for (const s of pgSubmissions.rows) {
+                        try {
+                            upsertSub.run(s.id, s.assignment_id, s.student_name, s.history, s.submittedat || s.submittedAt || null);
+                        } catch (_) {}
+                    }
+                    console.log(`[Database] Synced ${pgSubmissions.rows.length} submissions from Supabase into local SQLite.`);
+                }
+
+                // 7. Sync grades
+                const pgGrades = await client.query('SELECT id, assignment_id, student_id, grade, feedback, graded_at FROM grades').catch(() => ({ rows: [] }));
+                if (pgGrades.rows && pgGrades.rows.length > 0) {
+                    const upsertGrade = sqliteDb.prepare(`
+                        INSERT INTO grades (id, assignment_id, student_id, grade, feedback, graded_at)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(assignment_id, student_id) DO UPDATE SET
+                            grade = excluded.grade,
+                            feedback = excluded.feedback,
+                            graded_at = excluded.graded_at
+                    `);
+                    for (const g of pgGrades.rows) {
+                        try {
+                            upsertGrade.run(g.id, String(g.assignment_id), String(g.student_id), g.grade || '', g.feedback || '', g.graded_at ? new Date(g.graded_at).toISOString() : null);
+                        } catch (_) {}
+                    }
+                    console.log(`[Database] Synced ${pgGrades.rows.length} grades from Supabase into local SQLite.`);
+                }
+
+                // 8. Sync announcements
+                const pgAnnouncements = await client.query('SELECT id, classroom_id, title, details, author, posted, created_at FROM announcements').catch(() => ({ rows: [] }));
+                if (pgAnnouncements.rows && pgAnnouncements.rows.length > 0) {
+                    const upsertAnn = sqliteDb.prepare(`
+                        INSERT INTO announcements (id, classroom_id, title, details, author, posted, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(id) DO UPDATE SET
+                            classroom_id = excluded.classroom_id,
+                            title = excluded.title,
+                            details = excluded.details,
+                            author = excluded.author,
+                            posted = excluded.posted,
+                            created_at = excluded.created_at
+                    `);
+                    for (const an of pgAnnouncements.rows) {
+                        try {
+                            upsertAnn.run(an.id, an.classroom_id, an.title || '', an.details || '', an.author || '', an.posted || null, an.created_at || null);
+                        } catch (_) {}
+                    }
+                }
             } catch (syncErr) {
-                console.warn('[Database] User sync warning:', syncErr.message);
+                console.warn('[Database] Data sync warning:', syncErr.message);
             }
         }
     } catch (err) {

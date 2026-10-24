@@ -96356,22 +96356,168 @@ var require_db4 = __commonJS({
         provider = "postgres";
         if (sqliteDb) {
           try {
-            const pgUsers = await client.query("SELECT id, name, email, role, status FROM users").catch(() => ({ rows: [] }));
+            const pgUsers = await client.query("SELECT id, name, email, password, role, status, lastlogin, avatar FROM users").catch(() => ({ rows: [] }));
             if (pgUsers.rows && pgUsers.rows.length > 0) {
-              const updateSqlite = sqliteDb.prepare(
-                "UPDATE users SET email = ?, name = COALESCE(NULLIF(?, ''), name), role = COALESCE(NULLIF(?, ''), role), status = COALESCE(NULLIF(?, ''), status) WHERE id = ? OR LOWER(email) = LOWER(?)"
-              );
+              const upsertUser = sqliteDb.prepare(`
+                        INSERT INTO users (id, name, email, password, role, status, lastLogin, avatar)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(email) DO UPDATE SET
+                            name = excluded.name,
+                            password = excluded.password,
+                            role = excluded.role,
+                            status = excluded.status,
+                            lastLogin = excluded.lastLogin,
+                            avatar = excluded.avatar
+                    `);
               for (const u of pgUsers.rows) {
                 if (u.email) {
                   try {
-                    updateSqlite.run(u.email, u.name || "", u.role || "", u.status || "", u.id, u.email);
+                    upsertUser.run(u.id, u.name || "", u.email, u.password || "", u.role || "Student", u.status || "Active", u.lastlogin || null, u.avatar || null);
+                  } catch (_) {
+                  }
+                }
+              }
+              console.log(`[Database] Synced ${pgUsers.rows.length} users from Supabase into local SQLite.`);
+            }
+            const pgAdmins = await client.query("SELECT id, name, email, password, role, status, lastlogin, avatar FROM admin_users").catch(() => ({ rows: [] }));
+            if (pgAdmins.rows && pgAdmins.rows.length > 0) {
+              const upsertAdmin = sqliteDb.prepare(`
+                        INSERT INTO admin_users (id, name, email, password, role, status, lastLogin, avatar)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(email) DO UPDATE SET
+                            name = excluded.name,
+                            password = excluded.password,
+                            role = excluded.role,
+                            status = excluded.status,
+                            lastLogin = excluded.lastLogin,
+                            avatar = excluded.avatar
+                    `);
+              for (const a of pgAdmins.rows) {
+                if (a.email) {
+                  try {
+                    upsertAdmin.run(a.id, a.name || "", a.email, a.password || "", a.role || "Admin", a.status || "Active", a.lastlogin || null, a.avatar || null);
                   } catch (_) {
                   }
                 }
               }
             }
+            const pgClassrooms = await client.query("SELECT id, code, section, name, subject, instructor, instructor_email, theme FROM classrooms").catch(() => ({ rows: [] }));
+            if (pgClassrooms.rows && pgClassrooms.rows.length > 0) {
+              const upsertClassroom = sqliteDb.prepare(`
+                        INSERT INTO classrooms (id, code, section, name, subject, instructor, instructor_email, theme)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(id) DO UPDATE SET
+                            code = excluded.code,
+                            section = excluded.section,
+                            name = excluded.name,
+                            subject = excluded.subject,
+                            instructor = excluded.instructor,
+                            instructor_email = excluded.instructor_email,
+                            theme = excluded.theme
+                    `);
+              for (const c of pgClassrooms.rows) {
+                try {
+                  upsertClassroom.run(c.id, c.code || "", c.section || "", c.name || "", c.subject || "", c.instructor || "", c.instructor_email || null, c.theme || null);
+                } catch (_) {
+                }
+              }
+            }
+            const pgClasswork = await client.query("SELECT id, classroom_id, title, description, duedate, type, created_at FROM classwork").catch(() => ({ rows: [] }));
+            if (pgClasswork.rows && pgClasswork.rows.length > 0) {
+              const upsertCw = sqliteDb.prepare(`
+                        INSERT INTO classwork (id, classroom_id, title, description, dueDate, type, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(id) DO UPDATE SET
+                            classroom_id = excluded.classroom_id,
+                            title = excluded.title,
+                            description = excluded.description,
+                            dueDate = excluded.dueDate,
+                            type = excluded.type,
+                            created_at = excluded.created_at
+                    `);
+              for (const cw of pgClasswork.rows) {
+                try {
+                  upsertCw.run(cw.id, cw.classroom_id, cw.title, cw.description, cw.duedate, cw.type || "", cw.created_at || null);
+                } catch (_) {
+                }
+              }
+            }
+            const pgEnrollments = await client.query("SELECT id, classroom_id, student_id, student_name, student_email, enrolled_at FROM enrollments").catch(() => ({ rows: [] }));
+            if (pgEnrollments.rows && pgEnrollments.rows.length > 0) {
+              const upsertEnrollment = sqliteDb.prepare(`
+                        INSERT INTO enrollments (id, classroom_id, student_id, student_name, student_email, enrolled_at)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(classroom_id, student_email) DO UPDATE SET
+                            student_id = excluded.student_id,
+                            student_name = excluded.student_name,
+                            enrolled_at = excluded.enrolled_at
+                    `);
+              for (const en of pgEnrollments.rows) {
+                try {
+                  upsertEnrollment.run(en.id, en.classroom_id, en.student_id, en.student_name, en.student_email, en.enrolled_at || null);
+                } catch (_) {
+                }
+              }
+            }
+            const pgSubmissions = await client.query("SELECT id, assignment_id, student_name, history, submittedat FROM submissions").catch(() => ({ rows: [] }));
+            if (pgSubmissions.rows && pgSubmissions.rows.length > 0) {
+              const upsertSub = sqliteDb.prepare(`
+                        INSERT INTO submissions (id, assignment_id, student_name, history, submittedAt)
+                        VALUES (?, ?, ?, ?, ?)
+                        ON CONFLICT(id) DO UPDATE SET
+                            assignment_id = excluded.assignment_id,
+                            student_name = excluded.student_name,
+                            history = excluded.history,
+                            submittedAt = excluded.submittedAt
+                    `);
+              for (const s2 of pgSubmissions.rows) {
+                try {
+                  upsertSub.run(s2.id, s2.assignment_id, s2.student_name, s2.history, s2.submittedat || s2.submittedAt || null);
+                } catch (_) {
+                }
+              }
+              console.log(`[Database] Synced ${pgSubmissions.rows.length} submissions from Supabase into local SQLite.`);
+            }
+            const pgGrades = await client.query("SELECT id, assignment_id, student_id, grade, feedback, graded_at FROM grades").catch(() => ({ rows: [] }));
+            if (pgGrades.rows && pgGrades.rows.length > 0) {
+              const upsertGrade = sqliteDb.prepare(`
+                        INSERT INTO grades (id, assignment_id, student_id, grade, feedback, graded_at)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(assignment_id, student_id) DO UPDATE SET
+                            grade = excluded.grade,
+                            feedback = excluded.feedback,
+                            graded_at = excluded.graded_at
+                    `);
+              for (const g of pgGrades.rows) {
+                try {
+                  upsertGrade.run(g.id, String(g.assignment_id), String(g.student_id), g.grade || "", g.feedback || "", g.graded_at ? new Date(g.graded_at).toISOString() : null);
+                } catch (_) {
+                }
+              }
+              console.log(`[Database] Synced ${pgGrades.rows.length} grades from Supabase into local SQLite.`);
+            }
+            const pgAnnouncements = await client.query("SELECT id, classroom_id, title, details, author, posted, created_at FROM announcements").catch(() => ({ rows: [] }));
+            if (pgAnnouncements.rows && pgAnnouncements.rows.length > 0) {
+              const upsertAnn = sqliteDb.prepare(`
+                        INSERT INTO announcements (id, classroom_id, title, details, author, posted, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(id) DO UPDATE SET
+                            classroom_id = excluded.classroom_id,
+                            title = excluded.title,
+                            details = excluded.details,
+                            author = excluded.author,
+                            posted = excluded.posted,
+                            created_at = excluded.created_at
+                    `);
+              for (const an of pgAnnouncements.rows) {
+                try {
+                  upsertAnn.run(an.id, an.classroom_id, an.title || "", an.details || "", an.author || "", an.posted || null, an.created_at || null);
+                } catch (_) {
+                }
+              }
+            }
           } catch (syncErr) {
-            console.warn("[Database] User sync warning:", syncErr.message);
+            console.warn("[Database] Data sync warning:", syncErr.message);
           }
         }
       } catch (err) {
@@ -96919,6 +97065,118 @@ var require_dotnetManager = __commonJS({
   }
 });
 
+// server/node_modules/ffmpeg-static/package.json
+var require_package4 = __commonJS({
+  "server/node_modules/ffmpeg-static/package.json"(exports2, module2) {
+    module2.exports = {
+      name: "ffmpeg-static",
+      version: "5.3.0",
+      description: "ffmpeg binaries for macOS, Linux and Windows",
+      scripts: {
+        install: "node install.js",
+        prepublishOnly: "npm run install"
+      },
+      "ffmpeg-static": {
+        "binary-path-env-var": "FFMPEG_BIN",
+        "binary-release-tag-env-var": "FFMPEG_BINARY_RELEASE",
+        "binary-release-tag": "b6.1.1",
+        "binaries-url-env-var": "FFMPEG_BINARIES_URL",
+        "executable-base-name": "ffmpeg"
+      },
+      repository: {
+        type: "git",
+        url: "https://github.com/eugeneware/ffmpeg-static"
+      },
+      keywords: [
+        "ffmpeg",
+        "static",
+        "binary",
+        "binaries",
+        "mac",
+        "linux",
+        "windows"
+      ],
+      authors: [
+        "Eugene Ware <eugene@noblesamurai.com>",
+        "Jannis R <mail@jannisr.de>"
+      ],
+      contributors: [
+        "Thefrank (https://github.com/Thefrank)",
+        "Emil Sivervik <emil@sivervik.com>"
+      ],
+      license: "GPL-3.0-or-later",
+      bugs: {
+        url: "https://github.com/eugeneware/ffmpeg-static/issues"
+      },
+      engines: {
+        node: ">=16"
+      },
+      dependencies: {
+        "@derhuerst/http-basic": "^8.2.0",
+        "env-paths": "^2.2.0",
+        "https-proxy-agent": "^5.0.0",
+        progress: "^2.0.3"
+      },
+      devDependencies: {
+        "any-shell-escape": "^0.1.1"
+      },
+      main: "index.js",
+      files: [
+        "index.js",
+        "install.js",
+        "example.js",
+        "types"
+      ],
+      types: "types/index.d.ts"
+    };
+  }
+});
+
+// server/node_modules/ffmpeg-static/index.js
+var require_ffmpeg_static = __commonJS({
+  "server/node_modules/ffmpeg-static/index.js"(exports2, module2) {
+    "use strict";
+    var pkg = require_package4();
+    var {
+      "binary-path-env-var": BINARY_PATH_ENV_VAR,
+      "executable-base-name": executableBaseName
+    } = pkg[pkg.name];
+    if ("string" !== typeof BINARY_PATH_ENV_VAR) {
+      throw new Error(`package.json: invalid/missing ${pkg.name}.binary-path-env-var entry`);
+    }
+    if ("string" !== typeof executableBaseName) {
+      throw new Error(`package.json: invalid/missing ${pkg.name}.executable-base-name entry`);
+    }
+    if (process.env[BINARY_PATH_ENV_VAR]) {
+      module2.exports = process.env[BINARY_PATH_ENV_VAR];
+    } else {
+      os3 = require("os");
+      path2 = require("path");
+      binaries = Object.assign(/* @__PURE__ */ Object.create(null), {
+        darwin: ["x64", "arm64"],
+        freebsd: ["x64"],
+        linux: ["x64", "ia32", "arm64", "arm"],
+        win32: ["x64", "ia32"]
+      });
+      platform = process.env.npm_config_platform || os3.platform();
+      arch = process.env.npm_config_arch || os3.arch();
+      let binaryPath = path2.join(
+        __dirname,
+        executableBaseName + (platform === "win32" ? ".exe" : "")
+      );
+      if (!binaries[platform] || binaries[platform].indexOf(arch) === -1) {
+        binaryPath = null;
+      }
+      module2.exports = binaryPath;
+    }
+    var os3;
+    var path2;
+    var binaries;
+    var platform;
+    var arch;
+  }
+});
+
 // server/server.js
 var dns = require("dns");
 try {
@@ -97076,6 +97334,136 @@ app.use("/uploads", (req, res, next) => {
     }
   }
 }));
+var ffmpegStaticPath = null;
+try {
+  ffmpegStaticPath = require_ffmpeg_static();
+} catch (_) {
+}
+function processVideoUpload(targetPath) {
+  if (!ffmpegStaticPath || !fs2.existsSync(targetPath)) return;
+  const ext = path.extname(targetPath).toLowerCase();
+  if (![".mp4", ".webm", ".mov", ".mkv", ".avi"].includes(ext)) return;
+  const baseNoExt = targetPath.slice(0, -ext.length);
+  const thumbPath = `${baseNoExt}_thumb.jpg`;
+  const tempOptPath = `${baseNoExt}_opt.mp4`;
+  try {
+    const thumbArgs = [
+      "-y",
+      "-ss",
+      "00:00:03",
+      "-i",
+      targetPath,
+      "-vframes",
+      "1",
+      "-vf",
+      "scale='min(640,iw)':-2",
+      "-q:v",
+      "3",
+      thumbPath
+    ];
+    const thumbProc = spawn(ffmpegStaticPath, thumbArgs);
+    thumbProc.on("error", (err) => console.warn("[Video Thumb] Error:", err.message));
+  } catch (e2) {
+    console.warn("[Video Thumb] Failed to spawn thumbnail generation:", e2.message);
+  }
+  try {
+    const stats = fs2.statSync(targetPath);
+    if (stats.size > 15 * 1024 * 1024) {
+      const compressArgs = [
+        "-y",
+        "-i",
+        targetPath,
+        "-vf",
+        "scale='min(1280,iw)':-2",
+        "-c:v",
+        "h264_nvenc",
+        "-preset",
+        "p4",
+        "-cq",
+        "28",
+        "-b:v",
+        "350k",
+        "-maxrate",
+        "500k",
+        "-bufsize",
+        "800k",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "64k",
+        "-movflags",
+        "+faststart",
+        tempOptPath
+      ];
+      const compProc = spawn(ffmpegStaticPath, compressArgs);
+      compProc.on("close", (code) => {
+        if (code === 0 && fs2.existsSync(tempOptPath)) {
+          const optStats = fs2.statSync(tempOptPath);
+          if (optStats.size > 0 && optStats.size < stats.size) {
+            try {
+              fs2.renameSync(tempOptPath, targetPath);
+              console.log(`[Video Compression] Compressed ${path.basename(targetPath)} from ${(stats.size / 1024 / 1024).toFixed(1)}MB to ${(optStats.size / 1024 / 1024).toFixed(1)}MB`);
+            } catch (renErr) {
+              console.warn("[Video Compression] Rename failed:", renErr.message);
+            }
+          } else {
+            try {
+              fs2.unlinkSync(tempOptPath);
+            } catch (_) {
+            }
+          }
+        } else {
+          try {
+            const fallbackArgs = [
+              "-y",
+              "-i",
+              targetPath,
+              "-vf",
+              "scale='min(1280,iw)':-2",
+              "-c:v",
+              "libx264",
+              "-crf",
+              "28",
+              "-preset",
+              "veryfast",
+              "-c:a",
+              "aac",
+              "-b:a",
+              "64k",
+              "-movflags",
+              "+faststart",
+              tempOptPath
+            ];
+            const fallbackProc = spawn(ffmpegStaticPath, fallbackArgs);
+            fallbackProc.on("close", (fCode) => {
+              if (fCode === 0 && fs2.existsSync(tempOptPath)) {
+                try {
+                  fs2.renameSync(tempOptPath, targetPath);
+                  console.log(`[Video Compression] Compressed ${path.basename(targetPath)} (CPU fallback)`);
+                } catch (_) {
+                }
+              } else {
+                try {
+                  fs2.unlinkSync(tempOptPath);
+                } catch (_) {
+                }
+              }
+            });
+          } catch (_) {
+          }
+        }
+      });
+      compProc.on("error", () => {
+        try {
+          if (fs2.existsSync(tempOptPath)) fs2.unlinkSync(tempOptPath);
+        } catch (_) {
+        }
+      });
+    }
+  } catch (e2) {
+    console.warn("[Video Compression] Failed:", e2.message);
+  }
+}
 app.post("/upload-raw", (req, res) => {
   const rawFilename = req.query.filename || req.headers["x-filename"] || "file.mp4";
   const ext = path.extname(rawFilename).toLowerCase();
@@ -97092,7 +97480,13 @@ app.post("/upload-raw", (req, res) => {
   writeStream.on("finish", () => {
     const host = req.get("host");
     const protocol = req.headers["x-forwarded-proto"] || req.protocol;
-    res.status(201).json({ url: `${protocol}://${host}/uploads/${unique}` });
+    processVideoUpload(targetPath);
+    const isVideo = [".mp4", ".webm", ".mov", ".mkv", ".avi"].includes(ext);
+    const baseNoExt = unique.slice(0, -ext.length);
+    res.status(201).json({
+      url: `${protocol}://${host}/uploads/${unique}`,
+      thumbnailUrl: isVideo ? `${protocol}://${host}/uploads/${baseNoExt}_thumb.jpg` : null
+    });
   });
   writeStream.on("error", (err) => {
     console.error("Upload stream error:", err);
@@ -97124,10 +97518,17 @@ app.post("/upload", (req, res, next) => {
   const buffer = Buffer.from(match[2], "base64");
   const safeName = (filename || "file").replace(/[^a-zA-Z0-9._-]/g, "_");
   const unique = `${Date.now()}_${safeName}`;
-  fs2.writeFileSync(path.join(UPLOADS_DIR, unique), buffer);
+  const targetPath = path.join(UPLOADS_DIR, unique);
+  fs2.writeFileSync(targetPath, buffer);
+  processVideoUpload(targetPath);
   const host = req.get("host");
   const protocol = req.headers["x-forwarded-proto"] || req.protocol;
-  res.status(201).json({ url: `${protocol}://${host}/uploads/${unique}` });
+  const isVideo = [".mp4", ".webm", ".mov", ".mkv", ".avi"].includes(ext);
+  const baseNoExt = unique.slice(0, -ext.length);
+  res.status(201).json({
+    url: `${protocol}://${host}/uploads/${unique}`,
+    thumbnailUrl: isVideo ? `${protocol}://${host}/uploads/${baseNoExt}_thumb.jpg` : null
+  });
 });
 app.get("/api/check-update", (req, res) => {
   const currentVersion = "1.0.0";
@@ -98527,20 +98928,17 @@ async function checkClassroomAccess(req, classroomId) {
   }
   if (roleLower === "student") {
     const studentEmail = (req.user.email || "").trim().toLowerCase();
-    const studentName = (req.user.name || "").trim().toLowerCase();
     const studentId = req.user.id || 0;
     const e2 = await db.get(
       `SELECT 1 FROM enrollments 
              WHERE (classroom_id = ? OR CAST(classroom_id AS TEXT) = CAST(? AS TEXT))
-               AND ((student_email IS NOT NULL AND LOWER(student_email) = ?) 
-                 OR (student_id IS NOT NULL AND (student_id = ? OR CAST(student_id AS TEXT) = CAST(? AS TEXT)))
-                 OR (student_name IS NOT NULL AND LOWER(student_name) = ?))`,
+               AND ((student_email IS NOT NULL AND LOWER(TRIM(student_email)) = ?) 
+                 OR (student_id IS NOT NULL AND (student_id = ? OR CAST(student_id AS TEXT) = CAST(? AS TEXT))))`,
       classroomId,
       String(classroomId),
       studentEmail,
       studentId,
-      String(studentId),
-      studentName
+      String(studentId)
     );
     return !!e2;
   }
@@ -98707,19 +99105,28 @@ app.get("/classrooms", authenticateToken, async (req, res) => {
       const studentEmail = (req.user.email || "").trim().toLowerCase();
       const studentId = req.user.id || 0;
       rawClassrooms = await db.all(`
-                SELECT DISTINCT c.* FROM classrooms c
-                INNER JOIN enrollments e ON e.classroom_id = c.id
-                WHERE (e.student_email IS NOT NULL AND LOWER(e.student_email) = ?)
-                   OR (e.student_id IS NOT NULL AND (e.student_id = ? OR CAST(e.student_id AS TEXT) = CAST(? AS TEXT)))
-                ORDER BY LOWER(c.name) ASC, c.id ASC
+                SELECT * FROM (
+                    SELECT DISTINCT c.* FROM classrooms c
+                    INNER JOIN enrollments e ON e.classroom_id = c.id
+                    WHERE (e.student_email IS NOT NULL AND LOWER(TRIM(e.student_email)) = ?)
+                       OR (e.student_id IS NOT NULL AND (e.student_id = ? OR CAST(e.student_id AS TEXT) = CAST(? AS TEXT)))
+                ) sub
+                ORDER BY LOWER(sub.name) ASC, sub.id ASC
             `, studentEmail, studentId, String(studentId));
       if (studentEmail && studentId) {
         db.run(
-          "UPDATE enrollments SET student_email = ? WHERE (student_id = ? OR CAST(student_id AS TEXT) = CAST(? AS TEXT)) AND LOWER(student_email) != ?",
+          "UPDATE enrollments SET student_email = ? WHERE (student_id = ? OR CAST(student_id AS TEXT) = CAST(? AS TEXT)) AND (student_email IS NULL OR LOWER(TRIM(student_email)) != ?)",
           studentEmail,
           studentId,
           String(studentId),
           studentEmail
+        ).catch(() => {
+        });
+        db.run(
+          "UPDATE enrollments SET student_id = ? WHERE (student_email IS NOT NULL AND LOWER(TRIM(student_email)) = ?) AND (student_id IS NULL OR student_id != ?)",
+          studentId,
+          studentEmail,
+          studentId
         ).catch(() => {
         });
       }
@@ -98976,15 +99383,23 @@ app.get("/proctor-logs/:assignmentId", authenticateToken, requireRole("Teacher",
     const assignmentId = String(req.params.assignmentId);
     const classroomId = req.query.classroomId ? String(req.query.classroomId) : null;
     let logs = [];
-    if (classroomId) {
+    if (classroomId && classroomId !== "none" && classroomId !== "undefined" && classroomId !== "default") {
       logs = await db.all(
-        "SELECT * FROM proctor_session_logs WHERE assignment_id = ? AND classroom_id = ? ORDER BY id ASC",
+        `SELECT * FROM proctor_session_logs 
+                 WHERE (assignment_id = ? OR CAST(assignment_id AS TEXT) = ? OR assignment_id = 'none' OR assignment_id = 'default') 
+                   AND (classroom_id = ? OR CAST(classroom_id AS TEXT) = ? OR classroom_id = 'none' OR classroom_id = 'default' OR classroom_id IS NULL) 
+                 ORDER BY id ASC`,
         assignmentId,
+        assignmentId,
+        classroomId,
         classroomId
       ).catch(() => []);
     } else {
       logs = await db.all(
-        "SELECT * FROM proctor_session_logs WHERE assignment_id = ? ORDER BY id ASC",
+        `SELECT * FROM proctor_session_logs 
+                 WHERE assignment_id = ? OR CAST(assignment_id AS TEXT) = ? OR assignment_id = 'none' OR assignment_id = 'default'
+                 ORDER BY id ASC`,
+        assignmentId,
         assignmentId
       ).catch(() => []);
     }
@@ -99362,6 +99777,7 @@ app.post("/classrooms/join", authenticateToken, async (req, res) => {
             VALUES (?, ?, ?, ?, ?)
             ON CONFLICT(classroom_id, student_email) DO UPDATE SET
                 student_name = excluded.student_name,
+                student_id = COALESCE(excluded.student_id, enrollments.student_id),
                 enrolled_at = excluded.enrolled_at
         `, classroom.id, studentId, studentName, studentEmail, now);
     let parsedTheme = null;
@@ -99912,7 +100328,8 @@ async function getKioskSettings() {
     cognitivePauseThreshold: 45,
     strictClipboardBlocking: true,
     enforceSingleMonitor: false,
-    disableWindowsKeyAltTab: true
+    disableWindowsKeyAltTab: true,
+    blockVirtualMachine: true
   };
   try {
     const row = await db.get("SELECT value FROM system_settings WHERE key = 'global_config'");
@@ -99931,8 +100348,106 @@ async function getKioskSettings() {
 }
 var currentInstruction = "";
 var activeStudents = {};
+function getActiveActivitiesMap(targetClassroomId = null) {
+  const counts = {};
+  for (const student of Object.values(activeStudents)) {
+    if (!student || !student.assignmentId || student.assignmentId === "none" || student.assignmentId === "unassigned") continue;
+    if (student.isLive === false || student.status === "Offline" || student.status === "Submitted") continue;
+    if (targetClassroomId && targetClassroomId !== "all" && String(student.classroomId) !== String(targetClassroomId)) continue;
+    const aId = String(student.assignmentId);
+    counts[aId] = (counts[aId] || 0) + 1;
+  }
+  return counts;
+}
+function getActiveClassroomsMap() {
+  const classroomCounts = {};
+  for (const student of Object.values(activeStudents)) {
+    if (!student || !student.assignmentId || student.assignmentId === "none" || student.assignmentId === "unassigned") continue;
+    if (student.isLive === false || student.status === "Offline" || student.status === "Submitted") continue;
+    if (student.classroomId && student.classroomId !== "none" && student.classroomId !== "unassigned") {
+      const cId = String(student.classroomId);
+      classroomCounts[cId] = (classroomCounts[cId] || 0) + 1;
+      classroomCounts[cId.toLowerCase()] = (classroomCounts[cId.toLowerCase()] || 0) + 1;
+      if (student.classCode) {
+        const code = String(student.classCode);
+        classroomCounts[code] = (classroomCounts[code] || 0) + 1;
+        classroomCounts[code.toLowerCase()] = (classroomCounts[code.toLowerCase()] || 0) + 1;
+      }
+    }
+  }
+  return classroomCounts;
+}
+function broadcastActiveActivities() {
+  const allCounts = {};
+  const classroomCounts = getActiveClassroomsMap();
+  for (const student of Object.values(activeStudents)) {
+    if (!student || !student.assignmentId || student.assignmentId === "none" || student.assignmentId === "unassigned") continue;
+    if (student.isLive === false || student.status === "Offline" || student.status === "Submitted") continue;
+    const aId = String(student.assignmentId);
+    allCounts[aId] = (allCounts[aId] || 0) + 1;
+  }
+  io.emit("active_activities_update", { counts: allCounts, classroomCounts });
+}
+function removeStudentFromPreviousActivities(studentId, studentName, excludeKey = null) {
+  const sIdStr = String(studentId || "");
+  const sNameStr = String(studentName || "").trim().toLowerCase();
+  const removedRooms = [];
+  for (const [key, student] of Object.entries(activeStudents)) {
+    if (key === excludeKey) continue;
+    if (!student) continue;
+    const curId = String(student.studentId || student.id || "");
+    const curName = String(student.name || student.studentName || "").trim().toLowerCase();
+    const isMatch = sIdStr && curId === sIdStr || sNameStr && curName === sNameStr;
+    if (isMatch) {
+      removedRooms.push({
+        key,
+        classroomId: student.classroomId,
+        assignmentId: student.assignmentId,
+        studentId: student.studentId || studentId,
+        studentName: student.name || studentName
+      });
+      delete activeStudents[key];
+    }
+  }
+  for (const item of removedRooms) {
+    const roomName = `classroom:${item.classroomId}:assignment:${item.assignmentId}`;
+    const payload = {
+      studentId: item.studentId,
+      studentName: item.studentName,
+      classroomId: item.classroomId,
+      assignmentId: item.assignmentId,
+      reason: "switched_activity"
+    };
+    io.to(roomName).emit("teacher_student_left", payload);
+    io.emit("teacher_student_left", payload);
+  }
+  if (removedRooms.length > 0) {
+    broadcastActiveActivities();
+  }
+}
+app.get("/active-activities", (req, res) => {
+  try {
+    const counts = getActiveActivitiesMap(req.query.classroomId);
+    const classroomCounts = getActiveClassroomsMap();
+    res.status(200).json({ counts, classroomCounts });
+  } catch (e2) {
+    res.status(500).json({ message: e2.message });
+  }
+});
 io.on("connection", (socket) => {
   console.log("\u{1F7E2} Student Workspace Connected: " + socket.id);
+  socket.on("get_active_activities", (data) => {
+    socket.emit("active_activities_update", {
+      counts: getActiveActivitiesMap(data?.classroomId),
+      classroomCounts: getActiveClassroomsMap()
+    });
+  });
+  socket.on("teacher_leave", (data) => {
+    if (socket.data.teacherRoom) {
+      socket.leave(socket.data.teacherRoom);
+      socket.data.teacherRoom = null;
+    }
+  });
   socket.on("check_dotnet_status", (cb) => {
     const s2 = dotnetManager.checkDotnetStatus(OFFLINE_DOTNET_ENV);
     if (typeof cb === "function") cb(s2);
@@ -100029,49 +100544,50 @@ io.on("connection", (socket) => {
     const filterKey = `${cIdStr}:${aIdStr}`;
     let dbLogs = [];
     try {
-      dbLogs = await db.all(
-        "SELECT * FROM proctor_session_logs WHERE classroom_id = ? AND assignment_id = ? ORDER BY id ASC",
-        cIdStr,
+      if (cIdStr && cIdStr !== "none" && cIdStr !== "undefined" && cIdStr !== "default") {
+        dbLogs = await db.all(
+          `SELECT * FROM proctor_session_logs 
+                     WHERE (assignment_id = ? OR CAST(assignment_id AS TEXT) = ? OR assignment_id = 'none' OR assignment_id = 'default') 
+                       AND (classroom_id = ? OR CAST(classroom_id AS TEXT) = ? OR classroom_id = 'none' OR classroom_id = 'default' OR classroom_id IS NULL) 
+                     ORDER BY id ASC`,
+          aIdStr,
+          aIdStr,
+          cIdStr,
+          cIdStr
+        ).catch(() => []);
+      } else {
+        dbLogs = await db.all(
+          `SELECT * FROM proctor_session_logs 
+                     WHERE assignment_id = ? OR CAST(assignment_id AS TEXT) = ? OR assignment_id = 'none' OR assignment_id = 'default'
+                     ORDER BY id ASC`,
+          aIdStr,
+          aIdStr
+        ).catch(() => []);
+      }
+    } catch (_) {
+    }
+    if (Array.isArray(dbLogs) && dbLogs.length > 0) {
+      socket.emit("teacher_past_warnings", dbLogs);
+    }
+    let submittedRows = [];
+    try {
+      submittedRows = await db.all(
+        `SELECT LOWER(student_name) as sname FROM submissions WHERE assignment_id = ? OR CAST(assignment_id AS TEXT) = ?`,
+        aIdStr,
         aIdStr
       ).catch(() => []);
     } catch (_) {
     }
-    if (Array.isArray(dbLogs) && dbLogs.length > 0) {
-      for (const log of dbLogs) {
-        const sKey = `${cIdStr}:${aIdStr}:${log.student_id}`;
-        const targetKey = Object.keys(activeStudents).find(
-          (k) => k.startsWith(filterKey + ":") && (activeStudents[k].studentId === log.student_id || activeStudents[k].name === log.student_name)
-        ) || sKey;
-        if (!activeStudents[targetKey]) {
-          activeStudents[targetKey] = {
-            studentId: log.student_id,
-            name: log.student_name || log.student_id,
-            code: "",
-            classroomId: cIdStr,
-            assignmentId: aIdStr,
-            logs: [],
-            status: "Live"
-          };
-        }
-        const curStudent = activeStudents[targetKey];
-        const logs = Array.isArray(curStudent.logs) ? curStudent.logs : [];
-        const exists = logs.some((l) => l.id === log.id || l.action === log.action && l.time === log.time);
-        if (!exists) {
-          logs.unshift({
-            id: log.id,
-            action: log.action,
-            message: log.message || log.action,
-            time: log.time,
-            color: log.color,
-            studentId: log.student_id,
-            studentName: log.student_name
-          });
-          curStudent.logs = logs;
-        }
-      }
-    }
+    const submittedSet = new Set((submittedRows || []).map((r2) => r2.sname));
     for (const [key, student] of Object.entries(activeStudents)) {
-      if (key.startsWith(filterKey + ":")) {
+      if (!student || student.isLive === false || student.status === "Offline" || student.status === "Submitted" || student.submitted) continue;
+      const curName = String(student.name || student.studentName || "").trim().toLowerCase();
+      const curId = String(student.id || student.studentId || "").trim().toLowerCase();
+      if (submittedSet.has(curName) || submittedSet.has(curId)) {
+        delete activeStudents[key];
+        continue;
+      }
+      if (key.startsWith(filterKey + ":") || aIdStr !== "none" && key.startsWith(`none:${aIdStr}:`)) {
         socket.emit("teacher_update_code", {
           ...student,
           logs: student.logs || []
@@ -100079,12 +100595,29 @@ io.on("connection", (socket) => {
       }
     }
   });
-  socket.on("teacher_request_sync", ({ classroomId, assignmentId }) => {
+  socket.on("teacher_request_sync", async ({ classroomId, assignmentId }) => {
     const cIdStr = String(classroomId || "none");
     const aIdStr = String(assignmentId || "none");
     const filterKey = `${cIdStr}:${aIdStr}`;
+    let submittedRows = [];
+    try {
+      submittedRows = await db.all(
+        `SELECT LOWER(student_name) as sname FROM submissions WHERE assignment_id = ? OR CAST(assignment_id AS TEXT) = ?`,
+        aIdStr,
+        aIdStr
+      ).catch(() => []);
+    } catch (_) {
+    }
+    const submittedSet = new Set((submittedRows || []).map((r2) => r2.sname));
     for (const [key, student] of Object.entries(activeStudents)) {
-      if (key.startsWith(filterKey + ":")) {
+      if (!student || student.isLive === false || student.status === "Offline" || student.status === "Submitted" || student.submitted) continue;
+      const curName = String(student.name || student.studentName || "").trim().toLowerCase();
+      const curId = String(student.id || student.studentId || "").trim().toLowerCase();
+      if (submittedSet.has(curName) || submittedSet.has(curId)) {
+        delete activeStudents[key];
+        continue;
+      }
+      if (key.startsWith(filterKey + ":") || aIdStr !== "none" && key.startsWith(`none:${aIdStr}:`)) {
         socket.emit("teacher_update_code", {
           ...student,
           logs: student.logs || []
@@ -100603,13 +101136,62 @@ io.on("connection", (socket) => {
       socket.emit("test_cases_results", { results: [] });
     }
   });
-  const handleStudentActivity = (data) => {
+  const handleStudentActivity = async (data) => {
     if (!data || !data.studentId && !data.name) return;
+    if (data.submitted) return;
     const studentId = String(data.studentId || data.name);
     const studentName = String(data.name || data.studentName || studentId).trim();
-    const classroomId = data.classroomId != null ? String(data.classroomId) : "none";
-    const assignmentId = data.assignmentId != null ? String(data.assignmentId) : "none";
+    let classroomId = data.classroomId != null && data.classroomId !== "default" ? String(data.classroomId) : "none";
+    const assignmentId = data.assignmentId != null && data.assignmentId !== "default" ? String(data.assignmentId) : "none";
+    if ((!classroomId || classroomId === "none" || classroomId === "unassigned") && assignmentId !== "none") {
+      try {
+        const foundCw = await db.get(
+          `SELECT classroom_id FROM classwork WHERE id = ? OR CAST(id AS TEXT) = ?`,
+          assignmentId,
+          assignmentId
+        );
+        if (foundCw && foundCw.classroom_id != null) {
+          classroomId = String(foundCw.classroom_id);
+        }
+      } catch (_) {
+      }
+    }
+    let classCode = null;
+    if (classroomId && classroomId !== "none") {
+      try {
+        const clsRow = await db.get(
+          `SELECT id, code FROM classrooms WHERE id = ? OR CAST(id AS TEXT) = ? OR LOWER(code) = ?`,
+          classroomId,
+          classroomId,
+          classroomId.toLowerCase()
+        );
+        if (clsRow) {
+          classroomId = String(clsRow.id);
+          classCode = clsRow.code ? String(clsRow.code) : null;
+        }
+      } catch (_) {
+      }
+    }
     const studentKey = `${classroomId}:${assignmentId}:${studentId}`;
+    try {
+      const alreadySubmitted = await db.get(
+        `SELECT id FROM submissions WHERE (assignment_id = ? OR CAST(assignment_id AS TEXT) = ?) AND (LOWER(student_name) = ? OR LOWER(student_name) = ?)`,
+        assignmentId,
+        assignmentId,
+        studentName.toLowerCase(),
+        studentId.toLowerCase()
+      );
+      if (alreadySubmitted) {
+        delete activeStudents[studentKey];
+        return;
+      }
+    } catch (_) {
+    }
+    removeStudentFromPreviousActivities(studentId, studentName, studentKey);
+    const roomName = `classroom:${classroomId}:assignment:${assignmentId}`;
+    if (socket.data.roomName && socket.data.roomName !== roomName) {
+      socket.leave(socket.data.roomName);
+    }
     const existing = activeStudents[studentKey] || {};
     const existingLogs = Array.isArray(existing.logs) ? existing.logs : [];
     let mergedLogs = existingLogs;
@@ -100640,41 +101222,46 @@ io.on("connection", (socket) => {
       name: studentName,
       studentName,
       classroomId,
+      classCode: classCode || existing.classCode || null,
       assignmentId,
       logs: mergedLogs,
       status: "Live",
+      isLive: true,
       lastActive: Date.now()
     };
     activeStudents[studentKey] = updated;
     socket.data.studentKey = studentKey;
     socket.data.studentId = studentId;
-    const roomName = `classroom:${classroomId}:assignment:${assignmentId}`;
+    socket.data.studentName = studentName;
+    socket.data.classroomId = classroomId;
+    socket.data.assignmentId = assignmentId;
+    socket.data.roomName = roomName;
     socket.join(roomName);
     io.to(roomName).emit("teacher_update_code", updated);
-    socket.broadcast.emit("teacher_update_code", updated);
+    broadcastActiveActivities();
   };
   socket.on("student_enter_activity", handleStudentActivity);
   socket.on("student_typing", handleStudentActivity);
   socket.on("proctor_alert", async (data) => {
-    if (data && data.studentId) {
-      const studentId = data.studentId;
-      const studentName = data.name || studentId;
-      let classroomId = data.classroomId != null ? String(data.classroomId) : null;
-      let assignmentId = data.assignmentId != null ? String(data.assignmentId) : null;
+    if (data && (data.studentId || data.id || data.name || data.studentName || socket.data?.studentId)) {
+      const studentId = String(data.studentId || data.id || data.name || socket.data?.studentId || "student");
+      const studentName = String(data.name || data.studentName || studentId || "Student").trim();
+      let classroomId = data.classroomId != null && data.classroomId !== "default" ? String(data.classroomId) : null;
+      let assignmentId = data.assignmentId != null && data.assignmentId !== "default" ? String(data.assignmentId) : null;
       if (!classroomId || !assignmentId) {
         if (socket.data.studentKey) {
           const parts = socket.data.studentKey.split(":");
           if (parts.length >= 3) {
-            classroomId = classroomId || parts[0];
-            assignmentId = assignmentId || parts[1];
+            classroomId = classroomId || (parts[0] !== "default" ? parts[0] : null);
+            assignmentId = assignmentId || (parts[1] !== "default" ? parts[1] : null);
           }
         } else {
           const found = Object.values(activeStudents).find(
             (s2) => s2 && (s2.studentId === studentId || s2.name === studentName)
           );
           if (found) {
-            classroomId = classroomId || found.classroomId;
-            assignmentId = assignmentId || found.assignmentId;
+            classroomId = classroomId || (found.classroomId !== "default" ? found.classroomId : null);
+            assignmentId = assignmentId || (found.assignmentId !== "default" ? found.assignmentId : null);
           }
         }
       }
@@ -100694,6 +101281,32 @@ io.on("connection", (socket) => {
         studentName
       };
       const studentKey = `${classroomId}:${assignmentId}:${studentId}`;
+      try {
+        const alreadySubmitted = await db.get(
+          `SELECT id FROM submissions WHERE (assignment_id = ? OR CAST(assignment_id AS TEXT) = ?) AND (LOWER(student_name) = ? OR LOWER(student_name) = ?)`,
+          assignmentId,
+          assignmentId,
+          studentName.toLowerCase(),
+          studentId.toLowerCase()
+        );
+        if (alreadySubmitted) {
+          delete activeStudents[studentKey];
+          await db.run(
+            "INSERT INTO proctor_session_logs (classroom_id, assignment_id, student_id, student_name, action, message, time, color) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            classroomId,
+            assignmentId,
+            studentId,
+            studentName,
+            newLog.action,
+            newLog.message,
+            newLog.time,
+            newLog.color
+          ).catch(() => {
+          });
+          return;
+        }
+      } catch (_) {
+      }
       const existing = activeStudents[studentKey] || {
         studentId,
         name: studentName,
@@ -100737,7 +101350,7 @@ io.on("connection", (socket) => {
       } catch (_) {
       }
       const roomName = `classroom:${classroomId}:assignment:${assignmentId}`;
-      socket.to(roomName).emit("teacher_receive_alert", {
+      const alertPayload = {
         ...data,
         id: newLog.id,
         studentId,
@@ -100745,17 +101358,22 @@ io.on("connection", (socket) => {
         action: actionText,
         message: messageText,
         time: timeText,
-        color: colorVal
-      });
+        color: colorVal,
+        classroomId,
+        assignmentId
+      };
+      io.to(roomName).emit("teacher_receive_alert", alertPayload);
+      socket.broadcast.emit("teacher_receive_alert", alertPayload);
     }
     try {
       const key = todayKey();
       const actionStr = (data?.action || "").toLowerCase();
       const descStr = (data?.desc || "").toLowerCase();
-      const isSystemExit = actionStr.includes("system exit") || descStr.includes("system exit") || descStr.includes("exited system") || descStr.includes("exited the system");
-      const isExitTab = !isSystemExit && (actionStr.includes("tab") || actionStr.includes("exit") || actionStr.includes("blur") || descStr.includes("tab") || descStr.includes("blur"));
-      const isCopyPaste = actionStr.includes("paste") || actionStr.includes("clipboard") || actionStr.includes("copy");
-      const isAltTabCopyPaste = isExitTab || isCopyPaste || isSystemExit;
+      const isCrash = Boolean(data?.isCrash) || actionStr.includes("crash") || descStr.includes("crash");
+      const isSystemExit = !isCrash && (actionStr.includes("system exit") || descStr.includes("system exit") || descStr.includes("exited system") || descStr.includes("exited the system"));
+      const isExitTab = !isCrash && !isSystemExit && (actionStr.includes("tab") || actionStr.includes("exit") || actionStr.includes("blur") || descStr.includes("tab") || descStr.includes("blur"));
+      const isCopyPaste = !isCrash && (actionStr.includes("paste") || actionStr.includes("clipboard") || actionStr.includes("copy"));
+      const isAltTabCopyPaste = !isCrash && (isExitTab || isCopyPaste || isSystemExit);
       if (isAltTabCopyPaste) {
         await db.run(
           "INSERT INTO security_flags (date_string, count, alt_tab_copy_paste_count) VALUES (?, 0, 1) ON CONFLICT(date_string) DO UPDATE SET alt_tab_copy_paste_count = COALESCE(security_flags.alt_tab_copy_paste_count, 0) + 1",
@@ -100772,7 +101390,10 @@ io.on("connection", (socket) => {
         const userName = data.name || data.email || data.studentId;
         let logType = "Security Flag Alert";
         let logSeverity = "High";
-        if (isSystemExit) {
+        if (isCrash) {
+          logType = "System Crash Violation";
+          logSeverity = "High";
+        } else if (isSystemExit) {
           logType = "System Exit Violation";
           logSeverity = "Warning";
         } else if (isCopyPaste) {
@@ -100793,6 +101414,7 @@ io.on("connection", (socket) => {
       }
       io.emit("admin_security_alert", {
         ...data,
+        isCrash,
         isAltTabCopyPaste,
         isSystemExit,
         timestamp: nowIso
@@ -100803,12 +101425,11 @@ io.on("connection", (socket) => {
     }
   });
   socket.on("submit_exam", async (data) => {
-    if (!socket.user) return;
-    const authenticatedName = socket.user.name || socket.user.email || "Unknown";
-    const authenticatedId = socket.user.id || data.studentId;
+    if (!data) return;
+    const authenticatedName = socket.user?.name || socket.user?.email || data.studentName || data.studentId || "Unknown";
+    const authenticatedId = socket.user?.id || data.studentId || authenticatedName;
     const classroomId = data.classroomId || "none";
     const assignmentId = data.assignmentId != null ? String(data.assignmentId) : "unassigned";
-    const studentKey = `${classroomId}:${assignmentId}:${authenticatedId}`;
     const strictWarnings = await getTreatWarningsAsErrors();
     const payload = {
       ...data,
@@ -100816,12 +101437,23 @@ io.on("connection", (socket) => {
       studentId: authenticatedId,
       strictWarningsEnforced: strictWarnings
     };
-    delete activeStudents[studentKey];
-    delete activeStudents[`${classroomId}:${assignmentId}:${authenticatedName}`];
-    delete activeStudents[`${classroomId}:${assignmentId}:${authenticatedId}`];
+    const targetId = String(data.studentId || authenticatedId || "");
+    const targetName = String(data.studentName || authenticatedName || "").trim().toLowerCase();
+    for (const [key, student] of Object.entries(activeStudents)) {
+      if (!student) continue;
+      const curId = String(student.studentId || student.id || "");
+      const curName = String(student.name || student.studentName || "").trim().toLowerCase();
+      if (targetId && (curId === targetId || key.endsWith(`:${targetId}`)) || targetName && (curName === targetName || key.endsWith(`:${targetName}`))) {
+        delete activeStudents[key];
+      }
+    }
+    removeStudentFromPreviousActivities(targetId, targetName);
+    removeStudentFromPreviousActivities(authenticatedId, authenticatedName);
+    broadcastActiveActivities();
     const roomName = `classroom:${classroomId}:assignment:${assignmentId}`;
     socket.to(roomName).emit("teacher_receive_submission", payload);
-    socket.to(roomName).emit("teacher_student_left", { studentId: authenticatedName, studentIdNum: authenticatedId, reason: "submitted" });
+    socket.to(roomName).emit("teacher_student_left", { studentId: targetId, studentName: authenticatedName, studentIdNum: authenticatedId, reason: "submitted", assignmentId, classroomId });
+    io.emit("teacher_student_left", { studentId: targetId, studentName: authenticatedName, studentIdNum: authenticatedId, reason: "submitted", assignmentId, classroomId });
     try {
       await db.run("DELETE FROM submissions WHERE assignment_id = ? AND student_name = ?", assignmentId, authenticatedName);
       const historyStr = JSON.stringify(Array.isArray(data.codeHistory) ? data.codeHistory : []);
@@ -100870,19 +101502,50 @@ io.on("connection", (socket) => {
     socket.broadcast.emit("student_unsubmitted", { studentName, assignmentId, studentId: safeStudentId });
   });
   socket.on("student_terminal_update", (data) => {
-    socket.broadcast.emit("teacher_terminal_update", data);
+    if (data?.classroomId && data?.assignmentId) {
+      io.to(`classroom:${data.classroomId}:assignment:${data.assignmentId}`).emit("teacher_terminal_update", data);
+    } else {
+      socket.broadcast.emit("teacher_terminal_update", data);
+    }
   });
-  socket.on("student_leave_workspace", () => {
+  socket.on("student_leave_workspace", (data) => {
     if (activeProcess) {
-      activeProcess.kill();
+      try {
+        activeProcess.kill();
+      } catch (_) {
+      }
       activeProcess = null;
     }
+    const studentId = socket.data.studentId || data?.studentId;
+    const studentName = data?.name || data?.studentName || socket.user?.name || socket.data.studentName;
+    const classroomId = data?.classroomId || socket.data.classroomId;
+    const assignmentId = data?.assignmentId || socket.data.assignmentId;
     if (socket.data.studentKey) {
       delete activeStudents[socket.data.studentKey];
-      socket.broadcast.emit("teacher_student_left", { studentId: socket.data.studentId });
-      socket.data.studentKey = null;
-      socket.data.studentId = null;
     }
+    if (studentId || studentName) {
+      removeStudentFromPreviousActivities(studentId, studentName);
+    }
+    const roomName = socket.data.roomName || (classroomId && assignmentId ? `classroom:${classroomId}:assignment:${assignmentId}` : null);
+    const leftPayload = {
+      studentId,
+      studentName,
+      classroomId,
+      assignmentId,
+      reason: "left_workspace"
+    };
+    if (roomName) {
+      io.to(roomName).emit("teacher_student_left", leftPayload);
+      socket.leave(roomName);
+    }
+    socket.broadcast.emit("teacher_student_left", leftPayload);
+    socket.data.studentKey = null;
+    socket.data.studentId = null;
+    socket.data.studentName = null;
+    socket.data.classroomId = null;
+    socket.data.assignmentId = null;
+    socket.data.roomName = null;
+    broadcastActiveActivities();
   });
   socket.on("disconnect", async () => {
     if (activeProcess) {
@@ -100892,10 +101555,28 @@ io.on("connection", (socket) => {
       }
       activeProcess = null;
     }
+    const studentId = socket.data.studentId || socket.user?.id;
+    const studentName = socket.data.studentName || socket.user?.name;
+    const classroomId = socket.data.classroomId;
+    const assignmentId = socket.data.assignmentId;
     if (socket.data.studentKey) {
       delete activeStudents[socket.data.studentKey];
-      socket.broadcast.emit("teacher_student_left", { studentId: socket.data.studentId });
     }
+    if (studentId || studentName) {
+      removeStudentFromPreviousActivities(studentId, studentName);
+    }
+    const leftPayload = {
+      studentId,
+      studentName,
+      classroomId,
+      assignmentId,
+      reason: "disconnected"
+    };
+    if (socket.data.roomName) {
+      io.to(socket.data.roomName).emit("teacher_student_left", leftPayload);
+    }
+    socket.broadcast.emit("teacher_student_left", leftPayload);
+    broadcastActiveActivities();
     if (socket.user && socket.user.role === "Student") {
       const userName = socket.user.name || socket.user.email || "Student";
       try {
@@ -100928,7 +101609,7 @@ io.on("connection", (socket) => {
             type: "System Exit Violation",
             desc: `Student exited the system: ${userName} closed or disconnected application`,
             severity: "Warning",
-            isAltTabCopyPaste: true,
+            isAltTabCopyPaste: false,
             isSystemExit: true,
             timestamp: nowIso
           });
@@ -100976,8 +101657,9 @@ app.post("/audit-logs", authenticateToken, async (req, res) => {
       const key = todayKey();
       const descLower = (desc || "").toLowerCase();
       const typeLower = (type || "").toLowerCase();
-      const isSystemExit = typeLower.includes("system exit") || descLower.includes("system exit") || descLower.includes("exited system") || descLower.includes("exited the system");
-      const isAltTabCopyPaste = isSystemExit || (descLower.includes("tab") || descLower.includes("paste") || descLower.includes("clipboard") || descLower.includes("copy") || descLower.includes("exit tab") || typeLower.includes("alt-tab") || typeLower.includes("copy-paste"));
+      const isCrash = typeLower.includes("crash") || descLower.includes("crash");
+      const isSystemExit = !isCrash && (typeLower.includes("system exit") || descLower.includes("system exit") || descLower.includes("exited system") || descLower.includes("exited the system"));
+      const isAltTabCopyPaste = !isCrash && (isSystemExit || descLower.includes("tab") || descLower.includes("paste") || descLower.includes("clipboard") || descLower.includes("copy") || descLower.includes("exit tab") || typeLower.includes("alt-tab") || typeLower.includes("copy-paste"));
       if (isAltTabCopyPaste) {
         await db.run(
           `INSERT INTO security_flags (date_string, count, alt_tab_copy_paste_count) VALUES (?, 0, 1) ON CONFLICT(date_string) DO UPDATE SET alt_tab_copy_paste_count = COALESCE(security_flags.alt_tab_copy_paste_count, 0) + 1`,
@@ -100989,6 +101671,40 @@ app.post("/audit-logs", authenticateToken, async (req, res) => {
           key
         );
       }
+      const timeText = (/* @__PURE__ */ new Date()).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true }).toLowerCase();
+      const actionText = isCrash ? "System Crash" : isAltTabCopyPaste ? descLower.includes("paste") ? "Copy/Paste" : "Alt Tab" : type || "Violation";
+      const colorVal = isCrash ? "#dc2626" : isAltTabCopyPaste ? "#eab308" : "#ef4444";
+      const foundActive = Object.values(activeStudents).find((s2) => s2 && (s2.studentId === user || s2.name === user));
+      const cId = foundActive?.classroomId || "none";
+      const aId = foundActive?.assignmentId || "none";
+      try {
+        await db.run(
+          "INSERT INTO proctor_session_logs (classroom_id, assignment_id, student_id, student_name, action, message, time, color) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+          cId,
+          aId,
+          String(user),
+          String(user),
+          actionText,
+          actionText,
+          timeText,
+          colorVal
+        ).catch(() => {
+        });
+      } catch (_) {
+      }
+      io.emit("teacher_receive_alert", {
+        id: Date.now(),
+        studentId: user,
+        studentName: user,
+        name: user,
+        action: actionText,
+        message: actionText,
+        time: timeText,
+        color: colorVal,
+        isCrash,
+        classroomId: cId,
+        assignmentId: aId
+      });
       io.emit("admin_security_alert", {
         user,
         name: user,
@@ -101214,8 +101930,8 @@ function start(port = process.env.PORT || 3001) {
       console.log(`  Local Machine:     http://localhost:${p}`);
       if (lanIps.length > 0) {
         lanIps.forEach((ip) => {
-          console.log(`  LAN (ComLab Web):  http://${ip}:${p}`);
-          console.log(`  LAN (Vite Dev):    http://${ip}:5173`);
+          console.log(`  ComLab Student PCs: Connect via The Verity.exe (Server: http://${ip}:${p})`);
+          console.log(`  Mobile / Phone Web: http://${ip}:${p} (Phones only)`);
         });
       }
       console.log("--------------------------------------------------------");
