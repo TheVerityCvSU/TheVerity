@@ -324,15 +324,17 @@ export const getCachedClassrooms = (user, role = 'student') => {
     } catch {}
   }
 
-  // 4. Try generic/default fallbacks
-  for (const fallbackKey of [`${prefix}_default`, `${prefix}_anon`, 'verity_cached_classrooms']) {
-    try {
-      const raw = localStorage.getItem(fallbackKey);
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed) && parsed.length > 0) return sortClassroomsAlphabetically(parsed);
-      }
-    } catch {}
+  // 4. Try generic/default fallbacks ONLY for unauthenticated / demo users without user id or email
+  if (!user?.id && !user?.email) {
+    for (const fallbackKey of [`${prefix}_default`, `${prefix}_anon`, 'verity_cached_classrooms']) {
+      try {
+        const raw = localStorage.getItem(fallbackKey);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed) && parsed.length > 0) return sortClassroomsAlphabetically(parsed);
+        }
+      } catch {}
+    }
   }
 
   return [];
@@ -354,7 +356,10 @@ export const saveCachedClassrooms = (classrooms, user, role = 'student') => {
   if (user?.email) {
     try { localStorage.setItem(`${prefix}_${user.email}`, json); } catch {}
   }
-  try { localStorage.setItem(`${prefix}_default`, json); } catch {}
+  // Only write to default if anonymous / demo user
+  if (!user?.id && !user?.email) {
+    try { localStorage.setItem(`${prefix}_default`, json); } catch {}
+  }
 };
 
 /**

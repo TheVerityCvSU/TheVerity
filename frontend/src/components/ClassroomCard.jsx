@@ -269,10 +269,11 @@ export default function ClassroomCard({
                 onClick={(e) => {
                   e.stopPropagation();
                   if (onUnarchive) onUnarchive(e, classroom.id);
+                  else if (onArchive) onArchive(e, classroom.id);
                   setMenuOpen(false);
                 }}
               >
-                <RotateCcw size={15} style={{ marginRight: '8px' }} /> Restore
+                <RotateCcw size={15} style={{ marginRight: '8px' }} /> Unarchive
               </div>
             ) : (
               <>

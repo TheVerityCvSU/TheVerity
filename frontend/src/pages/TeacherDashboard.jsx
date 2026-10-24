@@ -109,6 +109,8 @@ const TeacherCourseCard = ({ classroom, onClick, onSettings, onArchive, onUnarch
   const { isDark } = useDarkMode();
   const [menuOpen, setMenuOpen] = useState(false);
   const [copied, setCopied] = useState(false);
+  const menuRef = useRef(null);
+  const isArchivedCard = Boolean(isArchived ?? classroom?.archived);
   const classTheme = (classroom.theme && (classroom.theme.primary || classroom.theme.id)) ? classroom.theme : getClassroomTheme(classroom);
   const theme = cardThemes.find(t => t.id === classTheme?.id) || cardThemes[index % cardThemes.length];
   const isMobile = typeof window !== 'undefined' && window.innerWidth <= 768;
@@ -127,9 +129,14 @@ const TeacherCourseCard = ({ classroom, onClick, onSettings, onArchive, onUnarch
   
   // Close menu when clicking outside
   useEffect(() => {
-    const handleDocClick = () => setMenuOpen(false);
-    if (menuOpen) document.addEventListener('click', handleDocClick);
-    return () => document.removeEventListener('click', handleDocClick);
+    if (!menuOpen) return;
+    const handleDocClick = (e) => {
+      if (menuRef.current && !menuRef.current.contains(e.target)) {
+        setMenuOpen(false);
+      }
+    };
+    document.addEventListener('pointerdown', handleDocClick);
+    return () => document.removeEventListener('pointerdown', handleDocClick);
   }, [menuOpen]);
 
   let bgStyle = classTheme?.customImageUrl
@@ -227,7 +234,7 @@ const TeacherCourseCard = ({ classroom, onClick, onSettings, onArchive, onUnarch
             </button>
           </div>
           
-          <div style={{ position: 'relative' }}>
+          <div ref={menuRef} style={{ position: 'relative' }}>
             <button
               type="button"
               aria-label="Classroom options"
@@ -270,7 +277,7 @@ const TeacherCourseCard = ({ classroom, onClick, onSettings, onArchive, onUnarch
                 }}
                 onClick={(e) => e.stopPropagation()}
               >
-                {!isArchived && onSettings && (
+                {!isArchivedCard && onSettings && (
                   <button 
                     type="button"
                     onClick={(e) => { e.stopPropagation(); setMenuOpen(false); onSettings(classroom); }} 
@@ -291,10 +298,14 @@ const TeacherCourseCard = ({ classroom, onClick, onSettings, onArchive, onUnarch
                   {copied ? <Check size={16} color="#10b981" /> : <Copy size={16} color={isDark ? '#9ca3af' : '#64748b'} />}
                   {copied ? 'Code Copied!' : 'Copy Code'}
                 </button>
-                {!isArchived && onArchive && (
+                {!isArchivedCard && (
                   <button 
                     type="button"
-                    onClick={(e) => { e.stopPropagation(); setMenuOpen(false); onArchive(classroom); }} 
+                    onClick={(e) => { 
+                      e.stopPropagation(); 
+                      setMenuOpen(false); 
+                      if (onArchive) onArchive(e, classroom.id); 
+                    }} 
                     style={{ width: '100%', padding: '10px 14px', textAlign: 'left', background: 'transparent', border: 'none', borderRadius: '10px', color: isDark ? '#f3f4f6' : '#1f2937', cursor: 'pointer', fontSize: '0.88rem', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '10px', transition: 'background 0.15s' }}
                     onMouseEnter={(e) => e.currentTarget.style.background = isDark ? '#333333' : '#f1f5f9'}
                     onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
@@ -302,10 +313,15 @@ const TeacherCourseCard = ({ classroom, onClick, onSettings, onArchive, onUnarch
                     <Archive size={16} color={isDark ? '#9ca3af' : '#64748b'} /> Archive
                   </button>
                 )}
-                {isArchived && onUnarchive && (
+                {isArchivedCard && (
                   <button 
                     type="button"
-                    onClick={(e) => { e.stopPropagation(); setMenuOpen(false); onUnarchive(classroom); }} 
+                    onClick={(e) => { 
+                      e.stopPropagation(); 
+                      setMenuOpen(false); 
+                      if (onUnarchive) onUnarchive(e, classroom.id); 
+                      else if (onArchive) onArchive(e, classroom.id);
+                    }} 
                     style={{ width: '100%', padding: '10px 14px', textAlign: 'left', background: 'transparent', border: 'none', borderRadius: '10px', color: isDark ? '#f3f4f6' : '#1f2937', cursor: 'pointer', fontSize: '0.88rem', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '10px', transition: 'background 0.15s' }}
                     onMouseEnter={(e) => e.currentTarget.style.background = isDark ? '#333333' : '#f1f5f9'}
                     onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
@@ -620,10 +636,15 @@ export default function TeacherDashboard({ currentUser, onLogout, onEnterClassro
             return matchesEmail || matchesName || (!emailStr && !nameStr);
           });
           const sortedTeacherClasses = sortClassroomsAlphabetically(teacherClasses);
-          if (sortedTeacherClasses.length > 0 || classrooms.length === 0) {
-            setClassrooms(sortedTeacherClasses);
-            saveCachedClassrooms(sortedTeacherClasses, currentUser, 'teacher');
-          }
+          setClassrooms(prev => {
+            const archivedMap = new Map((prev || []).map(p => [String(p.id), !!p.archived]));
+            const merged = sortedTeacherClasses.map(c => ({
+              ...c,
+              archived: archivedMap.has(String(c.id)) ? archivedMap.get(String(c.id)) : !!c.archived
+            }));
+            saveCachedClassrooms(merged, currentUser, 'teacher');
+            return merged;
+          });
         }
       } catch {} finally {
         if (active) setLoadingClassrooms(false);
@@ -762,13 +783,21 @@ export default function TeacherDashboard({ currentUser, onLogout, onEnterClassro
   const handleArchiveClass = (e, id) => {
     if (e && e.stopPropagation) e.stopPropagation();
     const targetId = id != null ? id : (e && typeof e === 'object' && e.id != null ? e.id : e);
-    setClassrooms(classrooms.map(c => String(c.id) === String(targetId) ? { ...c, archived: true } : c));
+    setClassrooms(prev => {
+      const updated = prev.map(c => String(c.id) === String(targetId) ? { ...c, archived: true } : c);
+      saveCachedClassrooms(updated, currentUser, 'teacher');
+      return updated;
+    });
     setActiveMenu(null);
   };
   const handleUnarchiveClass = (e, id) => {
     if (e && e.stopPropagation) e.stopPropagation();
     const targetId = id != null ? id : (e && typeof e === 'object' && e.id != null ? e.id : e);
-    setClassrooms(classrooms.map(c => String(c.id) === String(targetId) ? { ...c, archived: false } : c));
+    setClassrooms(prev => {
+      const updated = prev.map(c => String(c.id) === String(targetId) ? { ...c, archived: false } : c);
+      saveCachedClassrooms(updated, currentUser, 'teacher');
+      return updated;
+    });
     setActiveMenu(null);
   };
   const handleDeleteClass = (e, id) => {
@@ -1027,6 +1056,7 @@ export default function TeacherDashboard({ currentUser, onLogout, onEnterClassro
                           index={idx}
                           colSpan={span}
                           onClick={onEnterClassroom}
+                          onArchive={handleArchiveClass}
                           onUnarchive={handleUnarchiveClass}
                           onDelete={(allowDelete || currentUser?.role === 'Admin') ? handleDeleteClass : undefined}
                           isArchived={true}
@@ -1177,6 +1207,7 @@ export default function TeacherDashboard({ currentUser, onLogout, onEnterClassro
                         colSpan={span}
                         onClick={onEnterClassroom}
                         onArchive={handleArchiveClass}
+                        onUnarchive={handleUnarchiveClass}
                         onSettings={(c) => {
                           setSettingsClassroom(c);
                           handleSetView('classroomSettings');

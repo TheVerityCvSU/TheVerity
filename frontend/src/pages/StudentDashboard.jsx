@@ -103,6 +103,7 @@ const StudentCourseCard = ({ classroom, onClick, index, colSpan, isArchived = fa
   const { isDark } = useDarkMode();
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef(null);
+  const isArchivedCard = Boolean(isArchived ?? classroom?.archived);
   const classTheme = (classroom.theme && (classroom.theme.primary || classroom.theme.id)) ? classroom.theme : getClassroomTheme(classroom);
   const theme = cardThemes.find(t => t.id === classTheme?.id) || cardThemes[index % cardThemes.length];
   const isMobile = typeof window !== 'undefined' && window.innerWidth <= 768;
@@ -116,8 +117,8 @@ const StudentCourseCard = ({ classroom, onClick, index, colSpan, isArchived = fa
         setMenuOpen(false);
       }
     };
-    document.addEventListener('click', handleDocClick);
-    return () => document.removeEventListener('click', handleDocClick);
+    document.addEventListener('pointerdown', handleDocClick);
+    return () => document.removeEventListener('pointerdown', handleDocClick);
   }, [menuOpen]);
 
   let bgStyle = classTheme?.customImageUrl
@@ -234,120 +235,119 @@ const StudentCourseCard = ({ classroom, onClick, index, colSpan, isArchived = fa
           </div>
 
           {/* 3-dot Menu */}
-          {(onArchive || onUnarchive) && (
-            <div ref={menuRef} style={{ position: 'relative', flexShrink: 0 }}>
-              <button
-                type="button"
-                aria-label="Classroom options"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setMenuOpen(p => !p);
-                }}
+          <div ref={menuRef} style={{ position: 'relative', flexShrink: 0 }}>
+            <button
+              type="button"
+              aria-label="Classroom options"
+              onClick={(e) => {
+                e.stopPropagation();
+                setMenuOpen(p => !p);
+              }}
+              style={{
+                background: 'rgba(0, 0, 0, 0.22)',
+                border: '1px solid rgba(255, 255, 255, 0.15)',
+                color: 'white',
+                cursor: 'pointer',
+                padding: '6px',
+                borderRadius: '50%',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                backdropFilter: 'blur(6px)',
+                transition: 'background 0.2s, transform 0.15s'
+              }}
+              onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(0, 0, 0, 0.4)'}
+              onMouseLeave={(e) => e.currentTarget.style.background = 'rgba(0, 0, 0, 0.22)'}
+            >
+              <MoreVertical size={16} />
+            </button>
+
+            {menuOpen && (
+              <div
                 style={{
-                  background: 'rgba(0, 0, 0, 0.22)',
-                  border: '1px solid rgba(255, 255, 255, 0.15)',
-                  color: 'white',
-                  cursor: 'pointer',
-                  padding: '6px',
-                  borderRadius: '50%',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  backdropFilter: 'blur(6px)',
-                  transition: 'background 0.2s, transform 0.15s'
+                  position: 'absolute',
+                  top: 'calc(100% + 6px)',
+                  right: 0,
+                  backgroundColor: isDark ? '#262626' : '#ffffff',
+                  border: isDark ? '1px solid #404040' : '1px solid #e5e7eb',
+                  borderRadius: '14px',
+                  boxShadow: isDark
+                    ? '0 12px 28px rgba(0,0,0,0.5), 0 4px 10px rgba(0,0,0,0.3)'
+                    : '0 12px 28px rgba(0,0,0,0.15), 0 4px 10px rgba(0,0,0,0.06)',
+                  zIndex: 100,
+                  width: '160px',
+                  overflow: 'hidden',
+                  padding: '4px'
                 }}
-                onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(0, 0, 0, 0.4)'}
-                onMouseLeave={(e) => e.currentTarget.style.background = 'rgba(0, 0, 0, 0.22)'}
+                onClick={(e) => e.stopPropagation()}
               >
-                <MoreVertical size={16} />
-              </button>
+                {!isArchivedCard && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setMenuOpen(false);
+                      if (onArchive) onArchive(classroom);
+                    }}
+                    style={{
+                      width: '100%',
+                      padding: '10px 14px',
+                      textAlign: 'left',
+                      background: 'transparent',
+                      border: 'none',
+                      borderRadius: '10px',
+                      color: isDark ? '#f3f4f6' : '#1f2937',
+                      cursor: 'pointer',
+                      fontSize: '0.88rem',
+                      fontWeight: '600',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '10px',
+                      transition: 'background 0.15s'
+                    }}
+                    onMouseEnter={(e) => e.currentTarget.style.background = isDark ? '#333333' : '#f1f5f9'}
+                    onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                  >
+                    <Archive size={16} color={isDark ? '#9ca3af' : '#64748b'} />
+                    Archive
+                  </button>
+                )}
 
-              {menuOpen && (
-                <div
-                  style={{
-                    position: 'absolute',
-                    top: 'calc(100% + 6px)',
-                    right: 0,
-                    backgroundColor: isDark ? '#262626' : '#ffffff',
-                    border: isDark ? '1px solid #404040' : '1px solid #e5e7eb',
-                    borderRadius: '14px',
-                    boxShadow: isDark
-                      ? '0 12px 28px rgba(0,0,0,0.5), 0 4px 10px rgba(0,0,0,0.3)'
-                      : '0 12px 28px rgba(0,0,0,0.15), 0 4px 10px rgba(0,0,0,0.06)',
-                    zIndex: 100,
-                    width: '160px',
-                    overflow: 'hidden',
-                    padding: '4px'
-                  }}
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  {!isArchived && onArchive && (
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setMenuOpen(false);
-                        onArchive(classroom);
-                      }}
-                      style={{
-                        width: '100%',
-                        padding: '10px 14px',
-                        textAlign: 'left',
-                        background: 'transparent',
-                        border: 'none',
-                        borderRadius: '10px',
-                        color: isDark ? '#f3f4f6' : '#1f2937',
-                        cursor: 'pointer',
-                        fontSize: '0.88rem',
-                        fontWeight: '600',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '10px',
-                        transition: 'background 0.15s'
-                      }}
-                      onMouseEnter={(e) => e.currentTarget.style.background = isDark ? '#333333' : '#f1f5f9'}
-                      onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
-                    >
-                      <Archive size={16} color={isDark ? '#9ca3af' : '#64748b'} />
-                      Archive
-                    </button>
-                  )}
-
-                  {isArchived && onUnarchive && (
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setMenuOpen(false);
-                        onUnarchive(classroom);
-                      }}
-                      style={{
-                        width: '100%',
-                        padding: '10px 14px',
-                        textAlign: 'left',
-                        background: 'transparent',
-                        border: 'none',
-                        borderRadius: '10px',
-                        color: isDark ? '#f3f4f6' : '#1f2937',
-                        cursor: 'pointer',
-                        fontSize: '0.88rem',
-                        fontWeight: '600',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '10px',
-                        transition: 'background 0.15s'
-                      }}
-                      onMouseEnter={(e) => e.currentTarget.style.background = isDark ? '#333333' : '#f1f5f9'}
-                      onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
-                    >
-                      <RefreshCw size={16} color={isDark ? '#9ca3af' : '#64748b'} />
-                      Unarchive
-                    </button>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
+                {isArchivedCard && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setMenuOpen(false);
+                      if (onUnarchive) onUnarchive(classroom);
+                      else if (onArchive) onArchive(classroom);
+                    }}
+                    style={{
+                      width: '100%',
+                      padding: '10px 14px',
+                      textAlign: 'left',
+                      background: 'transparent',
+                      border: 'none',
+                      borderRadius: '10px',
+                      color: isDark ? '#f3f4f6' : '#1f2937',
+                      cursor: 'pointer',
+                      fontSize: '0.88rem',
+                      fontWeight: '600',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '10px',
+                      transition: 'background 0.15s'
+                    }}
+                    onMouseEnter={(e) => e.currentTarget.style.background = isDark ? '#333333' : '#f1f5f9'}
+                    onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                  >
+                    <RefreshCw size={16} color={isDark ? '#9ca3af' : '#64748b'} />
+                    Unarchive
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
         </div>
         <h3 style={{ margin: 0, fontSize: '1.75rem', fontWeight: 'bold', lineHeight: 1.2, textShadow: theme.textColor === 'white' ? '0 2px 4px rgba(0,0,0,0.5)' : 'none', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
           {classroom.name}
@@ -465,6 +465,12 @@ export default function StudentDashboard({ currentUser, onLogout, onEnterClassro
     });
   };
 
+  // Re-sync local classrooms cache when currentUser changes to prevent cross-account pollution
+  useEffect(() => {
+    const cached = sortClassroomsAlphabetically(getCachedClassrooms(currentUser, 'student').filter(c => !isPhantomClassroom(c)));
+    setClassrooms(cached);
+  }, [currentUser]);
+
   useEffect(() => {
     saveCachedClassrooms(classrooms, currentUser, 'student');
   }, [classrooms, currentUser]);
@@ -478,17 +484,15 @@ export default function StudentDashboard({ currentUser, onLogout, onEnterClassro
           const data = await res.json();
           const serverList = (Array.isArray(data) ? data : (data.classrooms || [])).filter(c => c && c.name && !isPhantomClassroom(c));
           const sortedList = sortClassroomsAlphabetically(serverList);
-          if (sortedList.length > 0 || classrooms.length === 0) {
-            setClassrooms(prev => {
-              const archivedMap = new Map((prev || []).map(p => [String(p.id), !!p.archived]));
-              const merged = sortedList.map(c => ({
-                ...c,
-                archived: archivedMap.has(String(c.id)) ? archivedMap.get(String(c.id)) : !!c.archived
-              }));
-              saveCachedClassrooms(merged, currentUser, 'student');
-              return merged;
-            });
-          }
+          setClassrooms(prev => {
+            const archivedMap = new Map((prev || []).map(p => [String(p.id), !!p.archived]));
+            const merged = sortedList.map(c => ({
+              ...c,
+              archived: archivedMap.has(String(c.id)) ? archivedMap.get(String(c.id)) : !!c.archived
+            }));
+            saveCachedClassrooms(merged, currentUser, 'student');
+            return merged;
+          });
         }
       } catch {} finally {
         if (active) setLoadingClassrooms(false);
@@ -538,13 +542,16 @@ export default function StudentDashboard({ currentUser, onLogout, onEnterClassro
     return `verity_cached_classwork_${id}`;
   };
 
-  // Instant local cache hydration so activities pop up immediately
+  // Instant local cache hydration strictly isolated for student's enrolled classes
   const [upcomingActivities, setUpcomingActivities] = useState(() => {
     try {
       const raw = localStorage.getItem(getActivitiesStorageKey(currentUser));
       if (raw) {
         const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          const userClassrooms = getCachedClassrooms(currentUser, 'student').filter(c => !isPhantomClassroom(c));
+          return parsed.filter(item => userClassrooms.some(c => String(c.id) === String(item.classroom_id || item.classId)));
+        }
       }
     } catch {}
     return [];
@@ -554,11 +561,42 @@ export default function StudentDashboard({ currentUser, onLogout, onEnterClassro
       const raw = localStorage.getItem(getClassworkStorageKey(currentUser));
       if (raw) {
         const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          const userClassrooms = getCachedClassrooms(currentUser, 'student').filter(c => !isPhantomClassroom(c));
+          return parsed.filter(item => userClassrooms.some(c => String(c.id) === String(item.classroom_id || item.classId)));
+        }
       }
     } catch {}
     return [];
   });
+
+  // Re-hydrate user-scoped activities and classwork whenever currentUser changes
+  useEffect(() => {
+    try {
+      const userClassrooms = getCachedClassrooms(currentUser, 'student').filter(c => !isPhantomClassroom(c));
+      const rawAct = localStorage.getItem(getActivitiesStorageKey(currentUser));
+      if (rawAct) {
+        const parsed = JSON.parse(rawAct);
+        if (Array.isArray(parsed)) {
+          setUpcomingActivities(parsed.filter(item => userClassrooms.some(c => String(c.id) === String(item.classroom_id || item.classId))));
+        }
+      } else {
+        setUpcomingActivities([]);
+      }
+      const rawCw = localStorage.getItem(getClassworkStorageKey(currentUser));
+      if (rawCw) {
+        const parsed = JSON.parse(rawCw);
+        if (Array.isArray(parsed)) {
+          setAllClasswork(parsed.filter(item => userClassrooms.some(c => String(c.id) === String(item.classroom_id || item.classId))));
+        }
+      } else {
+        setAllClasswork([]);
+      }
+    } catch {
+      setUpcomingActivities([]);
+      setAllClasswork([]);
+    }
+  }, [currentUser]);
   const [dashboardStats, setDashboardStats] = useState({ done: 0, dueSoon: 0, miss: 0 });
   const [loadingActivities, setLoadingActivities] = useState(() => {
     try {
@@ -581,11 +619,9 @@ export default function StudentDashboard({ currentUser, onLogout, onEnterClassro
             const classList = Array.isArray(classrooms) ? classrooms : [];
             const isLegacyHardcoded = (item) => (item?.id === 1 || item?.id === 2) && (item?.title?.startsWith('Activity 1:') || item?.title?.startsWith('Activity 2:'));
             
-            // Server already filters classwork for student's enrolled classes
+            // Strictly filter classwork for student's enrolled classes
             const enrolled = data.classwork.filter(
-              item => !item.archived && !isLegacyHardcoded(item) && (
-                classList.length === 0 || classList.some(c => String(c.id) === String(item.classroom_id || item.classId))
-              )
+              item => !item.archived && !isLegacyHardcoded(item) && classList.some(c => String(c.id) === String(item.classroom_id || item.classId))
             );
             setAllClasswork(enrolled);
             try {
@@ -643,15 +679,6 @@ export default function StudentDashboard({ currentUser, onLogout, onEnterClassro
     return () => { active = false; };
   }, [classrooms, currentUser]);
 
-  // Default video lesson matching user's course or demo video (real timestamp: 52:21)
-  const DEFAULT_VIDEO_LESSON = useMemo(() => ({
-    id: 'hci_lesson_1',
-    title: 'HCI Lesson 1 ITEC 80',
-    subject: 'C# PROGRAMMING',
-    duration: '52:21',
-    src: `${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/uploads/1792768564903_HCI_Lesson_1_ITEC_80.mp4`
-  }), []);
-
   // Real video durations map dynamically resolved from video files
   const [videoDurations, setVideoDurations] = useState(() => {
     try {
@@ -674,14 +701,18 @@ export default function StudentDashboard({ currentUser, onLogout, onEnterClassro
     }
   };
 
-  // Compute all available video lessons
+  // Compute all available video lessons strictly for student's active enrolled classrooms
   const videoLessons = useMemo(() => {
     const list = [];
-    const classList = Array.isArray(classrooms) ? classrooms : [];
+    const classList = Array.isArray(activeClassrooms) ? activeClassrooms : [];
+    if (classList.length === 0) return []; // Not in any active classroom = no video lessons!
 
     allClasswork.forEach(item => {
+      // Must strictly belong to an active enrolled classroom
+      const classObj = classList.find(c => String(c.id) === String(item.classroom_id || item.classId));
+      if (!classObj) return;
+
       if (getLessonType(item) === 'video') {
-        const classObj = classList.find(c => String(c.id) === String(item.classroom_id || item.classId));
         const videoAttachment = item.attachments?.find(a => 
           a?.type === 'video' || 
           a?.type === 'youtube' || 
@@ -690,13 +721,15 @@ export default function StudentDashboard({ currentUser, onLogout, onEnterClassro
         );
         const match = (item.details || item.instruction || '').match(/<video[^>]*src="([^"]+)"/);
         const ytMatch = (item.details || item.instruction || '').match(/(?:src="|href=")([^"]*(?:youtube\.com|youtu\.be)[^"]*)"/);
-        const src = videoAttachment?.url || (match ? match[1] : '') || (ytMatch ? ytMatch[1] : '') || DEFAULT_VIDEO_LESSON.src;
+        const src = videoAttachment?.url || (match ? match[1] : '') || (ytMatch ? ytMatch[1] : '');
+        if (!src) return;
+
         const title = extractVideoTitle(src, videoAttachment, item.title);
 
         list.push({
           id: String(item.id),
           title,
-          subject: (classObj?.name || classObj?.subject || 'C# PROGRAMMING').toUpperCase(),
+          subject: (classObj.name || classObj.subject || 'COURSE').toUpperCase(),
           duration: formatVideoTimestamp(item.duration) || (src?.includes('1792768564903_HCI_Lesson_1_ITEC_80') ? '52:21' : null) || '52:21',
           src,
           item,
@@ -705,11 +738,8 @@ export default function StudentDashboard({ currentUser, onLogout, onEnterClassro
       }
     });
 
-    if (list.length === 0) {
-      return [DEFAULT_VIDEO_LESSON];
-    }
     return list;
-  }, [allClasswork, classrooms, DEFAULT_VIDEO_LESSON]);
+  }, [allClasswork, activeClassrooms]);
 
   // Track seen state in localStorage per user
   const [seenVideoMap, setSeenVideoMap] = useState({});
@@ -1131,7 +1161,7 @@ export default function StudentDashboard({ currentUser, onLogout, onEnterClassro
                         transition={{ duration: 0.4, delay: idx * 0.05, ease: [0.16, 1, 0.3, 1] }}
                         style={{ gridColumn: `span ${isMobile ? 12 : cardThemes[idx % cardThemes.length].colSpan}` }}
                       >
-                        <StudentCourseCard key={cls.id} classroom={cls} index={idx} colSpan={cardThemes[idx % cardThemes.length].colSpan} onClick={handleEnterClassroom} onArchive={handleArchiveClass} />
+                        <StudentCourseCard key={cls.id} classroom={cls} index={idx} colSpan={cardThemes[idx % cardThemes.length].colSpan} onClick={handleEnterClassroom} onArchive={handleArchiveClass} onUnarchive={handleUnarchiveClass} isArchived={false} />
                       </motion.div>
                     ))
                   )}
@@ -1355,64 +1385,24 @@ export default function StudentDashboard({ currentUser, onLogout, onEnterClassro
                       </p>
                     </div>
                   </div>
-                ) : (
-                  /* Caught Up State */
+                ) : videoLessons.length > 0 ? (
+                  /* Caught Up State: text and icon remain, card box and replay button removed */
                   <div
                     style={{
                       display: 'flex',
                       alignItems: 'center',
-                      justifyContent: 'space-between',
-                      padding: '16px 20px',
-                      borderRadius: '20px',
-                      backgroundColor: isDark ? 'rgba(16, 185, 129, 0.1)' : '#ecfdf5',
-                      border: isDark ? '1px solid rgba(16, 185, 129, 0.25)' : '1px solid #a7f3d0',
-                      color: isDark ? '#34d399' : '#065f46',
-                      marginBottom: '32px',
-                      boxShadow: '0 2px 8px rgba(16, 185, 129, 0.05)'
+                      gap: '10px',
+                      padding: '4px 0',
+                      marginBottom: '24px',
+                      color: isDark ? '#34d399' : '#059669'
                     }}
                   >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                      <div
-                        style={{
-                          width: '32px',
-                          height: '32px',
-                          borderRadius: '50%',
-                          backgroundColor: isDark ? 'rgba(16, 185, 129, 0.2)' : '#d1fae5',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          flexShrink: 0
-                        }}
-                      >
-                        <CheckCircle2 size={18} color={isDark ? '#34d399' : '#059669'} />
-                      </div>
-                      <span style={{ fontSize: '0.92rem', fontWeight: '700' }}>
-                        You're all caught up in video lesson!
-                      </span>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={handleResetVideoSeen}
-                      title="Replay video lesson"
-                      style={{
-                        background: 'transparent',
-                        border: 'none',
-                        color: isDark ? '#6ee7b7' : '#047857',
-                        fontSize: '0.8rem',
-                        fontWeight: '600',
-                        cursor: 'pointer',
-                        padding: '4px 8px',
-                        borderRadius: '8px',
-                        textDecoration: 'underline',
-                        opacity: 0.85
-                      }}
-                      onMouseEnter={(e) => (e.currentTarget.style.opacity = '1')}
-                      onMouseLeave={(e) => (e.currentTarget.style.opacity = '0.85')}
-                    >
-                      Replay
-                    </button>
+                    <CheckCircle2 size={18} color={isDark ? '#34d399' : '#059669'} style={{ flexShrink: 0 }} />
+                    <span style={{ fontSize: '0.9rem', fontWeight: '600' }}>
+                      You're all caught up in video lesson!
+                    </span>
                   </div>
-                )}
+                ) : null}
 
                 {/* "To Do" Section */}
                 <h3 style={{ fontSize: '1rem', fontWeight: 'bold', margin: '0 0 16px' }}>To Do</h3>
@@ -1420,10 +1410,13 @@ export default function StudentDashboard({ currentUser, onLogout, onEnterClassro
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
                   {loadingActivities ? (
                     <div style={{ color: textMuted, fontSize: '0.9rem', textAlign: 'center', padding: '20px' }}>Loading tasks...</div>
-                  ) : upcomingActivities.length === 0 ? (
+                  ) : upcomingActivities.filter(act => (classrooms || []).some(c => String(c.id) === String(act.classroom_id || act.classId))).length === 0 ? (
                     <div style={{ color: textMuted, fontSize: '0.9rem', textAlign: 'center', padding: '20px' }}>No upcoming tasks!</div>
                   ) : (
-                    upcomingActivities.slice(0, 5).map((act) => {
+                    upcomingActivities
+                      .filter(act => (classrooms || []).some(c => String(c.id) === String(act.classroom_id || act.classId)))
+                      .slice(0, 5)
+                      .map((act) => {
                       const d = act.dueDate ? new Date(act.dueDate) : null;
                       const hasValidDate = d && !isNaN(d.getTime());
                       const time = hasValidDate ? d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false }) : '--:--';
@@ -1552,6 +1545,7 @@ export default function StudentDashboard({ currentUser, onLogout, onEnterClassro
                         colSpan={cardThemes[idx % cardThemes.length].colSpan}
                         onClick={handleEnterClassroom}
                         isArchived={true}
+                        onArchive={handleArchiveClass}
                         onUnarchive={handleUnarchiveClass}
                       />
                     </motion.div>

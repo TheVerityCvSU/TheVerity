@@ -1892,15 +1892,13 @@ async function checkClassroomAccess(req, classroomId) {
     }
     if (roleLower === 'student') {
         const studentEmail = (req.user.email || '').trim().toLowerCase();
-        const studentName = (req.user.name || '').trim().toLowerCase();
         const studentId = req.user.id || 0;
         const e = await db.get(
             `SELECT 1 FROM enrollments 
              WHERE (classroom_id = ? OR CAST(classroom_id AS TEXT) = CAST(? AS TEXT))
                AND ((student_email IS NOT NULL AND LOWER(student_email) = ?) 
-                 OR (student_id IS NOT NULL AND (student_id = ? OR CAST(student_id AS TEXT) = CAST(? AS TEXT)))
-                 OR (student_name IS NOT NULL AND LOWER(student_name) = ?))`,
-            classroomId, String(classroomId), studentEmail, studentId, String(studentId), studentName
+                 OR (student_id IS NOT NULL AND (student_id = ? OR CAST(student_id AS TEXT) = CAST(? AS TEXT))))`,
+            classroomId, String(classroomId), studentEmail, studentId, String(studentId)
         );
         return !!e;
     }
