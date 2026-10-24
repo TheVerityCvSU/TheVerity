@@ -621,7 +621,9 @@ export default function StudentDashboard({ currentUser, onLogout, onEnterClassro
             
             // Strictly filter classwork for student's enrolled classes
             const enrolled = data.classwork.filter(
-              item => !item.archived && !isLegacyHardcoded(item) && classList.some(c => String(c.id) === String(item.classroom_id || item.classId))
+              item => !item.archived && !isLegacyHardcoded(item) && (
+                classList.length === 0 || classList.some(c => String(c.id) === String(item.classroom_id || item.classId))
+              )
             );
             setAllClasswork(enrolled);
             try {

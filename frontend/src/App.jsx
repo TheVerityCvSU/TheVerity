@@ -30,15 +30,16 @@ const isWebHosted = typeof window !== 'undefined' &&
                     window.location.hostname !== '127.0.0.1' &&
                     !window.electronAPI;
 
-const CLOUD_SOCKET = (import.meta.env.VITE_SOCKET_URL || (isWebHosted ? 'https://verity-2z4v.onrender.com' : '')).replace(/\/$/, '');
+const CLOUD_SOCKET = getCloudUrl() || 'https://verity-2z4v.onrender.com';
 const LOCAL_SOCKET = 'http://localhost:3001';
 
-const socketTarget = isWebHosted ? (CLOUD_SOCKET || 'https://verity-2z4v.onrender.com') : (CLOUD_SOCKET || LOCAL_SOCKET);
+const socketTarget = isWebHosted ? CLOUD_SOCKET : ((typeof navigator !== 'undefined' && navigator.onLine) ? CLOUD_SOCKET : LOCAL_SOCKET);
 
 const socket = io(socketTarget, {
   reconnectionAttempts: 10,
   reconnectionDelay: 2000,
   timeout: 5000,
+  transports: ['websocket', 'polling'],
   auth: (cb) => {
     const token = localStorage.getItem('verity_token') || localStorage.getItem('token');
     cb({ token });

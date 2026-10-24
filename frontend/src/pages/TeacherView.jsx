@@ -21,7 +21,9 @@ import {
   AlertOctagon,
   Search,
   Terminal as TerminalIcon,
-  CheckCircle2
+  CheckCircle2,
+  PlayCircle,
+  Monitor
 } from 'lucide-react';
 import { apiFetch } from '../utils/api';
 import { motion, AnimatePresence } from 'framer-motion';

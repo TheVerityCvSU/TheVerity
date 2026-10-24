@@ -206,12 +206,8 @@ export default function Login({ onLogin, onGoToRegister }) {
 
     const sessionId = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
     const activeCloud = getCloudUrl() || 'https://verity-2z4v.onrender.com';
-    const isWebHosted = typeof window !== 'undefined' && 
-                        window.location && 
-                        window.location.hostname !== 'localhost' && 
-                        window.location.hostname !== '127.0.0.1' &&
-                        !window.electronAPI;
-    const backendUrl = isWebHosted ? activeCloud : (import.meta.env.VITE_API_URL || activeCloud || 'http://localhost:3001');
+    const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
+    const backendUrl = isOnline ? activeCloud : (import.meta.env.VITE_API_URL || 'http://localhost:3001');
     
     const socket = io(backendUrl, { transports: ['websocket', 'polling'] });
     socketRef.current = socket;

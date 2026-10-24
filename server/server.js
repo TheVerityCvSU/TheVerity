@@ -1896,7 +1896,7 @@ async function checkClassroomAccess(req, classroomId) {
         const e = await db.get(
             `SELECT 1 FROM enrollments 
              WHERE (classroom_id = ? OR CAST(classroom_id AS TEXT) = CAST(? AS TEXT))
-               AND ((student_email IS NOT NULL AND LOWER(student_email) = ?) 
+               AND ((student_email IS NOT NULL AND LOWER(TRIM(student_email)) = ?) 
                  OR (student_id IS NOT NULL AND (student_id = ? OR CAST(student_id AS TEXT) = CAST(? AS TEXT))))`,
             classroomId, String(classroomId), studentEmail, studentId, String(studentId)
         );
@@ -2075,20 +2075,27 @@ app.get('/classrooms', authenticateToken, async (req, res) => {
             const studentEmail = (req.user.email || '').trim().toLowerCase();
             const studentId = req.user.id || 0;
             rawClassrooms = await db.all(`
-                SELECT DISTINCT c.* FROM classrooms c
-                INNER JOIN enrollments e ON e.classroom_id = c.id
-                WHERE (e.student_email IS NOT NULL AND LOWER(e.student_email) = ?)
-                   OR (e.student_id IS NOT NULL AND (e.student_id = ? OR CAST(e.student_id AS TEXT) = CAST(? AS TEXT)))
-                ORDER BY LOWER(c.name) ASC, c.id ASC
+                SELECT * FROM (
+                    SELECT DISTINCT c.* FROM classrooms c
+                    INNER JOIN enrollments e ON e.classroom_id = c.id
+                    WHERE (e.student_email IS NOT NULL AND LOWER(TRIM(e.student_email)) = ?)
+                       OR (e.student_id IS NOT NULL AND (e.student_id = ? OR CAST(e.student_id AS TEXT) = CAST(? AS TEXT)))
+                ) sub
+                ORDER BY LOWER(sub.name) ASC, sub.id ASC
             `, studentEmail, studentId, String(studentId));
 
-            // Self-heal enrollments: if any enrollment has student_id matching this user, sync student_email
+            // Self-heal enrollments: sync student_email and student_id both ways
             if (studentEmail && studentId) {
                 db.run(
-                    'UPDATE enrollments SET student_email = ? WHERE (student_id = ? OR CAST(student_id AS TEXT) = CAST(? AS TEXT)) AND LOWER(student_email) != ?',
+                    'UPDATE enrollments SET student_email = ? WHERE (student_id = ? OR CAST(student_id AS TEXT) = CAST(? AS TEXT)) AND (student_email IS NULL OR LOWER(TRIM(student_email)) != ?)',
                     studentEmail, studentId, String(studentId), studentEmail
                 ).catch(() => {});
+                db.run(
+                    'UPDATE enrollments SET student_id = ? WHERE (student_email IS NOT NULL AND LOWER(TRIM(student_email)) = ?) AND (student_id IS NULL OR student_id != ?)',
+                    studentId, studentEmail, studentId
+                ).catch(() => {});
             }
+
         } else if (roleLower === 'teacher' || roleLower === 'instructor') {
             const teacherEmail = (req.user.email || '').trim().toLowerCase();
             const teacherName = (req.user.name || '').trim().toLowerCase();
@@ -2792,6 +2799,7 @@ app.post('/classrooms/join', authenticateToken, async (req, res) => {
             VALUES (?, ?, ?, ?, ?)
             ON CONFLICT(classroom_id, student_email) DO UPDATE SET
                 student_name = excluded.student_name,
+                student_id = COALESCE(excluded.student_id, enrollments.student_id),
                 enrolled_at = excluded.enrolled_at
         `, classroom.id, studentId, studentName, studentEmail, now);
 
