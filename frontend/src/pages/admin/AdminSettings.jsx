@@ -263,10 +263,21 @@ function AdminCheckUpdateCard() {
     setStatus('checking');
     setDownloadStarted(false);
     try {
+      let activeVer = clientAppVersion;
+      if (window.electronAPI?.getAppVersion) {
+        try {
+          const v = await window.electronAPI.getAppVersion();
+          if (v) {
+            activeVer = v;
+            setClientAppVersion(v);
+          }
+        } catch (_) {}
+      }
+
       const query = new URLSearchParams();
       query.append('role', 'Administrator');
       query.append('app', 'admin');
-      if (clientAppVersion) query.append('clientVersion', clientAppVersion);
+      if (activeVer) query.append('clientVersion', activeVer);
       if (force) query.append('force', 'true');
       const res = await apiFetch(`/api/check-update?${query.toString()}`);
       if (res && res.ok) {
@@ -404,7 +415,7 @@ function AdminCheckUpdateCard() {
             }}
           >
             <CheckCircle2 size={16} />
-            <span>You're up to date! The Verity Admin is running the latest version (v{updateInfo?.currentVersion || '1.0.0'}).</span>
+            <span>You're up to date! The Verity Admin is running the latest version (v{updateInfo?.currentVersion || clientAppVersion || '1.0.0'}).</span>
           </motion.div>
         )}
 

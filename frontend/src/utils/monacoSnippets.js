@@ -353,14 +353,32 @@ export const CSHARP_KEYWORDS = [
   'unchecked', 'unsafe', 'ushort', 'using', 'virtual', 'void', 'volatile', 'while'
 ];
 
+const registeredInstances = new WeakSet();
+
 /**
  * Registers C# snippets and keywords in Monaco Editor instance.
  * Safe to call multiple times (idempotent).
  */
 export function registerMonacoSnippets(monacoInstance = monaco) {
   if (!monacoInstance || !monacoInstance.languages) return;
-  if (monacoInstance._veritySnippetsRegistered) return;
-  monacoInstance._veritySnippetsRegistered = true;
+  if (
+    monacoInstance._veritySnippetsRegistered ||
+    registeredInstances.has(monacoInstance) ||
+    registeredInstances.has(monacoInstance.languages)
+  ) {
+    return;
+  }
+
+  registeredInstances.add(monacoInstance);
+  if (monacoInstance.languages && typeof monacoInstance.languages === 'object') {
+    registeredInstances.add(monacoInstance.languages);
+  }
+
+  try {
+    monacoInstance._veritySnippetsRegistered = true;
+  } catch {
+    // Silently ignore if monacoInstance is a frozen ES module namespace object
+  }
 
   try {
     monacoInstance.languages.registerCompletionItemProvider('csharp', {

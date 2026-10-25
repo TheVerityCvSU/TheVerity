@@ -10,34 +10,6 @@ export default function AdminLogin({ onLogin }) {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
-  const [rememberAdmin, setRememberAdmin] = useState(() => {
-    try {
-      const savedPref = localStorage.getItem('verity_remember_admin');
-      return savedPref !== 'false';
-    } catch (_) {
-      return true;
-    }
-  });
-
-  useEffect(() => {
-    const loadSavedAdmin = async () => {
-      let savedEmail = '';
-      try {
-        savedEmail = localStorage.getItem('verity_admin_saved_email') || '';
-      } catch (_) {}
-
-      if (!savedEmail && window.electronAPI?.localDB?.getLocal) {
-        try {
-          savedEmail = await window.electronAPI.localDB.getLocal('verity_admin_saved_email') || '';
-        } catch (_) {}
-      }
-
-      if (savedEmail) {
-        setEmail(savedEmail);
-      }
-    };
-    loadSavedAdmin();
-  }, []);
 
   const handleAdminLogin = async (e) => {
     e.preventDefault();
@@ -54,26 +26,14 @@ export default function AdminLogin({ onLogin }) {
       const data = await response.json();
 
       if (response.ok) {
-        const cleanEmail = (email || '').trim();
-        if (rememberAdmin && cleanEmail) {
-          try {
-            localStorage.setItem('verity_admin_saved_email', cleanEmail);
-            localStorage.setItem('verity_remember_admin', 'true');
-            if (window.electronAPI?.localDB?.setLocal) {
-              window.electronAPI.localDB.setLocal('verity_admin_saved_email', cleanEmail).catch(() => {});
-              window.electronAPI.localDB.setLocal('verity_remember_admin', 'true').catch(() => {});
-            }
-          } catch (_) {}
-        } else if (!rememberAdmin) {
-          try {
-            localStorage.removeItem('verity_admin_saved_email');
-            localStorage.setItem('verity_remember_admin', 'false');
-            if (window.electronAPI?.localDB?.setLocal) {
-              window.electronAPI.localDB.setLocal('verity_admin_saved_email', null).catch(() => {});
-              window.electronAPI.localDB.setLocal('verity_remember_admin', 'false').catch(() => {});
-            }
-          } catch (_) {}
-        }
+        try {
+          localStorage.removeItem('verity_admin_saved_email');
+          localStorage.removeItem('verity_remember_admin');
+          if (window.electronAPI?.localDB?.setLocal) {
+            window.electronAPI.localDB.setLocal('verity_admin_saved_email', null).catch(() => {});
+            window.electronAPI.localDB.setLocal('verity_remember_admin', null).catch(() => {});
+          }
+        } catch (_) {}
         onLogin(data.user, data.token);
       } else {
         setError(data.message || 'Invalid admin credentials');
@@ -230,37 +190,6 @@ export default function AdminLogin({ onLogin }) {
             </div>
           </div>
 
-          <div style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            margin: '2px 0 6px',
-            fontSize: '0.85rem',
-            userSelect: 'none'
-          }}>
-            <label style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
-              cursor: 'pointer',
-              color: isDark ? '#a1a1aa' : '#64748b',
-              fontSize: '0.85rem'
-            }}>
-              <input
-                type="checkbox"
-                checked={rememberAdmin}
-                onChange={(e) => setRememberAdmin(e.target.checked)}
-                style={{
-                  accentColor: '#3b82f6',
-                  width: '15px',
-                  height: '15px',
-                  cursor: 'pointer',
-                  borderRadius: '4px'
-                }}
-              />
-              <span>Remember admin identifier</span>
-            </label>
-          </div>
 
           <button
             type="submit"

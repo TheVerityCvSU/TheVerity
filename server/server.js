@@ -389,7 +389,12 @@ app.get('/api/check-update', async (req, res) => {
         try {
             const pkg = JSON.parse(fs.readFileSync(path.resolve(process.cwd(), 'package.json'), 'utf8'));
             if (pkg.version) serverPkgVersion = pkg.version;
-        } catch (_) {}
+        } catch (_) {
+            try {
+                const pkg = JSON.parse(fs.readFileSync(path.join(os.homedir(), 'The-Verity', 'package.json'), 'utf8'));
+                if (pkg.version) serverPkgVersion = pkg.version;
+            } catch (_) {}
+        }
     }
 
     const currentVersion = clientVer || serverPkgVersion;
@@ -399,14 +404,19 @@ app.get('/api/check-update', async (req, res) => {
     const isAdmin = req.query.role === 'admin' || req.query.app === 'admin' || req.query.role === 'Administrator';
 
     // 3. Scan local build directories for newly built installers (ComLab offline router mode)
+    const homeDir = os.homedir();
     const candidateDirs = [
         path.resolve(__dirname, isAdmin ? '../release/Admin' : '../release/Users'),
         path.resolve(process.cwd(), isAdmin ? 'release/Admin' : 'release/Users'),
         path.resolve(__dirname, '../release'),
         path.resolve(process.cwd(), 'release'),
         path.resolve(__dirname, '../dist'),
-        path.resolve(process.cwd(), 'dist')
-    ];
+        path.resolve(process.cwd(), 'dist'),
+        path.join(homeDir, 'The-Verity', isAdmin ? 'release/Admin' : 'release/Users'),
+        path.join(homeDir, 'The-Verity', 'release'),
+        process.env.RELEASE_DIR,
+        process.env.VERITY_RELEASE_DIR
+    ].filter(Boolean);
 
     for (const dir of candidateDirs) {
         if (fs.existsSync(dir)) {
@@ -493,14 +503,19 @@ app.get('/api/download-update', (req, res) => {
     const isAdmin = req.query.role === 'admin' || req.query.app === 'admin' || req.query.role === 'Administrator';
     
     // Look for installer in multiple potential local build output locations
+    const homeDir = os.homedir();
     const candidateDirs = [
         path.resolve(__dirname, isAdmin ? '../release/Admin' : '../release/Users'),
         path.resolve(process.cwd(), isAdmin ? 'release/Admin' : 'release/Users'),
         path.resolve(__dirname, '../release'),
         path.resolve(process.cwd(), 'release'),
         path.resolve(__dirname, '../dist'),
-        path.resolve(process.cwd(), 'dist')
-    ];
+        path.resolve(process.cwd(), 'dist'),
+        path.join(homeDir, 'The-Verity', isAdmin ? 'release/Admin' : 'release/Users'),
+        path.join(homeDir, 'The-Verity', 'release'),
+        process.env.RELEASE_DIR,
+        process.env.VERITY_RELEASE_DIR
+    ].filter(Boolean);
 
     for (const dir of candidateDirs) {
         if (fs.existsSync(dir)) {

@@ -97575,20 +97575,30 @@ app.get("/api/check-update", async (req, res) => {
       const pkg = JSON.parse(fs2.readFileSync(path.resolve(process.cwd(), "package.json"), "utf8"));
       if (pkg.version) serverPkgVersion = pkg.version;
     } catch (_2) {
+      try {
+        const pkg = JSON.parse(fs2.readFileSync(path.join(os2.homedir(), "The-Verity", "package.json"), "utf8"));
+        if (pkg.version) serverPkgVersion = pkg.version;
+      } catch (_3) {
+      }
     }
   }
   const currentVersion = clientVer || serverPkgVersion;
   let latestVersion = process.env.LATEST_APP_VERSION || serverPkgVersion;
   let githubDownloadUrl = null;
   const isAdmin = req.query.role === "admin" || req.query.app === "admin" || req.query.role === "Administrator";
+  const homeDir = os2.homedir();
   const candidateDirs = [
     path.resolve(__dirname, isAdmin ? "../release/Admin" : "../release/Users"),
     path.resolve(process.cwd(), isAdmin ? "release/Admin" : "release/Users"),
     path.resolve(__dirname, "../release"),
     path.resolve(process.cwd(), "release"),
     path.resolve(__dirname, "../dist"),
-    path.resolve(process.cwd(), "dist")
-  ];
+    path.resolve(process.cwd(), "dist"),
+    path.join(homeDir, "The-Verity", isAdmin ? "release/Admin" : "release/Users"),
+    path.join(homeDir, "The-Verity", "release"),
+    process.env.RELEASE_DIR,
+    process.env.VERITY_RELEASE_DIR
+  ].filter(Boolean);
   for (const dir of candidateDirs) {
     if (fs2.existsSync(dir)) {
       const ymlPath = path.join(dir, "latest.yml");
@@ -97663,14 +97673,19 @@ app.get("/api/check-update", async (req, res) => {
 });
 app.get("/api/download-update", (req, res) => {
   const isAdmin = req.query.role === "admin" || req.query.app === "admin" || req.query.role === "Administrator";
+  const homeDir = os2.homedir();
   const candidateDirs = [
     path.resolve(__dirname, isAdmin ? "../release/Admin" : "../release/Users"),
     path.resolve(process.cwd(), isAdmin ? "release/Admin" : "release/Users"),
     path.resolve(__dirname, "../release"),
     path.resolve(process.cwd(), "release"),
     path.resolve(__dirname, "../dist"),
-    path.resolve(process.cwd(), "dist")
-  ];
+    path.resolve(process.cwd(), "dist"),
+    path.join(homeDir, "The-Verity", isAdmin ? "release/Admin" : "release/Users"),
+    path.join(homeDir, "The-Verity", "release"),
+    process.env.RELEASE_DIR,
+    process.env.VERITY_RELEASE_DIR
+  ].filter(Boolean);
   for (const dir of candidateDirs) {
     if (fs2.existsSync(dir)) {
       try {

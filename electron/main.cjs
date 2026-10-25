@@ -459,8 +459,28 @@ function createWindow() {
     }
   }, 3500);
 
+  function enforceKioskTopmost() {
+    if (!mainWindow || mainWindow.isDestroyed() || !lockdownActive) return;
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.setAlwaysOnTop(false);
+    mainWindow.setAlwaysOnTop(true, 'screen-saver');
+    mainWindow.show();
+    mainWindow.focus();
+    mainWindow.moveTop();
+  }
+
   mainWindow.on('focus', () => {
-    if (lockdownActive) mainWindow.setKiosk(true);
+    if (lockdownActive) {
+      mainWindow.setKiosk(true);
+      enforceKioskTopmost();
+    }
+  });
+
+  mainWindow.on('enter-full-screen', () => {
+    if (lockdownActive) {
+      enforceKioskTopmost();
+      setTimeout(enforceKioskTopmost, 100);
+    }
   });
 
   mainWindow.on('blur', () => {
@@ -468,18 +488,14 @@ function createWindow() {
     setTimeout(() => {
       if (!lockdownActive) return;
       if (BrowserWindow.getFocusedWindow()) return;
-      if (mainWindow.isMinimized()) mainWindow.restore();
-      mainWindow.show();
-      mainWindow.focus();
-      mainWindow.setAlwaysOnTop(true, 'screen-saver');
+      enforceKioskTopmost();
     }, 120);
   });
 
   mainWindow.on('minimize', (e) => {
     if (lockdownActive) {
       e.preventDefault();
-      mainWindow.restore();
-      mainWindow.focus();
+      enforceKioskTopmost();
     }
   });
 
@@ -497,7 +513,7 @@ function createWindow() {
 }
 
 function enableLockdown(options = {}) {
-  if (!mainWindow) return;
+  if (!mainWindow || mainWindow.isDestroyed()) return;
   lockdownActive = true;
   logStartup('[lockdown] enableLockdown engaged');
 
@@ -507,10 +523,52 @@ function enableLockdown(options = {}) {
     }
   } catch (_) {}
 
+  mainWindow.setFullScreen(true);
   mainWindow.setKiosk(true);
-  mainWindow.setAlwaysOnTop(true, 'screen-saver');
   mainWindow.setVisibleOnAllWorkspaces(true);
+
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.setAlwaysOnTop(false);
+  mainWindow.setAlwaysOnTop(true, 'screen-saver');
+  mainWindow.show();
   mainWindow.focus();
+  mainWindow.moveTop();
+
+  setTimeout(() => {
+    if (lockdownActive && mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.setAlwaysOnTop(false);
+      mainWindow.setAlwaysOnTop(true, 'screen-saver');
+      mainWindow.moveTop();
+      mainWindow.focus();
+    }
+  }, 50);
+
+  setTimeout(() => {
+    if (lockdownActive && mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.setAlwaysOnTop(false);
+      mainWindow.setAlwaysOnTop(true, 'screen-saver');
+      mainWindow.moveTop();
+      mainWindow.focus();
+    }
+  }, 150);
+
+  setTimeout(() => {
+    if (lockdownActive && mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.setAlwaysOnTop(false);
+      mainWindow.setAlwaysOnTop(true, 'screen-saver');
+      mainWindow.moveTop();
+      mainWindow.focus();
+    }
+  }, 300);
+
+  setTimeout(() => {
+    if (lockdownActive && mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.setAlwaysOnTop(false);
+      mainWindow.setAlwaysOnTop(true, 'screen-saver');
+      mainWindow.moveTop();
+      mainWindow.focus();
+    }
+  }, 600);
 
   if (options.disableWindowsKeyAltTab !== false) {
     if (!hudProcess) {
@@ -532,10 +590,11 @@ function disableLockdown() {
   logStartup('[lockdown] disableLockdown engaged');
   lockdownActive = false;
   globalShortcut.unregisterAll();
-  if (mainWindow) {
+  if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.setAlwaysOnTop(false);
     mainWindow.setVisibleOnAllWorkspaces(false);
     mainWindow.setKiosk(false);
+    mainWindow.setFullScreen(false);
   }
   setLockedFile(false);
   killKeyboardHook();

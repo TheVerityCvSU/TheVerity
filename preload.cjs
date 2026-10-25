@@ -10,6 +10,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   openGoogleAuth: (url) => ipcRenderer.send('open-google-auth', url),
   closeGoogleAuth: () => ipcRenderer.send('close-google-auth'),
   checkGoogleAuthStatus: () => ipcRenderer.invoke('check-google-auth-status'),
+  getAppVersion: () => ipcRenderer.invoke('get-app-version'),
   onGoogleAuthClosed: (callback) => {
     const handler = () => callback();
     ipcRenderer.on('google-auth-closed', handler);

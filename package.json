@@ -1,7 +1,7 @@
 {
   "name": "the-verity",
   "productName": "The Verity",
-  "version": "1.0.0",
+  "version": "1.0.3",
   "description": "The Verity - Secure Examination & LMS Platform",
   "author": "The Verity Team",
   "private": true,
@@ -16,7 +16,7 @@
     "start": "node server/server.js",
     "server": "node --watch server/server.js",
     "dev": "concurrently \"cd frontend && vite\" \"node --watch server/server.js\"",
-    "build": "npm --prefix frontend run build",
+    "build": "npm --prefix frontend run build && npm run build:server",
     "build:server": "esbuild server/server.js --bundle --platform=node --outfile=dist-server/server-bundle.cjs --external:better-sqlite3 --external:node:sqlite",
     "electron": "electron .",
     "electron:admin": "electron electron/admin-main.cjs",

@@ -240,6 +240,57 @@ export const apiFetch = async (url, options = {}) => {
   const primaryCloudUrl = `${cloudUrl}${pathWithQuery}`;
   const localFallbackUrl = `${localUrl}${pathWithQuery}`;
 
+  // For update checking on desktop / dev, simultaneously probe both local and cloud servers.
+  // Whichever reports a newer available version or updateAvailable = true wins!
+  if (pathWithQuery.startsWith('/api/check-update')) {
+    const isNewerVer = (v1, v2) => {
+      if (!v1 || !v2) return false;
+      const p1 = String(v1).replace(/^v/i, '').split('.').map(n => parseInt(n, 10) || 0);
+      const p2 = String(v2).replace(/^v/i, '').split('.').map(n => parseInt(n, 10) || 0);
+      for (let i = 0; i < Math.max(p1.length, p2.length); i++) {
+        const a = p1[i] || 0;
+        const b = p2[i] || 0;
+        if (a > b) return true;
+        if (a < b) return false;
+      }
+      return false;
+    };
+
+    try {
+      const promises = [
+        fetch(primaryCloudUrl, { ...options, headers }).then(r => r.ok ? r.json() : null).catch(() => null)
+      ];
+      if (!isWebHosted) {
+        promises.push(
+          fetch(localFallbackUrl, { ...options, headers }).then(r => r.ok ? r.json() : null).catch(() => null)
+        );
+      }
+      const [cloudData, localData] = await Promise.all(promises);
+
+      let best = localData || cloudData;
+      if (localData && cloudData) {
+        if (localData.updateAvailable && !cloudData.updateAvailable) {
+          best = localData;
+        } else if (cloudData.updateAvailable && !localData.updateAvailable) {
+          best = cloudData;
+        } else if (isNewerVer(localData.latestVersion, cloudData.latestVersion)) {
+          best = localData;
+        } else if (isNewerVer(cloudData.latestVersion, localData.latestVersion)) {
+          best = cloudData;
+        } else {
+          best = localData;
+        }
+      }
+
+      if (best) {
+        return new Response(JSON.stringify(best), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+    } catch (_) {}
+  }
+
   // 1. Hosted Web (e.g. Vercel): Pure cloud mode (no local fallback server)
   if (isWebHosted) {
     try {

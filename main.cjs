@@ -103,7 +103,7 @@ function startServer() {
   if (app.isPackaged) seedDatabase(dataDir);
 
   serverProcess = fork(serverPath, [], {
-    env: { ...process.env, DATA_DIR: dataDir, NODE_ENV: 'production' },
+    env: { ...process.env, DATA_DIR: dataDir, NODE_ENV: 'production', APP_VERSION: app.getVersion() },
     silent: true,
   });
   serverProcess.stdout.on('data', (d) => process.stdout.write(`[server] ${d}`));
@@ -152,9 +152,30 @@ function createWindow() {
     mainWindow.loadURL('http://localhost:5173');
   }
 
-  // Pag biglang lumipat or nawala yung focus tapos bumalik, pilitin ulit mag-kiosk mode
+  function enforceKioskTopmost() {
+    if (!mainWindow || mainWindow.isDestroyed() || !lockdownActive) return;
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.setAlwaysOnTop(false);
+    mainWindow.setAlwaysOnTop(true, 'screen-saver');
+    mainWindow.show();
+    mainWindow.focus();
+    mainWindow.moveTop();
+  }
+
+  // Pag biglang lumipat or nawala yung focus tapos bumalik, pilitin ulit mag-kiosk mode at i-bury ang taskbar
   mainWindow.on('focus', () => {
-    if (lockdownActive) mainWindow.setKiosk(true);
+    if (lockdownActive) {
+      mainWindow.setKiosk(true);
+      enforceKioskTopmost();
+    }
+  });
+
+  // Pag pumasok na sa fullscreen/kiosk, i-angat agad sa ibabaw ng taskbar
+  mainWindow.on('enter-full-screen', () => {
+    if (lockdownActive) {
+      enforceKioskTopmost();
+      setTimeout(enforceKioskTopmost, 100);
+    }
   });
 
   // Hirap i-block ni Alt+Tab sa Windows, kaya pag nag-blur (lumipat ng window si student),
@@ -165,10 +186,7 @@ function createWindow() {
     setTimeout(() => {
       if (!lockdownActive) return;
       if (BrowserWindow.getFocusedWindow()) return; // sarili nating popup/window yung naka-focus, hayaan lang muna
-      if (mainWindow.isMinimized()) mainWindow.restore();
-      mainWindow.show();
-      mainWindow.focus();
-      mainWindow.setAlwaysOnTop(true, 'screen-saver');
+      enforceKioskTopmost();
     }, 120);
   });
 
@@ -176,8 +194,7 @@ function createWindow() {
   mainWindow.on('minimize', (e) => {
     if (lockdownActive) {
       e.preventDefault();
-      mainWindow.restore();
-      mainWindow.focus();
+      enforceKioskTopmost();
     }
   });
 
@@ -188,12 +205,59 @@ function createWindow() {
 }
 
 function enableLockdown() {
-  if (!mainWindow) return;
+  if (!mainWindow || mainWindow.isDestroyed()) return;
   lockdownActive = true;
+
+  mainWindow.setFullScreen(true);
   mainWindow.setKiosk(true);
-  mainWindow.setAlwaysOnTop(true, 'screen-saver');
   mainWindow.setVisibleOnAllWorkspaces(true);
+
+  // Sa Windows, minsan nauunang mag-render si taskbar kaysa sa pag-settle ng kiosk mode.
+  // Re-asserting topmost right after setKiosk and via staggered delays ensures the window
+  // is placed above the Windows taskbar immediately without needing an Alt+Tab cycle.
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.setAlwaysOnTop(false);
+  mainWindow.setAlwaysOnTop(true, 'screen-saver');
+  mainWindow.show();
   mainWindow.focus();
+  mainWindow.moveTop();
+
+  setTimeout(() => {
+    if (lockdownActive && mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.setAlwaysOnTop(false);
+      mainWindow.setAlwaysOnTop(true, 'screen-saver');
+      mainWindow.moveTop();
+      mainWindow.focus();
+    }
+  }, 50);
+
+  setTimeout(() => {
+    if (lockdownActive && mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.setAlwaysOnTop(false);
+      mainWindow.setAlwaysOnTop(true, 'screen-saver');
+      mainWindow.moveTop();
+      mainWindow.focus();
+    }
+  }, 150);
+
+  setTimeout(() => {
+    if (lockdownActive && mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.setAlwaysOnTop(false);
+      mainWindow.setAlwaysOnTop(true, 'screen-saver');
+      mainWindow.moveTop();
+      mainWindow.focus();
+    }
+  }, 300);
+
+  setTimeout(() => {
+    if (lockdownActive && mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.setAlwaysOnTop(false);
+      mainWindow.setAlwaysOnTop(true, 'screen-saver');
+      mainWindow.moveTop();
+      mainWindow.focus();
+    }
+  }, 600);
+
   // Paandarin na yung native keyboard hook para bawal ang Windows key
   setLockedFile(true);
   for (const accel of LOCKED_SHORTCUTS) {
@@ -208,10 +272,11 @@ function enableLockdown() {
 function disableLockdown() {
   lockdownActive = false;
   globalShortcut.unregisterAll();
-  if (mainWindow) {
+  if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.setAlwaysOnTop(false);
     mainWindow.setVisibleOnAllWorkspaces(false);
     mainWindow.setKiosk(false);
+    mainWindow.setFullScreen(false);
   }
   // Bitawan na yung native hook at ibalik sa normal
   setLockedFile(false);
@@ -246,6 +311,10 @@ ipcMain.handle('check-vm-status', async () => {
 
 ipcMain.handle('get-cached-vm-status', () => {
   return getCachedVmStatusSync();
+});
+
+ipcMain.handle('get-app-version', () => {
+  return app.getVersion();
 });
 
 ipcMain.on('close-app', () => {
