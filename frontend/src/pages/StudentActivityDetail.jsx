@@ -416,17 +416,28 @@ export default function StudentActivityDetail({
     setSubmission(subData);
 
     // Save to backend database
+    const subPayload = {
+      studentName: safeUsername,
+      studentId: studentId,
+      finalCode: currentCode,
+      codeHistory: resolvedHistory,
+      classroomId: classroomId
+    };
     apiFetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/submissions/${assignmentId}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        studentName: safeUsername,
-        studentId: studentId,
-        finalCode: currentCode,
-        codeHistory: resolvedHistory,
-        classroomId: classroomId
-      })
-    }).catch(() => {});
+      body: JSON.stringify(subPayload)
+    }).catch(async () => {
+      // Offline fallback: queue submission in local store for automatic upload on reconnect
+      try {
+        await localStore.addToSyncQueue(
+          'submit_assignment',
+          `/submissions/${assignmentId}`,
+          'POST',
+          subPayload
+        );
+      } catch (_) {}
+    });
 
     if (socket) {
       socket.emit('student_leave_workspace', {
@@ -506,13 +517,23 @@ export default function StudentActivityDetail({
     setSubmission(null);
 
     // Call backend endpoint & socket
-    apiFetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/submissions/${assignmentId}/${encodeURIComponent(safeUsername)}`, {
+    const deleteUrl = `/submissions/${assignmentId}/${encodeURIComponent(safeUsername)}`;
+    apiFetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}${deleteUrl}`, {
       method: 'DELETE'
-    }).catch(() => {});
+    }).catch(async () => {
+      try {
+        await localStore.addToSyncQueue('unsubmit_assignment', deleteUrl, 'DELETE', null);
+      } catch (_) {}
+    });
     if (studentId && studentId !== safeUsername) {
-      apiFetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/submissions/${assignmentId}/${encodeURIComponent(studentId)}`, {
+      const deleteIdUrl = `/submissions/${assignmentId}/${encodeURIComponent(studentId)}`;
+      apiFetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}${deleteIdUrl}`, {
         method: 'DELETE'
-      }).catch(() => {});
+      }).catch(async () => {
+        try {
+          await localStore.addToSyncQueue('unsubmit_assignment', deleteIdUrl, 'DELETE', null);
+        } catch (_) {}
+      });
     }
 
     if (socket) {

@@ -95954,6 +95954,455 @@ var require_lib6 = __commonJS({
   }
 });
 
+// server/db/cloudSync.js
+var require_cloudSync = __commonJS({
+  "server/db/cloudSync.js"(exports2, module2) {
+    var { Pool } = require_lib6();
+    var pgPool = null;
+    var sqliteDb = null;
+    var isSyncing = false;
+    var syncTimer = null;
+    var lastSyncTime = null;
+    var lastSyncStatus = "idle";
+    var connectionString = null;
+    function getCleanConnectionString(rawUrl) {
+      if (!rawUrl) return null;
+      let url = rawUrl.trim();
+      if (url.includes("[YOUR-PASSWORD]")) return null;
+      const authMatch = url.match(/^(postgres(?:ql)?:\/\/[^:]+:)(.*)(@[^@]+)$/);
+      if (authMatch) {
+        const [, prefix, rawPass, suffix] = authMatch;
+        if (!rawPass.includes("%25") && (rawPass.includes("%") || rawPass.includes("?"))) {
+          url = `${prefix}${encodeURIComponent(rawPass)}${suffix}`;
+        }
+      }
+      return url;
+    }
+    function getPool() {
+      if (pgPool) return pgPool;
+      if (!connectionString) return null;
+      try {
+        pgPool = new Pool({
+          connectionString,
+          ssl: { rejectUnauthorized: false },
+          max: 3,
+          idleTimeoutMillis: 3e4,
+          connectionTimeoutMillis: 3500,
+          statement_timeout: 4500,
+          query_timeout: 4500
+        });
+        pgPool.on("error", () => {
+        });
+        return pgPool;
+      } catch (_) {
+        return null;
+      }
+    }
+    function initCloudSync(sqliteDatabase, dbUrl) {
+      sqliteDb = sqliteDatabase;
+      connectionString = getCleanConnectionString(dbUrl);
+      if (!connectionString) {
+        console.log("[Cloud Sync] No valid PostgreSQL DATABASE_URL found. Running standalone SQLite.");
+        return;
+      }
+      console.log("[Cloud Sync] \u{1F504} Bidirectional In-Memory Cloud Sync Engine initialized.");
+      setTimeout(() => {
+        syncBidirectional().catch(() => {
+        });
+      }, 2e3);
+      if (syncTimer) clearInterval(syncTimer);
+      syncTimer = setInterval(() => {
+        syncBidirectional().catch(() => {
+        });
+      }, 15e3);
+    }
+    async function syncBidirectional() {
+      if (isSyncing || !sqliteDb) return { status: "skipped" };
+      const pool = getPool();
+      if (!pool) return { status: "no_pool" };
+      isSyncing = true;
+      let client = null;
+      try {
+        client = await pool.connect();
+        await client.query(`
+            ALTER TABLE classrooms ADD COLUMN IF NOT EXISTS archived INTEGER DEFAULT 0;
+            ALTER TABLE classrooms ADD COLUMN IF NOT EXISTS theme TEXT;
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar TEXT;
+        `).catch(() => {
+        });
+        let pushedCount = 0;
+        let pulledCount = 0;
+        try {
+          const localClasses = sqliteDb.prepare("SELECT id, code, section, name, subject, instructor, archived, instructor_email, theme FROM classrooms").all();
+          const cloudClassesRes = await client.query("SELECT id, code, section, name, subject, instructor, archived, instructor_email, theme FROM classrooms");
+          const cloudClasses = cloudClassesRes.rows || [];
+          const localMap = new Map(localClasses.map((c) => [String(c.id), c]));
+          const cloudMap = new Map(cloudClasses.map((c) => [String(c.id), c]));
+          const isPhantom = (c) => !c || !c.name || /^Classroom \d+$/i.test(String(c.name).trim()) && (!c.section || !String(c.section).trim());
+          for (const [id, localC] of localMap) {
+            const cloudC = cloudMap.get(id);
+            const localIsPhantom = isPhantom(localC);
+            const cloudIsPhantom = isPhantom(cloudC);
+            const needsPush = !cloudC || cloudIsPhantom && !localIsPhantom || String(localC.name || "") !== String(cloudC.name || "") || String(localC.code || "") !== String(cloudC.code || "") || String(localC.section || "") !== String(cloudC.section || "") || String(localC.subject || "") !== String(cloudC.subject || "") || String(localC.instructor || "") !== String(cloudC.instructor || "") || String(localC.instructor_email || "") !== String(cloudC.instructor_email || "") || Number(localC.archived || 0) !== Number(cloudC.archived || 0) || String(localC.theme || "") !== String(cloudC.theme || "");
+            if (needsPush) {
+              await client.query(`
+                        INSERT INTO classrooms (id, code, section, name, subject, instructor, archived, instructor_email, theme)
+                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                        ON CONFLICT (id) DO UPDATE SET
+                            code = CASE WHEN EXCLUDED.code != '' THEN EXCLUDED.code ELSE classrooms.code END,
+                            section = CASE WHEN EXCLUDED.section != '' THEN EXCLUDED.section ELSE classrooms.section END,
+                            name = CASE WHEN EXCLUDED.name NOT LIKE 'Classroom %' THEN EXCLUDED.name ELSE classrooms.name END,
+                            subject = CASE WHEN EXCLUDED.subject != '' THEN EXCLUDED.subject ELSE classrooms.subject END,
+                            instructor = CASE WHEN EXCLUDED.instructor != '' THEN EXCLUDED.instructor ELSE classrooms.instructor END,
+                            archived = EXCLUDED.archived,
+                            instructor_email = COALESCE(NULLIF(EXCLUDED.instructor_email, ''), classrooms.instructor_email),
+                            theme = COALESCE(EXCLUDED.theme, classrooms.theme)
+                    `, [localC.id, localC.code || "", localC.section || "", localC.name || "", localC.subject || "", localC.instructor || "", localC.archived || 0, localC.instructor_email || null, localC.theme || null]);
+              pushedCount++;
+              cloudMap.set(id, { ...localC });
+            }
+          }
+          const upsertClassroomStmt = sqliteDb.prepare(`
+                INSERT INTO classrooms (id, code, section, name, subject, instructor, archived, instructor_email, theme)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    code = CASE WHEN excluded.code != '' THEN excluded.code ELSE classrooms.code END,
+                    section = CASE WHEN excluded.section != '' THEN excluded.section ELSE classrooms.section END,
+                    name = CASE WHEN excluded.name NOT LIKE 'Classroom %' THEN excluded.name ELSE classrooms.name END,
+                    subject = CASE WHEN excluded.subject != '' THEN excluded.subject ELSE classrooms.subject END,
+                    instructor = CASE WHEN excluded.instructor != '' THEN excluded.instructor ELSE classrooms.instructor END,
+                    archived = excluded.archived,
+                    instructor_email = COALESCE(NULLIF(excluded.instructor_email, ''), classrooms.instructor_email),
+                    theme = COALESCE(excluded.theme, classrooms.theme)
+            `);
+          for (const [id, cloudC] of cloudMap) {
+            const localC = localMap.get(id);
+            const cloudIsPhantom = isPhantom(cloudC);
+            const localIsPhantom = isPhantom(localC);
+            if (localC && !localIsPhantom && cloudIsPhantom) {
+              continue;
+            }
+            const needsPull = !localC || localIsPhantom && !cloudIsPhantom || String(cloudC.name || "") !== String(localC.name || "") || String(cloudC.code || "") !== String(localC.code || "") || String(cloudC.section || "") !== String(localC.section || "") || String(cloudC.subject || "") !== String(localC.subject || "") || String(cloudC.instructor || "") !== String(localC.instructor || "") || String(cloudC.instructor_email || "") !== String(localC.instructor_email || "") || Number(cloudC.archived || 0) !== Number(localC.archived || 0) || String(cloudC.theme || "") !== String(localC.theme || "");
+            if (needsPull) {
+              upsertClassroomStmt.run(cloudC.id, cloudC.code || "", cloudC.section || "", cloudC.name || "", cloudC.subject || "", cloudC.instructor || "", cloudC.archived || 0, cloudC.instructor_email || null, cloudC.theme || null);
+              pulledCount++;
+            }
+          }
+        } catch (cErr) {
+          console.warn("[Cloud Sync] Classroom sync notice:", cErr.message);
+        }
+        try {
+          const localCw = sqliteDb.prepare("SELECT id, classroom_id, title, description, dueDate, type, created_at FROM classwork").all();
+          const cloudCwRes = await client.query("SELECT id, classroom_id, title, description, duedate, type, created_at FROM classwork");
+          const cloudCw = cloudCwRes.rows || [];
+          const localCwMap = new Map(localCw.map((cw) => [String(cw.id), cw]));
+          const cloudCwMap = new Map(cloudCw.map((cw) => [String(cw.id), cw]));
+          const localClassesNow = sqliteDb.prepare("SELECT id, code, section, name, subject, instructor, archived, instructor_email, theme FROM classrooms").all();
+          const localClassMap = new Map(localClassesNow.map((c) => [String(c.id), c]));
+          for (const [id, lCw] of localCwMap) {
+            const cCw = cloudCwMap.get(id);
+            const needsPush = !cCw || String(lCw.title || "") !== String(cCw.title || "") || String(lCw.description || "") !== String(cCw.description || "") || String(lCw.dueDate || "") !== String(cCw.duedate || "") || String(lCw.type || "") !== String(cCw.type || "");
+            if (needsPush) {
+              const realClass = localClassMap.get(String(lCw.classroom_id));
+              if (realClass) {
+                await client.query(`
+                            INSERT INTO classrooms (id, code, section, name, subject, instructor, archived, instructor_email, theme)
+                            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                            ON CONFLICT (id) DO UPDATE SET
+                                code = CASE WHEN EXCLUDED.code != '' THEN EXCLUDED.code ELSE classrooms.code END,
+                                section = CASE WHEN EXCLUDED.section != '' THEN EXCLUDED.section ELSE classrooms.section END,
+                                name = CASE WHEN EXCLUDED.name NOT LIKE 'Classroom %' THEN EXCLUDED.name ELSE classrooms.name END,
+                                subject = CASE WHEN EXCLUDED.subject != '' THEN EXCLUDED.subject ELSE classrooms.subject END,
+                                instructor = CASE WHEN EXCLUDED.instructor != '' THEN EXCLUDED.instructor ELSE classrooms.instructor END,
+                                instructor_email = COALESCE(NULLIF(EXCLUDED.instructor_email, ''), classrooms.instructor_email)
+                        `, [realClass.id, realClass.code || "", realClass.section || "", realClass.name || "", realClass.subject || "", realClass.instructor || "", realClass.archived || 0, realClass.instructor_email || null, realClass.theme || null]);
+              } else {
+                await client.query("INSERT INTO classrooms (id, name) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING", [lCw.classroom_id, "Classroom " + lCw.classroom_id]);
+              }
+              await client.query(`
+                        INSERT INTO classwork (id, classroom_id, title, description, duedate, type, created_at)
+                        VALUES ($1, $2, $3, $4, $5, $6, $7)
+                        ON CONFLICT (id) DO UPDATE SET
+                            classroom_id = EXCLUDED.classroom_id,
+                            title = EXCLUDED.title,
+                            description = EXCLUDED.description,
+                            duedate = EXCLUDED.duedate,
+                            type = EXCLUDED.type
+                    `, [lCw.id, lCw.classroom_id, lCw.title, lCw.description || "", lCw.dueDate || "", lCw.type || "Assignment", lCw.created_at || null]);
+              pushedCount++;
+              cloudCwMap.set(id, { ...lCw, duedate: lCw.dueDate });
+            }
+          }
+          const upsertCwStmt = sqliteDb.prepare(`
+                INSERT INTO classwork (id, classroom_id, title, description, dueDate, type, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    classroom_id = excluded.classroom_id,
+                    title = excluded.title,
+                    description = excluded.description,
+                    dueDate = excluded.dueDate,
+                    type = excluded.type
+            `);
+          for (const [id, cCw] of cloudCwMap) {
+            const lCw = localCwMap.get(id);
+            const needsPull = !lCw || String(cCw.title || "") !== String(lCw.title || "") || String(cCw.description || "") !== String(lCw.description || "") || String(cCw.duedate || "") !== String(lCw.dueDate || "") || String(cCw.type || "") !== String(lCw.type || "");
+            if (needsPull) {
+              try {
+                sqliteDb.prepare("INSERT OR IGNORE INTO classrooms (id, name) VALUES (?, ?)").run(cCw.classroom_id, "Classroom " + cCw.classroom_id);
+              } catch (_) {
+              }
+              upsertCwStmt.run(cCw.id, cCw.classroom_id, cCw.title || "", cCw.description || "", cCw.duedate || "", cCw.type || "Assignment", cCw.created_at ? new Date(cCw.created_at).toISOString() : null);
+              pulledCount++;
+            }
+          }
+        } catch (cwErr) {
+          console.warn("[Cloud Sync] Classwork sync notice:", cwErr.message);
+        }
+        try {
+          const localUsers = sqliteDb.prepare("SELECT id, name, email, password, role, status, lastLogin, avatar FROM users").all();
+          const cloudUsersRes = await client.query("SELECT id, name, email, password, role, status, lastlogin, avatar FROM users");
+          const cloudUsers = cloudUsersRes.rows || [];
+          const localUserMap = new Map(localUsers.map((u) => [u.email.toLowerCase(), u]));
+          const cloudUserMap = new Map(cloudUsers.map((u) => [u.email.toLowerCase(), u]));
+          for (const [email, lU] of localUserMap) {
+            if (lU.role === "Admin") continue;
+            const cU = cloudUserMap.get(email);
+            const needsPush = !cU || lU.password && lU.password !== cU.password || lU.status && lU.status !== cU.status;
+            if (needsPush) {
+              await client.query(`
+                        INSERT INTO users (name, email, password, role, status, lastlogin, avatar)
+                        VALUES ($1, $2, $3, $4, $5, $6, $7)
+                        ON CONFLICT (email) DO UPDATE SET
+                            name = EXCLUDED.name,
+                            password = EXCLUDED.password,
+                            role = EXCLUDED.role,
+                            status = EXCLUDED.status,
+                            lastlogin = COALESCE(EXCLUDED.lastlogin, users.lastlogin),
+                            avatar = COALESCE(EXCLUDED.avatar, users.avatar)
+                    `, [lU.name, lU.email, lU.password, lU.role, lU.status || "Active", lU.lastLogin || null, lU.avatar || null]);
+              pushedCount++;
+            }
+          }
+          const upsertUserStmt = sqliteDb.prepare(`
+                INSERT INTO users (name, email, password, role, status, lastLogin, avatar)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(email) DO UPDATE SET
+                    name = excluded.name,
+                    password = excluded.password,
+                    role = excluded.role,
+                    status = excluded.status,
+                    lastLogin = COALESCE(excluded.lastLogin, users.lastLogin),
+                    avatar = COALESCE(excluded.avatar, users.avatar)
+            `);
+          for (const [email, cU] of cloudUserMap) {
+            const lU = localUserMap.get(email);
+            const needsPull = !lU || cU.password && cU.password !== lU.password || cU.status && cU.status !== lU.status;
+            if (needsPull) {
+              upsertUserStmt.run(cU.name || "", cU.email, cU.password || "", cU.role || "Student", cU.status || "Active", cU.lastlogin || null, cU.avatar || null);
+              pulledCount++;
+            }
+          }
+        } catch (uErr) {
+          console.warn("[Cloud Sync] Users sync notice:", uErr.message);
+        }
+        try {
+          const localEn = sqliteDb.prepare("SELECT classroom_id, student_id, student_name, student_email, enrolled_at FROM enrollments").all();
+          const cloudEnRes = await client.query("SELECT classroom_id, student_id, student_name, student_email, enrolled_at FROM enrollments");
+          const cloudEn = cloudEnRes.rows || [];
+          const key = (cId, email) => `${cId}_${(email || "").toLowerCase()}`;
+          const localEnMap = new Map(localEn.map((e2) => [key(e2.classroom_id, e2.student_email), e2]));
+          const cloudEnMap = new Map(cloudEn.map((e2) => [key(e2.classroom_id, e2.student_email), e2]));
+          for (const [k, lE] of localEnMap) {
+            if (!cloudEnMap.has(k)) {
+              await client.query(`
+                        INSERT INTO enrollments (classroom_id, student_id, student_name, student_email, enrolled_at)
+                        VALUES ($1, $2, $3, $4, $5)
+                        ON CONFLICT (classroom_id, student_email) DO NOTHING
+                    `, [lE.classroom_id, lE.student_id || null, lE.student_name || "", lE.student_email.trim().toLowerCase(), lE.enrolled_at || null]);
+              pushedCount++;
+            }
+          }
+          const upsertEnStmt = sqliteDb.prepare(`
+                INSERT INTO enrollments (classroom_id, student_id, student_name, student_email, enrolled_at)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(classroom_id, student_email) DO NOTHING
+            `);
+          for (const [k, cE] of cloudEnMap) {
+            if (!localEnMap.has(k)) {
+              upsertEnStmt.run(cE.classroom_id, cE.student_id || null, cE.student_name || "", cE.student_email.trim().toLowerCase(), cE.enrolled_at ? new Date(cE.enrolled_at).toISOString() : null);
+              pulledCount++;
+            }
+          }
+        } catch (enErr) {
+          console.warn("[Cloud Sync] Enrollment sync notice:", enErr.message);
+        }
+        try {
+          const localAnn = sqliteDb.prepare("SELECT id, classroom_id, title, details, author, posted, created_at FROM announcements").all();
+          const cloudAnnRes = await client.query("SELECT id, classroom_id, title, details, author, posted, created_at FROM announcements");
+          const cloudAnn = cloudAnnRes.rows || [];
+          const localAnnMap = new Map(localAnn.map((a) => [String(a.id), a]));
+          const cloudAnnMap = new Map(cloudAnn.map((a) => [String(a.id), a]));
+          for (const [id, lA] of localAnnMap) {
+            if (!cloudAnnMap.has(id)) {
+              await client.query(`
+                        INSERT INTO announcements (id, classroom_id, title, details, author, posted, created_at)
+                        VALUES ($1, $2, $3, $4, $5, $6, $7)
+                        ON CONFLICT (id) DO UPDATE SET
+                            title = EXCLUDED.title,
+                            details = EXCLUDED.details,
+                            author = EXCLUDED.author,
+                            posted = EXCLUDED.posted
+                    `, [lA.id, lA.classroom_id, lA.title || "", lA.details || "", lA.author || "", lA.posted || null, lA.created_at || null]);
+              pushedCount++;
+            }
+          }
+          const upsertAnnStmt = sqliteDb.prepare(`
+                INSERT INTO announcements (id, classroom_id, title, details, author, posted, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    title = excluded.title,
+                    details = excluded.details,
+                    author = excluded.author,
+                    posted = excluded.posted
+            `);
+          for (const [id, cA] of cloudAnnMap) {
+            if (!localAnnMap.has(id)) {
+              upsertAnnStmt.run(cA.id, cA.classroom_id, cA.title || "", cA.details || "", cA.author || "", cA.posted || null, cA.created_at || null);
+              pulledCount++;
+            }
+          }
+        } catch (_) {
+        }
+        try {
+          const localSubs = sqliteDb.prepare("SELECT assignment_id, student_name, history, submittedAt FROM submissions").all();
+          const cloudSubsRes = await client.query("SELECT assignment_id, student_name, history, submittedat FROM submissions");
+          const cloudSubs = cloudSubsRes.rows || [];
+          const subKey = (aId, sName) => `${aId}_${(sName || "").trim().toLowerCase()}`;
+          const localSubMap = new Map(localSubs.map((s2) => [subKey(s2.assignment_id, s2.student_name), s2]));
+          const cloudSubMap = new Map(cloudSubs.map((s2) => [subKey(s2.assignment_id, s2.student_name), s2]));
+          for (const [k, lS] of localSubMap) {
+            const cS = cloudSubMap.get(k);
+            const needsPush = !cS || lS.submittedAt && (!cS.submittedat || new Date(lS.submittedAt) > new Date(cS.submittedat));
+            if (needsPush) {
+              await client.query("DELETE FROM submissions WHERE assignment_id = $1 AND LOWER(TRIM(student_name)) = LOWER(TRIM($2))", [lS.assignment_id, lS.student_name]);
+              await client.query(`
+                        INSERT INTO submissions (assignment_id, student_name, history, submittedat)
+                        VALUES ($1, $2, $3, $4)
+                    `, [lS.assignment_id, lS.student_name, lS.history || "[]", lS.submittedAt || null]);
+              pushedCount++;
+            }
+          }
+          const delLocalSub = sqliteDb.prepare("DELETE FROM submissions WHERE assignment_id = ? AND LOWER(TRIM(student_name)) = LOWER(TRIM(?))");
+          const insLocalSub = sqliteDb.prepare("INSERT INTO submissions (assignment_id, student_name, history, submittedAt) VALUES (?, ?, ?, ?)");
+          for (const [k, cS] of cloudSubMap) {
+            const lS = localSubMap.get(k);
+            const needsPull = !lS || cS.submittedat && (!lS.submittedAt || new Date(cS.submittedat) > new Date(lS.submittedAt));
+            if (needsPull) {
+              try {
+                const hasCw = sqliteDb.prepare("SELECT 1 FROM classwork WHERE id = ?").get(cS.assignment_id);
+                if (!hasCw) {
+                  sqliteDb.prepare("INSERT OR IGNORE INTO classrooms (id, name) VALUES (?, ?)").run(1, "Default Classroom");
+                  sqliteDb.prepare("INSERT OR IGNORE INTO classwork (id, classroom_id, title) VALUES (?, ?, ?)").run(cS.assignment_id, 1, "Assignment " + cS.assignment_id);
+                }
+                delLocalSub.run(cS.assignment_id, cS.student_name);
+                insLocalSub.run(cS.assignment_id, cS.student_name, cS.history || "[]", cS.submittedat ? new Date(cS.submittedat).toISOString() : null);
+                pulledCount++;
+              } catch (_) {
+              }
+            }
+          }
+        } catch (subErr) {
+          console.warn("[Cloud Sync] Submissions sync notice:", subErr.message);
+        }
+        try {
+          const localGrades = sqliteDb.prepare("SELECT assignment_id, student_id, grade, feedback, graded_at FROM grades").all();
+          const cloudGradesRes = await client.query("SELECT assignment_id, student_id, grade, feedback, graded_at FROM grades");
+          const cloudGrades = cloudGradesRes.rows || [];
+          const gradeKey = (aId, sId) => `${aId}_${sId}`;
+          const localGradeMap = new Map(localGrades.map((g) => [gradeKey(g.assignment_id, g.student_id), g]));
+          const cloudGradeMap = new Map(cloudGrades.map((g) => [gradeKey(g.assignment_id, g.student_id), g]));
+          for (const [k, lG] of localGradeMap) {
+            const cG = cloudGradeMap.get(k);
+            const needsPush = !cG || String(lG.grade || "") !== String(cG.grade || "") || String(lG.feedback || "") !== String(cG.feedback || "");
+            if (needsPush) {
+              await client.query(`
+                        INSERT INTO grades (assignment_id, student_id, grade, feedback, graded_at)
+                        VALUES ($1, $2, $3, $4, $5)
+                        ON CONFLICT (assignment_id, student_id) DO UPDATE SET
+                            grade = EXCLUDED.grade,
+                            feedback = EXCLUDED.feedback,
+                            graded_at = EXCLUDED.graded_at
+                    `, [String(lG.assignment_id), String(lG.student_id), String(lG.grade || ""), lG.feedback || "", lG.graded_at || null]);
+              pushedCount++;
+            }
+          }
+          const upsertGradeStmt = sqliteDb.prepare(`
+                INSERT INTO grades (assignment_id, student_id, grade, feedback, graded_at)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(assignment_id, student_id) DO UPDATE SET
+                    grade = excluded.grade,
+                    feedback = excluded.feedback,
+                    graded_at = excluded.graded_at
+            `);
+          for (const [k, cG] of cloudGradeMap) {
+            const lG = localGradeMap.get(k);
+            const needsPull = !lG || String(cG.grade || "") !== String(lG.grade || "") || String(cG.feedback || "") !== String(lG.feedback || "");
+            if (needsPull) {
+              upsertGradeStmt.run(String(cG.assignment_id), String(cG.student_id), String(cG.grade || ""), cG.feedback || "", cG.graded_at ? new Date(cG.graded_at).toISOString() : null);
+              pulledCount++;
+            }
+          }
+        } catch (gradeErr) {
+          console.warn("[Cloud Sync] Grades sync notice:", gradeErr.message);
+        }
+        lastSyncTime = Date.now();
+        lastSyncStatus = "success";
+        if (pushedCount > 0 || pulledCount > 0) {
+          console.log(`[Cloud Sync] \u{1F504} Sync complete! Pushed to Cloud: ${pushedCount} items | Pulled to Local: ${pulledCount} items`);
+        }
+        return {
+          status: "success",
+          pushed: pushedCount,
+          pulled: pulledCount,
+          timestamp: lastSyncTime
+        };
+      } catch (err) {
+        lastSyncStatus = "offline";
+        return { status: "offline", error: err.message };
+      } finally {
+        if (client) {
+          try {
+            client.release();
+          } catch (_) {
+          }
+        }
+        isSyncing = false;
+      }
+    }
+    var debounceTimeout = null;
+    function triggerSync() {
+      if (debounceTimeout) clearTimeout(debounceTimeout);
+      debounceTimeout = setTimeout(() => {
+        syncBidirectional().catch(() => {
+        });
+      }, 300);
+    }
+    function getSyncStatus() {
+      return {
+        isSyncing,
+        lastSyncTime,
+        lastSyncStatus
+      };
+    }
+    module2.exports = {
+      initCloudSync,
+      syncBidirectional,
+      triggerSync,
+      getSyncStatus
+    };
+  }
+});
+
 // server/db/index.js
 var require_db4 = __commonJS({
   "server/db/index.js"(exports2, module2) {
@@ -96334,7 +96783,9 @@ var require_db4 = __commonJS({
         ssl: sslConfig,
         max: 5,
         idleTimeoutMillis: 3e4,
-        connectionTimeoutMillis: 1e4
+        connectionTimeoutMillis: 3500,
+        statement_timeout: 4e3,
+        query_timeout: 4e3
       });
       const client = await pgPool.connect();
       try {
@@ -96569,7 +97020,6 @@ var require_db4 = __commonJS({
           try {
             console.log("[Database] Attempting connection to PostgreSQL...");
             await initPostgres(cleanedUrl);
-            return;
           } catch (err) {
             console.warn(`[Database] PostgreSQL connection failed: ${err.message}`);
             if (err.code === "ENETUNREACH" || cleanedUrl.includes("db.") && cleanedUrl.includes(".supabase.co")) {
@@ -96588,6 +97038,12 @@ var require_db4 = __commonJS({
         }
         provider = "sqlite";
       }
+      try {
+        const { initCloudSync } = require_cloudSync();
+        initCloudSync(sqliteDb, cleanedUrl || DATABASE_URL);
+      } catch (syncInitErr) {
+        console.warn("[Database] Cloud sync initialization notice:", syncInitErr.message);
+      }
     })();
     var db2 = {
       ready: () => readyPromise,
@@ -96596,6 +97052,29 @@ var require_db4 = __commonJS({
       },
       get providerName() {
         return provider === "postgres" ? "PostgreSQL (Supabase)" : "SQLite (Local Fallback)";
+      },
+      syncWithCloud: () => {
+        try {
+          const { syncBidirectional } = require_cloudSync();
+          return syncBidirectional();
+        } catch (_) {
+          return Promise.resolve({ status: "error" });
+        }
+      },
+      triggerSync: () => {
+        try {
+          const { triggerSync } = require_cloudSync();
+          return triggerSync();
+        } catch (_) {
+        }
+      },
+      getSyncStatus: () => {
+        try {
+          const { getSyncStatus } = require_cloudSync();
+          return getSyncStatus();
+        } catch (_) {
+          return { isSyncing: false, lastSyncStatus: "idle" };
+        }
       },
       // Execute query and return all matching rows as Array
       async all(sql, ...args) {
@@ -96674,6 +97153,11 @@ var require_db4 = __commonJS({
               } catch (_) {
               }
             }
+            try {
+              const { triggerSync } = require_cloudSync();
+              triggerSync();
+            } catch (_) {
+            }
             return {
               lastInsertRowid: lastId,
               changes: res.rowCount || 0
@@ -96704,6 +97188,11 @@ var require_db4 = __commonJS({
               });
             } catch (_) {
             }
+          }
+          try {
+            const { triggerSync } = require_cloudSync();
+            triggerSync();
+          } catch (_) {
           }
           return res;
         }
@@ -97199,6 +97688,209 @@ var require_ffmpeg_static = __commonJS({
   }
 });
 
+// server/lanDiscovery.js
+var require_lanDiscovery = __commonJS({
+  "server/lanDiscovery.js"(exports2, module2) {
+    var dgram = require("dgram");
+    var os3 = require("os");
+    var DISCOVERY_PORT = 39123;
+    var APP_TAG = "the-verity";
+    var beaconSocket = null;
+    var beaconTimer = null;
+    var isRunning = false;
+    function getValidNetworkInterfaces() {
+      const interfaces = os3.networkInterfaces();
+      const results = [];
+      for (const name of Object.keys(interfaces)) {
+        for (const iface of interfaces[name]) {
+          if (iface.family === "IPv4" && !iface.internal && iface.address && !iface.address.startsWith("127.") && !iface.address.startsWith("169.254.") && // exclude Windows APIPA
+          !iface.address.startsWith("192.168.56.")) {
+            let broadcast = "255.255.255.255";
+            if (iface.netmask) {
+              try {
+                const ipParts = iface.address.split(".").map(Number);
+                const maskParts = iface.netmask.split(".").map(Number);
+                const bcastParts = ipParts.map((part, i2) => (part | ~maskParts[i2] & 255) >>> 0);
+                broadcast = bcastParts.join(".");
+              } catch (_) {
+              }
+            }
+            results.push({
+              name,
+              ip: iface.address,
+              broadcast,
+              netmask: iface.netmask
+            });
+          }
+        }
+      }
+      return results;
+    }
+    function getLanIpAddresses2() {
+      return getValidNetworkInterfaces().map((i2) => i2.ip);
+    }
+    function findBestMatchingServerIp(clientIp) {
+      const ifaces = getValidNetworkInterfaces();
+      if (ifaces.length === 0) return "127.0.0.1";
+      if (!clientIp) return ifaces[0].ip;
+      const cParts = clientIp.split(".");
+      for (const iface of ifaces) {
+        const sParts = iface.ip.split(".");
+        if (cParts[0] === sParts[0] && cParts[1] === sParts[1] && cParts[2] === sParts[2]) {
+          return iface.ip;
+        }
+      }
+      return ifaces[0].ip;
+    }
+    function startLanDiscovery2(httpPort = 3001, isHost = true) {
+      if (isRunning) return;
+      if (!isHost) {
+        return;
+      }
+      try {
+        beaconSocket = dgram.createSocket({ type: "udp4", reuseAddr: true });
+        beaconSocket.on("error", (err) => {
+          console.warn(`[LAN Discovery] UDP Socket notice: ${err.message}`);
+        });
+        beaconSocket.on("message", (msg, rinfo) => {
+          try {
+            const data = JSON.parse(msg.toString());
+            if (data && data.app === APP_TAG && data.type === "discover") {
+              const matchedIp = findBestMatchingServerIp(rinfo.address);
+              const allIps = getLanIpAddresses2();
+              const candidateUrls = allIps.map((ip) => `http://${ip}:${httpPort}`);
+              const response = Buffer.from(JSON.stringify({
+                app: APP_TAG,
+                type: "beacon",
+                role: "host",
+                port: httpPort,
+                primaryIp: matchedIp,
+                serverUrl: `http://${matchedIp}:${httpPort}`,
+                ips: allIps,
+                candidateUrls,
+                hostname: os3.hostname(),
+                timestamp: Date.now()
+              }));
+              beaconSocket.send(response, 0, response.length, rinfo.port, rinfo.address, (sErr) => {
+                if (!sErr) {
+                  console.log(`[LAN Discovery] Client discovered from ${rinfo.address} -> matched server URL: http://${matchedIp}:${httpPort}`);
+                }
+              });
+            }
+          } catch (_) {
+          }
+        });
+        beaconSocket.bind(DISCOVERY_PORT, "0.0.0.0", () => {
+          try {
+            beaconSocket.setBroadcast(true);
+          } catch (_) {
+          }
+          isRunning = true;
+          console.log(`\u{1F4E1} [LAN Discovery] Host Beacon active on UDP port ${DISCOVERY_PORT} (HTTP port: ${httpPort})`);
+          const sendBeacon = () => {
+            if (!isRunning || !beaconSocket) return;
+            try {
+              const ifaces = getValidNetworkInterfaces();
+              if (ifaces.length === 0) return;
+              const allIps = ifaces.map((i2) => i2.ip);
+              const candidateUrls = allIps.map((ip) => `http://${ip}:${httpPort}`);
+              for (const iface of ifaces) {
+                try {
+                  const payload = Buffer.from(JSON.stringify({
+                    app: APP_TAG,
+                    type: "beacon",
+                    role: "host",
+                    port: httpPort,
+                    primaryIp: iface.ip,
+                    serverUrl: `http://${iface.ip}:${httpPort}`,
+                    ips: allIps,
+                    candidateUrls,
+                    hostname: os3.hostname(),
+                    timestamp: Date.now()
+                  }));
+                  beaconSocket.send(payload, 0, payload.length, DISCOVERY_PORT, iface.broadcast);
+                } catch (_) {
+                }
+              }
+              try {
+                const globalPayload = Buffer.from(JSON.stringify({
+                  app: APP_TAG,
+                  type: "beacon",
+                  role: "host",
+                  port: httpPort,
+                  primaryIp: ifaces[0].ip,
+                  serverUrl: `http://${ifaces[0].ip}:${httpPort}`,
+                  ips: allIps,
+                  candidateUrls,
+                  hostname: os3.hostname(),
+                  timestamp: Date.now()
+                }));
+                beaconSocket.send(globalPayload, 0, globalPayload.length, DISCOVERY_PORT, "255.255.255.255");
+              } catch (_) {
+              }
+              try {
+                const { execSync: execSync2 } = require("child_process");
+                const arpOut = execSync2("arp -a", { timeout: 1e3, windowsHide: true }).toString();
+                const matches = Array.from(new Set(arpOut.match(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g) || []));
+                const targetIps = matches.filter(
+                  (ip) => !ip.startsWith("224.") && !ip.startsWith("239.") && !ip.startsWith("255.") && !ip.endsWith(".255") && !ip.startsWith("127.") && !allIps.includes(ip)
+                );
+                for (const targetIp of targetIps) {
+                  try {
+                    const matchedIp = findBestMatchingServerIp(targetIp);
+                    const unicastPayload = Buffer.from(JSON.stringify({
+                      app: APP_TAG,
+                      type: "beacon",
+                      role: "host",
+                      port: httpPort,
+                      primaryIp: matchedIp,
+                      serverUrl: `http://${matchedIp}:${httpPort}`,
+                      ips: allIps,
+                      candidateUrls,
+                      hostname: os3.hostname(),
+                      timestamp: Date.now()
+                    }));
+                    beaconSocket.send(unicastPayload, 0, unicastPayload.length, DISCOVERY_PORT, targetIp);
+                  } catch (_) {
+                  }
+                }
+              } catch (_) {
+              }
+            } catch (_) {
+            }
+          };
+          sendBeacon();
+          beaconTimer = setInterval(sendBeacon, 2500);
+        });
+      } catch (err) {
+        console.warn(`[LAN Discovery] Could not initialize LAN Discovery: ${err.message}`);
+      }
+    }
+    function stopLanDiscovery2() {
+      isRunning = false;
+      if (beaconTimer) {
+        clearInterval(beaconTimer);
+        beaconTimer = null;
+      }
+      if (beaconSocket) {
+        try {
+          beaconSocket.close();
+        } catch (_) {
+        }
+        beaconSocket = null;
+      }
+    }
+    module2.exports = {
+      startLanDiscovery: startLanDiscovery2,
+      stopLanDiscovery: stopLanDiscovery2,
+      getLanIpAddresses: getLanIpAddresses2,
+      findBestMatchingServerIp,
+      DISCOVERY_PORT,
+      APP_TAG
+    };
+  }
+});
+
 // server/server.js
 var dns = require("dns");
 try {
@@ -97607,7 +98299,7 @@ app.get("/api/check-update", async (req, res) => {
           const files = fs2.readdirSync(dir);
           for (const f3 of files) {
             const lower2 = f3.toLowerCase();
-            if (lower2.endsWith(".exe") && (isAdminApp ? lower2.includes("admin") : !lower2.includes("admin"))) {
+            if (lower2.endsWith(".exe") && lower2.includes("verity") && (isAdminApp ? lower2.includes("admin") : !lower2.includes("admin"))) {
               const vMatch = f3.match(/(\d+\.\d+\.\d+)/);
               const fileVer = vMatch ? vMatch[1] : "0.0.0";
               found.push({
@@ -97684,20 +98376,34 @@ app.get("/api/check-update", async (req, res) => {
   }
   const forceUpdate = req.query.force === "true" || req.query.force === "1";
   const updateAvailable = forceUpdate || isNewer(latestVersion, currentVersion);
+  const isPrivateHost = (hostname) => {
+    if (!hostname) return false;
+    const clean = hostname.split(":")[0].trim().toLowerCase();
+    if (clean === "localhost" || clean === "127.0.0.1" || clean === "::1" || clean.endsWith(".local")) return true;
+    if (/^10\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(clean)) return true;
+    if (/^192\.168\.\d{1,3}\.\d{1,3}$/.test(clean)) return true;
+    if (/^172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3}$/.test(clean)) return true;
+    return false;
+  };
   const protocol = req.headers["x-forwarded-proto"] || req.protocol;
-  const host = req.get("host");
+  const host = req.get("host") || "localhost:3001";
   const baseUrl = `${protocol}://${host}`;
   const downloadQuery = isAdmin ? "?app=admin" : "";
+  const isLocalServer = isPrivateHost(host);
+  let finalDownloadUrl = `${baseUrl}/api/download-update${downloadQuery}`;
+  if (!isLocalServer && (process.env.UPDATE_DOWNLOAD_URL || githubDownloadUrl)) {
+    finalDownloadUrl = process.env.UPDATE_DOWNLOAD_URL || githubDownloadUrl;
+  }
   const releaseNotes = `Version ${latestVersion}: Enhanced proctoring stability, UI performance optimizations, and security patches.`;
   res.json({
     currentVersion,
     latestVersion,
     updateAvailable,
-    downloadUrl: process.env.UPDATE_DOWNLOAD_URL || githubDownloadUrl || `${baseUrl}/api/download-update${downloadQuery}`,
+    downloadUrl: finalDownloadUrl,
     releaseNotes
   });
 });
-app.get("/api/download-update", (req, res) => {
+app.get("/api/download-update", async (req, res) => {
   const isAdmin = req.query.role === "admin" || req.query.app === "admin" || req.query.role === "Administrator";
   const reqVersion = (req.query.version || req.query.v || "").trim();
   const homeDir = os2.homedir();
@@ -97710,6 +98416,10 @@ app.get("/api/download-update", (req, res) => {
     path.resolve(process.cwd(), "dist"),
     path.join(homeDir, "The-Verity", isAdmin ? "release/Admin" : "release/Users"),
     path.join(homeDir, "The-Verity", "release"),
+    path.join(homeDir, "Desktop", "The-Verity", isAdmin ? "release/Admin" : "release/Users"),
+    path.join(homeDir, "Desktop", "The-Verity", "release"),
+    process.resourcesPath ? path.join(process.resourcesPath, "updates") : null,
+    path.join(process.cwd(), "updates"),
     process.env.RELEASE_DIR,
     process.env.VERITY_RELEASE_DIR
   ].filter(Boolean);
@@ -97720,7 +98430,7 @@ app.get("/api/download-update", (req, res) => {
         const files = fs2.readdirSync(dir);
         for (const f3 of files) {
           const lower2 = f3.toLowerCase();
-          if (lower2.endsWith(".exe") && (isAdmin ? lower2.includes("admin") : !lower2.includes("admin"))) {
+          if (lower2.endsWith(".exe") && lower2.includes("verity") && (isAdmin ? lower2.includes("admin") : !lower2.includes("admin"))) {
             const vMatch = f3.match(/(\d+\.\d+\.\d+)/);
             const fileVer = vMatch ? vMatch[1] : "0.0.0";
             found.push({
@@ -97759,27 +98469,96 @@ app.get("/api/download-update", (req, res) => {
     }
     return res.download(best.path, best.filename);
   }
-  res.redirect("https://github.com/belheroth/Verity/releases/latest");
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 4e3);
+    const ghRes = await fetch("https://api.github.com/repos/belheroth/Verity/releases/latest", {
+      headers: { "User-Agent": "The-Verity-App" },
+      signal: controller.signal
+    });
+    clearTimeout(timeout);
+    if (ghRes.ok) {
+      const releaseData = await ghRes.json();
+      const asset = (releaseData.assets || []).find(
+        (a) => isAdmin ? /admin.*\.exe$/i.test(a.name) : /\.exe$/i.test(a.name) && !/admin/i.test(a.name)
+      );
+      if (asset?.browser_download_url) {
+        const downloadStream = await fetch(asset.browser_download_url);
+        if (downloadStream.ok) {
+          res.setHeader("Content-Disposition", `attachment; filename="${asset.name || "The-Verity-Setup.exe"}"`);
+          res.setHeader("Content-Type", "application/octet-stream");
+          if (downloadStream.headers.get("content-length")) {
+            res.setHeader("Content-Length", downloadStream.headers.get("content-length"));
+          }
+          const { Readable } = require("stream");
+          return Readable.fromWeb(downloadStream.body).pipe(res);
+        }
+      }
+    }
+  } catch (_) {
+  }
+  res.status(404).json({
+    error: "Installer package not found on local server.",
+    message: "Please ensure The Verity Setup.exe is placed in the release/Users or release/Admin directory."
+  });
 });
+function getValidLanIps() {
+  const interfaces = os2.networkInterfaces();
+  const ips = [];
+  for (const name of Object.keys(interfaces)) {
+    for (const iface of interfaces[name]) {
+      if (iface.family === "IPv4" && !iface.internal && iface.address && !iface.address.startsWith("127.") && !iface.address.startsWith("169.254.") && !iface.address.startsWith("192.168.56.")) {
+        ips.push(iface.address);
+      }
+    }
+  }
+  return ips;
+}
 app.get("/health", async (req, res) => {
   try {
     await db.get("SELECT 1");
+    const lanIps = getValidLanIps();
+    const isExplicitClient = process.env.IS_LAN_HOST === "false";
+    const isHost = !isExplicitClient && Boolean(
+      fs2.existsSync(path.join(DATA_DIR, "host.flag")) || fs2.existsSync(path.join(__dirname, "host.flag")) || process.env.IS_LAN_HOST === "true" || process.env.IS_VERITY_ADMIN === "true" || process.argv.includes("--host")
+    );
     res.status(200).json({
       status: "operational",
+      app: "the-verity",
       uptime: process.uptime(),
       db: "connected",
       provider: db.providerName,
+      isHost,
+      lanIps,
       timestamp: (/* @__PURE__ */ new Date()).toISOString()
     });
   } catch (err) {
     res.status(500).json({
       status: "error",
+      app: "the-verity",
       error: err.message,
       uptime: process.uptime(),
       db: "error",
       provider: db.providerName,
       timestamp: (/* @__PURE__ */ new Date()).toISOString()
     });
+  }
+});
+app.post("/api/sync", async (req, res) => {
+  try {
+    const { syncBidirectional } = require_cloudSync();
+    const syncResult = await syncBidirectional();
+    res.status(200).json({ message: "Sync complete", ...syncResult });
+  } catch (e2) {
+    res.status(500).json({ message: "Sync failed", error: e2.message });
+  }
+});
+app.get("/api/sync-status", (req, res) => {
+  try {
+    const { getSyncStatus } = require_cloudSync();
+    res.status(200).json(getSyncStatus());
+  } catch (e2) {
+    res.status(500).json({ error: e2.message });
   }
 });
 var server = http3.createServer(app);
@@ -99191,22 +99970,33 @@ var saveClassworkToDb = async (classroomId, classwork) => {
                 type = excluded.type
         `, id, Number(classroomId) || classroomId, cw.title || "", JSON.stringify(descObj), cw.dueDate || "", cw.type || cw.activityType || "");
   }
+  try {
+    db.triggerSync();
+  } catch (_) {
+  }
 };
 async function checkClassroomAccess(req, classroomId) {
   const roleLower = String(req.user?.role || "").toLowerCase();
   if (roleLower === "admin") return true;
   if (roleLower === "teacher" || roleLower === "instructor") {
-    const c = await db.get("SELECT instructor_email, instructor FROM classrooms WHERE id = ?", classroomId);
+    const c = await db.get("SELECT id, instructor_email, instructor, name FROM classrooms WHERE id = ? OR CAST(id AS TEXT) = ?", classroomId, String(classroomId));
     if (!c) return false;
     const teacherEmail = (req.user.email || "").trim().toLowerCase();
     const teacherName = (req.user.name || "").trim().toLowerCase();
     const cEmail = (c.instructor_email || "").trim().toLowerCase();
     const cName = (c.instructor || "").trim().toLowerCase();
-    const matchesEmail = Boolean(teacherEmail && cEmail && cEmail === teacherEmail);
-    const matchesName = Boolean(teacherName && cName && cName === teacherName);
+    const matchesEmail = Boolean(teacherEmail && cEmail && (cEmail === teacherEmail || cEmail.includes(teacherEmail)));
+    const matchesName = Boolean(teacherName && cName && (cName === teacherName || cName.includes(teacherName)));
     if (matchesEmail || matchesName) {
       if (teacherEmail && cEmail !== teacherEmail && matchesName) {
-        db.run("UPDATE classrooms SET instructor_email = ? WHERE id = ?", teacherEmail, classroomId).catch(() => {
+        db.run("UPDATE classrooms SET instructor_email = ? WHERE id = ?", teacherEmail, c.id).catch(() => {
+        });
+      }
+      return true;
+    }
+    if (!cEmail || !cName || cName === "instructor" || c.name && /^Classroom \d+$/i.test(c.name.trim())) {
+      if (teacherEmail || teacherName) {
+        db.run("UPDATE classrooms SET instructor = COALESCE(NULLIF(instructor, ''), ?), instructor_email = COALESCE(NULLIF(instructor_email, ''), ?) WHERE id = ?", req.user.name || "Instructor", teacherEmail || null, c.id).catch(() => {
         });
       }
       return true;
@@ -99355,6 +100145,10 @@ app.post("/classrooms/:classroomId/announcements", authenticateToken, requireRol
                 author = excluded.author,
                 posted = excluded.posted
         `, announcementId, Number(classroomId), announcementTitle, details.trim(), announcementAuthor, postedTime);
+    try {
+      db.triggerSync();
+    } catch (_) {
+    }
     const newAnnouncement = {
       id: announcementId,
       classroomId: Number(classroomId),
@@ -99377,6 +100171,10 @@ app.delete("/classrooms/:classroomId/announcements/:id", authenticateToken, requ
       return res.status(403).json({ message: "Access denied" });
     }
     await db.run("DELETE FROM announcements WHERE id = ? AND classroom_id = ?", Number(id), Number(classroomId));
+    try {
+      db.triggerSync();
+    } catch (_) {
+    }
     io.emit("announcement_deleted", { classroomId: Number(classroomId), announcementId: Number(id) });
     res.status(200).json({ success: true, message: "Announcement deleted" });
   } catch (e2) {
@@ -99422,10 +100220,11 @@ app.get("/classrooms", authenticateToken, async (req, res) => {
       const teacherName = (req.user.name || "").trim().toLowerCase();
       rawClassrooms = await db.all(`
                 SELECT * FROM classrooms
-                WHERE (instructor_email IS NOT NULL AND instructor_email != '' AND LOWER(instructor_email) = ?)
-                   OR (instructor IS NOT NULL AND instructor != '' AND TRIM(LOWER(instructor)) = ?)
+                WHERE (instructor_email IS NOT NULL AND instructor_email != '' AND (LOWER(instructor_email) = ? OR LOWER(instructor_email) LIKE ?))
+                   OR (instructor IS NOT NULL AND instructor != '' AND (TRIM(LOWER(instructor)) = ? OR TRIM(LOWER(instructor)) LIKE ?))
+                   OR (instructor_email IS NULL OR instructor_email = '' OR instructor IS NULL OR instructor = '' OR instructor = 'Instructor')
                 ORDER BY LOWER(name) ASC, id ASC
-            `, teacherEmail, teacherName);
+            `, teacherEmail, `%${teacherEmail}%`, teacherName, `%${teacherName}%`);
       if (teacherEmail && teacherName) {
         db.run(
           "UPDATE classrooms SET instructor_email = ? WHERE (instructor IS NOT NULL AND TRIM(LOWER(instructor)) = ?) AND (instructor_email IS NULL OR instructor_email = '' OR LOWER(instructor_email) != ?)",
@@ -99489,10 +100288,11 @@ app.put("/classrooms", authenticateToken, requireRole("Teacher", "Admin"), async
     const savedClassrooms = [];
     for (const c of classrooms) {
       if (c.id) {
-        const existing = await db.get("SELECT id FROM classrooms WHERE id = ?", c.id);
-        if (existing && !await checkClassroomAccess(req, c.id)) continue;
+        const existing = await db.get("SELECT id, instructor, instructor_email, name FROM classrooms WHERE id = ? OR CAST(id AS TEXT) = ?", c.id, String(c.id));
+        const isPlaceholder = existing && (!existing.instructor_email || !existing.instructor || existing.instructor === "Instructor" || existing.name && /^Classroom \d+$/i.test(existing.name.trim()));
+        if (existing && !isPlaceholder && !await checkClassroomAccess(req, c.id)) continue;
       }
-      if (c.name && /^Classroom \d+$/i.test(c.name.trim()) && (!c.section || !c.section.trim()) && (!c.subject || !c.subject.trim())) {
+      if (!c.name || !String(c.name).trim()) {
         continue;
       }
       const instName = c.instructor || req.user.name || "Instructor";
@@ -99555,6 +100355,11 @@ app.put("/classrooms", authenticateToken, requireRole("Teacher", "Admin"), async
         instructorEmail: instEmail
       });
     }
+    try {
+      db.triggerSync();
+    } catch (_) {
+    }
+    io.emit("classrooms_changed", { classrooms: savedClassrooms });
     res.status(200).json({ message: "Classrooms saved", classrooms: savedClassrooms });
   } catch (e2) {
     res.status(500).json({ message: e2.message });
@@ -99614,9 +100419,29 @@ app.delete("/classrooms/:id", authenticateToken, requireRole("Teacher", "Admin")
     await db.run("DELETE FROM enrollments WHERE classroom_id = ?", id).catch(() => {
     });
     await db.run("DELETE FROM classrooms WHERE id = ?", id);
+    try {
+      db.triggerSync();
+    } catch (_) {
+    }
     res.status(200).json({ message: "Classroom deleted successfully" });
   } catch (e2) {
     res.status(500).json({ message: e2.message });
+  }
+});
+app.post("/api/sync", async (req, res) => {
+  try {
+    const result = await db.syncWithCloud();
+    res.status(200).json({ success: true, result });
+  } catch (e2) {
+    res.status(500).json({ success: false, error: e2.message });
+  }
+});
+app.get("/api/sync", async (req, res) => {
+  try {
+    const status = db.getSyncStatus();
+    res.status(200).json({ success: true, status });
+  } catch (e2) {
+    res.status(500).json({ success: false, error: e2.message });
   }
 });
 app.get("/student/submissions", authenticateToken, requireRole("Student"), async (req, res) => {
@@ -99715,6 +100540,11 @@ app.post("/submissions/:assignmentId", authenticateToken, requireRole("Student")
       historyStr,
       (/* @__PURE__ */ new Date()).toISOString()
     );
+    try {
+      db.triggerSync();
+    } catch (_) {
+    }
+    io.emit("submission_updated", { assignmentId, studentName: name });
     res.status(200).json({ message: "Submission saved" });
   } catch (e2) {
     res.status(500).json({ message: e2.message });
@@ -99781,6 +100611,11 @@ app.delete("/submissions/:assignmentId/:studentName", authenticateToken, require
       req.user?.name || "",
       uId
     );
+    try {
+      db.triggerSync();
+    } catch (_) {
+    }
+    io.emit("submission_deleted", { assignmentId: req.params.assignmentId, studentName });
     res.status(200).json({ message: "Submission deleted" });
   } catch (e2) {
     res.status(500).json({ message: e2.message });
@@ -100067,6 +100902,10 @@ app.post("/classrooms/join", authenticateToken, async (req, res) => {
                 student_id = COALESCE(excluded.student_id, enrollments.student_id),
                 enrolled_at = excluded.enrolled_at
         `, classroom.id, studentId, studentName, studentEmail, now);
+    try {
+      db.triggerSync();
+    } catch (_) {
+    }
     let parsedTheme = null;
     if (classroom.theme) {
       try {
@@ -102208,6 +103047,7 @@ function getLanIpAddresses() {
   }
   return ips;
 }
+var { startLanDiscovery, stopLanDiscovery } = require_lanDiscovery();
 function start(port = process.env.PORT || 3001) {
   return new Promise((resolve) => {
     const p = parseInt(port, 10) || 3001;
@@ -102230,6 +103070,13 @@ function start(port = process.env.PORT || 3001) {
       }
       console.log("  \u{1F512} 100% Offline Capable: No external internet required");
       console.log("========================================================\n");
+      const isExplicitClient = process.env.IS_LAN_HOST === "false";
+      const isHost = !isExplicitClient && (process.env.IS_LAN_HOST === "true" || process.env.IS_VERITY_ADMIN === "true" || fs2.existsSync(path.join(DATA_DIR, "host.flag")) || fs2.existsSync(path.join(__dirname, "host.flag")) || process.argv.includes("--host") || require.main === module);
+      try {
+        startLanDiscovery(p, isHost);
+      } catch (dErr) {
+        console.warn("[LAN Discovery] Start error:", dErr.message);
+      }
       reconcileDatabaseClassrooms().catch(() => {
       });
       resolve(p);
@@ -102238,6 +103085,10 @@ function start(port = process.env.PORT || 3001) {
 }
 function stop() {
   return new Promise((resolve) => {
+    try {
+      stopLanDiscovery();
+    } catch (_) {
+    }
     io.close();
     server.close(() => resolve());
   });

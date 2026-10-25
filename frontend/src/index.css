@@ -191,10 +191,26 @@ body, button, input, select, textarea {
   }
 }
 
-/* Responsive Offline Status Banner */
-.offline-status-banner {
+/* Responsive Status Banners (LAN & Offline) */
+.offline-status-banner,
+.lan-status-banner {
   max-width: calc(100vw - 20px);
   box-sizing: border-box;
+}
+
+@keyframes lanPulse {
+  0%, 100% {
+    transform: scale(1);
+    box-shadow: 0 0 6px #38bdf8, 0 0 12px rgba(56, 189, 248, 0.4);
+  }
+  50% {
+    transform: scale(1.18);
+    box-shadow: 0 0 10px #38bdf8, 0 0 18px rgba(56, 189, 248, 0.8);
+  }
+}
+
+.lan-pulse-dot {
+  animation: lanPulse 2.2s infinite ease-in-out;
 }
 
 .offline-banner-text-mobile {
@@ -205,7 +221,8 @@ body, button, input, select, textarea {
 }
 
 @media (max-width: 640px) {
-  .offline-status-banner {
+  .offline-status-banner,
+  .lan-status-banner {
     padding: 5px 12px !important;
     font-size: 0.72rem !important;
     gap: 6px !important;

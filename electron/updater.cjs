@@ -1,6 +1,7 @@
 const { app, ipcMain } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 const http = require('http');
 const https = require('https');
 const { spawn } = require('child_process');
@@ -13,7 +14,15 @@ function resolveFullUrl(inputUrl) {
   if (inputUrl.startsWith('http://') || inputUrl.startsWith('https://')) {
     return inputUrl;
   }
-  const baseUrl = process.env.VITE_API_URL || process.env.API_URL || 'http://localhost:3001';
+  let baseUrl = process.env.VITE_API_URL || process.env.API_URL;
+  if (!baseUrl) {
+    try {
+      const { getDiscoveredServer } = require('./lan-client.cjs');
+      const discovered = getDiscoveredServer();
+      if (discovered) baseUrl = discovered;
+    } catch (_) {}
+  }
+  if (!baseUrl) baseUrl = 'http://localhost:3001';
   const cleanBase = baseUrl.replace(/\/+$/, '');
   const cleanPath = inputUrl.startsWith('/') ? inputUrl : `/${inputUrl}`;
   return `${cleanBase}${cleanPath}`;

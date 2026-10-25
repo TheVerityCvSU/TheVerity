@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useGoogleLogin } from '@react-oauth/google';
 import { Moon, Sun, Loader2, Construction, AlertTriangle, Eye, EyeOff, Monitor } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { apiFetch, getCloudUrl, getLocalApiUrl } from '../utils/api';
+import { apiFetch } from '../utils/api';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { io } from 'socket.io-client';
 import { isDesktopWebBrowser } from '../utils/deviceUtils';
@@ -48,6 +48,7 @@ export default function Login({ onLogin, onGoToRegister }) {
   const socketRef = useRef(null);
   const authTimeoutRef = useRef(null);
   const authWindowRef = useRef(null);
+
 
   // Load saved account email on mount (localStorage + Electron localDB)
   useEffect(() => {
@@ -525,7 +526,7 @@ export default function Login({ onLogin, onGoToRegister }) {
               transition={{ duration: 0.25 }}
               style={styles.error}
             >
-              {error}
+              <div>{error}</div>
             </motion.div>
           )}
         </AnimatePresence>
@@ -797,10 +798,9 @@ export default function Login({ onLogin, onGoToRegister }) {
           <p style={{ ...styles.registerText, color: isDark ? '#a1a1aa' : '#9ca3af' }}>
             Don't have an account? <span onClick={onGoToRegister} style={styles.registerLink}>Register</span>
           </p>
+
         </form>
       </motion.div>
-
-
     </div>
   );
 }

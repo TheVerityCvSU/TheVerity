@@ -475,12 +475,21 @@ export default function ClassroomView({
       .then(data => {
         if (cancelled) return;
         if (Array.isArray(data.classwork) && data.classwork.length > 0) {
-          applyList(data.classwork);
+          // Merge server items with any locally cached items that have not yet reached the server
+          let localItems = [];
           try {
-            localStorage.setItem(storageKey, JSON.stringify(data.classwork));
+            const raw = localStorage.getItem(storageKey);
+            if (raw) localItems = JSON.parse(raw);
+          } catch (_) {}
+          const serverIds = new Set(data.classwork.map(item => String(item.id)));
+          const unuploadedLocal = (Array.isArray(localItems) ? localItems : []).filter(item => item && item.id && !serverIds.has(String(item.id)));
+          const merged = [...data.classwork, ...unuploadedLocal];
+          applyList(merged);
+          try {
+            localStorage.setItem(storageKey, JSON.stringify(merged));
           } catch (_) {}
           if (window.electronAPI?.localDB?.cacheClasswork) {
-            window.electronAPI.localDB.cacheClasswork(classroomId, data.classwork).catch(() => {});
+            window.electronAPI.localDB.cacheClasswork(classroomId, merged).catch(() => {});
           }
         } else {
           // If server returned empty (offline local fallback), preserve existing cached activities!
@@ -493,12 +502,20 @@ export default function ClassroomView({
     const onClassworkChanged = (payload) => {
       if (String(payload?.classroomId) === String(classroomId) && Array.isArray(payload?.classwork)) {
         if (payload.classwork.length > 0) {
-          applyList(payload.classwork);
+          let localItems = [];
           try {
-            localStorage.setItem(storageKey, JSON.stringify(payload.classwork));
+            const raw = localStorage.getItem(storageKey);
+            if (raw) localItems = JSON.parse(raw);
+          } catch (_) {}
+          const serverIds = new Set(payload.classwork.map(item => String(item.id)));
+          const unuploadedLocal = (Array.isArray(localItems) ? localItems : []).filter(item => item && item.id && !serverIds.has(String(item.id)));
+          const merged = [...payload.classwork, ...unuploadedLocal];
+          applyList(merged);
+          try {
+            localStorage.setItem(storageKey, JSON.stringify(merged));
           } catch (e) {}
           if (window.electronAPI?.localDB?.cacheClasswork) {
-            window.electronAPI.localDB.cacheClasswork(classroomId, payload.classwork).catch(() => {});
+            window.electronAPI.localDB.cacheClasswork(classroomId, merged).catch(() => {});
           }
         }
       }

@@ -18,7 +18,7 @@ import AdminLogin from './pages/admin/AdminLogin';
 import ProtectedRoute from './components/ProtectedRoute';
 import NotFound from './pages/NotFound';
 import syncService from './services/syncService';
-import { subscribeConnectionStatus, getConnectionStatus, getCloudUrl, apiFetch } from './utils/api';
+import { subscribeConnectionStatus, getConnectionStatus, getCloudUrl, getLocalApiUrl, apiFetch } from './utils/api';
 import { saveClassroomTheme } from './utils/classroomUtils';
 import { notifyUserListeners } from './hooks/useCurrentUser';
 import { useMediaQuery } from './hooks/useMediaQuery';
@@ -33,14 +33,17 @@ const isWebHosted = typeof window !== 'undefined' &&
                     !window.electronAPI;
 
 const CLOUD_SOCKET = getCloudUrl() || 'https://verity-2z4v.onrender.com';
-const LOCAL_SOCKET = 'http://localhost:3001';
+const getActiveLocalSocket = () => getLocalApiUrl();
 
-const socketTarget = isWebHosted ? CLOUD_SOCKET : ((typeof navigator !== 'undefined' && navigator.onLine) ? CLOUD_SOCKET : LOCAL_SOCKET);
+const socketTarget = isWebHosted ? CLOUD_SOCKET : ((typeof navigator !== 'undefined' && navigator.onLine) ? CLOUD_SOCKET : getActiveLocalSocket());
 
 const socket = io(socketTarget, {
-  reconnectionAttempts: 10,
-  reconnectionDelay: 2000,
-  timeout: 5000,
+  reconnection: true,
+  reconnectionAttempts: 15,
+  reconnectionDelay: 1000,
+  reconnectionDelayMax: 10000,
+  randomizationFactor: 0.5,
+  timeout: 6000,
   transports: ['websocket', 'polling'],
   auth: (cb) => {
     const token = localStorage.getItem('verity_token') || localStorage.getItem('token');
@@ -48,11 +51,12 @@ const socket = io(socketTarget, {
   }
 });
 
-if (!isWebHosted && CLOUD_SOCKET && CLOUD_SOCKET !== LOCAL_SOCKET) {
+if (!isWebHosted) {
   socket.on('connect_error', () => {
-    if (socket.io.uri !== LOCAL_SOCKET) {
-      console.warn('[Socket.IO] Cloud socket unreachable. Switching to local offline socket...');
-      socket.io.uri = LOCAL_SOCKET;
+    const targetLocal = getActiveLocalSocket();
+    if (socket.io.uri !== targetLocal) {
+      console.warn(`[Socket.IO] Socket unreachable at ${socket.io.uri}. Switching to local host: ${targetLocal}...`);
+      socket.io.uri = targetLocal;
       socket.connect();
     }
   });
@@ -65,6 +69,21 @@ if (!isWebHosted && CLOUD_SOCKET && CLOUD_SOCKET !== LOCAL_SOCKET) {
         socket.connect();
       }
     });
+
+    const handleLanServerSwitch = () => {
+      const activeStatus = getConnectionStatus();
+      if (!activeStatus.isOnline) {
+        const newLocal = getActiveLocalSocket();
+        if (socket.io.uri !== newLocal) {
+          console.log(`[Socket.IO] LAN Host detected at ${newLocal}. Reconnecting socket...`);
+          socket.io.uri = newLocal;
+          socket.connect();
+        }
+      }
+    };
+
+    window.addEventListener('verity:lan-discovered', handleLanServerSwitch);
+    window.addEventListener('verity:server-changed', handleLanServerSwitch);
   }
 }
 
@@ -1337,8 +1356,59 @@ export default function App() {
         </motion.div>
       </AnimatePresence>
 
-      {/* --- OFFLINE LOCAL FALLBACK BANNER (Electron / Desktop / Mobile) --- */}
-      {connStatus?.activeMode === 'local' && Boolean(getCloudUrl()) && (() => {
+      {/* --- CONNECTED TO LAN SERVER EMBLEM / WARNING --- */}
+      {connStatus?.activeMode === 'lan' && (() => {
+        const hasBottomNav = isMobile && Boolean(currentUser && ['student_dashboard', 'classroom_view', 'student_activity_detail', 'teacher_dashboard', 'teacher_classwork', 'teacher_grading'].includes(currentScreen));
+        return (
+          <div 
+            className={`lan-status-banner ${hasBottomNav ? 'has-bottom-nav' : ''}`}
+            style={{
+              position: 'fixed',
+              bottom: hasBottomNav ? '76px' : '16px',
+              left: '50%',
+              transform: 'translateX(-50%)',
+              zIndex: 999999,
+              backgroundColor: 'rgba(15, 23, 42, 0.78)',
+              color: '#f8fafc',
+              padding: isMobile ? '5px 14px' : '7px 18px',
+              borderRadius: '9999px',
+              fontSize: isMobile ? '0.72rem' : '0.8rem',
+              fontWeight: '500',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: isMobile ? '7px' : '10px',
+              boxShadow: '0 4px 20px rgba(0,0,0,0.32), 0 0 14px rgba(56, 189, 248, 0.22)',
+              border: '1px solid rgba(56, 189, 248, 0.38)',
+              pointerEvents: 'none',
+              backdropFilter: 'blur(12px)',
+              WebkitBackdropFilter: 'blur(12px)',
+              maxWidth: 'calc(100vw - 20px)',
+              boxSizing: 'border-box',
+              textAlign: 'center',
+              transition: 'bottom 0.25s ease, padding 0.2s ease, font-size 0.2s ease, opacity 0.2s ease'
+            }}
+          >
+            <span className="lan-pulse-dot" style={{
+              width: isMobile ? '7px' : '8px',
+              height: isMobile ? '7px' : '8px',
+              borderRadius: '50%',
+              backgroundColor: '#38bdf8',
+              display: 'inline-block',
+              flexShrink: 0
+            }}></span>
+            <span className="offline-banner-text-desktop">
+              Connected via LAN Server &bull; School Network &bull; Changes will sync to cloud when internet is available
+            </span>
+            <span className="offline-banner-text-mobile">
+              Connected via LAN Server
+            </span>
+          </div>
+        );
+      })()}
+
+      {/* --- OFFLINE WARNING (No Internet & No LAN Server) --- */}
+      {connStatus?.activeMode === 'offline' && (() => {
         const hasBottomNav = isMobile && Boolean(currentUser && ['student_dashboard', 'classroom_view', 'student_activity_detail', 'teacher_dashboard', 'teacher_classwork', 'teacher_grading'].includes(currentScreen));
         return (
           <div 
@@ -1349,9 +1419,9 @@ export default function App() {
               left: '50%',
               transform: 'translateX(-50%)',
               zIndex: 999999,
-              backgroundColor: 'rgba(15, 23, 42, 0.65)',
+              backgroundColor: 'rgba(15, 23, 42, 0.75)',
               color: '#f8fafc',
-              opacity: 0.85,
+              opacity: 0.88,
               padding: isMobile ? '5px 12px' : '7px 16px',
               borderRadius: '9999px',
               fontSize: isMobile ? '0.72rem' : '0.8rem',
@@ -1360,8 +1430,8 @@ export default function App() {
               alignItems: 'center',
               justifyContent: 'center',
               gap: isMobile ? '6px' : '10px',
-              boxShadow: '0 4px 20px rgba(0,0,0,0.25)',
-              border: '1px solid rgba(255,255,255,0.15)',
+              boxShadow: '0 4px 20px rgba(0,0,0,0.25), 0 0 10px rgba(245, 158, 11, 0.15)',
+              border: '1px solid rgba(245, 158, 11, 0.3)',
               pointerEvents: 'none',
               backdropFilter: 'blur(10px)',
               WebkitBackdropFilter: 'blur(10px)',
@@ -1381,63 +1451,10 @@ export default function App() {
               flexShrink: 0
             }}></span>
             <span className="offline-banner-text-desktop">
-              Offline Mode &bull; Working locally &bull; Changes will sync when reconnected
+              Offline Mode &bull; No internet connection &bull; Working locally &bull; Changes will sync when reconnected
             </span>
             <span className="offline-banner-text-mobile">
-              Offline Mode &bull; Working locally
-            </span>
-          </div>
-        );
-      })()}
-
-      {/* --- OFFLINE NO CONNECTION BANNER (Hosted Web / Vercel) --- */}
-      {connStatus?.activeMode === 'offline' && (() => {
-        const hasBottomNav = isMobile && Boolean(currentUser && ['student_dashboard', 'classroom_view', 'student_activity_detail', 'teacher_dashboard', 'teacher_classwork', 'teacher_grading'].includes(currentScreen));
-        return (
-          <div 
-            className={`offline-status-banner ${hasBottomNav ? 'has-bottom-nav' : ''}`}
-            style={{
-              position: 'fixed',
-              bottom: hasBottomNav ? '76px' : '16px',
-              left: '50%',
-              transform: 'translateX(-50%)',
-              zIndex: 999999,
-              backgroundColor: 'rgba(15, 23, 42, 0.65)',
-              color: '#f8fafc',
-              opacity: 0.85,
-              padding: isMobile ? '5px 12px' : '7px 16px',
-              borderRadius: '9999px',
-              fontSize: isMobile ? '0.72rem' : '0.8rem',
-              fontWeight: '500',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: isMobile ? '6px' : '10px',
-              boxShadow: '0 4px 20px rgba(0,0,0,0.25)',
-              border: '1px solid rgba(255,255,255,0.15)',
-              pointerEvents: 'none',
-              backdropFilter: 'blur(10px)',
-              WebkitBackdropFilter: 'blur(10px)',
-              maxWidth: 'calc(100vw - 20px)',
-              boxSizing: 'border-box',
-              textAlign: 'center',
-              transition: 'bottom 0.25s ease, padding 0.2s ease, font-size 0.2s ease, opacity 0.2s ease'
-            }}
-          >
-            <span style={{
-              width: isMobile ? '7px' : '8px',
-              height: isMobile ? '7px' : '8px',
-              borderRadius: '50%',
-              backgroundColor: '#ef4444',
-              boxShadow: '0 0 6px #ef4444',
-              display: 'inline-block',
-              flexShrink: 0
-            }}></span>
-            <span className="offline-banner-text-desktop">
-              Offline &bull; Could not connect to backend server
-            </span>
-            <span className="offline-banner-text-mobile">
-              Offline &bull; Could not connect
+              Offline Mode &bull; No internet
             </span>
           </div>
         );

@@ -493,12 +493,39 @@ function AdminCheckUpdateCard() {
               fontSize: '0.85rem',
               fontWeight: '600',
               display: 'flex',
-              alignItems: 'center',
+              flexDirection: 'column',
               gap: '8px'
             }}
           >
-            <CheckCircle2 size={16} />
-            <span>You're up to date! The Verity Admin is running the latest version (v{clientAppVersion || updateInfo?.currentVersion || '1.0.0'}).</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <CheckCircle2 size={16} />
+              <span>You're up to date! The Verity Admin is running the latest version (v{clientAppVersion || updateInfo?.currentVersion || '1.0.0'}).</span>
+            </div>
+            {updateInfo?.downloadUrl && (
+              <div>
+                <button
+                  type="button"
+                  onClick={handleUpdateNow}
+                  disabled={isDownloading}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    padding: '5px 12px',
+                    borderRadius: '6px',
+                    backgroundColor: isDark ? 'rgba(34, 197, 94, 0.2)' : 'rgba(34, 197, 94, 0.15)',
+                    border: '1px solid #22c55e',
+                    color: isDark ? '#4ade80' : '#15803d',
+                    fontSize: '0.78rem',
+                    fontWeight: '600',
+                    cursor: isDownloading ? 'wait' : 'pointer'
+                  }}
+                >
+                  <Download size={13} />
+                  {isDownloading ? 'Downloading...' : 'Reinstall / Re-sync from Local Server'}
+                </button>
+              </div>
+            )}
           </motion.div>
         )}
 
@@ -543,14 +570,7 @@ function AdminCheckUpdateCard() {
               }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.82rem', fontWeight: '600' }}>
                   <span>Downloading update inside The Verity...</span>
-                  <span>
-                    {downloadProgress ? `${downloadProgress.percent}%` : 'Connecting...'}
-                    {downloadProgress?.total > 0 && (
-                      <span style={{ opacity: 0.75, marginLeft: '6px', fontWeight: 'normal' }}>
-                        ({(downloadProgress.transferred / (1024 * 1024)).toFixed(1)} MB / {(downloadProgress.total / (1024 * 1024)).toFixed(1)} MB)
-                      </span>
-                    )}
-                  </span>
+                  <span>{downloadProgress ? `${downloadProgress.percent}%` : 'Connecting...'}</span>
                 </div>
                 <div style={{
                   width: '100%',

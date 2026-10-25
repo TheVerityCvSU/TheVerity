@@ -44,6 +44,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('google-auth-closed', handler);
     return () => ipcRenderer.removeListener('google-auth-closed', handler);
   },
+  getDiscoveredServer: () => ipcRenderer.invoke('get-discovered-server'),
+  onLanServerDiscovered: (callback) => {
+    const handler = (event, url) => callback(url);
+    ipcRenderer.on('lan-server-discovered', handler);
+    return () => ipcRenderer.removeListener('lan-server-discovered', handler);
+  },
 
   // Client-side SQLite local storage
   localDB: {

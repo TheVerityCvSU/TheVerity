@@ -818,8 +818,8 @@ function CheckUpdateField({ isDark, role }) {
       {status === 'latest' && (
         <div style={{
           display: 'flex',
-          alignItems: 'center',
-          gap: '10px',
+          flexDirection: 'column',
+          gap: '8px',
           padding: '12px 16px',
           borderRadius: '12px',
           backgroundColor: isDark ? 'rgba(16, 185, 129, 0.12)' : '#ecfdf5',
@@ -828,8 +828,35 @@ function CheckUpdateField({ isDark, role }) {
           fontSize: '0.88rem',
           fontWeight: '500',
         }}>
-          <CheckCircle2 size={18} color="#10b981" style={{ flexShrink: 0 }} />
-          <span>You're up to date! The Verity is running the latest version (v{clientAppVersion || updateInfo?.currentVersion || '1.0.0'}).</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <CheckCircle2 size={18} color="#10b981" style={{ flexShrink: 0 }} />
+            <span>You're up to date! The Verity is running the latest version (v{clientAppVersion || updateInfo?.currentVersion || '1.0.0'}).</span>
+          </div>
+          {updateInfo?.downloadUrl && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '4px' }}>
+              <button
+                type="button"
+                onClick={handleUpdateNow}
+                disabled={isDownloading}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  padding: '5px 12px',
+                  borderRadius: '6px',
+                  backgroundColor: isDark ? 'rgba(16, 185, 129, 0.2)' : 'rgba(16, 185, 129, 0.15)',
+                  border: '1px solid #10b981',
+                  color: isDark ? '#34d399' : '#047857',
+                  fontSize: '0.8rem',
+                  fontWeight: '600',
+                  cursor: isDownloading ? 'wait' : 'pointer'
+                }}
+              >
+                <Download size={14} />
+                {isDownloading ? 'Downloading...' : 'Reinstall / Re-sync from Local Server'}
+              </button>
+            </div>
+          )}
         </div>
       )}
 
@@ -869,14 +896,7 @@ function CheckUpdateField({ isDark, role }) {
             }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.82rem', fontWeight: '600' }}>
                 <span>Downloading update inside The Verity...</span>
-                <span>
-                  {downloadProgress ? `${downloadProgress.percent}%` : 'Connecting...'}
-                  {downloadProgress?.total > 0 && (
-                    <span style={{ opacity: 0.75, marginLeft: '6px', fontWeight: 'normal' }}>
-                      ({(downloadProgress.transferred / (1024 * 1024)).toFixed(1)} MB / {(downloadProgress.total / (1024 * 1024)).toFixed(1)} MB)
-                    </span>
-                  )}
-                </span>
+                <span>{downloadProgress ? `${downloadProgress.percent}%` : 'Connecting...'}</span>
               </div>
               <div style={{
                 width: '100%',

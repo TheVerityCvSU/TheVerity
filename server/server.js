@@ -427,7 +427,7 @@ app.get('/api/check-update', async (req, res) => {
                     const files = fs.readdirSync(dir);
                     for (const f of files) {
                         const lower = f.toLowerCase();
-                        if (lower.endsWith('.exe') && (isAdminApp ? lower.includes('admin') : !lower.includes('admin'))) {
+                        if (lower.endsWith('.exe') && lower.includes('verity') && (isAdminApp ? lower.includes('admin') : !lower.includes('admin'))) {
                             const vMatch = f.match(/(\d+\.\d+\.\d+)/);
                             const fileVer = vMatch ? vMatch[1] : '0.0.0';
                             found.push({
@@ -514,10 +514,27 @@ app.get('/api/check-update', async (req, res) => {
     const forceUpdate = req.query.force === 'true' || req.query.force === '1';
     const updateAvailable = forceUpdate || isNewer(latestVersion, currentVersion);
 
+    const isPrivateHost = (hostname) => {
+        if (!hostname) return false;
+        const clean = hostname.split(':')[0].trim().toLowerCase();
+        if (clean === 'localhost' || clean === '127.0.0.1' || clean === '::1' || clean.endsWith('.local')) return true;
+        if (/^10\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(clean)) return true;
+        if (/^192\.168\.\d{1,3}\.\d{1,3}$/.test(clean)) return true;
+        if (/^172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3}$/.test(clean)) return true;
+        return false;
+    };
+
     const protocol = req.headers['x-forwarded-proto'] || req.protocol;
-    const host = req.get('host');
+    const host = req.get('host') || 'localhost:3001';
     const baseUrl = `${protocol}://${host}`;
     const downloadQuery = isAdmin ? '?app=admin' : '';
+    const isLocalServer = isPrivateHost(host);
+
+    // On local/LAN servers, ALWAYS deliver downloadUrl through this local server so offline clients can download it!
+    let finalDownloadUrl = `${baseUrl}/api/download-update${downloadQuery}`;
+    if (!isLocalServer && (process.env.UPDATE_DOWNLOAD_URL || githubDownloadUrl)) {
+        finalDownloadUrl = process.env.UPDATE_DOWNLOAD_URL || githubDownloadUrl;
+    }
 
     const releaseNotes = `Version ${latestVersion}: Enhanced proctoring stability, UI performance optimizations, and security patches.`;
 
@@ -525,12 +542,12 @@ app.get('/api/check-update', async (req, res) => {
         currentVersion,
         latestVersion,
         updateAvailable,
-        downloadUrl: process.env.UPDATE_DOWNLOAD_URL || githubDownloadUrl || `${baseUrl}/api/download-update${downloadQuery}`,
+        downloadUrl: finalDownloadUrl,
         releaseNotes
     });
 });
 
-app.get('/api/download-update', (req, res) => {
+app.get('/api/download-update', async (req, res) => {
     const isAdmin = req.query.role === 'admin' || req.query.app === 'admin' || req.query.role === 'Administrator';
     const reqVersion = (req.query.version || req.query.v || '').trim();
 
@@ -545,6 +562,10 @@ app.get('/api/download-update', (req, res) => {
         path.resolve(process.cwd(), 'dist'),
         path.join(homeDir, 'The-Verity', isAdmin ? 'release/Admin' : 'release/Users'),
         path.join(homeDir, 'The-Verity', 'release'),
+        path.join(homeDir, 'Desktop', 'The-Verity', isAdmin ? 'release/Admin' : 'release/Users'),
+        path.join(homeDir, 'Desktop', 'The-Verity', 'release'),
+        process.resourcesPath ? path.join(process.resourcesPath, 'updates') : null,
+        path.join(process.cwd(), 'updates'),
         process.env.RELEASE_DIR,
         process.env.VERITY_RELEASE_DIR
     ].filter(Boolean);
@@ -556,7 +577,7 @@ app.get('/api/download-update', (req, res) => {
                 const files = fs.readdirSync(dir);
                 for (const f of files) {
                     const lower = f.toLowerCase();
-                    if (lower.endsWith('.exe') && (isAdmin ? lower.includes('admin') : !lower.includes('admin'))) {
+                    if (lower.endsWith('.exe') && lower.includes('verity') && (isAdmin ? lower.includes('admin') : !lower.includes('admin'))) {
                         const vMatch = f.match(/(\d+\.\d+\.\d+)/);
                         const fileVer = vMatch ? vMatch[1] : '0.0.0';
                         found.push({
@@ -597,29 +618,113 @@ app.get('/api/download-update', (req, res) => {
         return res.download(best.path, best.filename);
     }
 
-    // Fallback: redirect to GitHub Releases page
-    res.redirect('https://github.com/belheroth/Verity/releases/latest');
+    // 2. If no local installer on disk, but this host server has internet, stream from GitHub directly
+    try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 4000);
+        const ghRes = await fetch('https://api.github.com/repos/belheroth/Verity/releases/latest', {
+            headers: { 'User-Agent': 'The-Verity-App' },
+            signal: controller.signal
+        });
+        clearTimeout(timeout);
+        if (ghRes.ok) {
+            const releaseData = await ghRes.json();
+            const asset = (releaseData.assets || []).find(a => 
+                isAdmin ? /admin.*\.exe$/i.test(a.name) : /\.exe$/i.test(a.name) && !/admin/i.test(a.name)
+            );
+            if (asset?.browser_download_url) {
+                const downloadStream = await fetch(asset.browser_download_url);
+                if (downloadStream.ok) {
+                    res.setHeader('Content-Disposition', `attachment; filename="${asset.name || 'The-Verity-Setup.exe'}"`);
+                    res.setHeader('Content-Type', 'application/octet-stream');
+                    if (downloadStream.headers.get('content-length')) {
+                        res.setHeader('Content-Length', downloadStream.headers.get('content-length'));
+                    }
+                    const { Readable } = require('stream');
+                    return Readable.fromWeb(downloadStream.body).pipe(res);
+                }
+            }
+        }
+    } catch (_) {}
+
+    res.status(404).json({
+        error: 'Installer package not found on local server.',
+        message: 'Please ensure The Verity Setup.exe is placed in the release/Users or release/Admin directory.'
+    });
 });
+
+function getValidLanIps() {
+    const interfaces = os.networkInterfaces();
+    const ips = [];
+    for (const name of Object.keys(interfaces)) {
+        for (const iface of interfaces[name]) {
+            if (
+                iface.family === 'IPv4' && 
+                !iface.internal && 
+                iface.address && 
+                !iface.address.startsWith('127.') &&
+                !iface.address.startsWith('169.254.') &&
+                !iface.address.startsWith('192.168.56.')
+            ) {
+                ips.push(iface.address);
+            }
+        }
+    }
+    return ips;
+}
 
 app.get('/health', async (req, res) => {
     try {
         await db.get('SELECT 1');
+        const lanIps = getValidLanIps();
+        const isExplicitClient = process.env.IS_LAN_HOST === 'false';
+        const isHost = !isExplicitClient && Boolean(
+            fs.existsSync(path.join(DATA_DIR, 'host.flag')) || 
+            fs.existsSync(path.join(__dirname, 'host.flag')) || 
+            process.env.IS_LAN_HOST === 'true' ||
+            process.env.IS_VERITY_ADMIN === 'true' ||
+            process.argv.includes('--host')
+        );
         res.status(200).json({
             status: 'operational',
+            app: 'the-verity',
             uptime: process.uptime(),
             db: 'connected',
             provider: db.providerName,
+            isHost,
+            lanIps,
             timestamp: new Date().toISOString()
         });
     } catch (err) {
         res.status(500).json({
             status: 'error',
+            app: 'the-verity',
             error: err.message,
             uptime: process.uptime(),
             db: 'error',
             provider: db.providerName,
             timestamp: new Date().toISOString()
         });
+    }
+});
+
+// --- Cloud / Local Database Sync Endpoints ---
+app.post('/api/sync', async (req, res) => {
+    try {
+        const { syncBidirectional } = require('./db/cloudSync');
+        const syncResult = await syncBidirectional();
+        res.status(200).json({ message: 'Sync complete', ...syncResult });
+    } catch (e) {
+        res.status(500).json({ message: 'Sync failed', error: e.message });
+    }
+});
+
+app.get('/api/sync-status', (req, res) => {
+    try {
+        const { getSyncStatus } = require('./db/cloudSync');
+        res.status(200).json(getSyncStatus());
+    } catch (e) {
+        res.status(500).json({ error: e.message });
     }
 });
 
@@ -2155,6 +2260,7 @@ const saveClassworkToDb = async (classroomId, classwork) => {
                 type = excluded.type
         `, id, Number(classroomId) || classroomId, cw.title || '', JSON.stringify(descObj), cw.dueDate || '', cw.type || cw.activityType || '');
     }
+    try { db.triggerSync(); } catch (_) {}
 };
 
 // --- ACCESS CONTROL HELPERS ---
@@ -2162,18 +2268,25 @@ async function checkClassroomAccess(req, classroomId) {
     const roleLower = String(req.user?.role || '').toLowerCase();
     if (roleLower === 'admin') return true;
     if (roleLower === 'teacher' || roleLower === 'instructor') {
-        const c = await db.get('SELECT instructor_email, instructor FROM classrooms WHERE id = ?', classroomId);
+        const c = await db.get('SELECT id, instructor_email, instructor, name FROM classrooms WHERE id = ? OR CAST(id AS TEXT) = ?', classroomId, String(classroomId));
         if (!c) return false;
         const teacherEmail = (req.user.email || '').trim().toLowerCase();
         const teacherName = (req.user.name || '').trim().toLowerCase();
         const cEmail = (c.instructor_email || '').trim().toLowerCase();
         const cName = (c.instructor || '').trim().toLowerCase();
-        const matchesEmail = Boolean(teacherEmail && cEmail && cEmail === teacherEmail);
-        const matchesName = Boolean(teacherName && cName && cName === teacherName);
+        const matchesEmail = Boolean(teacherEmail && cEmail && (cEmail === teacherEmail || cEmail.includes(teacherEmail)));
+        const matchesName = Boolean(teacherName && cName && (cName === teacherName || cName.includes(teacherName)));
         if (matchesEmail || matchesName) {
             // Self-heal: keep instructor_email up-to-date
             if (teacherEmail && cEmail !== teacherEmail && matchesName) {
-                db.run('UPDATE classrooms SET instructor_email = ? WHERE id = ?', teacherEmail, classroomId).catch(() => {});
+                db.run('UPDATE classrooms SET instructor_email = ? WHERE id = ?', teacherEmail, c.id).catch(() => {});
+            }
+            return true;
+        }
+        // Self-heal & Adoption: if classroom is unassigned, has placeholder name, or instructor is missing
+        if (!cEmail || !cName || cName === 'instructor' || (c.name && /^Classroom \d+$/i.test(c.name.trim()))) {
+            if (teacherEmail || teacherName) {
+                db.run('UPDATE classrooms SET instructor = COALESCE(NULLIF(instructor, \'\'), ?), instructor_email = COALESCE(NULLIF(instructor_email, \'\'), ?) WHERE id = ?', req.user.name || 'Instructor', teacherEmail || null, c.id).catch(() => {});
             }
             return true;
         }
@@ -2323,6 +2436,8 @@ app.post('/classrooms/:classroomId/announcements', authenticateToken, requireRol
                 posted = excluded.posted
         `, announcementId, Number(classroomId), announcementTitle, details.trim(), announcementAuthor, postedTime);
 
+        try { db.triggerSync(); } catch (_) {}
+
         const newAnnouncement = {
             id: announcementId,
             classroomId: Number(classroomId),
@@ -2347,6 +2462,7 @@ app.delete('/classrooms/:classroomId/announcements/:id', authenticateToken, requ
             return res.status(403).json({ message: 'Access denied' });
         }
         await db.run('DELETE FROM announcements WHERE id = ? AND classroom_id = ?', Number(id), Number(classroomId));
+        try { db.triggerSync(); } catch (_) {}
         io.emit('announcement_deleted', { classroomId: Number(classroomId), announcementId: Number(id) });
         res.status(200).json({ success: true, message: 'Announcement deleted' });
     } catch (e) {
@@ -2390,10 +2506,11 @@ app.get('/classrooms', authenticateToken, async (req, res) => {
             const teacherName = (req.user.name || '').trim().toLowerCase();
             rawClassrooms = await db.all(`
                 SELECT * FROM classrooms
-                WHERE (instructor_email IS NOT NULL AND instructor_email != '' AND LOWER(instructor_email) = ?)
-                   OR (instructor IS NOT NULL AND instructor != '' AND TRIM(LOWER(instructor)) = ?)
+                WHERE (instructor_email IS NOT NULL AND instructor_email != '' AND (LOWER(instructor_email) = ? OR LOWER(instructor_email) LIKE ?))
+                   OR (instructor IS NOT NULL AND instructor != '' AND (TRIM(LOWER(instructor)) = ? OR TRIM(LOWER(instructor)) LIKE ?))
+                   OR (instructor_email IS NULL OR instructor_email = '' OR instructor IS NULL OR instructor = '' OR instructor = 'Instructor')
                 ORDER BY LOWER(name) ASC, id ASC
-            `, teacherEmail, teacherName);
+            `, teacherEmail, `%${teacherEmail}%`, teacherName, `%${teacherName}%`);
 
             // Self-heal classrooms: if matched by teacher name but instructor_email is missing or outdated, update it
             if (teacherEmail && teacherName) {
@@ -2470,11 +2587,17 @@ app.put('/classrooms', authenticateToken, requireRole('Teacher', 'Admin'), async
 
         for (const c of classrooms) {
             if (c.id) {
-                const existing = await db.get('SELECT id FROM classrooms WHERE id = ?', c.id);
-                if (existing && !(await checkClassroomAccess(req, c.id))) continue;
+                const existing = await db.get('SELECT id, instructor, instructor_email, name FROM classrooms WHERE id = ? OR CAST(id AS TEXT) = ?', c.id, String(c.id));
+                const isPlaceholder = existing && (
+                    !existing.instructor_email ||
+                    !existing.instructor ||
+                    existing.instructor === 'Instructor' ||
+                    (existing.name && /^Classroom \d+$/i.test(existing.name.trim()))
+                );
+                if (existing && !isPlaceholder && !(await checkClassroomAccess(req, c.id))) continue;
             }
-            // Ignore phantom classrooms
-            if (c.name && /^Classroom \d+$/i.test(c.name.trim()) && (!c.section || !c.section.trim()) && (!c.subject || !c.subject.trim())) {
+            // Only ignore if completely empty name
+            if (!c.name || !String(c.name).trim()) {
                 continue;
             }
             const instName = c.instructor || req.user.name || 'Instructor';
@@ -2540,6 +2663,8 @@ app.put('/classrooms', authenticateToken, requireRole('Teacher', 'Admin'), async
                 instructorEmail: instEmail
             });
         }
+        try { db.triggerSync(); } catch (_) {}
+        io.emit('classrooms_changed', { classrooms: savedClassrooms });
         res.status(200).json({ message: 'Classrooms saved', classrooms: savedClassrooms });
     } catch (e) {
         res.status(500).json({ message: e.message });
@@ -2600,9 +2725,29 @@ app.delete('/classrooms/:id', authenticateToken, requireRole('Teacher', 'Admin')
         await db.run('DELETE FROM classwork WHERE classroom_id = ?', id).catch(() => {});
         await db.run('DELETE FROM enrollments WHERE classroom_id = ?', id).catch(() => {});
         await db.run('DELETE FROM classrooms WHERE id = ?', id);
+        try { db.triggerSync(); } catch (_) {}
         res.status(200).json({ message: 'Classroom deleted successfully' });
     } catch (e) {
         res.status(500).json({ message: e.message });
+    }
+});
+
+// --- BIDIRECTIONAL CLOUD SYNC ENDPOINTS ---
+app.post('/api/sync', async (req, res) => {
+    try {
+        const result = await db.syncWithCloud();
+        res.status(200).json({ success: true, result });
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+app.get('/api/sync', async (req, res) => {
+    try {
+        const status = db.getSyncStatus();
+        res.status(200).json({ success: true, status });
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
     }
 });
 
@@ -2692,6 +2837,9 @@ app.post('/submissions/:assignmentId', authenticateToken, requireRole('Student')
             assignmentId, name, historyStr, new Date().toISOString()
         );
 
+        try { db.triggerSync(); } catch (_) {}
+        io.emit('submission_updated', { assignmentId, studentName: name });
+
         res.status(200).json({ message: 'Submission saved' });
     } catch (e) {
         res.status(500).json({ message: e.message });
@@ -2757,6 +2905,8 @@ app.delete('/submissions/:assignmentId/:studentName', authenticateToken, require
             req.params.assignmentId, String(req.params.assignmentId),
             studentName, sLower, uNameLower, uEmailLower, req.user?.name || '', uId
         );
+        try { db.triggerSync(); } catch (_) {}
+        io.emit('submission_deleted', { assignmentId: req.params.assignmentId, studentName });
         res.status(200).json({ message: 'Submission deleted' });
     } catch (e) {
         res.status(500).json({ message: e.message });
@@ -3091,6 +3241,8 @@ app.post('/classrooms/join', authenticateToken, async (req, res) => {
                 student_id = COALESCE(excluded.student_id, enrollments.student_id),
                 enrolled_at = excluded.enrolled_at
         `, classroom.id, studentId, studentName, studentEmail, now);
+
+        try { db.triggerSync(); } catch (_) {}
 
         let parsedTheme = null;
         if (classroom.theme) {
@@ -5406,6 +5558,8 @@ function getLanIpAddresses() {
     return ips;
 }
 
+const { startLanDiscovery, stopLanDiscovery } = require('./lanDiscovery');
+
 function start(port = process.env.PORT || 3001) {
     return new Promise((resolve) => {
         const p = parseInt(port, 10) || 3001;
@@ -5428,6 +5582,24 @@ function start(port = process.env.PORT || 3001) {
             }
             console.log('  🔒 100% Offline Capable: No external internet required');
             console.log('========================================================\n');
+            
+            // Check if this instance is designated as the Host/Teacher Server
+            const isExplicitClient = process.env.IS_LAN_HOST === 'false';
+            const isHost = !isExplicitClient && (
+                process.env.IS_LAN_HOST === 'true' || 
+                process.env.IS_VERITY_ADMIN === 'true' || 
+                fs.existsSync(path.join(DATA_DIR, 'host.flag')) ||
+                fs.existsSync(path.join(__dirname, 'host.flag')) ||
+                process.argv.includes('--host') || 
+                require.main === module
+            );
+
+            try {
+                startLanDiscovery(p, isHost);
+            } catch (dErr) {
+                console.warn('[LAN Discovery] Start error:', dErr.message);
+            }
+
             reconcileDatabaseClassrooms().catch(() => {});
             resolve(p);
         });
@@ -5436,6 +5608,9 @@ function start(port = process.env.PORT || 3001) {
 
 function stop() {
     return new Promise((resolve) => {
+        try {
+            stopLanDiscovery();
+        } catch (_) {}
         io.close();
         server.close(() => resolve());
     });

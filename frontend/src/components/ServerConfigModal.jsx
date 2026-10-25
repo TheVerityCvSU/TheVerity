@@ -13,20 +13,29 @@ export default function ServerConfigModal({ isOpen, onClose }) {
 
   useEffect(() => {
     if (isOpen) {
-      const active = getCloudUrl() || DEFAULT_CLOUD_API_URL;
+      let active = localStorage.getItem('verity_custom_server') || localStorage.getItem('verity_cloud_url') || getCloudUrl() || DEFAULT_CLOUD_API_URL;
       setCurrentUrl(active);
       setInputUrl(active);
       setTestResult(null);
+
+      if (window.electronAPI?.localDB?.getLocal) {
+        window.electronAPI.localDB.getLocal('verity_custom_server').then(saved => {
+          if (saved) {
+            setCurrentUrl(saved);
+            setInputUrl(saved);
+          }
+        }).catch(() => {});
+      }
     }
   }, [isOpen]);
 
   const normalizeUrl = (raw) => {
-    let u = raw.trim();
+    let u = (raw || '').trim();
     if (!u) return DEFAULT_CLOUD_API_URL;
     if (!u.startsWith('http://') && !u.startsWith('https://')) {
       u = `http://${u}`;
     }
-    // If it looks like a raw IP without port, add :3001
+    // If it looks like a raw IP without port (e.g. http://192.168.1.10), add :3001
     const match = u.match(/^http:\/\/(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/);
     if (match) {
       u = `${u}:3001`;
@@ -50,18 +59,18 @@ export default function ServerConfigModal({ isOpen, onClose }) {
       if (res.ok) {
         setTestResult({
           success: true,
-          message: `Connected successfully! (${latency}ms) — Server is online.`
+          message: `Connected successfully! (${latency}ms) — Server is online and ready.`
         });
       } else {
         setTestResult({
           success: false,
-          message: `Server returned HTTP ${res.status}. Verify the server is running.`
+          message: `Server returned HTTP ${res.status}. Verify the server is running on the Host PC.`
         });
       }
     } catch (err) {
       setTestResult({
         success: false,
-        message: `Could not reach ${target}. Ensure the Host PC is on the same network and port 3001 is open in Windows Firewall.`
+        message: `Could not reach ${target}. Ensure the Host PC is on the same Wi-Fi router, port 3001 is open, and server.js is running.`
       });
     } finally {
       setTesting(false);
@@ -72,8 +81,18 @@ export default function ServerConfigModal({ isOpen, onClose }) {
     const target = normalizeUrl(inputUrl);
     if (target === DEFAULT_CLOUD_API_URL) {
       localStorage.removeItem('verity_cloud_url');
+      localStorage.removeItem('verity_custom_server');
+      if (window.electronAPI?.localDB?.setLocal) {
+        window.electronAPI.localDB.setLocal('verity_custom_server', null).catch(() => {});
+        window.electronAPI.localDB.setLocal('verity_cloud_url', null).catch(() => {});
+      }
     } else {
       localStorage.setItem('verity_cloud_url', target);
+      localStorage.setItem('verity_custom_server', target);
+      if (window.electronAPI?.localDB?.setLocal) {
+        window.electronAPI.localDB.setLocal('verity_custom_server', target).catch(() => {});
+        window.electronAPI.localDB.setLocal('verity_cloud_url', target).catch(() => {});
+      }
     }
     onClose();
     // Reload to apply new server socket and API endpoints cleanly
@@ -83,6 +102,11 @@ export default function ServerConfigModal({ isOpen, onClose }) {
   const handleResetToCloud = () => {
     setInputUrl(DEFAULT_CLOUD_API_URL);
     localStorage.removeItem('verity_cloud_url');
+    localStorage.removeItem('verity_custom_server');
+    if (window.electronAPI?.localDB?.setLocal) {
+      window.electronAPI.localDB.setLocal('verity_custom_server', null).catch(() => {});
+      window.electronAPI.localDB.setLocal('verity_cloud_url', null).catch(() => {});
+    }
     setTestResult(null);
   };
 
@@ -209,6 +233,27 @@ export default function ServerConfigModal({ isOpen, onClose }) {
                   boxSizing: 'border-box'
                 }}
               />
+              <div style={{ marginTop: '6px', fontSize: '0.78rem', color: isDark ? '#94a3b8' : '#64748b' }}>
+                💡 Tip: If this laptop is connecting to the teacher/host laptop, type its Wi-Fi IP (e.g.{' '}
+                <button
+                  type="button"
+                  onClick={() => { setInputUrl('192.168.1.10:3001'); setTestResult(null); }}
+                  style={{
+                    background: isDark ? 'rgba(99, 102, 241, 0.2)' : 'rgba(79, 70, 229, 0.1)',
+                    border: 'none',
+                    color: isDark ? '#a5b4fc' : '#4f46e5',
+                    padding: '1px 6px',
+                    borderRadius: '4px',
+                    cursor: 'pointer',
+                    fontFamily: 'monospace',
+                    fontWeight: 600
+                  }}
+                  title="Click to insert"
+                >
+                  192.168.1.10:3001
+                </button>
+                )
+              </div>
             </div>
 
             {/* Test result status box */}

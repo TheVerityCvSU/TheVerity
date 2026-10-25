@@ -403,7 +403,9 @@ async function initPostgres(connStr = cleanedUrl) {
         ssl: sslConfig,
         max: 5,
         idleTimeoutMillis: 30000,
-        connectionTimeoutMillis: 10000,
+        connectionTimeoutMillis: 3500,
+        statement_timeout: 4000,
+        query_timeout: 4000,
     });
 
     // Test connection
@@ -668,7 +670,6 @@ const readyPromise = (async () => {
             try {
                 console.log('[Database] Attempting connection to PostgreSQL...');
                 await initPostgres(cleanedUrl);
-                return;
             } catch (err) {
                 console.warn(`[Database] PostgreSQL connection failed: ${err.message}`);
                 if (err.code === 'ENETUNREACH' || (cleanedUrl.includes('db.') && cleanedUrl.includes('.supabase.co'))) {
@@ -687,12 +688,43 @@ const readyPromise = (async () => {
         }
         provider = 'sqlite';
     }
+
+    // Initialize continuous differential cloud sync engine
+    try {
+        const { initCloudSync } = require('./cloudSync');
+        initCloudSync(sqliteDb, cleanedUrl || DATABASE_URL);
+    } catch (syncInitErr) {
+        console.warn('[Database] Cloud sync initialization notice:', syncInitErr.message);
+    }
 })();
 
 const db = {
     ready: () => readyPromise,
     get isPostgres() { return provider === 'postgres'; },
     get providerName() { return provider === 'postgres' ? 'PostgreSQL (Supabase)' : 'SQLite (Local Fallback)'; },
+
+    syncWithCloud: () => {
+        try {
+            const { syncBidirectional } = require('./cloudSync');
+            return syncBidirectional();
+        } catch (_) {
+            return Promise.resolve({ status: 'error' });
+        }
+    },
+    triggerSync: () => {
+        try {
+            const { triggerSync } = require('./cloudSync');
+            return triggerSync();
+        } catch (_) {}
+    },
+    getSyncStatus: () => {
+        try {
+            const { getSyncStatus } = require('./cloudSync');
+            return getSyncStatus();
+        } catch (_) {
+            return { isSyncing: false, lastSyncStatus: 'idle' };
+        }
+    },
 
     // Execute query and return all matching rows as Array
     async all(sql, ...args) {
@@ -776,6 +808,12 @@ const db = {
                     } catch (_) {}
                 }
 
+                // Trigger differential cloud sync to reconcile mutations with local SQLite
+                try {
+                    const { triggerSync } = require('./cloudSync');
+                    triggerSync();
+                } catch (_) {}
+
                 return {
                     lastInsertRowid: lastId,
                     changes: res.rowCount || 0
@@ -807,6 +845,12 @@ const db = {
                     pgPool.query(pgSql, params).catch(() => {});
                 } catch (_) {}
             }
+
+            // Trigger differential cloud sync to reconcile mutations with Supabase
+            try {
+                const { triggerSync } = require('./cloudSync');
+                triggerSync();
+            } catch (_) {}
 
             return res;
         }

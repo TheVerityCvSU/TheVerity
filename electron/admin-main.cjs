@@ -164,7 +164,7 @@ function startServer() {
 
     logStartup(`[admin-main] Forking server process: ${serverPath}`);
     serverProcess = fork(serverPath, [], {
-      env: { ...process.env, ...parsedEnv, DATA_DIR: dataDir, NODE_ENV: 'production', IS_ADMIN_APP: 'true', APP_VERSION: app.getVersion() },
+      env: { ...process.env, ...parsedEnv, DATA_DIR: dataDir, NODE_ENV: 'production', IS_ADMIN_APP: 'true', IS_LAN_HOST: 'true', APP_VERSION: app.getVersion() },
       silent: true,
     });
     serverProcess.stdout.on('data', (d) => {

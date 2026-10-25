@@ -494,11 +494,12 @@ export default function StudentDashboard({ currentUser, onLogout, onEnterClassro
 
           const sortedList = sortClassroomsAlphabetically(serverList);
           setClassrooms(prev => {
-            if (sortedList.length === 0 && Array.isArray(prev) && prev.length > 0) {
-              return prev; // Never wipe out existing classrooms
-            }
+            const serverIds = new Set(sortedList.map(c => String(c.id)));
+            // Preserve all valid previously loaded/cached classrooms that the student has joined
+            const preserved = (prev || []).filter(c => c && c.id && !serverIds.has(String(c.id)) && !isPhantomClassroom(c));
             const archivedMap = new Map((prev || []).map(p => [String(p.id), !!p.archived]));
-            const merged = sortedList.map(c => ({
+            const combined = sortClassroomsAlphabetically([...sortedList, ...preserved]);
+            const merged = combined.map(c => ({
               ...c,
               archived: archivedMap.has(String(c.id)) ? archivedMap.get(String(c.id)) : !!c.archived
             }));

@@ -238,15 +238,28 @@ export default function TeacherClasswork({
       .then(res => res.json())
       .then(data => {
         if (cancelled) return;
-        if (Array.isArray(data.classwork) && data.classwork.length > 0) {
+        if (Array.isArray(data.classwork)) {
           const filtered = data.classwork.filter(item => !isLegacyHardcoded(item));
-          setClasswork(filtered);
-          try {
-            localStorage.setItem(storageKey, JSON.stringify(filtered));
-          } catch {}
-          if (window.electronAPI?.localDB?.cacheClasswork) {
-            window.electronAPI.localDB.cacheClasswork(classroomId, filtered).catch(() => {});
-          }
+          const serverCwIds = new Set(filtered.map(item => String(item.id)));
+          setClasswork(prev => {
+            const offlineItems = (prev || []).filter(item => item && item.id && !serverCwIds.has(String(item.id)) && !isLegacyHardcoded(item));
+            const merged = [...filtered, ...offlineItems];
+            if (offlineItems.length > 0) {
+              // Auto-upload offline-created items to server immediately
+              apiFetch(`${import.meta.env.VITE_API_URL}/classwork/${classroomId}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ classwork: merged })
+              }).catch(() => {});
+            }
+            try {
+              localStorage.setItem(storageKey, JSON.stringify(merged));
+            } catch {}
+            if (window.electronAPI?.localDB?.cacheClasswork) {
+              window.electronAPI.localDB.cacheClasswork(classroomId, merged).catch(() => {});
+            }
+            return merged;
+          });
         }
       })
       .catch(() => { /* offline — fall back to localStorage copy */ })

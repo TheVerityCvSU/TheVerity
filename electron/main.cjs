@@ -6,6 +6,7 @@ const { pathToFileURL } = require('url');
 const { fork, spawn } = require('child_process');
 const { initLocalDb, localDbAPI } = require('./local-db.cjs');
 const { initStartupVmDetection, getVmStatus, getCachedVmStatusSync } = require('./vm-detect.cjs');
+const { initLanClient, getDiscoveredServer, stopLanClient } = require('./lan-client.cjs');
 
 // Persistent diagnostic and startup logging
 const logFile = path.join(os.tmpdir(), 'the-verity-startup.log');
@@ -206,9 +207,17 @@ function startServer() {
       } catch (_) {}
     }
 
-    logStartup(`[main] Forking server process: ${serverPath}`);
+    const isHostMode = process.argv.includes('--host') || process.env.IS_LAN_HOST === 'true';
+    logStartup(`[main] Forking server process: ${serverPath} (isHostMode: ${isHostMode})`);
     serverProcess = fork(serverPath, [], {
-      env: { ...process.env, ...parsedEnv, DATA_DIR: dataDir, NODE_ENV: 'production', APP_VERSION: app.getVersion() },
+      env: {
+        ...process.env,
+        ...parsedEnv,
+        DATA_DIR: dataDir,
+        NODE_ENV: 'production',
+        APP_VERSION: app.getVersion(),
+        IS_LAN_HOST: isHostMode ? 'true' : 'false'
+      },
       silent: true,
     });
     serverProcess.stdout.on('data', (d) => {
@@ -651,6 +660,14 @@ app.whenReady().then(() => {
     logStartup(`[main] initLocalDb error: ${e.message}`);
   }
 
+  // Automatic LAN Discovery for ComLab environment
+  try {
+    initLanClient(() => mainWindow, localDbAPI);
+    logStartup('[main] LAN Auto-Discovery client initialized');
+  } catch (lanErr) {
+    logStartup(`[main] initLanClient error: ${lanErr.message}`);
+  }
+
   if (app.isPackaged) {
     logStartup('[main] Production mode: launching embedded server process');
     startServer();
@@ -785,6 +802,8 @@ ipcMain.handle('local-db:setLocal', (_, key, value) =>
   localDbAPI.setLocal(key, value));
 ipcMain.handle('local-db:getLocal', (_, key) => 
   localDbAPI.getLocal(key));
+ipcMain.handle('get-discovered-server', () => 
+  getDiscoveredServer());
 
 app.on('will-quit', () => {
   logStartup('[main] app will-quit fired');
@@ -793,6 +812,7 @@ app.on('will-quit', () => {
     googleAuthWindow = null;
   }
   globalShortcut.unregisterAll();
+  stopLanClient();
   stopServer();
   killKeyboardHook();
 });

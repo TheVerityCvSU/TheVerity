@@ -14,7 +14,6 @@ export const syncService = {
     // Process all pending mutations in the local SQLite/storage queue
     async syncOfflineQueue(authToken) {
         if (isSyncing) return { synced: 0, status: 'already_running' };
-        if (!navigator.onLine) return { synced: 0, status: 'offline' };
 
         const queue = await localStore.getSyncQueue();
         if (!queue || queue.length === 0) return { synced: 0, status: 'empty' };
@@ -62,15 +61,25 @@ export const syncService = {
         return { synced: syncedCount, status: 'complete' };
     },
 
-    // Setup automatic listener to flush queue on reconnect
+    // Setup automatic listener to flush queue on reconnect (online event or LAN server found)
     initAutoSync(getAuthToken) {
         if (typeof window === 'undefined') return;
 
-        window.addEventListener('online', () => {
-            console.log('[SyncService] Network connectivity restored. Triggering offline sync...');
+        const trigger = () => {
+            console.log('[SyncService] Connectivity event detected. Triggering offline queue sync...');
             const token = typeof getAuthToken === 'function' ? getAuthToken() : null;
             syncService.syncOfflineQueue(token);
-        });
+        };
+
+        window.addEventListener('online', trigger);
+        window.addEventListener('verity:lan-discovered', trigger);
+        window.addEventListener('verity:server-changed', trigger);
+
+        // Periodic check every 15 seconds to flush queue whenever local or cloud server is reachable
+        setInterval(() => {
+            const token = typeof getAuthToken === 'function' ? getAuthToken() : null;
+            syncService.syncOfflineQueue(token);
+        }, 15000);
     }
 };
 

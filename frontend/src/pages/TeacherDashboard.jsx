@@ -695,22 +695,46 @@ export default function TeacherDashboard({ currentUser, onLogout, onEnterClassro
               return;
             }
           }
-          // Filter strictly for this teacher: match by email OR instructor name
+          // Filter strictly for this teacher: match by email (including co-teachers) OR instructor name OR admin
+          const userEmail = (currentUser?.email || '').trim().toLowerCase();
+          const curName = (currentUser?.name || '').trim().toLowerCase();
+          const isUserAdmin = String(currentUser?.role || '').toLowerCase() === 'admin';
+
           const teacherClasses = serverList.filter(c => {
+            if (isUserAdmin) return true;
             const emailStr = (c.instructor_email || c.instructorEmail || '').toLowerCase();
-            const matchesEmail = Boolean(currentUser?.email && emailStr && emailStr === currentUser.email.toLowerCase());
+            const emailList = emailStr.split(/[\s,]+/).filter(Boolean);
+            const matchesEmail = Boolean(userEmail && (emailStr === userEmail || emailList.includes(userEmail) || emailStr.includes(userEmail)));
             const nameStr = (c.instructor || '').trim().toLowerCase();
-            const curName = (currentUser?.name || '').trim().toLowerCase();
-            const matchesName = Boolean(curName && nameStr && nameStr === curName);
+            const matchesName = Boolean(curName && (nameStr === curName || nameStr.includes(curName)));
             return matchesEmail || matchesName || (!emailStr && !nameStr);
           });
           const sortedTeacherClasses = sortClassroomsAlphabetically(teacherClasses);
           setClassrooms(prev => {
+            const serverIds = new Set(sortedTeacherClasses.map(c => String(c.id)));
+            // Retain any locally/offline created classrooms not yet synced to the server
+            const offlineClasses = (prev || []).filter(c => c && c.id && !serverIds.has(String(c.id)) && !isPhantomClassroom(c));
             const archivedMap = new Map((prev || []).map(p => [String(p.id), !!p.archived]));
-            const merged = sortedTeacherClasses.map(c => ({
+            
+            const merged = sortClassroomsAlphabetically([...sortedTeacherClasses, ...offlineClasses]).map(c => ({
               ...c,
               archived: archivedMap.has(String(c.id)) ? archivedMap.get(String(c.id)) : !!c.archived
             }));
+
+            // If there were offline classrooms, immediately push them to the server so they are saved
+            if (offlineClasses.length > 0) {
+              const withInstructor = merged.map(c => ({
+                ...c,
+                instructor: c.instructor || currentUser?.name || 'Instructor',
+                instructorEmail: c.instructorEmail || c.instructor_email || currentUser?.email || ''
+              }));
+              apiFetch(`${import.meta.env.VITE_API_URL}/classrooms`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ classrooms: withInstructor })
+              }).catch(() => {});
+            }
+
             saveCachedClassrooms(merged, currentUser, 'teacher');
             return merged;
           });
