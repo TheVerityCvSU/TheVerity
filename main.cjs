@@ -317,6 +317,9 @@ ipcMain.handle('get-app-version', () => {
   return app.getVersion();
 });
 
+const { registerUpdateIpc } = require('./electron/updater.cjs');
+registerUpdateIpc(() => mainWindow, disableLockdown);
+
 ipcMain.on('close-app', () => {
   disableLockdown(); // tanggalin muna lockdown para payagan tayo mag-quit nang maayos
   app.quit();

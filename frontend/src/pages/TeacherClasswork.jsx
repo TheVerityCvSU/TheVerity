@@ -873,6 +873,7 @@ export default function TeacherClasswork({
 
   // Classwork modal state
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [viewingMaterialModal, setViewingMaterialModal] = useState(null);
 
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState(EMPTY_FORM);
@@ -1232,7 +1233,8 @@ export default function TeacherClasswork({
       duration: item.duration || 60,
       autoSaveInterval: item.autoSaveInterval || '30s',
       treatWarningsAsErrors: !!item.treatWarningsAsErrors,
-      testCases: Array.isArray(item.testCases) ? item.testCases : []
+      testCases: Array.isArray(item.testCases) ? item.testCases : [],
+      starterCode: item.starterCode || ''
     });
     setActiveMenu(null);
     setIsModalOpen(true);
@@ -1261,7 +1263,8 @@ export default function TeacherClasswork({
       duration: form.duration,
       autoSaveInterval: form.autoSaveInterval,
       treatWarningsAsErrors: form.treatWarningsAsErrors,
-      testCases: Array.isArray(form.testCases) ? form.testCases : []
+      testCases: Array.isArray(form.testCases) ? form.testCases : [],
+      starterCode: form.starterCode || (editingId ? (classwork.find(i => i.id === editingId)?.starterCode || '') : '')
     };
 
     if (editingId) {
@@ -2489,8 +2492,57 @@ export default function TeacherClasswork({
                                     )}
                                   </div>
                                 </div>
+
+                                <div style={styles.detailDivider} />
+
+                                <div style={{
+                                  ...styles.detailFooter,
+                                  flexDirection: isMobile ? 'column' : 'row',
+                                  alignItems: isMobile ? 'stretch' : 'center',
+                                  padding: isMobile ? '14px 20px' : '16px 28px'
+                                }}>
+                                  <button
+                                    style={{
+                                      ...styles.viewGradingBtn,
+                                      width: isMobile ? '100%' : 'auto',
+                                      justifyContent: 'center'
+                                    }}
+                                    className="btn-anim"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setViewingMaterialModal(item);
+                                    }}
+                                    title="View full material details"
+                                  >
+                                    <FileText size={16} /> View Material Details
+                                  </button>
+
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', width: isMobile ? '100%' : 'auto' }}>
+                                    <button
+                                      style={{
+                                        ...styles.viewGradingBtn,
+                                        backgroundColor: isDark ? 'rgba(16, 185, 129, 0.12)' : '#ecfdf5',
+                                        borderColor: isDark ? 'rgba(16, 185, 129, 0.35)' : '#a7f3d0',
+                                        color: isDark ? '#34d399' : '#059669',
+                                        boxShadow: isDark
+                                          ? '0 0 12px rgba(16, 185, 129, 0.12)'
+                                          : '0 1px 3px rgba(16, 185, 129, 0.10)',
+                                        width: isMobile ? '100%' : 'auto',
+                                        justifyContent: 'center'
+                                      }}
+                                      className="btn-anim"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        openModify(e, item);
+                                      }}
+                                      title="Edit this material"
+                                    >
+                                      <Edit3 size={15} /> Edit Material
+                                    </button>
                                   </div>
-                                </motion.div>
+                                </div>
+                              </div>
+                            </motion.div>
                               )}
                             </AnimatePresence>
                           </div>
@@ -3541,6 +3593,202 @@ export default function TeacherClasswork({
                   className="btn-anim"
                 >
                   Delete Classwork
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* ═══ MODAL: VIEW MATERIAL DETAILS ═══ */}
+      <AnimatePresence>
+        {viewingMaterialModal && (
+          <div
+            style={{
+              position: 'fixed',
+              inset: 0,
+              backgroundColor: 'rgba(0, 0, 0, 0.65)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              zIndex: 99999,
+              backdropFilter: 'blur(5px)',
+              padding: '20px'
+            }}
+            onClick={() => setViewingMaterialModal(null)}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 15 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 15 }}
+              transition={{ type: 'spring', damping: 25, stiffness: 300 }}
+              style={{
+                ...styles.modalCard,
+                maxWidth: '750px',
+                padding: '32px'
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Header with Type Icon, Title, and Close Button */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '16px', marginBottom: '20px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '16px', minWidth: 0 }}>
+                  <div style={{
+                    width: '46px',
+                    height: '46px',
+                    borderRadius: '12px',
+                    backgroundColor: isDark ? 'rgba(16, 185, 129, 0.15)' : '#dcfce7',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    color: '#10b981',
+                    flexShrink: 0
+                  }}>
+                    {(() => {
+                      const lType = getLessonType(viewingMaterialModal);
+                      if (lType === 'video') return <Video size={24} color={isDark ? '#fbbf24' : '#d97706'} />;
+                      if (lType === 'link') return <Link2 size={24} color={isDark ? '#38bdf8' : '#0284c7'} />;
+                      return <FileText size={24} color="#10b981" />;
+                    })()}
+                  </div>
+                  <div>
+                    <span style={{ fontSize: '0.72rem', fontWeight: '700', color: isDark ? '#94a3b8' : '#64748b', letterSpacing: '0.05em', textTransform: 'uppercase' }}>
+                      MATERIAL DETAILS
+                    </span>
+                    <h2 style={{ margin: '2px 0 0 0', fontSize: '1.4rem', fontWeight: '800', color: isDark ? '#f8fafc' : '#0f172a', wordBreak: 'break-word' }}>
+                      {viewingMaterialModal.title}
+                    </h2>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setViewingMaterialModal(null)}
+                  style={{
+                    ...styles.closeModalBtn,
+                    padding: '8px',
+                    borderRadius: '8px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center'
+                  }}
+                  title="Close"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+
+              {/* Meta information strip */}
+              <div style={{
+                backgroundColor: isDark ? '#262626' : '#f8fafc',
+                border: isDark ? '1px solid #444' : '1px solid #e2e8f0',
+                borderRadius: '12px',
+                padding: '14px 20px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '24px',
+                flexWrap: 'wrap',
+                marginBottom: '24px'
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <BookOpen size={16} color={isDark ? '#94a3b8' : '#64748b'} />
+                  <span style={{ fontSize: '0.85rem', color: isDark ? '#cbd5e1' : '#334155', fontWeight: '600' }}>
+                    Topic: <strong>{viewingMaterialModal.topic || 'General Material'}</strong>
+                  </span>
+                </div>
+                <div style={{ width: '1px', height: '18px', backgroundColor: isDark ? '#404040' : '#e2e8f0' }} />
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <Calendar size={16} color="#10b981" />
+                  <span style={{ fontSize: '0.85rem', color: isDark ? '#cbd5e1' : '#334155', fontWeight: '600' }}>
+                    Posted: <strong>{formatShortDate(viewingMaterialModal.posted || viewingMaterialModal.id)}</strong>
+                  </span>
+                </div>
+                {viewingMaterialModal.attachments?.length > 0 && (
+                  <>
+                    <div style={{ width: '1px', height: '18px', backgroundColor: isDark ? '#404040' : '#e2e8f0' }} />
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <FileText size={16} color={isDark ? '#94a3b8' : '#64748b'} />
+                      <span style={{ fontSize: '0.85rem', color: isDark ? '#cbd5e1' : '#334155', fontWeight: '600' }}>
+                        {viewingMaterialModal.attachments.length} attachment{viewingMaterialModal.attachments.length > 1 ? 's' : ''}
+                      </span>
+                    </div>
+                  </>
+                )}
+              </div>
+
+              {/* Material Overview / Content */}
+              <div style={{ marginBottom: '24px' }}>
+                <h4 style={{ margin: '0 0 12px 0', fontSize: '0.95rem', fontWeight: '700', color: isDark ? '#f1f5f9' : '#1e293b' }}>
+                  Material Content & Description
+                </h4>
+                <div style={{
+                  backgroundColor: isDark ? '#262626' : '#ffffff',
+                  border: isDark ? '1px solid #3e3e3e' : '1px solid #e2e8f0',
+                  borderRadius: '12px',
+                  padding: '20px',
+                  maxHeight: '320px',
+                  overflowY: 'auto'
+                }}>
+                  {viewingMaterialModal.details ? (
+                    <div
+                      style={{ color: isDark ? '#d1d5db' : '#334155', fontSize: '0.95rem', lineHeight: 1.6 }}
+                      dangerouslySetInnerHTML={{ __html: viewingMaterialModal.details }}
+                      onClick={handleInstructionClick}
+                    />
+                  ) : (
+                    <p style={{ margin: 0, color: isDark ? '#9ca3af' : '#64748b', fontSize: '0.9rem', fontStyle: 'italic' }}>
+                      No description or written notes provided for this material.
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              {/* Attachments Section */}
+              {viewingMaterialModal.attachments?.length > 0 && (
+                <div style={{ marginBottom: '24px' }}>
+                  <h4 style={{ margin: '0 0 12px 0', fontSize: '0.95rem', fontWeight: '700', color: isDark ? '#f1f5f9' : '#1e293b' }}>
+                    Attached Resources ({viewingMaterialModal.attachments.length})
+                  </h4>
+                  <div style={styles.cardAttachments}>
+                    {viewingMaterialModal.attachments.map((att, i) => (
+                      <AttachmentCard
+                        key={i}
+                        att={att}
+                        isDark={isDark}
+                        onClick={(clickedAtt) => {
+                          if (clickedAtt.type === 'image') setPreviewImage(clickedAtt);
+                          else if (clickedAtt.type === 'video') setPreviewVideo(clickedAtt);
+                          else if (clickedAtt.type === 'document' || clickedAtt.type === 'link') {
+                            setPreviewIframe(clickedAtt);
+                          }
+                        }}
+                      />
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Footer Actions */}
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '24px', paddingTop: '16px', borderTop: isDark ? '1px solid #3e3e3e' : '1px solid #e2e8f0' }}>
+                <button
+                  type="button"
+                  onClick={() => setViewingMaterialModal(null)}
+                  style={styles.cancelBtn}
+                >
+                  Close
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    const toEdit = viewingMaterialModal;
+                    setViewingMaterialModal(null);
+                    openModify(e, toEdit);
+                  }}
+                  style={{
+                    ...styles.saveGradeBtn,
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '6px'
+                  }}
+                >
+                  <Edit3 size={15} /> Edit Material
                 </button>
               </div>
             </motion.div>

@@ -676,6 +676,9 @@ ipcMain.handle('get-app-version', () => {
   return app.getVersion();
 });
 
+const { registerUpdateIpc } = require('./updater.cjs');
+registerUpdateIpc(() => mainWindow, disableLockdown);
+
 ipcMain.handle('get-display-count', () => {
   const { screen } = require('electron');
   return screen.getAllDisplays().length;

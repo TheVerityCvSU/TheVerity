@@ -3,6 +3,24 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('IS_ADMIN_APP', true);
 contextBridge.exposeInMainWorld('electronAPI', {
   isAdminApp: true,
+  getAppVersion: () => ipcRenderer.invoke('get-app-version'),
+  startAppUpdate: (downloadUrl) => ipcRenderer.invoke('start-app-update', downloadUrl),
+  installAppUpdate: () => ipcRenderer.invoke('install-app-update'),
+  onUpdateDownloadProgress: (callback) => {
+    const handler = (event, progress) => callback(progress);
+    ipcRenderer.on('update-download-progress', handler);
+    return () => ipcRenderer.removeListener('update-download-progress', handler);
+  },
+  onUpdateDownloadComplete: (callback) => {
+    const handler = () => callback();
+    ipcRenderer.on('update-download-complete', handler);
+    return () => ipcRenderer.removeListener('update-download-complete', handler);
+  },
+  onUpdateDownloadError: (callback) => {
+    const handler = (event, err) => callback(err);
+    ipcRenderer.on('update-download-error', handler);
+    return () => ipcRenderer.removeListener('update-download-error', handler);
+  },
   closeApp: () => ipcRenderer.send('close-app'),
   enableLockdown: () => {},
   disableLockdown: () => {},

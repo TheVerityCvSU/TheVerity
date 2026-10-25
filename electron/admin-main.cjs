@@ -457,6 +457,9 @@ ipcMain.handle('get-app-version', () => {
   return app.getVersion();
 });
 
+const { registerUpdateIpc } = require('./updater.cjs');
+registerUpdateIpc(() => mainWindow);
+
 ipcMain.handle('check-vm-status', async () => {
   return await getVmStatus();
 });

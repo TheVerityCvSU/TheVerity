@@ -1776,6 +1776,28 @@ export default function ClassroomView({
                                             ))}
                                           </div>
                                         )}
+
+                                        {/* Divider */}
+                                        <div style={{ height: '1px', backgroundColor: isDark ? '#3E3E3E' : '#e2e8f0', margin: '22px 0 16px 0' }} />
+
+                                        {/* View Material Details Link */}
+                                        <div>
+                                          <span
+                                            style={{ ...styles.viewActivityLink, display: 'inline-flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}
+                                            onClick={() => {
+                                              markSingleMaterialAsSeen(item.id);
+                                              try {
+                                                if (classroom?.id) sessionStorage.setItem(`verity_student_classroom_tab_${classroom.id}`, 'materials');
+                                                sessionStorage.setItem('verity_student_classroom_tab_active', 'materials');
+                                                sessionStorage.setItem(`verity_student_tab_${classroom?.id}`, 'materials');
+                                                sessionStorage.setItem('verity_student_tab_active', 'materials');
+                                              } catch (_) {}
+                                              onOpenAssignment(item);
+                                            }}
+                                          >
+                                            View Material Details <ArrowUpRight size={16} />
+                                          </span>
+                                        </div>
                                       </div>
                                     </div>
                                   </div>

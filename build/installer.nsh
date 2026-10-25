@@ -37,6 +37,10 @@ Var hwndDotnetDesc
 !macroend
 
 Function confirmPageCreate
+  ${If} ${Silent}
+    Abort
+  ${EndIf}
+
   GetDlgItem $0 $HWNDPARENT 1037
   GetDlgItem $1 $HWNDPARENT 1038
 
@@ -120,6 +124,9 @@ Function confirmPageCreate
 FunctionEnd
 
 Function confirmPageLeave
+  ${If} ${Silent}
+    Return
+  ${EndIf}
   ${If} $hwndDotnetCheckbox != 0
     ${NSD_GetState} $hwndDotnetCheckbox $0
     ${If} $0 == ${BST_CHECKED}
@@ -189,6 +196,10 @@ FunctionEnd
 !macroend
 
 !macro customInstall
+  ${If} $isVerityUpdate == "1"
+    # Never prompt or re-install .NET during app updates - it's already installed
+    StrCpy $installDotnetChoice "0"
+  ${EndIf}
   ${If} $installDotnetChoice == "1"
     DetailPrint "--------------------------------------------------------"
     DetailPrint "Setting up Microsoft .NET SDK..."

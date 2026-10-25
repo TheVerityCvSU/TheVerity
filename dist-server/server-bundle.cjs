@@ -97599,6 +97599,45 @@ app.get("/api/check-update", async (req, res) => {
     process.env.RELEASE_DIR,
     process.env.VERITY_RELEASE_DIR
   ].filter(Boolean);
+  const findLocalInstallers = (isAdminApp) => {
+    const found = [];
+    for (const dir of candidateDirs) {
+      if (fs2.existsSync(dir)) {
+        try {
+          const files = fs2.readdirSync(dir);
+          for (const f3 of files) {
+            const lower2 = f3.toLowerCase();
+            if (lower2.endsWith(".exe") && (isAdminApp ? lower2.includes("admin") : !lower2.includes("admin"))) {
+              const vMatch = f3.match(/(\d+\.\d+\.\d+)/);
+              const fileVer = vMatch ? vMatch[1] : "0.0.0";
+              found.push({
+                path: path.join(dir, f3),
+                filename: f3,
+                version: fileVer,
+                isSetup: lower2.includes("setup")
+              });
+            }
+          }
+        } catch (_) {
+        }
+      }
+    }
+    found.sort((a, b) => {
+      if (isNewer(a.version, b.version)) return -1;
+      if (isNewer(b.version, a.version)) return 1;
+      if (a.isSetup && !b.isSetup) return -1;
+      if (!a.isSetup && b.isSetup) return 1;
+      return 0;
+    });
+    return found;
+  };
+  const localInstallers = findLocalInstallers(isAdmin);
+  if (localInstallers.length > 0) {
+    const newestLocal = localInstallers[0];
+    if (isNewer(newestLocal.version, latestVersion)) {
+      latestVersion = newestLocal.version;
+    }
+  }
   for (const dir of candidateDirs) {
     if (fs2.existsSync(dir)) {
       const ymlPath = path.join(dir, "latest.yml");
@@ -97614,22 +97653,6 @@ app.get("/api/check-update", async (req, res) => {
           }
         } catch (_) {
         }
-      }
-      try {
-        const files = fs2.readdirSync(dir);
-        for (const f3 of files) {
-          const lower2 = f3.toLowerCase();
-          if (lower2.endsWith(".exe") && (isAdmin ? lower2.includes("admin") : !lower2.includes("admin"))) {
-            const vMatch = f3.match(/(\d+\.\d+\.\d+)/);
-            if (vMatch && vMatch[1]) {
-              const fileVer = vMatch[1];
-              if (isNewer(fileVer, latestVersion)) {
-                latestVersion = fileVer;
-              }
-            }
-          }
-        }
-      } catch (_) {
       }
     }
   }
@@ -97656,6 +97679,9 @@ app.get("/api/check-update", async (req, res) => {
     }
   } catch (_) {
   }
+  if (!githubDownloadUrl && localInstallers.length > 0 && !process.env.LATEST_APP_VERSION) {
+    latestVersion = localInstallers[0].version;
+  }
   const forceUpdate = req.query.force === "true" || req.query.force === "1";
   const updateAvailable = forceUpdate || isNewer(latestVersion, currentVersion);
   const protocol = req.headers["x-forwarded-proto"] || req.protocol;
@@ -97673,6 +97699,7 @@ app.get("/api/check-update", async (req, res) => {
 });
 app.get("/api/download-update", (req, res) => {
   const isAdmin = req.query.role === "admin" || req.query.app === "admin" || req.query.role === "Administrator";
+  const reqVersion = (req.query.version || req.query.v || "").trim();
   const homeDir = os2.homedir();
   const candidateDirs = [
     path.resolve(__dirname, isAdmin ? "../release/Admin" : "../release/Users"),
@@ -97686,23 +97713,51 @@ app.get("/api/download-update", (req, res) => {
     process.env.RELEASE_DIR,
     process.env.VERITY_RELEASE_DIR
   ].filter(Boolean);
+  const found = [];
   for (const dir of candidateDirs) {
     if (fs2.existsSync(dir)) {
       try {
         const files = fs2.readdirSync(dir);
-        const installerFile = files.find((f3) => {
+        for (const f3 of files) {
           const lower2 = f3.toLowerCase();
-          return lower2.endsWith(".exe") && lower2.includes("setup") && (isAdmin ? lower2.includes("admin") : !lower2.includes("admin"));
-        }) || files.find((f3) => {
-          const lower2 = f3.toLowerCase();
-          return lower2.endsWith(".exe") && (isAdmin ? lower2.includes("admin") : !lower2.includes("admin"));
-        });
-        if (installerFile) {
-          return res.download(path.join(dir, installerFile), installerFile);
+          if (lower2.endsWith(".exe") && (isAdmin ? lower2.includes("admin") : !lower2.includes("admin"))) {
+            const vMatch = f3.match(/(\d+\.\d+\.\d+)/);
+            const fileVer = vMatch ? vMatch[1] : "0.0.0";
+            found.push({
+              path: path.join(dir, f3),
+              filename: f3,
+              version: fileVer,
+              isSetup: lower2.includes("setup")
+            });
+          }
         }
       } catch (_) {
       }
     }
+  }
+  found.sort((a, b) => {
+    const isNewer = (v1, v2) => {
+      const p1 = String(v1).replace(/^v/i, "").split(".").map((n) => parseInt(n, 10) || 0);
+      const p2 = String(v2).replace(/^v/i, "").split(".").map((n) => parseInt(n, 10) || 0);
+      for (let i2 = 0; i2 < Math.max(p1.length, p2.length); i2++) {
+        if ((p1[i2] || 0) > (p2[i2] || 0)) return true;
+        if ((p1[i2] || 0) < (p2[i2] || 0)) return false;
+      }
+      return false;
+    };
+    if (isNewer(a.version, b.version)) return -1;
+    if (isNewer(b.version, a.version)) return 1;
+    if (a.isSetup && !b.isSetup) return -1;
+    if (!a.isSetup && b.isSetup) return 1;
+    return 0;
+  });
+  if (found.length > 0) {
+    let best = found[0];
+    if (reqVersion) {
+      const exactMatch = found.find((f3) => f3.version === reqVersion);
+      if (exactMatch) best = exactMatch;
+    }
+    return res.download(best.path, best.filename);
   }
   res.redirect("https://github.com/belheroth/Verity/releases/latest");
 });
@@ -99076,7 +99131,11 @@ var getClassworkFromDb = async (classroomId) => {
       grading: meta.grading !== void 0 ? meta.grading : "On",
       archived: typeof meta.archived === "boolean" ? meta.archived : false,
       posted: meta.posted || row.created_at,
-      testCases: Array.isArray(meta.testCases) ? meta.testCases : []
+      testCases: Array.isArray(meta.testCases) ? meta.testCases : [],
+      starterCode: meta.starterCode || "",
+      duration: meta.duration !== void 0 ? meta.duration : 60,
+      autoSaveInterval: meta.autoSaveInterval || "30s",
+      treatWarningsAsErrors: !!meta.treatWarningsAsErrors
     };
   });
 };
@@ -99115,7 +99174,11 @@ var saveClassworkToDb = async (classroomId, classwork) => {
       archived: !!cw.archived,
       posted: cw.posted || null,
       testCases: Array.isArray(cw.testCases) ? cw.testCases : [],
-      activityType: cw.activityType || cw.type || "Assignment"
+      activityType: cw.activityType || cw.type || "Assignment",
+      starterCode: cw.starterCode !== void 0 ? cw.starterCode : "",
+      duration: cw.duration !== void 0 ? cw.duration : 60,
+      autoSaveInterval: cw.autoSaveInterval || "30s",
+      treatWarningsAsErrors: !!cw.treatWarningsAsErrors
     };
     await db.run(`
             INSERT INTO classwork (id, classroom_id, title, description, dueDate, type)

@@ -247,7 +247,10 @@ function AdminCheckUpdateCard() {
   const [status, setStatus] = useState('idle'); // 'idle' | 'checking' | 'latest' | 'available' | 'error'
   const [updateInfo, setUpdateInfo] = useState(null);
   const [isDownloading, setIsDownloading] = useState(false);
-  const [downloadStarted, setDownloadStarted] = useState(false);
+  const [downloadProgress, setDownloadProgress] = useState(null); // { percent, transferred, total }
+  const [isUpdateReady, setIsUpdateReady] = useState(false);
+  const [downloadError, setDownloadError] = useState(null);
+  const [isInstalling, setIsInstalling] = useState(false);
   const [clientAppVersion, setClientAppVersion] = useState(() => import.meta.env.VITE_APP_VERSION || '1.0.0');
 
   useEffect(() => {
@@ -256,12 +259,43 @@ function AdminCheckUpdateCard() {
         if (v) setClientAppVersion(v);
       }).catch(() => {});
     }
+
+    const cleanups = [];
+    if (window.electronAPI?.onUpdateDownloadProgress) {
+      cleanups.push(window.electronAPI.onUpdateDownloadProgress((progress) => {
+        setDownloadProgress(progress);
+        setIsDownloading(true);
+        setDownloadError(null);
+      }));
+    }
+    if (window.electronAPI?.onUpdateDownloadComplete) {
+      cleanups.push(window.electronAPI.onUpdateDownloadComplete(() => {
+        setIsDownloading(false);
+        setIsUpdateReady(true);
+        setDownloadProgress(null);
+        setDownloadError(null);
+      }));
+    }
+    if (window.electronAPI?.onUpdateDownloadError) {
+      cleanups.push(window.electronAPI.onUpdateDownloadError((err) => {
+        setIsDownloading(false);
+        setDownloadError(typeof err === 'string' ? err : (err?.error || 'Download failed. Please check network connection.'));
+      }));
+    }
+
+    return () => {
+      cleanups.forEach(fn => fn && fn());
+    };
   }, []);
 
   const handleCheckUpdate = async (e) => {
     const force = e?.altKey || e?.shiftKey;
     setStatus('checking');
-    setDownloadStarted(false);
+    setDownloadError(null);
+    setIsUpdateReady(false);
+    setIsDownloading(false);
+    setDownloadProgress(null);
+
     try {
       let activeVer = clientAppVersion;
       if (window.electronAPI?.getAppVersion) {
@@ -297,26 +331,54 @@ function AdminCheckUpdateCard() {
     }
   };
 
-  const handleUpdateNow = () => {
+  const handleUpdateNow = async () => {
     if (!updateInfo?.downloadUrl) return;
     setIsDownloading(true);
-    setDownloadStarted(true);
+    setDownloadError(null);
+    setIsUpdateReady(false);
+    setDownloadProgress({ percent: 0, transferred: 0, total: 0 });
 
-    try {
-      const a = document.createElement('a');
-      a.href = updateInfo.downloadUrl;
-      a.setAttribute('download', '');
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-    } catch (err) {
-      console.error('Download error:', err);
-      window.open(updateInfo.downloadUrl, '_blank');
+    if (window.electronAPI?.startAppUpdate) {
+      try {
+        const res = await window.electronAPI.startAppUpdate(updateInfo.downloadUrl);
+        if (!res?.success) {
+          setIsDownloading(false);
+          setDownloadError(res?.error || 'Failed to start update download.');
+        }
+      } catch (err) {
+        setIsDownloading(false);
+        setDownloadError(err?.message || 'Update download failed.');
+      }
+    } else {
+      // In-browser fallback
+      try {
+        const a = document.createElement('a');
+        a.href = updateInfo.downloadUrl;
+        a.setAttribute('download', '');
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+      } catch (err) {
+        window.open(updateInfo.downloadUrl, '_blank');
+      }
+      setTimeout(() => setIsDownloading(false), 2000);
     }
+  };
 
-    setTimeout(() => {
-      setIsDownloading(false);
-    }, 2500);
+  const handleRestartAndInstall = async () => {
+    setIsInstalling(true);
+    if (window.electronAPI?.installAppUpdate) {
+      try {
+        const res = await window.electronAPI.installAppUpdate();
+        if (!res?.success) {
+          setIsInstalling(false);
+          setDownloadError(res?.error || 'Failed to launch installer.');
+        }
+      } catch (err) {
+        setIsInstalling(false);
+        setDownloadError(err?.message || 'Failed to launch installer.');
+      }
+    }
   };
 
   return (
@@ -343,7 +405,7 @@ function AdminCheckUpdateCard() {
           fontWeight: '700',
         }}>
           <span>Current Version:</span>
-          <span style={{ color: T.blue }}>v{updateInfo?.currentVersion || clientAppVersion || '1.0.0'}</span>
+          <span style={{ color: T.blue }}>v{clientAppVersion || updateInfo?.currentVersion || '1.0.0'}</span>
         </div>
       </div>
 
@@ -352,14 +414,14 @@ function AdminCheckUpdateCard() {
           whileHover={{ scale: 1.02 }}
           whileTap={{ scale: 0.98 }}
           onClick={handleCheckUpdate}
-          disabled={status === 'checking'}
+          disabled={status === 'checking' || isDownloading || isInstalling}
           style={{
             ...styles.secBtn,
-            backgroundColor: T.blue,
+            backgroundColor: (status === 'checking' || isDownloading || isInstalling) ? (isDark ? '#4b5563' : '#94a3b8') : T.blue,
             color: '#ffffff',
             border: 'none',
             boxShadow: '0 4px 12px rgba(0, 123, 255, 0.25)',
-            cursor: status === 'checking' ? 'not-allowed' : 'pointer'
+            cursor: (status === 'checking' || isDownloading || isInstalling) ? 'not-allowed' : 'pointer'
           }}
           title="Click to check for updates"
         >
@@ -372,7 +434,7 @@ function AdminCheckUpdateCard() {
           <span>{status === 'checking' ? 'Checking for updates...' : status === 'latest' ? 'Check Again' : 'Check for Updates'}</span>
         </motion.button>
 
-        {status === 'available' && (
+        {status === 'available' && !isUpdateReady && (
           <motion.button
             whileHover={{ scale: 1.02 }}
             whileTap={{ scale: 0.98 }}
@@ -380,16 +442,37 @@ function AdminCheckUpdateCard() {
             disabled={isDownloading}
             style={{
               ...styles.secBtn,
-              backgroundColor: '#16a34a',
+              backgroundColor: isDownloading ? (isDark ? '#4b5563' : '#94a3b8') : '#16a34a',
               color: '#ffffff',
               border: 'none',
               boxShadow: '0 4px 12px rgba(22, 163, 74, 0.3)',
               cursor: isDownloading ? 'wait' : 'pointer'
             }}
-            title="Download and install update"
+            title="Download update inside The Verity"
           >
             <Download size={15} />
-            <span>{isDownloading ? 'Starting Download...' : 'Update Now'}</span>
+            <span>{isDownloading ? 'Downloading Update...' : 'Update Now'}</span>
+          </motion.button>
+        )}
+
+        {isUpdateReady && (
+          <motion.button
+            whileHover={{ scale: 1.03 }}
+            whileTap={{ scale: 0.97 }}
+            onClick={handleRestartAndInstall}
+            disabled={isInstalling}
+            style={{
+              ...styles.secBtn,
+              backgroundColor: '#16a34a',
+              color: '#ffffff',
+              border: 'none',
+              boxShadow: '0 4px 14px rgba(22, 163, 74, 0.45)',
+              cursor: isInstalling ? 'wait' : 'pointer'
+            }}
+            title="Restart and install the downloaded update"
+          >
+            <RefreshCw size={15} style={{ animation: isInstalling ? 'spin 1s linear infinite' : 'none' }} />
+            <span>{isInstalling ? 'Restarting The Verity...' : 'Restart & Install Now'}</span>
           </motion.button>
         )}
       </div>
@@ -415,7 +498,7 @@ function AdminCheckUpdateCard() {
             }}
           >
             <CheckCircle2 size={16} />
-            <span>You're up to date! The Verity Admin is running the latest version (v{updateInfo?.currentVersion || clientAppVersion || '1.0.0'}).</span>
+            <span>You're up to date! The Verity Admin is running the latest version (v{clientAppVersion || updateInfo?.currentVersion || '1.0.0'}).</span>
           </motion.div>
         )}
 
@@ -426,7 +509,7 @@ function AdminCheckUpdateCard() {
             exit={{ opacity: 0 }}
             style={{
               marginTop: '16px',
-              padding: '14px 18px',
+              padding: '16px 20px',
               borderRadius: '12px',
               backgroundColor: isDark ? 'rgba(0, 123, 255, 0.12)' : '#eff6ff',
               border: `1px solid ${T.blue}`,
@@ -434,7 +517,7 @@ function AdminCheckUpdateCard() {
               fontSize: '0.85rem',
               display: 'flex',
               flexDirection: 'column',
-              gap: '6px'
+              gap: '10px'
             }}
           >
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: '700' }}>
@@ -446,9 +529,82 @@ function AdminCheckUpdateCard() {
                 {updateInfo.releaseNotes}
               </div>
             )}
-            {downloadStarted && (
-              <div style={{ marginTop: '4px', fontSize: '0.8rem', color: isDark ? '#4ade80' : '#15803d', fontWeight: '600' }}>
-                ✓ Download initiated! Once the installer finishes downloading, run it to complete the update.
+
+            {/* In-app download progress bar */}
+            {isDownloading && (
+              <div style={{
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '6px',
+                padding: '12px',
+                borderRadius: '10px',
+                backgroundColor: isDark ? 'rgba(0, 0, 0, 0.3)' : 'rgba(255, 255, 255, 0.7)',
+                border: `1px solid ${isDark ? 'rgba(0, 123, 255, 0.3)' : 'rgba(0, 123, 255, 0.2)'}`
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.82rem', fontWeight: '600' }}>
+                  <span>Downloading update inside The Verity...</span>
+                  <span>
+                    {downloadProgress ? `${downloadProgress.percent}%` : 'Connecting...'}
+                    {downloadProgress?.total > 0 && (
+                      <span style={{ opacity: 0.75, marginLeft: '6px', fontWeight: 'normal' }}>
+                        ({(downloadProgress.transferred / (1024 * 1024)).toFixed(1)} MB / {(downloadProgress.total / (1024 * 1024)).toFixed(1)} MB)
+                      </span>
+                    )}
+                  </span>
+                </div>
+                <div style={{
+                  width: '100%',
+                  height: '8px',
+                  borderRadius: '999px',
+                  backgroundColor: isDark ? '#374151' : '#e2e8f0',
+                  overflow: 'hidden'
+                }}>
+                  <div style={{
+                    width: `${downloadProgress?.percent || 0}%`,
+                    height: '100%',
+                    background: 'linear-gradient(90deg, #3b82f6, #10b981)',
+                    borderRadius: '999px',
+                    transition: 'width 0.2s ease'
+                  }} />
+                </div>
+              </div>
+            )}
+
+            {/* Update ready notice */}
+            {isUpdateReady && (
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '10px',
+                padding: '10px 14px',
+                borderRadius: '8px',
+                backgroundColor: isDark ? 'rgba(34, 197, 94, 0.2)' : '#dcfce7',
+                border: '1px solid #22c55e',
+                color: isDark ? '#4ade80' : '#15803d',
+                fontWeight: '600',
+                fontSize: '0.85rem'
+              }}>
+                <CheckCircle2 size={16} color="#22c55e" style={{ flexShrink: 0 }} />
+                <span>Update downloaded successfully! Click "Restart & Install Now" to apply the update seamlessly.</span>
+              </div>
+            )}
+
+            {/* Download error alert */}
+            {downloadError && (
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                padding: '10px 14px',
+                borderRadius: '8px',
+                backgroundColor: isDark ? 'rgba(239, 68, 68, 0.2)' : '#fee2e2',
+                border: '1px solid #ef4444',
+                color: isDark ? '#f87171' : '#b91c1c',
+                fontSize: '0.83rem',
+                fontWeight: '600'
+              }}>
+                <AlertCircle size={16} color="#ef4444" style={{ flexShrink: 0 }} />
+                <span>{downloadError}</span>
               </div>
             )}
           </motion.div>

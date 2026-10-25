@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
-import { Home, Calendar, ClipboardList, Settings, Menu, Archive, ArrowLeft, CheckCircle2, Code2, ExternalLink, X, Link2, TerminalSquare, Award, ArrowRight, Check, AlertTriangle } from 'lucide-react';
+import { Home, Calendar, ClipboardList, Settings, Menu, Archive, ArrowLeft, CheckCircle2, Code2, ExternalLink, X, Link2, TerminalSquare, Award, ArrowRight, Check, AlertTriangle, FileText, Video, BookOpen } from 'lucide-react';
 import ProfileMenu from './ProfileMenu';
 import { motion, AnimatePresence } from 'framer-motion';
 import { apiFetch } from '../utils/api';
@@ -535,12 +535,30 @@ export default function StudentActivityDetail({
     } catch {}
   };
 
+  const isMaterial = assignment?.activityType === 'Material';
+  const lessonType = isMaterial ? (
+    assignment?.attachments?.some(a => a?.type?.toLowerCase()?.includes('video') || a?.type === 'youtube') ? 'video' :
+    assignment?.attachments?.some(a => a?.type?.toLowerCase()?.includes('link') || a?.type === 'url') ? 'link' :
+    'document'
+  ) : null;
   const pointsText = assignment?.points ? `${assignment.points} points` : '100 points';
   const dueDateText = assignment?.dueDate ? `Due : ${assignment.dueDate}` : 'No due date';
-  const title = assignment?.title || "Activity Details";
-  const details = assignment?.details || assignment?.description || "No instructions provided for this activity.";
+  const title = assignment?.title || (isMaterial ? "Material Details" : "Activity Details");
+  const details = assignment?.details || assignment?.description || (isMaterial ? "No description provided for this material." : "No instructions provided for this activity.");
   const displayScore = gradeData?.grade != null ? gradeData.grade : null;
   const feedbackText = gradeData?.feedback || (gradeData?.grade != null ? "No written feedback provided." : "No feedback yet. Your submission is pending instructor review.");
+
+  const handleBackToClassroom = () => {
+    if (isMaterial) {
+      try {
+        if (classroom?.id) sessionStorage.setItem(`verity_student_classroom_tab_${classroom.id}`, 'materials');
+        sessionStorage.setItem('verity_student_classroom_tab_active', 'materials');
+        sessionStorage.setItem(`verity_student_tab_${classroom?.id}`, 'materials');
+        sessionStorage.setItem('verity_student_tab_active', 'materials');
+      } catch (_) {}
+    }
+    if (onBack) onBack();
+  };
 
   return (
     <motion.div 
@@ -669,10 +687,10 @@ export default function StudentActivityDetail({
               {/* Top Navigation Row (Outside the card) */}
               <div style={{ display: 'flex', justifyContent: 'flex-start', alignItems: 'center', marginBottom: '24px' }}>
                 <button
-                  onClick={onBack}
+                  onClick={handleBackToClassroom}
                   style={styles.backBtn}
                 >
-                  <ArrowLeft size={16} style={{ marginRight: '6px' }} /> Back to Activities
+                  <ArrowLeft size={16} style={{ marginRight: '6px' }} /> {isMaterial ? 'Back to Materials' : 'Back to Activities'}
                 </button>
               </div>
 
@@ -697,13 +715,32 @@ export default function StudentActivityDetail({
                   borderBottom: isDark ? '1px solid #484848' : '1px solid #e2e8f0'
                 }}>
                   {/* Icon Block */}
-                  <div style={{ width: '64px', height: '64px', borderRadius: '16px', backgroundColor: isDark ? 'rgba(16, 185, 129, 0.1)' : '#ecfdf5', border: isDark ? '1px solid rgba(16, 185, 129, 0.2)' : 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#10b981', flexShrink: 0 }}>
-                    <ClipboardList size={28} />
+                  <div style={{
+                    width: '64px',
+                    height: '64px',
+                    borderRadius: '16px',
+                    backgroundColor: isMaterial
+                      ? (lessonType === 'video' ? (isDark ? 'rgba(245, 158, 11, 0.15)' : '#fef3c7') : lessonType === 'link' ? (isDark ? 'rgba(56, 189, 248, 0.15)' : '#e0f2fe') : (isDark ? 'rgba(16, 185, 129, 0.1)' : '#ecfdf5'))
+                      : (isDark ? 'rgba(16, 185, 129, 0.1)' : '#ecfdf5'),
+                    border: isDark ? '1px solid rgba(16, 185, 129, 0.2)' : 'none',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    color: isMaterial
+                      ? (lessonType === 'video' ? (isDark ? '#fbbf24' : '#d97706') : lessonType === 'link' ? (isDark ? '#38bdf8' : '#0284c7') : '#10b981')
+                      : '#10b981',
+                    flexShrink: 0
+                  }}>
+                    {isMaterial ? (
+                      lessonType === 'video' ? <Video size={28} /> : lessonType === 'link' ? <Link2 size={28} /> : <FileText size={28} />
+                    ) : (
+                      <ClipboardList size={28} />
+                    )}
                   </div>
                   
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                     <span style={{ fontSize: '0.7rem', fontWeight: '700', color: isDark ? '#94a3b8' : '#64748b', letterSpacing: '0.05em', textTransform: 'uppercase' }}>
-                      ACTIVITY DETAILS
+                      {isMaterial ? 'MATERIAL DETAILS' : 'ACTIVITY DETAILS'}
                     </span>
                     <h1 style={{ fontSize: '2.2rem', fontWeight: 'bold', color: isDark ? 'white' : '#0f172a', margin: 0, lineHeight: 1.1, wordBreak: 'break-word' }}>
                       {title}
@@ -721,31 +758,72 @@ export default function StudentActivityDetail({
                   gap: '32px',
                   flexWrap: 'wrap'
                 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                    <Award size={18} color={isDark ? '#94a3b8' : '#64748b'} />
-                    <div style={{ display: 'flex', flexDirection: 'column' }}>
-                      <span style={{ fontSize: '0.7rem', color: isDark ? '#94a3b8' : '#64748b', fontWeight: '600' }}>Points</span>
-                      <span style={{ fontSize: '0.9rem', color: isDark ? '#e2e8f0' : '#1e293b', fontWeight: 'bold' }}>{pointsText}</span>
-                    </div>
-                  </div>
-                  
-                  <div style={{ width: '1px', height: '28px', backgroundColor: isDark ? '#334155' : '#e2e8f0' }} />
-                  
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                    <div style={{ backgroundColor: isDark ? 'rgba(16, 185, 129, 0.12)' : '#ecfdf5', padding: '6px', borderRadius: '8px', color: '#10b981', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                      <Calendar size={16} />
-                    </div>
-                    <div style={{ display: 'flex', flexDirection: 'column' }}>
-                      <span style={{ fontSize: '0.7rem', color: isDark ? '#94a3b8' : '#64748b', fontWeight: '600' }}>Due</span>
-                      <span style={{ fontSize: '0.9rem', color: isDark ? '#e2e8f0' : '#1e293b', fontWeight: 'bold' }}>{dueDateText === 'No Due Date' ? 'No Due Date' : dueDateText}</span>
-                    </div>
-                  </div>
+                  {isMaterial ? (
+                    <>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                        <BookOpen size={18} color={isDark ? '#94a3b8' : '#64748b'} />
+                        <div style={{ display: 'flex', flexDirection: 'column' }}>
+                          <span style={{ fontSize: '0.7rem', color: isDark ? '#94a3b8' : '#64748b', fontWeight: '600' }}>Topic</span>
+                          <span style={{ fontSize: '0.9rem', color: isDark ? '#e2e8f0' : '#1e293b', fontWeight: 'bold' }}>{assignment?.topic || 'Course Material'}</span>
+                        </div>
+                      </div>
+
+                      <div style={{ width: '1px', height: '28px', backgroundColor: isDark ? '#334155' : '#e2e8f0' }} />
+
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                        <div style={{ backgroundColor: isDark ? 'rgba(16, 185, 129, 0.12)' : '#ecfdf5', padding: '6px', borderRadius: '8px', color: '#10b981', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                          <Calendar size={16} />
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column' }}>
+                          <span style={{ fontSize: '0.7rem', color: isDark ? '#94a3b8' : '#64748b', fontWeight: '600' }}>Posted</span>
+                          <span style={{ fontSize: '0.9rem', color: isDark ? '#e2e8f0' : '#1e293b', fontWeight: 'bold' }}>{assignment?.posted || formatFullDate(assignment?.id)}</span>
+                        </div>
+                      </div>
+
+                      {assignment?.attachments?.length > 0 && (
+                        <>
+                          <div style={{ width: '1px', height: '28px', backgroundColor: isDark ? '#334155' : '#e2e8f0' }} />
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                            <FileText size={18} color={isDark ? '#94a3b8' : '#64748b'} />
+                            <div style={{ display: 'flex', flexDirection: 'column' }}>
+                              <span style={{ fontSize: '0.7rem', color: isDark ? '#94a3b8' : '#64748b', fontWeight: '600' }}>Resources</span>
+                              <span style={{ fontSize: '0.9rem', color: isDark ? '#e2e8f0' : '#1e293b', fontWeight: 'bold' }}>
+                                {assignment.attachments.length} attachment{assignment.attachments.length > 1 ? 's' : ''}
+                              </span>
+                            </div>
+                          </div>
+                        </>
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                        <Award size={18} color={isDark ? '#94a3b8' : '#64748b'} />
+                        <div style={{ display: 'flex', flexDirection: 'column' }}>
+                          <span style={{ fontSize: '0.7rem', color: isDark ? '#94a3b8' : '#64748b', fontWeight: '600' }}>Points</span>
+                          <span style={{ fontSize: '0.9rem', color: isDark ? '#e2e8f0' : '#1e293b', fontWeight: 'bold' }}>{pointsText}</span>
+                        </div>
+                      </div>
+                      
+                      <div style={{ width: '1px', height: '28px', backgroundColor: isDark ? '#334155' : '#e2e8f0' }} />
+                      
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                        <div style={{ backgroundColor: isDark ? 'rgba(16, 185, 129, 0.12)' : '#ecfdf5', padding: '6px', borderRadius: '8px', color: '#10b981', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                          <Calendar size={16} />
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column' }}>
+                          <span style={{ fontSize: '0.7rem', color: isDark ? '#94a3b8' : '#64748b', fontWeight: '600' }}>Due</span>
+                          <span style={{ fontSize: '0.9rem', color: isDark ? '#e2e8f0' : '#1e293b', fontWeight: 'bold' }}>{dueDateText === 'No Due Date' ? 'No Due Date' : dueDateText}</span>
+                        </div>
+                      </div>
+                    </>
+                  )}
                 </div>
 
                 {/* Instructions Area */}
                 <div style={{ padding: '32px' }}>
                   <h3 style={{ fontSize: '1.05rem', fontWeight: '700', color: isDark ? 'white' : '#1e293b', margin: '0 0 16px 0' }}>
-                    Instructions
+                    {isMaterial ? 'Material Overview & Resources' : 'Instructions'}
                   </h3>
                   
                   <div style={{ 
@@ -782,8 +860,66 @@ export default function StudentActivityDetail({
                     )}
                   </div>
                   
-                  {/* Action Buttons (Submit, Start) */}
-                  {!isSubmitted ? (
+                  {/* Action Buttons or Resource Banner */}
+                  {isMaterial ? (
+                    <div style={{
+                      marginTop: '32px',
+                      padding: '20px 24px',
+                      borderRadius: '12px',
+                      backgroundColor: isDark ? '#1f2425' : '#ecfdf5',
+                      border: `1px solid ${isDark ? '#2d3739' : '#a7f3d0'}`,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      flexWrap: 'wrap',
+                      gap: '16px'
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+                        <div style={{
+                          width: '40px',
+                          height: '40px',
+                          borderRadius: '10px',
+                          backgroundColor: '#10b981',
+                          color: '#ffffff',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          flexShrink: 0
+                        }}>
+                          <BookOpen size={20} />
+                        </div>
+                        <div>
+                          <div style={{ fontSize: '0.95rem', fontWeight: '700', color: isDark ? '#f3f4f6' : '#065f46' }}>
+                            Reference Learning Material
+                          </div>
+                          <p style={{ margin: '2px 0 0 0', fontSize: '0.85rem', color: isDark ? '#9ca3af' : '#047857' }}>
+                            This material is provided for study and review. No code or assignment submission is required.
+                          </p>
+                        </div>
+                      </div>
+
+                      <button
+                        onClick={handleBackToClassroom}
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '8px',
+                          padding: '10px 22px',
+                          borderRadius: '50px',
+                          backgroundColor: '#10b981',
+                          color: '#ffffff',
+                          border: 'none',
+                          fontWeight: '700',
+                          fontSize: '0.88rem',
+                          cursor: 'pointer',
+                          boxShadow: '0 4px 10px rgba(16, 185, 129, 0.25)',
+                          transition: 'all 0.2s ease'
+                        }}
+                      >
+                        <ArrowLeft size={16} /> Back to Materials
+                      </button>
+                    </div>
+                  ) : !isSubmitted ? (
                     <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '16px', marginTop: '32px' }}>
                       <button
                         onClick={handleSubmit}

@@ -11,6 +11,23 @@ if (isAdminApp) {
 contextBridge.exposeInMainWorld('electronAPI', {
   isAdminApp,
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),
+  startAppUpdate: (downloadUrl) => ipcRenderer.invoke('start-app-update', downloadUrl),
+  installAppUpdate: () => ipcRenderer.invoke('install-app-update'),
+  onUpdateDownloadProgress: (callback) => {
+    const handler = (event, progress) => callback(progress);
+    ipcRenderer.on('update-download-progress', handler);
+    return () => ipcRenderer.removeListener('update-download-progress', handler);
+  },
+  onUpdateDownloadComplete: (callback) => {
+    const handler = () => callback();
+    ipcRenderer.on('update-download-complete', handler);
+    return () => ipcRenderer.removeListener('update-download-complete', handler);
+  },
+  onUpdateDownloadError: (callback) => {
+    const handler = (event, err) => callback(err);
+    ipcRenderer.on('update-download-error', handler);
+    return () => ipcRenderer.removeListener('update-download-error', handler);
+  },
   closeApp: () => ipcRenderer.send('close-app'),
   enableLockdown: (options) => ipcRenderer.send('enable-lockdown', options),
   disableLockdown: () => ipcRenderer.send('disable-lockdown'),

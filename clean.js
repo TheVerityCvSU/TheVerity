@@ -6,11 +6,12 @@ const target = process.argv[2] ? process.argv[2].toLowerCase() : 'all';
 const folders = ['dist', 'temp_submissions'];
 
 if (target === 'users' || target === 'user') {
-    folders.push(path.join('release', 'Users'));
+    folders.push(path.join('release', 'Users', 'win-unpacked'));
 } else if (target === 'admin') {
-    folders.push(path.join('release', 'Admin'));
+    folders.push(path.join('release', 'Admin', 'win-unpacked'));
 } else {
-    folders.push('release');
+    folders.push(path.join('release', 'Users', 'win-unpacked'));
+    folders.push(path.join('release', 'Admin', 'win-unpacked'));
 }
 
 folders.forEach(folder => {

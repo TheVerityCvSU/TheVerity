@@ -11,6 +11,23 @@ contextBridge.exposeInMainWorld('electronAPI', {
   closeGoogleAuth: () => ipcRenderer.send('close-google-auth'),
   checkGoogleAuthStatus: () => ipcRenderer.invoke('check-google-auth-status'),
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),
+  startAppUpdate: (downloadUrl) => ipcRenderer.invoke('start-app-update', downloadUrl),
+  installAppUpdate: () => ipcRenderer.invoke('install-app-update'),
+  onUpdateDownloadProgress: (callback) => {
+    const handler = (event, progress) => callback(progress);
+    ipcRenderer.on('update-download-progress', handler);
+    return () => ipcRenderer.removeListener('update-download-progress', handler);
+  },
+  onUpdateDownloadComplete: (callback) => {
+    const handler = () => callback();
+    ipcRenderer.on('update-download-complete', handler);
+    return () => ipcRenderer.removeListener('update-download-complete', handler);
+  },
+  onUpdateDownloadError: (callback) => {
+    const handler = (event, err) => callback(err);
+    ipcRenderer.on('update-download-error', handler);
+    return () => ipcRenderer.removeListener('update-download-error', handler);
+  },
   onGoogleAuthClosed: (callback) => {
     const handler = () => callback();
     ipcRenderer.on('google-auth-closed', handler);

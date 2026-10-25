@@ -418,9 +418,51 @@ app.get('/api/check-update', async (req, res) => {
         process.env.VERITY_RELEASE_DIR
     ].filter(Boolean);
 
+    // Helper to find all available installer executables, sorted newest to oldest
+    const findLocalInstallers = (isAdminApp) => {
+        const found = [];
+        for (const dir of candidateDirs) {
+            if (fs.existsSync(dir)) {
+                try {
+                    const files = fs.readdirSync(dir);
+                    for (const f of files) {
+                        const lower = f.toLowerCase();
+                        if (lower.endsWith('.exe') && (isAdminApp ? lower.includes('admin') : !lower.includes('admin'))) {
+                            const vMatch = f.match(/(\d+\.\d+\.\d+)/);
+                            const fileVer = vMatch ? vMatch[1] : '0.0.0';
+                            found.push({
+                                path: path.join(dir, f),
+                                filename: f,
+                                version: fileVer,
+                                isSetup: lower.includes('setup')
+                            });
+                        }
+                    }
+                } catch (_) {}
+            }
+        }
+        found.sort((a, b) => {
+            if (isNewer(a.version, b.version)) return -1;
+            if (isNewer(b.version, a.version)) return 1;
+            if (a.isSetup && !b.isSetup) return -1;
+            if (!a.isSetup && b.isSetup) return 1;
+            return 0;
+        });
+        return found;
+    };
+
+    // Scan local build directories for newly built installers
+    const localInstallers = findLocalInstallers(isAdmin);
+    if (localInstallers.length > 0) {
+        const newestLocal = localInstallers[0];
+        if (isNewer(newestLocal.version, latestVersion)) {
+            latestVersion = newestLocal.version;
+        }
+    }
+
+    // Check latest.yml if produced by electron-builder
     for (const dir of candidateDirs) {
         if (fs.existsSync(dir)) {
-            // A. Check latest.yml if produced by electron-builder
             const ymlPath = path.join(dir, 'latest.yml');
             if (fs.existsSync(ymlPath)) {
                 try {
@@ -434,23 +476,6 @@ app.get('/api/check-update', async (req, res) => {
                     }
                 } catch (_) {}
             }
-
-            // B. Check .exe installer filenames (e.g. "The Verity Setup 1.0.2.exe")
-            try {
-                const files = fs.readdirSync(dir);
-                for (const f of files) {
-                    const lower = f.toLowerCase();
-                    if (lower.endsWith('.exe') && (isAdmin ? lower.includes('admin') : !lower.includes('admin'))) {
-                        const vMatch = f.match(/(\d+\.\d+\.\d+)/);
-                        if (vMatch && vMatch[1]) {
-                            const fileVer = vMatch[1];
-                            if (isNewer(fileVer, latestVersion)) {
-                                latestVersion = fileVer;
-                            }
-                        }
-                    }
-                }
-            } catch (_) {}
         }
     }
 
@@ -480,6 +505,12 @@ app.get('/api/check-update', async (req, res) => {
         // Offline or GitHub unreachable — use local build/package version
     }
 
+    // In local offline mode (when no GitHub release download is available),
+    // the latest deliverable version MUST be bounded by what actually exists to be downloaded
+    if (!githubDownloadUrl && localInstallers.length > 0 && !process.env.LATEST_APP_VERSION) {
+        latestVersion = localInstallers[0].version;
+    }
+
     const forceUpdate = req.query.force === 'true' || req.query.force === '1';
     const updateAvailable = forceUpdate || isNewer(latestVersion, currentVersion);
 
@@ -501,8 +532,9 @@ app.get('/api/check-update', async (req, res) => {
 
 app.get('/api/download-update', (req, res) => {
     const isAdmin = req.query.role === 'admin' || req.query.app === 'admin' || req.query.role === 'Administrator';
-    
-    // Look for installer in multiple potential local build output locations
+    const reqVersion = (req.query.version || req.query.v || '').trim();
+
+    // 1. Scan local build output directories
     const homeDir = os.homedir();
     const candidateDirs = [
         path.resolve(__dirname, isAdmin ? '../release/Admin' : '../release/Users'),
@@ -517,23 +549,52 @@ app.get('/api/download-update', (req, res) => {
         process.env.VERITY_RELEASE_DIR
     ].filter(Boolean);
 
+    const found = [];
     for (const dir of candidateDirs) {
         if (fs.existsSync(dir)) {
             try {
                 const files = fs.readdirSync(dir);
-                // Prefer 'Setup' installer first, then fallback to portable or any .exe
-                const installerFile = files.find(f => {
+                for (const f of files) {
                     const lower = f.toLowerCase();
-                    return lower.endsWith('.exe') && lower.includes('setup') && (isAdmin ? lower.includes('admin') : !lower.includes('admin'));
-                }) || files.find(f => {
-                    const lower = f.toLowerCase();
-                    return lower.endsWith('.exe') && (isAdmin ? lower.includes('admin') : !lower.includes('admin'));
-                });
-                if (installerFile) {
-                    return res.download(path.join(dir, installerFile), installerFile);
+                    if (lower.endsWith('.exe') && (isAdmin ? lower.includes('admin') : !lower.includes('admin'))) {
+                        const vMatch = f.match(/(\d+\.\d+\.\d+)/);
+                        const fileVer = vMatch ? vMatch[1] : '0.0.0';
+                        found.push({
+                            path: path.join(dir, f),
+                            filename: f,
+                            version: fileVer,
+                            isSetup: lower.includes('setup')
+                        });
+                    }
                 }
             } catch (_) {}
         }
+    }
+
+    found.sort((a, b) => {
+        const isNewer = (v1, v2) => {
+            const p1 = String(v1).replace(/^v/i, '').split('.').map(n => parseInt(n, 10) || 0);
+            const p2 = String(v2).replace(/^v/i, '').split('.').map(n => parseInt(n, 10) || 0);
+            for (let i = 0; i < Math.max(p1.length, p2.length); i++) {
+                if ((p1[i] || 0) > (p2[i] || 0)) return true;
+                if ((p1[i] || 0) < (p2[i] || 0)) return false;
+            }
+            return false;
+        };
+        if (isNewer(a.version, b.version)) return -1;
+        if (isNewer(b.version, a.version)) return 1;
+        if (a.isSetup && !b.isSetup) return -1;
+        if (!a.isSetup && b.isSetup) return 1;
+        return 0;
+    });
+
+    if (found.length > 0) {
+        let best = found[0];
+        if (reqVersion) {
+            const exactMatch = found.find(f => f.version === reqVersion);
+            if (exactMatch) best = exactMatch;
+        }
+        return res.download(best.path, best.filename);
     }
 
     // Fallback: redirect to GitHub Releases page
@@ -2030,7 +2091,11 @@ const getClassworkFromDb = async (classroomId) => {
             grading: meta.grading !== undefined ? meta.grading : 'On',
             archived: typeof meta.archived === 'boolean' ? meta.archived : false,
             posted: meta.posted || row.created_at,
-            testCases: Array.isArray(meta.testCases) ? meta.testCases : []
+            testCases: Array.isArray(meta.testCases) ? meta.testCases : [],
+            starterCode: meta.starterCode || '',
+            duration: meta.duration !== undefined ? meta.duration : 60,
+            autoSaveInterval: meta.autoSaveInterval || '30s',
+            treatWarningsAsErrors: !!meta.treatWarningsAsErrors
         };
     });
 };
@@ -2073,7 +2138,11 @@ const saveClassworkToDb = async (classroomId, classwork) => {
             archived: !!cw.archived,
             posted: cw.posted || null,
             testCases: Array.isArray(cw.testCases) ? cw.testCases : [],
-            activityType: cw.activityType || cw.type || 'Assignment'
+            activityType: cw.activityType || cw.type || 'Assignment',
+            starterCode: cw.starterCode !== undefined ? cw.starterCode : '',
+            duration: cw.duration !== undefined ? cw.duration : 60,
+            autoSaveInterval: cw.autoSaveInterval || '30s',
+            treatWarningsAsErrors: !!cw.treatWarningsAsErrors
         };
         await db.run(`
             INSERT INTO classwork (id, classroom_id, title, description, dueDate, type)
