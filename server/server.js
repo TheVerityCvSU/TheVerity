@@ -683,7 +683,8 @@ app.get('/health', async (req, res) => {
             fs.existsSync(path.join(__dirname, 'host.flag')) || 
             process.env.IS_LAN_HOST === 'true' ||
             process.env.IS_VERITY_ADMIN === 'true' ||
-            process.argv.includes('--host')
+            process.argv.includes('--host') ||
+            require.main === module
         );
         res.status(200).json({
             status: 'operational',
@@ -4092,6 +4093,9 @@ io.on('connection', (socket) => {
         }
 
         socket.join(roomName);
+        if (assignmentId && assignmentId !== 'none') {
+            socket.join(`assignment:${assignmentId}`);
+        }
         socket.data.teacherRoom = roomName;
 
         const cIdStr = String(classroomId || 'none');
@@ -4141,7 +4145,15 @@ io.on('connection', (socket) => {
                 delete activeStudents[key];
                 continue;
             }
-            if (key.startsWith(filterKey + ':') || (aIdStr !== 'none' && key.startsWith(`none:${aIdStr}:`))) {
+            const isMatch = (
+                key.startsWith(filterKey + ':') ||
+                (aIdStr !== 'none' && (
+                    key.startsWith(`none:${aIdStr}:`) ||
+                    key.includes(`:${aIdStr}:`) ||
+                    String(student.assignmentId) === aIdStr
+                ))
+            );
+            if (isMatch) {
                 socket.emit('teacher_update_code', {
                     ...student,
                     logs: student.logs || []
@@ -4173,7 +4185,15 @@ io.on('connection', (socket) => {
                 delete activeStudents[key];
                 continue;
             }
-            if (key.startsWith(filterKey + ':') || (aIdStr !== 'none' && key.startsWith(`none:${aIdStr}:`))) {
+            const isMatch = (
+                key.startsWith(filterKey + ':') ||
+                (aIdStr !== 'none' && (
+                    key.startsWith(`none:${aIdStr}:`) ||
+                    key.includes(`:${aIdStr}:`) ||
+                    String(student.assignmentId) === aIdStr
+                ))
+            );
+            if (isMatch) {
                 socket.emit('teacher_update_code', {
                     ...student,
                     logs: student.logs || []
@@ -4826,8 +4846,11 @@ io.on('connection', (socket) => {
 
         socket.join(roomName);
 
-        // Broadcast ONLY to monitoring teachers in this specific activity room
+        // Broadcast to monitoring teachers in this specific activity room and assignment room
         io.to(roomName).emit('teacher_update_code', updated);
+        if (assignmentId && assignmentId !== 'none') {
+            io.to(`assignment:${assignmentId}`).emit('teacher_update_code', updated);
+        }
 
         // Real-time update activity indicator dots for instructors
         broadcastActiveActivities();
@@ -4955,6 +4978,9 @@ io.on('connection', (socket) => {
                 assignmentId
             };
             io.to(roomName).emit('teacher_receive_alert', alertPayload);
+            if (assignmentId && assignmentId !== 'none') {
+                io.to(`assignment:${assignmentId}`).emit('teacher_receive_alert', alertPayload);
+            }
         }
 
         try {

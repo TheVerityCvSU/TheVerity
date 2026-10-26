@@ -329,8 +329,9 @@ export default function Login({ onLogin, onGoToRegister }) {
         setError(data.message || 'Invalid login credentials');
         setIsLoading(false);
       }
-    } catch (_) {
-      setError('Could not connect to server. Is server.js running?');
+    } catch (err) {
+      console.error('[Login] Login request failed:', err);
+      setError(err?.message && !err.message.includes('fetch') ? err.message : 'Could not connect to server. Is server.js running?');
       setIsLoading(false);
     }
   };

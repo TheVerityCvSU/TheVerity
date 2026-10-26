@@ -6,7 +6,7 @@ const { pathToFileURL } = require('url');
 const { fork, spawn } = require('child_process');
 const { initLocalDb, localDbAPI } = require('./local-db.cjs');
 const { initStartupVmDetection, getVmStatus, getCachedVmStatusSync } = require('./vm-detect.cjs');
-const { initLanClient, getDiscoveredServer, stopLanClient } = require('./lan-client.cjs');
+const { initLanClient, getDiscoveredServer, setDiscoveredServer, verifyHttpServer, runDiscoveryScan, stopLanClient } = require('./lan-client.cjs');
 
 // Persistent diagnostic and startup logging
 const logFile = path.join(os.tmpdir(), 'the-verity-startup.log');
@@ -804,6 +804,21 @@ ipcMain.handle('local-db:getLocal', (_, key) =>
   localDbAPI.getLocal(key));
 ipcMain.handle('get-discovered-server', () => 
   getDiscoveredServer());
+ipcMain.handle('set-lan-server', async (_, serverUrl) => {
+  logStartup(`[main] set-lan-server requested: ${serverUrl}`);
+  if (!serverUrl) return { success: false, error: 'Empty URL provided' };
+  const ok = await verifyHttpServer(serverUrl, 2500);
+  if (ok) {
+    await setDiscoveredServer(serverUrl);
+    return { success: true, url: serverUrl };
+  }
+  return { success: false, error: 'Could not connect to Verity server at this address' };
+});
+ipcMain.handle('scan-lan-servers', async () => {
+  logStartup('[main] scan-lan-servers requested');
+  await runDiscoveryScan(true);
+  return getDiscoveredServer();
+});
 
 app.on('will-quit', () => {
   logStartup('[main] app will-quit fired');

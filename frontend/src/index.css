@@ -213,6 +213,17 @@ body, button, input, select, textarea {
   animation: lanPulse 2.2s infinite ease-in-out;
 }
 
+@keyframes fadeInPop {
+  from {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
 .offline-banner-text-mobile {
   display: none;
 }

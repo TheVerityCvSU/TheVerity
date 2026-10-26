@@ -51,8 +51,8 @@ function getBroadcastAddresses() {
     return Array.from(broadcasts);
 }
 
-// Ultra-fast TCP port probe (1-3ms for active host, 280ms timeout for closed)
-function testTcpPort(host, port = 3001, timeoutMs = 280) {
+// TCP port probe with explicit connect timer (avoids hung sockets on un-ARPed Wi-Fi)
+function testTcpPort(host, port = 3001, timeoutMs = 600) {
     return new Promise((resolve) => {
         if (!host) return resolve(false);
         const socket = new net.Socket();
@@ -61,18 +61,25 @@ function testTcpPort(host, port = 3001, timeoutMs = 280) {
         const done = (result) => {
             if (finished) return;
             finished = true;
-            socket.destroy();
+            try { socket.destroy(); } catch (_) {}
             resolve(result);
         };
 
-        socket.setTimeout(timeoutMs);
-        socket.once('connect', () => done(true));
-        socket.once('timeout', () => done(false));
-        socket.once('error', () => done(false));
+        const timer = setTimeout(() => done(false), timeoutMs);
+
+        socket.once('connect', () => {
+            clearTimeout(timer);
+            done(true);
+        });
+        socket.once('error', () => {
+            clearTimeout(timer);
+            done(false);
+        });
 
         try {
             socket.connect(port, host);
         } catch (_) {
+            clearTimeout(timer);
             done(false);
         }
     });
@@ -97,8 +104,8 @@ function getArpIps() {
     }
 }
 
-// Verify that a given URL is a real Verity Server and NOT ourselves
-async function verifyHttpServer(url, timeoutMs = 1200) {
+// Verify that a given URL is a real Verity Server and NOT ourselves (unless testing as host)
+async function verifyHttpServer(url, timeoutMs = 1500, allowSelfIfHost = true) {
     if (!url) return false;
     let cleanUrl = url.trim().replace(/\/$/, '');
     if (!cleanUrl.startsWith('http://') && !cleanUrl.startsWith('https://')) {
@@ -108,17 +115,17 @@ async function verifyHttpServer(url, timeoutMs = 1200) {
     try {
         const parsedUrl = new URL(cleanUrl);
         const host = parsedUrl.hostname;
-        const port = parseInt(parsedUrl.port, 10) || 3001;
         const myIps = getMyIps();
-
-        // Never lock onto self
-        if (myIps.has(host)) return false;
-
-        // Pre-check raw TCP port before attempting HTTP to avoid hanging sockets
-        const tcpUp = await testTcpPort(host, port, 350);
-        if (!tcpUp) return false;
+        const isSelf = myIps.has(host);
 
         return await new Promise((resolve) => {
+            let finished = false;
+            const done = (res) => {
+                if (finished) return;
+                finished = true;
+                resolve(res);
+            };
+
             const req = http.get(`${cleanUrl}/health`, { timeout: timeoutMs }, (res) => {
                 let data = '';
                 res.on('data', chunk => data += chunk);
@@ -126,16 +133,30 @@ async function verifyHttpServer(url, timeoutMs = 1200) {
                     try {
                         const parsed = JSON.parse(data);
                         if (parsed && (parsed.app === APP_TAG || parsed.status === 'operational')) {
-                            return resolve(true);
+                            // If testing on self, only accept if running as designated host
+                            if (isSelf && !allowSelfIfHost) return done(false);
+                            if (isSelf && parsed.isHost !== true) return done(false);
+                            return done(true);
                         }
                     } catch (_) {}
-                    resolve(res.statusCode >= 200 && res.statusCode < 400);
+                    if (isSelf) return done(false);
+                    done(res.statusCode >= 200 && res.statusCode < 400);
                 });
             });
-            req.on('error', () => resolve(false));
+
+            const timer = setTimeout(() => {
+                try { req.destroy(); } catch (_) {}
+                done(false);
+            }, timeoutMs);
+
+            req.on('error', () => {
+                clearTimeout(timer);
+                done(false);
+            });
             req.on('timeout', () => {
-                req.destroy();
-                resolve(false);
+                clearTimeout(timer);
+                try { req.destroy(); } catch (_) {}
+                done(false);
             });
         });
     } catch (_) {
@@ -144,11 +165,22 @@ async function verifyHttpServer(url, timeoutMs = 1200) {
 }
 
 async function setDiscoveredServer(url) {
-    if (!url) return;
+    if (!url) {
+        if (discoveredServer !== null) {
+            console.log('📡 [LAN Client] Disconnected from Verity Host Server');
+            discoveredServer = null;
+            if (mainWindowGetter) {
+                try {
+                    const win = mainWindowGetter();
+                    if (win && !win.isDestroyed() && win.webContents) {
+                        win.webContents.send('lan-server-discovered', null);
+                    }
+                } catch (_) {}
+            }
+        }
+        return;
+    }
     const cleanUrl = url.replace(/\/$/, '');
-    
-    if (discoveredServer === cleanUrl) return;
-
     discoveredServer = cleanUrl;
     console.log(`🎯 [LAN Client] Locked onto Verity Host Server: ${cleanUrl}`);
 
@@ -208,21 +240,41 @@ async function tryCandidates(candidateList) {
 }
 
 // Multi-tiered high-speed scanner
-async function runDiscoveryScan() {
-    if (discoveredServer || isScanning) return;
+async function runDiscoveryScan(force = false) {
+    if (isScanning) return;
+    if (discoveredServer && !force) return;
     isScanning = true;
 
     try {
         const myIps = getMyIps();
 
+        // 0. High priority: check previously saved host from local SQLite
+        if (localDb && typeof localDb.getLocal === 'function') {
+            try {
+                const cached = await localDb.getLocal('verity_lan_server');
+                if (cached) {
+                    const clean = cached.trim().replace(/\/$/, '');
+                    let hostname = '';
+                    try { hostname = new URL(clean).hostname; } catch (_) {}
+                    if (hostname && !myIps.has(hostname)) {
+                        const ok = await verifyHttpServer(clean, 700);
+                        if (ok) {
+                            await setDiscoveredServer(clean);
+                            return;
+                        }
+                    }
+                }
+            } catch (_) {}
+        }
+
         // 1. ARP Cache: all active devices currently communicating on the router
         const arpIps = getArpIps();
         if (arpIps.length > 0) {
             for (const ip of arpIps) {
-                if (discoveredServer) break;
+                if (discoveredServer && !force) break;
                 const testUrl = `http://${ip}:3001`;
-                const ok = await verifyHttpServer(testUrl, 800);
-                if (ok && !discoveredServer) {
+                const ok = await verifyHttpServer(testUrl, 600);
+                if (ok) {
                     await setDiscoveredServer(testUrl);
                     return;
                 }
@@ -231,9 +283,9 @@ async function runDiscoveryScan() {
 
         // 2. High-probability ComLab default IPs
         const defaultCandidates = [
+            'http://192.168.254.100:3001',
             'http://192.168.254.101:3001',
             'http://192.168.1.10:3001',
-            'http://192.168.254.100:3001',
             'http://192.168.1.100:3001',
             'http://192.168.254.1:3001',
             'http://192.168.1.1:3001'
@@ -242,9 +294,9 @@ async function runDiscoveryScan() {
         });
 
         for (const url of defaultCandidates) {
-            if (discoveredServer) break;
-            const ok = await verifyHttpServer(url, 700);
-            if (ok && !discoveredServer) {
+            if (discoveredServer && !force) break;
+            const ok = await verifyHttpServer(url, 600);
+            if (ok) {
                 await setDiscoveredServer(url);
                 return;
             }
@@ -269,26 +321,26 @@ async function runDiscoveryScan() {
             }
         }
 
-        const priorityOctets = [101, 100, 10, 1, 2, 20, 50, 254];
+        const priorityOctets = [100, 101, 10, 1, 2, 20, 50, 254];
 
         for (const myIp of activeSubnets) {
-            if (discoveredServer) break;
+            if (discoveredServer && !force) break;
             const prefix = myIp.substring(0, myIp.lastIndexOf('.') + 1);
             const priorityIps = priorityOctets
                 .map(o => `${prefix}${o}`)
                 .filter(ip => !myIps.has(ip));
 
             await Promise.all(priorityIps.map(async (ip) => {
-                if (discoveredServer) return;
+                if (discoveredServer && !force) return;
                 const testUrl = `http://${ip}:3001`;
-                const ok = await verifyHttpServer(testUrl, 600);
-                if (ok && !discoveredServer) {
+                const ok = await verifyHttpServer(testUrl, 500);
+                if (ok) {
                     await setDiscoveredServer(testUrl);
                 }
             }));
-            if (discoveredServer) return;
+            if (discoveredServer && !force) return;
 
-            // 4. Fast Subnet Sweep in parallel batches of 25 using TCP connect probe
+            // 4. Fast Subnet Sweep in parallel batches of 35 using TCP connect probe
             const remaining = [];
             for (let i = 1; i <= 254; i++) {
                 if (!priorityOctets.includes(i)) {
@@ -297,17 +349,17 @@ async function runDiscoveryScan() {
                 }
             }
 
-            const batchSize = 25;
+            const batchSize = 35;
             for (let b = 0; b < remaining.length; b += batchSize) {
-                if (discoveredServer) break;
+                if (discoveredServer && !force) break;
                 const batch = remaining.slice(b, b + batchSize);
                 await Promise.all(batch.map(async (ip) => {
-                    if (discoveredServer) return;
-                    const tcpUp = await testTcpPort(ip, 3001, 250);
-                    if (tcpUp && !discoveredServer) {
+                    if (discoveredServer && !force) return;
+                    const tcpUp = await testTcpPort(ip, 3001, 200);
+                    if (tcpUp) {
                         const testUrl = `http://${ip}:3001`;
-                        const ok = await verifyHttpServer(testUrl, 800);
-                        if (ok && !discoveredServer) {
+                        const ok = await verifyHttpServer(testUrl, 600);
+                        if (ok) {
                             await setDiscoveredServer(testUrl);
                         }
                     }
@@ -327,7 +379,7 @@ function initLanClient(getWin, dbAPI) {
     if (localDb && typeof localDb.getLocal === 'function') {
         localDb.getLocal('verity_lan_server').then((cached) => {
             if (cached && !discoveredServer) {
-                verifyHttpServer(cached).then((ok) => {
+                verifyHttpServer(cached, 1000).then((ok) => {
                     if (ok && !discoveredServer) {
                         setDiscoveredServer(cached);
                     }
@@ -386,33 +438,49 @@ function initLanClient(getWin, dbAPI) {
         }
     }, 2000);
 
-    // 3. Continuous background subnet and ARP scan every 3.5 seconds while searching
+    // 3. Continuous background subnet and ARP scan every 3 seconds while searching
     backgroundScanTimer = setInterval(() => {
         if (!discoveredServer) {
             runDiscoveryScan();
         }
-    }, 3500);
+    }, 3000);
 
-    // 4. Watchdog: every 7 seconds verify that locked server is still reachable.
-    // If router disconnects or host shuts down, smoothly unlock and resume scanning.
+    // 4. Watchdog: every 2 seconds verify that locked server is still reachable.
+    // If router disconnects, Wi-Fi is toggled off, or host shuts down, immediately unlock and resume scanning.
     watchdogTimer = setInterval(async () => {
+        const interfaces = os.networkInterfaces();
+        let hasActiveInterface = false;
+        for (const name of Object.keys(interfaces)) {
+            for (const iface of interfaces[name]) {
+                if (iface.family === 'IPv4' && !iface.internal && iface.address && !iface.address.startsWith('127.') && !iface.address.startsWith('169.254.')) {
+                    hasActiveInterface = true;
+                    break;
+                }
+            }
+            if (hasActiveInterface) break;
+        }
+
+        if (!hasActiveInterface) {
+            // Wi-Fi is turned off or disconnected
+            if (discoveredServer) {
+                console.log('⚠️ [LAN Client] No network connection detected. Disconnecting LAN server...');
+                await setDiscoveredServer(null);
+            }
+            return;
+        }
+
         if (discoveredServer) {
-            const alive = await verifyHttpServer(discoveredServer, 1500);
+            const alive = await verifyHttpServer(discoveredServer, 1000);
             if (!alive) {
                 console.log(`⚠️ [LAN Client] Lost contact with host (${discoveredServer}). Resuming discovery...`);
-                discoveredServer = null;
-                if (mainWindowGetter) {
-                    try {
-                        const win = mainWindowGetter();
-                        if (win && !win.isDestroyed() && win.webContents) {
-                            win.webContents.send('lan-server-discovered', null);
-                        }
-                    } catch (_) {}
-                }
+                await setDiscoveredServer(null);
                 runDiscoveryScan();
             }
+        } else {
+            // Unlocked and network interface is active: actively discover!
+            runDiscoveryScan();
         }
-    }, 7000);
+    }, 2000);
 }
 
 function getDiscoveredServer() {
@@ -442,5 +510,7 @@ module.exports = {
     initLanClient,
     getDiscoveredServer,
     setDiscoveredServer,
+    verifyHttpServer,
+    runDiscoveryScan,
     stopLanClient
 };

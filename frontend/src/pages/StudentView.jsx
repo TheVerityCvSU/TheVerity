@@ -3,7 +3,7 @@ import { motion } from 'framer-motion';
 import { io } from 'socket.io-client';
 import Editor from '@monaco-editor/react';
 import { ArrowLeft, Save, Play, Square, Settings, TerminalSquare, Check, AlertTriangle, Trash2, Moon, Sun, X, Link2, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, PanelLeftClose, PanelLeft, BookOpen, CheckSquare, Plus, CheckCircle2, XCircle, PlayCircle, Loader2, Maximize2, Minimize2, Monitor, MonitorX, ShieldAlert } from 'lucide-react';
-import { apiFetch, getCompilerSocketUrl, getLocalApiUrl } from '../utils/api';
+import { apiFetch, getCompilerSocketUrl, getLocalApiUrl, getCloudUrl, getConnectionStatus } from '../utils/api';
 import localStore from '../services/localStore';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { useMediaQuery } from '../hooks/useMediaQuery';
@@ -420,18 +420,16 @@ export default function StudentView({ socket, currentUser, username, assignment,
           if (res && res.isVm) {
             setVmDetected(true);
             setVmReasons(res.reasons || []);
-            if (socket && typeof socket.emit === 'function') {
-              const studentName = currentUser?.name || currentUser?.email || 'Student';
-              const studentIdVal = currentUser?.id || currentUser?.email || studentName;
-              socket.emit('proctor_alert', {
-                studentId: studentIdVal,
-                name: studentName,
-                email: currentUser?.email || '',
-                action: 'Virtual Machine Detected',
-                desc: `VM Detected during exam: ${(res.reasons && res.reasons[0]) || 'Virtualized environment detected'}`,
-                color: '#ef4444'
-              });
-            }
+            const studentName = currentUser?.name || currentUser?.email || 'Student';
+            const studentIdVal = currentUser?.id || currentUser?.email || studentName;
+            emitToSockets('proctor_alert', {
+              studentId: studentIdVal,
+              name: studentName,
+              email: currentUser?.email || '',
+              action: 'Virtual Machine Detected',
+              desc: `VM Detected during exam: ${(res.reasons && res.reasons[0]) || 'Virtualized environment detected'}`,
+              color: '#ef4444'
+            });
           } else {
             setVmDetected(false);
           }
@@ -1066,6 +1064,62 @@ export default function StudentView({ socket, currentUser, username, assignment,
   const [saveStatus, setSaveStatus] = useState(false);
   const saveTimeoutRef = useRef(null);
 
+  // Dual-bridge secondary socket (connecting to LAN if primary is Cloud, or Cloud if primary is LAN)
+  const secondarySocketRef = useRef(null);
+
+  useEffect(() => {
+    let secSocket = null;
+    try {
+      const conn = getConnectionStatus();
+      const localUrl = getLocalApiUrl();
+      const cloudUrl = getCloudUrl();
+      const primaryUri = socket?.io?.uri || '';
+
+      let altTarget = null;
+      if (primaryUri.includes('localhost') || primaryUri.includes('127.0.0.1') || primaryUri.includes('192.168.')) {
+        if (conn.isOnline && cloudUrl && !cloudUrl.includes('localhost') && !cloudUrl.includes('127.0.0.1')) {
+          altTarget = cloudUrl;
+        }
+      } else {
+        if (localUrl && !localUrl.includes('verity-2z4v')) {
+          altTarget = localUrl;
+        }
+      }
+
+      if (altTarget && altTarget !== primaryUri) {
+        console.log(`📡 [StudentView] Establishing secondary dual-bridge socket to ${altTarget}`);
+        secSocket = io(altTarget, {
+          reconnection: true,
+          reconnectionAttempts: Infinity,
+          reconnectionDelay: 2000,
+          timeout: 5000,
+          transports: ['websocket', 'polling'],
+          auth: (cb) => {
+            const token = localStorage.getItem('verity_token') || localStorage.getItem('token');
+            cb({ token });
+          }
+        });
+        secondarySocketRef.current = secSocket;
+      }
+    } catch (_) {}
+
+    return () => {
+      if (secondarySocketRef.current) {
+        try { secondarySocketRef.current.disconnect(); } catch (_) {}
+        secondarySocketRef.current = null;
+      }
+    };
+  }, [socket]);
+
+  const emitToSockets = useCallback((event, data) => {
+    if (socket && typeof socket.emit === 'function') {
+      socket.emit(event, data);
+    }
+    if (secondarySocketRef.current && typeof secondarySocketRef.current.emit === 'function') {
+      secondarySocketRef.current.emit(event, data);
+    }
+  }, [socket]);
+
   const handleSaveCode = () => {
     if (submitted) return;
     const currentCode = codeRef.current;
@@ -1078,20 +1132,18 @@ export default function StudentView({ socket, currentUser, username, assignment,
       persistHistory(curHist, currentCode);
     } catch { /* ignore */ }
 
-    if (socket) {
-      socket.emit('student_typing', {
-        studentId: studentActualId,
-        id: studentActualId,
-        name: studentDisplayName,
-        studentName: studentDisplayName,
-        email: currentUser?.email || '',
-        avatar: currentUser?.avatar || '',
-        code: currentCode,
-        classroomId: (classroom?.id != null ? String(classroom.id) : null) || (classroomId !== 'none' ? classroomId : null) || 'none',
-        assignmentId: assignment?.id || assignmentId,
-        logs: proctorLogsRef.current || proctorLogs
-      });
-    }
+    emitToSockets('student_typing', {
+      studentId: studentActualId,
+      id: studentActualId,
+      name: studentDisplayName,
+      studentName: studentDisplayName,
+      email: currentUser?.email || '',
+      avatar: currentUser?.avatar || '',
+      code: currentCode,
+      classroomId: (classroom?.id != null ? String(classroom.id) : null) || (classroomId !== 'none' ? classroomId : null) || 'none',
+      assignmentId: assignment?.id || assignmentId,
+      logs: proctorLogsRef.current || proctorLogs
+    });
 
     setSaveStatus(true);
     if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
@@ -1141,14 +1193,12 @@ export default function StudentView({ socket, currentUser, username, assignment,
       if (codeHistoryRef.current && codeHistoryRef.current.length > 0) {
         persistHistory(codeHistoryRef.current, codeRef.current);
       }
-      if (socket) {
-        socket.emit('student_leave_workspace', {
-          assignmentId: curAId,
-          classroomId: curCId,
-          studentId: curSId,
-          name: curSName
-        });
-      }
+      emitToSockets('student_leave_workspace', {
+        assignmentId: curAId,
+        classroomId: curCId,
+        studentId: curSId,
+        name: curSName
+      });
       try {
         const sKey = `verity_active_session_${curCId}_${curAId}_${curSId}`;
         const tabSessionId = sessionStorage.getItem('verity_tab_session_id') || '';
@@ -1186,9 +1236,9 @@ export default function StudentView({ socket, currentUser, username, assignment,
       timestamp: Date.now()
     };
 
-    socket.emit('student_enter_activity', payload);
-    socket.emit('student_typing', payload);
-  }, [socket, submitted, studentActualId, studentDisplayName, currentUser, classroom?.id, classroomId, assignment?.id, assignmentId, code]);
+    emitToSockets('student_enter_activity', payload);
+    emitToSockets('student_typing', payload);
+  }, [emitToSockets, submitted, studentActualId, studentDisplayName, currentUser, classroom?.id, classroomId, assignment?.id, assignmentId, code]);
 
   useEffect(() => {
     const currentCodeVal = codeRef.current || code;
@@ -1294,9 +1344,7 @@ export default function StudentView({ socket, currentUser, username, assignment,
       assignmentId: aId
     };
 
-    if (socket && typeof socket.emit === 'function') {
-      socket.emit('proctor_alert', payload);
-    }
+    emitToSockets('proctor_alert', payload);
     const isCopyPaste = !detectedCrash && (actionStr.includes('paste') || actionStr.includes('clipboard') || actionStr.includes('copy'));
     
     // Also post directly to /audit-logs for guaranteed persistence & instant admin dashboard update
@@ -1722,17 +1770,15 @@ export default function StudentView({ socket, currentUser, username, assignment,
       setOutput((prev) => {
         const newOutput = prev + dataChunk;
         // Broadcast to teacher via cloud socket
-        if (socket && socket.connected) {
-          socket.emit('student_terminal_update', {
-            studentId: studentActualId,
-            id: studentActualId,
-            name: studentDisplayName,
-            studentName: studentDisplayName,
-            output: newOutput,
-            classroomId: (classroom?.id != null ? String(classroom.id) : null) || (classroomId !== 'none' ? classroomId : null) || 'none',
-            assignmentId: assignment?.id || assignmentId
-          });
-        }
+        emitToSockets('student_terminal_update', {
+          studentId: studentActualId,
+          id: studentActualId,
+          name: studentDisplayName,
+          studentName: studentDisplayName,
+          output: newOutput,
+          classroomId: (classroom?.id != null ? String(classroom.id) : null) || (classroomId !== 'none' ? classroomId : null) || 'none',
+          assignmentId: assignment?.id || assignmentId
+        });
         return newOutput;
       });
       if (terminalEndRef.current) terminalEndRef.current.scrollIntoView({ behavior: "smooth" });
@@ -1966,14 +2012,12 @@ export default function StudentView({ socket, currentUser, username, assignment,
     }
 
     // Tell teacher we started running
-    if (socket && socket.connected) {
-      socket.emit('student_terminal_update', {
-        studentId: safeUsername,
-        output: "Compiling...\n",
-        classroomId: classroom?.id,
-        assignmentId: assignment?.id
-      });
-    }
+    emitToSockets('student_terminal_update', {
+      studentId: safeUsername,
+      output: "Compiling...\n",
+      classroomId: classroom?.id,
+      assignmentId: assignment?.id
+    });
 
     const token = localStorage.getItem('verity_token') || localStorage.getItem('token');
     console.log('[RUN] emitting compile_code on socket:', targetSocket.id);
@@ -1990,14 +2034,12 @@ export default function StudentView({ socket, currentUser, username, assignment,
     if (targetSocket) {
       targetSocket.emit('stop_code');
     }
-    if (socket && socket.connected) {
-      socket.emit('student_terminal_update', {
-        studentId: safeUsername,
-        output: "[Process stopped by user]\n",
-        classroomId: classroom?.id,
-        assignmentId: assignment?.id
-      });
-    }
+    emitToSockets('student_terminal_update', {
+      studentId: safeUsername,
+      output: "[Process stopped by user]\n",
+      classroomId: classroom?.id,
+      assignmentId: assignment?.id
+    });
     setIsRunning(false);
     setProgramStarted(false);
   };  const handleSubmit = () => {
@@ -2066,14 +2108,14 @@ export default function StudentView({ socket, currentUser, username, assignment,
 
     // I-notify si teacher at tanggalin si student sa live roster
     if (socket) {
-      socket.emit('student_leave_workspace', {
+      emitToSockets('student_leave_workspace', {
         assignmentId: assignment?.id ?? aId,
         classroomId: classroom?.id,
         studentId: studentId,
         name: safeUsername,
         reason: 'submitted'
       });
-      socket.emit('submit_exam', {
+      emitToSockets('submit_exam', {
         studentName: safeUsername,
         studentId: studentId,
         assignmentId: assignment?.id ?? null,
@@ -2130,14 +2172,12 @@ export default function StudentView({ socket, currentUser, username, assignment,
       }).catch(() => {});
     }
 
-    if (socket) {
-      socket.emit('unsubmit_exam', {
-        studentName: safeUsername,
-        studentId: studentId,
-        assignmentId: aId,
-        classroomId: classroom?.id ?? 'default'
-      });
-    }
+    emitToSockets('unsubmit_exam', {
+      studentName: safeUsername,
+      studentId: studentId,
+      assignmentId: aId,
+      classroomId: classroom?.id ?? 'default'
+    });
 
     try {
       window.dispatchEvent(new CustomEvent('verity:submission-updated', {
@@ -2157,28 +2197,24 @@ export default function StudentView({ socket, currentUser, username, assignment,
       targetSocket.emit('terminal_input', inputValue);
       const newOutput = output + inputValue + '\n';
       setOutput(newOutput);
-      if (socket && socket.connected) {
-        socket.emit('student_terminal_update', {
-          studentId: safeUsername,
-          output: newOutput,
-          classroomId: classroom?.id,
-          assignmentId: assignment?.id
-        });
-      }
+      emitToSockets('student_terminal_update', {
+        studentId: safeUsername,
+        output: newOutput,
+        classroomId: classroom?.id,
+        assignmentId: assignment?.id
+      });
       setInputValue("");
     }
   };
 
   const handleClearTerminal = () => {
     setOutput("");
-    if (socket) {
-      socket.emit('student_terminal_update', {
-        studentId: safeUsername,
-        output: "",
-        classroomId: classroom?.id,
-        assignmentId: assignment?.id
-      });
-    }
+    emitToSockets('student_terminal_update', {
+      studentId: safeUsername,
+      output: "",
+      classroomId: classroom?.id,
+      assignmentId: assignment?.id
+    });
   };
 
   const renderFormattedOutput = (rawText) => {
@@ -2846,7 +2882,7 @@ export default function StudentView({ socket, currentUser, username, assignment,
                   persistHistory(nextHist, newCode);
                   return nextHist;
                 });
-                socket.emit('student_typing', {
+                emitToSockets('student_typing', {
                   studentId: studentActualId,
                   id: studentActualId,
                   name: studentDisplayName,

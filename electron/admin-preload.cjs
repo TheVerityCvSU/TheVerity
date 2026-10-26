@@ -36,6 +36,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => ipcRenderer.removeListener('google-auth-closed', handler);
   },
   getDiscoveredServer: () => ipcRenderer.invoke('get-discovered-server'),
+  setLanServer: (url) => ipcRenderer.invoke('set-lan-server', url),
+  scanLanServers: () => ipcRenderer.invoke('scan-lan-servers'),
   onLanServerDiscovered: (callback) => {
     const handler = (event, url) => callback(url);
     ipcRenderer.on('lan-server-discovered', handler);

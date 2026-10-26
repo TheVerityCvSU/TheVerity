@@ -98520,7 +98520,7 @@ app.get("/health", async (req, res) => {
     const lanIps = getValidLanIps();
     const isExplicitClient = process.env.IS_LAN_HOST === "false";
     const isHost = !isExplicitClient && Boolean(
-      fs2.existsSync(path.join(DATA_DIR, "host.flag")) || fs2.existsSync(path.join(__dirname, "host.flag")) || process.env.IS_LAN_HOST === "true" || process.env.IS_VERITY_ADMIN === "true" || process.argv.includes("--host")
+      fs2.existsSync(path.join(DATA_DIR, "host.flag")) || fs2.existsSync(path.join(__dirname, "host.flag")) || process.env.IS_LAN_HOST === "true" || process.env.IS_VERITY_ADMIN === "true" || process.argv.includes("--host") || require.main === module
     );
     res.status(200).json({
       status: "operational",
@@ -101664,6 +101664,9 @@ io.on("connection", (socket) => {
       socket.leave(socket.data.teacherRoom);
     }
     socket.join(roomName);
+    if (assignmentId && assignmentId !== "none") {
+      socket.join(`assignment:${assignmentId}`);
+    }
     socket.data.teacherRoom = roomName;
     const cIdStr = String(classroomId || "none");
     const aIdStr = String(assignmentId || "none");
@@ -101713,7 +101716,8 @@ io.on("connection", (socket) => {
         delete activeStudents[key];
         continue;
       }
-      if (key.startsWith(filterKey + ":") || aIdStr !== "none" && key.startsWith(`none:${aIdStr}:`)) {
+      const isMatch = key.startsWith(filterKey + ":") || aIdStr !== "none" && (key.startsWith(`none:${aIdStr}:`) || key.includes(`:${aIdStr}:`) || String(student.assignmentId) === aIdStr);
+      if (isMatch) {
         socket.emit("teacher_update_code", {
           ...student,
           logs: student.logs || []
@@ -101743,7 +101747,8 @@ io.on("connection", (socket) => {
         delete activeStudents[key];
         continue;
       }
-      if (key.startsWith(filterKey + ":") || aIdStr !== "none" && key.startsWith(`none:${aIdStr}:`)) {
+      const isMatch = key.startsWith(filterKey + ":") || aIdStr !== "none" && (key.startsWith(`none:${aIdStr}:`) || key.includes(`:${aIdStr}:`) || String(student.assignmentId) === aIdStr);
+      if (isMatch) {
         socket.emit("teacher_update_code", {
           ...student,
           logs: student.logs || []
@@ -102364,6 +102369,9 @@ io.on("connection", (socket) => {
     socket.data.roomName = roomName;
     socket.join(roomName);
     io.to(roomName).emit("teacher_update_code", updated);
+    if (assignmentId && assignmentId !== "none") {
+      io.to(`assignment:${assignmentId}`).emit("teacher_update_code", updated);
+    }
     broadcastActiveActivities();
   };
   socket.on("student_enter_activity", handleStudentActivity);
@@ -102489,6 +102497,9 @@ io.on("connection", (socket) => {
         assignmentId
       };
       io.to(roomName).emit("teacher_receive_alert", alertPayload);
+      if (assignmentId && assignmentId !== "none") {
+        io.to(`assignment:${assignmentId}`).emit("teacher_receive_alert", alertPayload);
+      }
     }
     try {
       const key = todayKey();

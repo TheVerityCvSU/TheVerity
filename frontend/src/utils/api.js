@@ -40,13 +40,6 @@ let autoDiscoveredLanServer = null;
 
 const isElectronApp = () => typeof window !== 'undefined' && Boolean(window.electronAPI?.getDiscoveredServer);
 
-// In the desktop app, Electron's LAN client is the single source of truth for the host address.
-// A cached address from a previous session may now belong to THIS laptop (DHCP reassignment),
-// which would silently route logins to our own empty embedded server. Drop it on startup.
-if (isElectronApp()) {
-  try { localStorage.removeItem('verity_lan_server'); } catch (_) {}
-}
-
 /**
  * Waits (up to timeoutMs) for Electron's LAN client to lock onto the Host server.
  * Returns the discovered URL or null.
@@ -90,17 +83,18 @@ if (typeof window !== 'undefined') {
   // Subscribe to real-time LAN host discovery events
   if (window.electronAPI?.onLanServerDiscovered) {
     window.electronAPI.onLanServerDiscovered((discovered) => {
-      if (discovered && discovered !== autoDiscoveredLanServer) {
+      if (discovered) {
         console.log('📡 [Network] Live Verity Host discovered on LAN:', discovered);
         autoDiscoveredLanServer = discovered;
+        isLocalServerUp = true;
         try { localStorage.setItem('verity_lan_server', discovered); } catch (_) {}
         checkLocalHealth();
         notifyListeners();
-      } else if (!discovered && autoDiscoveredLanServer) {
+      } else if (autoDiscoveredLanServer) {
         console.log('📡 [Network] LAN Host disconnected. Returning to offline state.');
         autoDiscoveredLanServer = null;
-        try { localStorage.removeItem('verity_lan_server'); } catch (_) {}
-        checkLocalHealth();
+        isLocalServerUp = false;
+        localHealthData = null;
         notifyListeners();
       }
     });
@@ -130,23 +124,12 @@ export const getLocalApiUrl = () => {
     return autoDiscoveredLanServer;
   }
 
-  // 2. Cached LAN server from previous discovery session (web/browser clients only;
-  //    in Electron the live discovery above is authoritative)
-  if (typeof window !== 'undefined' && !isElectronApp()) {
-    try {
-      const cached = localStorage.getItem('verity_lan_server');
-      if (cached && cached.trim()) {
-        return cached.trim().replace(/\/$/, '');
-      }
-    } catch (_) {}
-  }
-
-  // 3. Web client accessed via LAN IP (phones, tablets, browser)
+  // 2. Web client accessed via LAN IP (phones, tablets, browser)
   if (typeof window !== 'undefined' && window.location && isPrivateHost(window.location.hostname) && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
     return `http://${window.location.hostname}:3001`;
   }
 
-  // 4. Default to local embedded server
+  // 3. Default to local embedded server
   return LOCAL_DEV_API_URL;
 };
 
@@ -197,7 +180,7 @@ export const checkLocalHealth = async () => {
   localHealthPromise = (async () => {
     try {
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 2500);
+      const timer = setTimeout(() => controller.abort(), 2000);
       const res = await fetch(`${localUrl}/health`, {
         signal: controller.signal,
         cache: 'no-store'
@@ -213,13 +196,35 @@ export const checkLocalHealth = async () => {
         }
       }
     } catch (_) {}
+
+    // If localUrl was autoDiscoveredLanServer and unreachable, clear it immediately
+    if (autoDiscoveredLanServer && localUrl === autoDiscoveredLanServer) {
+      console.log('⚠️ [Network] LAN Host unreachable. Clearing active LAN server.');
+      autoDiscoveredLanServer = null;
+    }
     isLocalServerUp = false;
+    localHealthData = null;
     notifyListeners();
     return false;
   })().finally(() => {
     localHealthPromise = null;
   });
   return localHealthPromise;
+};
+
+export const getHasExplicitLanServer = () => {
+  return Boolean(
+    (autoDiscoveredLanServer && !autoDiscoveredLanServer.includes('localhost') && !autoDiscoveredLanServer.includes('127.0.0.1')) ||
+    (typeof window !== 'undefined' && window.location && isPrivateHost(window.location.hostname) && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1')
+  );
+};
+
+export const getIsLanConnected = () => {
+  // If local server or LAN endpoint is down, we are NOT connected to LAN!
+  if (!isLocalServerUp) return false;
+  const hasExplicitLanServer = getHasExplicitLanServer();
+  const isHost = Boolean(localHealthData && localHealthData.isHost === true);
+  return hasExplicitLanServer || isHost;
 };
 
 export const getConnectionStatus = () => {
@@ -233,41 +238,24 @@ export const getConnectionStatus = () => {
   const hasCloud = Boolean(cloudUrl && cloudUrl !== localUrl);
   const isNavOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
 
-  // Determine whether this client is connected to a LAN Server:
-  // 1. autoDiscoveredLanServer is active (UDP beacon discovered the Teacher host on LAN router)
-  // 2. OR custom LAN server configured in localStorage (not localhost/127.0.0.1)
-  // 3. OR web client running on a private LAN IP (e.g. phones/tablets or browser connected to teacher IP)
-  // 4. OR local server is running and broadcasting on physical LAN interface (ComLab host mode)
-  const hasExplicitLanServer = Boolean(
-    autoDiscoveredLanServer ||
-    (typeof window !== 'undefined' && (
-      (localStorage.getItem('verity_lan_server') && !localStorage.getItem('verity_lan_server').includes('localhost') && !localStorage.getItem('verity_lan_server').includes('127.0.0.1')) ||
-      (window.location && isPrivateHost(window.location.hostname) && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1')
-    ))
-  );
+  const isLanConnected = getIsLanConnected();
 
-  const isLocalHostOnLan = Boolean(
-    isLocalServerUp && (
-      hasExplicitLanServer ||
-      (localHealthData && localHealthData.isHost === true)
-    )
-  );
-
-  const isLanConnected = hasExplicitLanServer || isLocalHostOnLan;
-
-  let activeMode = 'cloud';
+  let activeMode = 'offline';
   if (isWebHosted) {
-    if (isCloudDown || !isNavOnline) {
-      activeMode = isLanConnected ? 'lan' : 'offline';
-    } else {
+    if (isLanConnected) {
+      activeMode = 'lan';
+    } else if (!isCloudDown && isNavOnline) {
       activeMode = 'cloud';
+    } else {
+      activeMode = 'offline';
     }
   } else {
     // Desktop / Electron
-    if (hasCloud && !isCloudDown && isNavOnline) {
-      activeMode = 'cloud';
-    } else if (isLanConnected) {
+    // When connected to a responsive LAN Server in Electron or local network, prioritize LAN Server!
+    if (isLanConnected) {
       activeMode = 'lan';
+    } else if (hasCloud && !isCloudDown && isNavOnline) {
+      activeMode = 'cloud';
     } else {
       activeMode = 'offline';
     }
@@ -283,7 +271,7 @@ export const getConnectionStatus = () => {
   }
 
   return {
-    isOnline: !isCloudDown && isNavOnline,
+    isOnline: (!isCloudDown && isNavOnline) || isLanConnected,
     isCloudDown,
     isNavOnline,
     activeMode, // 'cloud' | 'lan' | 'offline'
@@ -293,6 +281,14 @@ export const getConnectionStatus = () => {
     localUrl,
     isWebHosted
   };
+};
+
+export const getActiveSocketUrl = () => {
+  const status = getConnectionStatus();
+  if (status.isWebHosted) return status.cloudUrl || DEFAULT_CLOUD_API_URL;
+  if (status.activeMode === 'lan') return status.localUrl || getLocalApiUrl();
+  if (status.activeMode === 'cloud') return status.cloudUrl || DEFAULT_CLOUD_API_URL;
+  return status.localUrl || getLocalApiUrl();
 };
 
 export const subscribeConnectionStatus = (callback) => {
@@ -353,22 +349,109 @@ export const checkCloudHealth = async () => {
   return healthCheckPromise;
 };
 
+/**
+ * Fast auto-reconnection to LAN host:
+ * Automatically probes previously saved LAN server and common host IPs.
+ * Locks on within milliseconds without user clicking 'Connect to LAN'.
+ */
+export const attemptAutoLanReconnect = async () => {
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    return false;
+  }
+
+  let saved = null;
+  if (typeof window !== 'undefined') {
+    try { saved = localStorage.getItem('verity_lan_server'); } catch (_) {}
+  }
+
+  const candidates = [
+    saved,
+    'http://192.168.254.100:3001',
+    'http://192.168.254.101:3001',
+    'http://192.168.1.10:3001',
+    'http://192.168.1.100:3001'
+  ].filter(Boolean);
+
+  const myHostnames = new Set(['localhost', '127.0.0.1', '::1']);
+
+  for (const cand of candidates) {
+    let clean = cand.trim().replace(/\/$/, '');
+    if (!clean.startsWith('http://') && !clean.startsWith('https://')) {
+      clean = `http://${clean}`;
+    }
+    try {
+      const u = new URL(clean);
+      if (myHostnames.has(u.hostname)) continue;
+    } catch (_) {
+      continue;
+    }
+
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 1000);
+      const res = await fetch(`${clean}/health`, { signal: controller.signal, cache: 'no-store' });
+      clearTimeout(timer);
+      if (res.ok) {
+        const data = await res.json().catch(() => null);
+        if (data && data.app === 'the-verity') {
+          autoDiscoveredLanServer = clean;
+          localHealthData = data;
+          isLocalServerUp = true;
+          try { localStorage.setItem('verity_lan_server', clean); } catch (_) {}
+          if (window.electronAPI?.setLanServer) {
+            window.electronAPI.setLanServer(clean).catch(() => {});
+          }
+          notifyListeners();
+          console.log('⚡ [Network] Auto-connected to LAN Host:', clean);
+          return true;
+        }
+      }
+    } catch (_) {}
+  }
+
+  // Trigger Electron discovery scanner if available
+  if (window.electronAPI?.scanLanServers) {
+    try {
+      const found = await window.electronAPI.scanLanServers();
+      if (found) {
+        autoDiscoveredLanServer = found;
+        try { localStorage.setItem('verity_lan_server', found); } catch (_) {}
+        await checkLocalHealth();
+        notifyListeners();
+        return true;
+      }
+    } catch (_) {}
+  }
+
+  return false;
+};
+
 // Run network probes immediately on startup and keep checking periodically for auto-recovery
 if (typeof window !== 'undefined') {
   // Immediate initial health probe on app load
   checkCloudHealth();
-  checkLocalHealth();
+  checkLocalHealth().then((ok) => {
+    if (!ok) attemptAutoLanReconnect();
+  });
 
-  // Background auto-recovery check: probe every 8 seconds when cloud is down to instantly pop back online
+  // Background auto-recovery check:
+  // - If connected to LAN: check local health every 2.5s to immediately catch disconnects
+  // - If NOT connected to LAN: attempt auto-reconnect every 2.5s to lock on as soon as Wi-Fi/router reconnects
   setInterval(() => {
-    if (isCloudDown || Date.now() - lastCloudCheckTime > 30000) {
+    if (getIsLanConnected()) {
+      checkLocalHealth();
+    } else {
+      attemptAutoLanReconnect();
+    }
+
+    if (isCloudDown || Date.now() - lastCloudCheckTime > 25000) {
       checkCloudHealth();
     }
-    checkLocalHealth();
-  }, 8000);
+  }, 2500);
 
   window.addEventListener('online', () => {
-    console.log('[Network] Network connectivity restored. Probing cloud and local servers...');
+    console.log('🟢 [Network] Network connectivity restored. Reconnecting to LAN and Cloud...');
+    attemptAutoLanReconnect();
     checkCloudHealth();
     checkLocalHealth();
     try {
@@ -377,8 +460,11 @@ if (typeof window !== 'undefined') {
   });
 
   window.addEventListener('offline', () => {
-    // Probe rather than blindly marking offline, to avoid false positives on multi-adapter/Wi-Fi setups
-    checkCloudHealth();
+    console.log('🔴 [Network] Network connectivity lost. Immediately switching to Offline Mode.');
+    autoDiscoveredLanServer = null;
+    isLocalServerUp = false;
+    localHealthData = null;
+    notifyListeners();
     checkLocalHealth();
   });
 
@@ -391,7 +477,18 @@ if (typeof window !== 'undefined') {
 }
 
 export const setCustomLanServer = async (url) => {
-  if (!url) return false;
+  if (!url) {
+    autoDiscoveredLanServer = null;
+    try {
+      localStorage.removeItem('verity_lan_server');
+      if (window.electronAPI?.localDB?.setLocal) {
+        await window.electronAPI.localDB.setLocal('verity_lan_server', null);
+      }
+    } catch (_) {}
+    notifyListeners();
+    return { success: true };
+  }
+
   let clean = url.trim().replace(/\/$/, '');
   if (!clean.startsWith('http://') && !clean.startsWith('https://')) {
     clean = `http://${clean}`;
@@ -399,15 +496,58 @@ export const setCustomLanServer = async (url) => {
   if (!clean.replace(/^https?:\/\//, '').includes(':')) {
     clean = `${clean}:3001`;
   }
+
+  // Pre-test the health of the target LAN server
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 3000);
+    const res = await fetch(`${clean}/health`, { signal: controller.signal, cache: 'no-store' });
+    clearTimeout(timer);
+    if (!res.ok) {
+      return { success: false, error: `Server returned HTTP ${res.status}` };
+    }
+    const data = await res.json().catch(() => null);
+    if (!data || data.app !== 'the-verity') {
+      return { success: false, error: 'Target reachable, but not a Verity server' };
+    }
+  } catch (err) {
+    return { success: false, error: 'Could not connect. Please check IP and port.' };
+  }
+
   autoDiscoveredLanServer = clean;
   try {
     localStorage.setItem('verity_lan_server', clean);
     if (window.electronAPI?.localDB?.setLocal) {
       await window.electronAPI.localDB.setLocal('verity_lan_server', clean);
     }
+    if (window.electronAPI?.setLanServer) {
+      await window.electronAPI.setLanServer(clean).catch(() => {});
+    }
   } catch (_) {}
+
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('verity:server-changed', { detail: clean }));
+    window.dispatchEvent(new CustomEvent('verity:lan-discovered', { detail: clean }));
+  }
+
+  checkLocalHealth();
   notifyListeners();
-  return true;
+  return { success: true, url: clean };
+};
+
+export const switchToCloudMode = () => {
+  autoDiscoveredLanServer = null;
+  try {
+    localStorage.removeItem('verity_lan_server');
+    if (window.electronAPI?.localDB?.setLocal) {
+      window.electronAPI.localDB.setLocal('verity_lan_server', null).catch(() => {});
+    }
+  } catch (_) {}
+  isCloudDown = false;
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('verity:server-changed', { detail: getCloudUrl() }));
+  }
+  notifyListeners();
 };
 
 /**
@@ -426,10 +566,8 @@ export const apiFetch = async (url, options = {}) => {
   if (!autoDiscoveredLanServer && typeof window !== 'undefined' && window.electronAPI?.getDiscoveredServer) {
     try {
       let liveDiscovered = await window.electronAPI.getDiscoveredServer();
-      // If offline in ComLab and still waiting on discovery, give the background scan time to lock on
-      const isNavOffline = typeof navigator !== 'undefined' && navigator.onLine === false;
-      if (!liveDiscovered && (isCloudDown || isNavOffline)) {
-        liveDiscovered = await waitForLanServer(6000);
+      if (!liveDiscovered) {
+        liveDiscovered = await waitForLanServer(1500);
       }
       if (liveDiscovered) {
         autoDiscoveredLanServer = liveDiscovered;
@@ -562,7 +700,25 @@ export const apiFetch = async (url, options = {}) => {
     }
   }
 
-  // 2. Desktop / Electron / Local dev: Cloud-first with local fallback
+  // 2. Desktop / Electron / Local dev: Check if connected to LAN server
+  // When connected to LAN server (School / ComLab mode), route directly to LAN server first!
+  const isLanMode = getIsLanConnected();
+  if (isLanMode) {
+    try {
+      const currentLocalUrl = getLocalApiUrl();
+      const currentFallbackUrl = `${currentLocalUrl}${pathWithQuery}`;
+      const localRes = await fetch(currentFallbackUrl, { ...options, headers });
+      const method = (options.method || 'GET').toUpperCase();
+      if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(method)) {
+        fetch(`${currentLocalUrl}/api/sync`, { method: 'POST' }).catch(() => {});
+      }
+      return localRes;
+    } catch (lanErr) {
+      console.warn(`[apiFetch] Direct request to LAN server failed (${localFallbackUrl}):`, lanErr.message);
+      // Fall through to try cloud if available
+    }
+  }
+
   // When cloud is marked down (e.g. offline ComLab), route directly to local/LAN server for instant response
   if (isCloudDown) {
     try {

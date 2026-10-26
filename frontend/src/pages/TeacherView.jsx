@@ -25,7 +25,8 @@ import {
   PlayCircle,
   Monitor
 } from 'lucide-react';
-import { apiFetch } from '../utils/api';
+import { io } from 'socket.io-client';
+import { apiFetch, getCloudUrl, getLocalApiUrl, getConnectionStatus } from '../utils/api';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { getStudentGrade, isStudentGraded } from '../utils/gradeUtils';
@@ -544,17 +545,40 @@ export default function TeacherView({
   useEffect(() => {
     if (!socket) return;
 
-    const joinRoom = () => {
-      if (mode === 'live') {
-        const token = localStorage.getItem('verity_token') || localStorage.getItem('token');
-        socket.emit('teacher_join', {
-          classroomId: classroom?.id,
-          assignmentId: assignment?.id,
-          token,
-          user: currentUser
+    // Dual-bridge: Connect to both primary socket and alternate socket (LAN/Cloud)
+    let secondarySocket = null;
+    try {
+      const conn = getConnectionStatus();
+      const localUrl = getLocalApiUrl();
+      const cloudUrl = getCloudUrl();
+      const primaryUri = socket?.io?.uri || '';
+
+      let altTarget = null;
+      if (primaryUri.includes('localhost') || primaryUri.includes('127.0.0.1') || primaryUri.includes('192.168.')) {
+        if (conn.isOnline && cloudUrl && !cloudUrl.includes('localhost') && !cloudUrl.includes('127.0.0.1')) {
+          altTarget = cloudUrl;
+        }
+      } else {
+        if (localUrl && !localUrl.includes('verity-2z4v')) {
+          altTarget = localUrl;
+        }
+      }
+
+      if (altTarget && altTarget !== primaryUri) {
+        console.log(`📡 [TeacherView] Establishing dual-bridge socket to ${altTarget}`);
+        secondarySocket = io(altTarget, {
+          reconnection: true,
+          reconnectionAttempts: Infinity,
+          reconnectionDelay: 1500,
+          timeout: 5000,
+          transports: ['websocket', 'polling'],
+          auth: (cb) => {
+            const token = localStorage.getItem('verity_token') || localStorage.getItem('token');
+            cb({ token });
+          }
         });
       }
-    };
+    } catch (_) {}
 
     const handlePastWarnings = (pastLogs) => {
       if (Array.isArray(pastLogs) && pastLogs.length > 0) {
@@ -568,30 +592,13 @@ export default function TeacherView({
         mergeWarningLogs(filtered);
       }
     };
-    socket.on('teacher_past_warnings', handlePastWarnings);
-
-    joinRoom();
-    socket.on('connect', joinRoom);
-
-    let syncInterval = null;
-    if (mode === 'live') {
-      syncInterval = setInterval(() => {
-        if (socket.connected) {
-          socket.emit('teacher_request_sync', {
-            classroomId: classroom?.id,
-            assignmentId: assignment?.id
-          });
-        }
-      }, 4000);
-    }
 
     const checkSelection = (id) => {
       if (!id) return;
       setSelectedStudentId((prev) => (prev ? prev : id));
     };
 
-    if (mode === 'live') {
-      socket.on('teacher_update_code', (data) => {
+    const handleUpdateCode = (data) => {
         if (!data) return;
         // Isolate updates strictly to the active assignment
         if (data.assignmentId && assignment?.id && data.assignmentId !== 'none' && String(data.assignmentId) !== String(assignment.id)) {
@@ -711,9 +718,9 @@ export default function TeacherView({
           return next;
         });
         checkSelection(studentId || studentName);
-      });
+      };
 
-      socket.on('teacher_receive_alert', (data) => {
+      const handleReceiveAlert = (data) => {
         if (!data) return;
         const incomingAId = data.assignmentId || data.assignment_id;
         if (assignment?.id && incomingAId && incomingAId !== 'none' && incomingAId !== 'default' && String(incomingAId) !== String(assignment.id)) {
@@ -838,9 +845,9 @@ export default function TeacherView({
             osc.stop(ctx.currentTime + 0.15);
           } catch {}
         }
-      });
+      };
 
-      socket.on('teacher_terminal_update', (data) => {
+      const handleTerminalUpdate = (data) => {
         if (!data) return;
         const studentId = String(data.studentId || data.name || '');
         const studentName = String(data.name || data.studentName || studentId || 'Student').trim();
@@ -877,9 +884,9 @@ export default function TeacherView({
           return next;
         });
         checkSelection(studentId || studentName);
-      });
+      };
 
-      socket.on('teacher_student_left', ({ studentId, studentName, assignmentId: leftAssignmentId, classroomId: leftClassroomId }) => {
+      const handleStudentLeft = ({ studentId, studentName, assignmentId: leftAssignmentId, classroomId: leftClassroomId }) => {
         if (leftAssignmentId && assignment?.id && leftAssignmentId !== 'none' && String(leftAssignmentId) !== String(assignment.id)) {
           return;
         }
@@ -915,10 +922,9 @@ export default function TeacherView({
           }
           return prev;
         });
-      });
-    }
+      };
 
-    socket.on('teacher_receive_submission', (data) => {
+    const handleReceiveSubmission = (data) => {
       const sName = String(data.studentName || data.studentId || '').trim();
       const sId = String(data.studentId || data.studentName || '').trim();
       const sNameLower = sName.toLowerCase();
@@ -990,7 +996,7 @@ export default function TeacherView({
         });
         setTimeout(() => setToast(null), 3500);
       }
-    });
+    };
 
     const handleUnsubmitted = (data) => {
       if (!data) return;
@@ -1010,9 +1016,6 @@ export default function TeacherView({
         };
       });
     };
-
-    socket.on('teacher_student_unsubmitted', handleUnsubmitted);
-    socket.on('student_unsubmitted', handleUnsubmitted);
 
     const handleLiveGradeUpdate = (data) => {
       if (!data || String(data.assignmentId) !== String(assignment?.id) || !data.studentId)
@@ -1042,25 +1045,88 @@ export default function TeacherView({
         };
       });
     };
-    socket.on('grade_updated', handleLiveGradeUpdate);
+
+    const bindSocket = (targetSock) => {
+      if (!targetSock) return () => {};
+
+      const joinRoom = () => {
+        if (mode === 'live') {
+          const token = localStorage.getItem('verity_token') || localStorage.getItem('token');
+          targetSock.emit('teacher_join', {
+            classroomId: classroom?.id,
+            assignmentId: assignment?.id,
+            token,
+            user: currentUser
+          });
+          targetSock.emit('teacher_request_sync', {
+            classroomId: classroom?.id,
+            assignmentId: assignment?.id
+          });
+        }
+      };
+
+      targetSock.on('connect', joinRoom);
+      if (targetSock.connected) joinRoom();
+
+      targetSock.on('teacher_past_warnings', handlePastWarnings);
+      if (mode === 'live') {
+        targetSock.on('teacher_update_code', handleUpdateCode);
+        targetSock.on('teacher_receive_alert', handleReceiveAlert);
+        targetSock.on('teacher_terminal_update', handleTerminalUpdate);
+        targetSock.on('teacher_student_left', handleStudentLeft);
+      }
+      targetSock.on('teacher_receive_submission', handleReceiveSubmission);
+      targetSock.on('teacher_student_unsubmitted', handleUnsubmitted);
+      targetSock.on('student_unsubmitted', handleUnsubmitted);
+      targetSock.on('grade_updated', handleLiveGradeUpdate);
+
+      return () => {
+        targetSock.off('connect', joinRoom);
+        targetSock.off('teacher_past_warnings', handlePastWarnings);
+        if (mode === 'live') {
+          targetSock.off('teacher_update_code', handleUpdateCode);
+          targetSock.off('teacher_receive_alert', handleReceiveAlert);
+          targetSock.off('teacher_terminal_update', handleTerminalUpdate);
+          targetSock.off('teacher_student_left', handleStudentLeft);
+        }
+        targetSock.off('teacher_receive_submission', handleReceiveSubmission);
+        targetSock.off('teacher_student_unsubmitted', handleUnsubmitted);
+        targetSock.off('student_unsubmitted', handleUnsubmitted);
+        targetSock.off('grade_updated', handleLiveGradeUpdate);
+        try {
+          targetSock.emit('teacher_leave', { classroomId: classroom?.id, assignmentId: assignment?.id });
+        } catch (_) {}
+      };
+    };
+
+    const unbindPrimary = bindSocket(socket);
+    const unbindSecondary = secondarySocket ? bindSocket(secondarySocket) : null;
+
+    let syncInterval = null;
+    if (mode === 'live') {
+      syncInterval = setInterval(() => {
+        if (socket?.connected) {
+          socket.emit('teacher_request_sync', {
+            classroomId: classroom?.id,
+            assignmentId: assignment?.id
+          });
+        }
+        if (secondarySocket?.connected) {
+          secondarySocket.emit('teacher_request_sync', {
+            classroomId: classroom?.id,
+            assignmentId: assignment?.id
+          });
+        }
+      }, 4000);
+    }
 
     return () => {
-      socket.off('connect', joinRoom);
       if (syncInterval) clearInterval(syncInterval);
-      if (socket) {
-        socket.emit('teacher_leave', { classroomId: classroom?.id, assignmentId: assignment?.id });
+      if (unbindPrimary) unbindPrimary();
+      if (unbindSecondary) unbindSecondary();
+      if (secondarySocket) {
+        try { secondarySocket.disconnect(); } catch (_) {}
       }
-      if (mode === 'live') {
-        socket.off('teacher_update_code');
-        socket.off('teacher_receive_alert');
-        socket.off('teacher_terminal_update');
-        socket.off('teacher_student_left');
-      }
-      socket.off('teacher_receive_submission');
-      socket.off('teacher_past_warnings', handlePastWarnings);
-      socket.off('teacher_student_unsubmitted', handleUnsubmitted);
-      socket.off('student_unsubmitted', handleUnsubmitted);
-      socket.off('grade_updated', handleLiveGradeUpdate);
     };
   }, [socket, mode, classroom?.id, assignment?.id, currentUser]);
 
