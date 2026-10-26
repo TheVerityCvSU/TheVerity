@@ -3874,6 +3874,18 @@ async function getKioskSettings() {
 let currentInstruction = "";
 const activeStudents = {};
 
+const {
+    initCloudRelay,
+    relayStudentActivity,
+    relayProctorAlert,
+    relayTerminalUpdate,
+    relayStudentLeft,
+    relaySubmitExam,
+    relayUnsubmitExam
+} = require('./cloudRelay');
+
+initCloudRelay(activeStudents, io);
+
 function getActiveActivitiesMap(targetClassroomId = null) {
     const counts = {};
     for (const student of Object.values(activeStudents)) {
@@ -4163,6 +4175,8 @@ io.on('connection', (socket) => {
     });
 
     socket.on('teacher_request_sync', async ({ classroomId, assignmentId }) => {
+        // Broadcast request to any connected LAN relays to refresh live students
+        io.emit('cloud_request_lan_sync', { classroomId, assignmentId });
         const cIdStr = String(classroomId || 'none');
         const aIdStr = String(assignmentId || 'none');
         const filterKey = `${cIdStr}:${aIdStr}`;
@@ -4852,6 +4866,9 @@ io.on('connection', (socket) => {
             io.to(`assignment:${assignmentId}`).emit('teacher_update_code', updated);
         }
 
+        // Relay to Render Cloud so teachers on Vercel see real-time updates!
+        relayStudentActivity(updated);
+
         // Real-time update activity indicator dots for instructors
         broadcastActiveActivities();
     };
@@ -4981,6 +4998,8 @@ io.on('connection', (socket) => {
             if (assignmentId && assignmentId !== 'none') {
                 io.to(`assignment:${assignmentId}`).emit('teacher_receive_alert', alertPayload);
             }
+            // Relay proctor alert to Render Cloud for Vercel teachers!
+            relayProctorAlert(alertPayload);
         }
 
         try {
@@ -5089,6 +5108,8 @@ io.on('connection', (socket) => {
         socket.to(roomName).emit('teacher_receive_submission', payload);
         socket.to(roomName).emit('teacher_student_left', { studentId: targetId, studentName: authenticatedName, studentIdNum: authenticatedId, reason: 'submitted', assignmentId, classroomId });
         io.emit('teacher_student_left', { studentId: targetId, studentName: authenticatedName, studentIdNum: authenticatedId, reason: 'submitted', assignmentId, classroomId });
+        relaySubmitExam(payload);
+        relayStudentLeft({ studentId: targetId, studentName: authenticatedName, studentIdNum: authenticatedId, reason: 'submitted', assignmentId, classroomId });
 
         try {
             await db.run('DELETE FROM submissions WHERE assignment_id = ? AND student_name = ?', assignmentId, authenticatedName);
@@ -5132,6 +5153,7 @@ io.on('connection', (socket) => {
         socket.to(roomName).emit('teacher_student_unsubmitted', { studentName, assignmentId, studentId: safeStudentId });
         socket.emit('student_unsubmitted', { studentName, assignmentId, studentId: safeStudentId });
         socket.broadcast.emit('student_unsubmitted', { studentName, assignmentId, studentId: safeStudentId });
+        relayUnsubmitExam({ studentName, assignmentId, studentId: safeStudentId, classroomId });
     });
 
     socket.on('student_terminal_update', (data) => {
@@ -5140,6 +5162,7 @@ io.on('connection', (socket) => {
         } else {
             socket.broadcast.emit('teacher_terminal_update', data);
         }
+        relayTerminalUpdate(data);
     });
 
     socket.on('student_leave_workspace', (data) => {
@@ -5173,6 +5196,7 @@ io.on('connection', (socket) => {
             socket.leave(roomName);
         }
         socket.broadcast.emit('teacher_student_left', leftPayload);
+        relayStudentLeft(leftPayload);
 
         socket.data.studentKey = null;
         socket.data.studentId = null;

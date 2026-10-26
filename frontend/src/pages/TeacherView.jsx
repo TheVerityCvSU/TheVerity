@@ -559,7 +559,7 @@ export default function TeacherView({
           altTarget = cloudUrl;
         }
       } else {
-        if (localUrl && !localUrl.includes('verity-2z4v')) {
+        if (!conn.isWebHosted && localUrl && !localUrl.includes('verity-2z4v')) {
           altTarget = localUrl;
         }
       }
