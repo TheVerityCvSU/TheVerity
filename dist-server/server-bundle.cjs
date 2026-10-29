@@ -108832,7 +108832,8 @@ var getClassworkFromDb = async (classroomId) => {
       starterCode: meta.starterCode || "",
       duration: meta.duration !== void 0 ? meta.duration : 60,
       autoSaveInterval: meta.autoSaveInterval || "30s",
-      treatWarningsAsErrors: !!meta.treatWarningsAsErrors
+      treatWarningsAsErrors: !!meta.treatWarningsAsErrors,
+      disableBack: !!meta.disableBack
     };
   });
 };
@@ -108875,7 +108876,8 @@ var saveClassworkToDb = async (classroomId, classwork) => {
       starterCode: cw.starterCode !== void 0 ? cw.starterCode : "",
       duration: cw.duration !== void 0 ? cw.duration : 60,
       autoSaveInterval: cw.autoSaveInterval || "30s",
-      treatWarningsAsErrors: !!cw.treatWarningsAsErrors
+      treatWarningsAsErrors: !!cw.treatWarningsAsErrors,
+      disableBack: !!cw.disableBack
     };
     await db.run(`
             INSERT INTO classwork (id, classroom_id, title, description, dueDate, type)

@@ -7,7 +7,7 @@ import {
   Image, Video, Monitor, Menu, Home, Archive, Edit3, Maximize2, Copy, Check, 
   Info, Users, BookOpen, Sparkles, Plus, Send, ChevronRight, ChevronDown, CheckCircle2, 
   MessageSquare, PlayCircle, Eye, RefreshCw, Palette, ExternalLink, FileText,
-  Paperclip, MoreHorizontal, Code2, Trash2, AlertTriangle
+  Paperclip, MoreHorizontal, Code2, Trash2, AlertTriangle, Lock
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { apiFetch } from '../utils/api';
@@ -26,7 +26,7 @@ import { getStudentGrade, isStudentGraded, formatGradeScore } from '../utils/gra
 import { formatShortDate } from '../utils/dateUtils';
 import ClassroomBannerIllustration from '../components/ClassroomBannerIllustration';
 
-const EMPTY_FORM = { title: '', activityType: 'Activity', noDueDate: true, dueDate: '', instruction: '', points: '100', grading: 'On', attachments: [], duration: 60, autoSaveInterval: '30s', treatWarningsAsErrors: false, testCases: [] };
+const EMPTY_FORM = { title: '', activityType: 'Activity', noDueDate: true, dueDate: '', instruction: '', points: '100', grading: 'On', attachments: [], duration: 60, autoSaveInterval: '30s', treatWarningsAsErrors: false, disableBack: false, testCases: [] };
 
 const isLegacyHardcoded = (item) => (item?.id === 1 || item?.id === 2) && (item?.title?.startsWith('Activity 1:') || item?.title?.startsWith('Activity 2:'));
 
@@ -1246,6 +1246,7 @@ export default function TeacherClasswork({
       duration: item.duration || 60,
       autoSaveInterval: item.autoSaveInterval || '30s',
       treatWarningsAsErrors: !!item.treatWarningsAsErrors,
+      disableBack: !!item.disableBack,
       testCases: Array.isArray(item.testCases) ? item.testCases : [],
       starterCode: item.starterCode || ''
     });
@@ -1276,6 +1277,7 @@ export default function TeacherClasswork({
       duration: form.duration,
       autoSaveInterval: form.autoSaveInterval,
       treatWarningsAsErrors: form.treatWarningsAsErrors,
+      disableBack: !!form.disableBack,
       testCases: Array.isArray(form.testCases) ? form.testCases : [],
       starterCode: form.starterCode || (editingId ? (classwork.find(i => i.id === editingId)?.starterCode || '') : '')
     };
@@ -1860,21 +1862,23 @@ export default function TeacherClasswork({
                             initial={{ opacity: 0, y: 15 }}
                             animate={{ opacity: 1, y: 0 }}
                             transition={{ duration: 0.3, delay: index * 0.05 }}
-                            className="vt-card" style={{ background: ui.surface, border: `1px solid ${ui.border}`, borderRadius: '14px', overflow: 'hidden', position: 'relative' }}>
+                            className="vt-card" style={{ background: ui.surface, border: `1px solid ${ui.border}`, borderRadius: '14px', overflow: 'visible', position: 'relative' }}>
                             {Number(activeActivityCounts[String(item.id)]) > 0 && !isMaterial && (
                               <span
                                 title={`${activeActivityCounts[String(item.id)]} student${Number(activeActivityCounts[String(item.id)]) > 1 ? 's' : ''} currently working on this activity`}
                                 style={{
                                   position: 'absolute',
-                                  top: '8px',
-                                  left: '8px',
-                                  width: '8px',
-                                  height: '8px',
+                                  top: '-3px',
+                                  left: '-3px',
+                                  width: '14px',
+                                  height: '14px',
                                   borderRadius: '50%',
                                   backgroundColor: '#10b981',
-                                  boxShadow: '0 0 6px #10b981',
-                                  animation: 'live-pulse 2s infinite',
-                                  zIndex: 3,
+                                  boxShadow: isDark
+                                    ? `0 0 0 2.5px ${ui.surface || '#1b1e1c'}, 0 0 12px #10b981`
+                                    : '0 0 0 2.5px #ffffff, 0 0 12px #10b981',
+                                  animation: 'live-pulse 1.8s infinite',
+                                  zIndex: 40,
                                   pointerEvents: 'auto'
                                 }}
                               />
@@ -2038,15 +2042,17 @@ export default function TeacherClasswork({
                                     title={`${activeActivityCounts[String(item.id)]} student${Number(activeActivityCounts[String(item.id)]) > 1 ? 's' : ''} currently working on this activity`}
                                     style={{
                                       position: 'absolute',
-                                      top: '8px',
-                                      left: '8px',
-                                      width: '8px',
-                                      height: '8px',
+                                      top: '-3px',
+                                      left: '-3px',
+                                      width: '14px',
+                                      height: '14px',
                                       borderRadius: '50%',
                                       backgroundColor: '#10b981',
-                                      boxShadow: '0 0 6px #10b981',
-                                      animation: 'live-pulse 2s infinite',
-                                      zIndex: 3,
+                                      boxShadow: isDark
+                                        ? `0 0 0 2.5px ${isOpen ? '#242a2b' : '#1e2324'}, 0 0 12px #10b981`
+                                        : `0 0 0 2.5px ${isOpen ? '#f1f5f9' : '#f8fafc'}, 0 0 12px #10b981`,
+                                      animation: 'live-pulse 1.8s infinite',
+                                      zIndex: 40,
                                       pointerEvents: 'auto'
                                     }}
                                   />
@@ -3341,7 +3347,7 @@ export default function TeacherClasswork({
                       </select>
                     </div>
                   </div>
-                  <div style={{ ...styles.labelRow, marginTop: '5px', marginBottom: '10px' }}>
+                  <div style={{ ...styles.labelRow, marginTop: '5px', marginBottom: '6px' }}>
                     <label style={styles.checkboxLabel}>
                       <input
                         type="checkbox"
@@ -3349,6 +3355,17 @@ export default function TeacherClasswork({
                         onChange={(e) => setForm({ ...form, treatWarningsAsErrors: e.target.checked })}
                       />
                       Treat compiler warnings as errors
+                    </label>
+                  </div>
+                  <div style={{ ...styles.labelRow, marginTop: '2px', marginBottom: '12px' }}>
+                    <label style={styles.checkboxLabel}>
+                      <input
+                        type="checkbox"
+                        checked={!!form.disableBack}
+                        onChange={(e) => setForm({ ...form, disableBack: e.target.checked })}
+                      />
+                      <Lock size={14} style={{ marginRight: '5px', color: form.disableBack ? '#10b981' : (isDark ? '#a3a3a3' : '#6b7280'), verticalAlign: '-2px' }} />
+                      Disable back button in student workspace
                     </label>
                   </div>
                 {/* Automated Test Cases */}

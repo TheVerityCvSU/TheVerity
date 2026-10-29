@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import { io } from 'socket.io-client';
 import Editor from '@monaco-editor/react';
-import { ArrowLeft, Save, Play, Square, Settings, TerminalSquare, Check, AlertTriangle, Trash2, Moon, Sun, X, Link2, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, PanelLeftClose, PanelLeft, BookOpen, CheckSquare, Plus, CheckCircle2, XCircle, PlayCircle, Loader2, Maximize2, Minimize2, Monitor, MonitorX, ShieldAlert } from 'lucide-react';
+import { ArrowLeft, Save, Play, Square, Settings, TerminalSquare, Check, AlertTriangle, Trash2, Moon, Sun, X, Link2, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, PanelLeftClose, PanelLeft, BookOpen, CheckSquare, Plus, CheckCircle2, XCircle, PlayCircle, Loader2, Maximize2, Minimize2, Monitor, MonitorX, ShieldAlert, Lock } from 'lucide-react';
 import { apiFetch, getCompilerSocketUrl, getLocalApiUrl, getCloudUrl, getConnectionStatus } from '../utils/api';
 import localStore from '../services/localStore';
 import { useDarkMode } from '../hooks/useDarkMode';
@@ -69,6 +69,36 @@ export default function StudentView({ socket, currentUser, username, assignment,
   };
 
   const [submitted, setSubmitted] = useState(() => checkLocalSubmitted());
+
+  // Locked workspace check: when teacher enabled disableBack, students cannot exit until submitted
+  const isBackDisabled = Boolean(!isSandbox && (assignment?.disableBack || assignment?.disable_back));
+  const isBackBlocked = isBackDisabled && !submitted;
+
+  // Intercept browser back navigation & keyboard shortcuts when back is blocked
+  useEffect(() => {
+    if (!isBackBlocked) return;
+
+    const handleKeyDown = (e) => {
+      // Block Alt + ArrowLeft (browser back)
+      if (e.altKey && (e.key === 'ArrowLeft' || e.keyCode === 37)) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    };
+
+    const handlePopState = (e) => {
+      try {
+        window.history.pushState(null, '', window.location.href);
+      } catch {}
+    };
+
+    window.addEventListener('keydown', handleKeyDown, true);
+    window.addEventListener('popstate', handlePopState);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown, true);
+      window.removeEventListener('popstate', handlePopState);
+    };
+  }, [isBackBlocked]);
 
   const getHistoryKeys = () => [
     `verity_history_${classroomId}_${assignmentId}_${studentId}`,
@@ -2607,6 +2637,9 @@ export default function StudentView({ socket, currentUser, username, assignment,
           <div style={styles.toolGroupLeft}>
             <button
               onClick={() => {
+                if (isBackBlocked) {
+                  return;
+                }
                 isExitingCleanlyRef.current = true;
                 const cId = classroom?.id != null ? String(classroom.id) : (classroomId || 'none');
                 const aId = assignment?.id != null ? String(assignment.id) : (assignmentId || 'none');
@@ -2633,12 +2666,15 @@ export default function StudentView({ socket, currentUser, username, assignment,
                 } catch (_) {}
                 onBack();
               }}
+              disabled={isBackBlocked}
+              title={isBackBlocked ? "Workspace exit is locked until submitted" : "Back"}
               style={{
                 ...styles.backButton,
-                ...(isDark ? { backgroundColor: '#333333', borderColor: '#484848', color: '#E8EAED' } : {})
+                ...(isDark ? { backgroundColor: '#333333', borderColor: '#484848', color: '#E8EAED' } : {}),
+                ...(isBackBlocked ? { opacity: 0.4, cursor: 'not-allowed' } : {})
               }}
             >
-              <ArrowLeft size={18} /> Back
+              {isBackBlocked ? <Lock size={15} /> : <ArrowLeft size={18} />} Back
             </button>
             <button
               onClick={handleSaveCode}

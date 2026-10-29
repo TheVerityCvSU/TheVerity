@@ -7,10 +7,14 @@ import {
   getLocalApiUrl,
   getCloudUrl
 } from '../utils/api';
+import { useDarkMode } from '../hooks/useDarkMode';
 
-export default function NetworkStatusIndicator() {
+export default function NetworkStatusIndicator({ hidden = false }) {
+  if (hidden) return null;
+  const { isDark } = useDarkMode();
   const [status, setStatus] = useState(() => getConnectionStatus());
   const [isOpen, setIsOpen] = useState(false);
+  const [isHovered, setIsHovered] = useState(false);
   const [customIp, setCustomIp] = useState('');
   const [isConnecting, setIsConnecting] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
@@ -146,32 +150,24 @@ export default function NetworkStatusIndicator() {
           setIsOpen(!isOpen);
           setFeedback(null);
         }}
+        onMouseEnter={() => setIsHovered(true)}
+        onMouseLeave={() => setIsHovered(false)}
         title={tooltipText}
         aria-label={tooltipText}
         style={{
           width: '24px',
           height: '24px',
-          borderRadius: '50%',
-          backgroundColor: 'rgba(15, 23, 42, 0.45)',
-          border: '1px solid rgba(255, 255, 255, 0.12)',
-          backdropFilter: 'blur(8px)',
-          WebkitBackdropFilter: 'blur(8px)',
+          backgroundColor: 'transparent',
+          border: 'none',
+          outline: 'none',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
           cursor: 'pointer',
           padding: 0,
-          outline: 'none',
-          boxShadow: '0 2px 8px rgba(0, 0, 0, 0.25)',
-          transition: 'transform 0.2s ease, border-color 0.2s ease'
-        }}
-        onMouseEnter={(e) => {
-          e.currentTarget.style.transform = 'scale(1.15)';
-          e.currentTarget.style.borderColor = dotColor;
-        }}
-        onMouseLeave={(e) => {
-          e.currentTarget.style.transform = 'scale(1)';
-          e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.12)';
+          boxShadow: 'none',
+          transform: isHovered ? 'scale(1.2)' : 'scale(1)',
+          transition: 'transform 0.2s ease'
         }}
       >
         <span
@@ -196,14 +192,16 @@ export default function NetworkStatusIndicator() {
             top: '34px',
             left: '0px',
             width: '320px',
-            backgroundColor: 'rgba(24, 24, 27, 0.94)',
+            backgroundColor: isDark ? 'rgba(24, 24, 27, 0.94)' : 'rgba(255, 255, 255, 0.96)',
             backdropFilter: 'blur(16px)',
             WebkitBackdropFilter: 'blur(16px)',
-            border: '1px solid rgba(255, 255, 255, 0.14)',
+            border: isDark ? '1px solid rgba(255, 255, 255, 0.14)' : '1px solid rgba(0, 0, 0, 0.12)',
             borderRadius: '16px',
             padding: '16px',
-            color: '#f4f4f5',
-            boxShadow: '0 12px 32px rgba(0, 0, 0, 0.5), 0 0 1px rgba(255, 255, 255, 0.2)',
+            color: isDark ? '#f4f4f5' : '#18181b',
+            boxShadow: isDark 
+              ? '0 12px 32px rgba(0, 0, 0, 0.5), 0 0 1px rgba(255, 255, 255, 0.2)' 
+              : '0 12px 32px rgba(0, 0, 0, 0.15), 0 1px 3px rgba(0, 0, 0, 0.06)',
             fontSize: '0.82rem',
             fontFamily: 'system-ui, -apple-system, sans-serif',
             zIndex: 1000000,
@@ -222,7 +220,7 @@ export default function NetworkStatusIndicator() {
                   boxShadow: `0 0 6px ${dotColor}`
                 }}
               />
-              <span style={{ fontWeight: '700', fontSize: '0.88rem' }}>{modeLabel}</span>
+              <span style={{ fontWeight: '700', fontSize: '0.88rem', color: isDark ? '#f4f4f5' : '#18181b' }}>{modeLabel}</span>
             </div>
             <button
               type="button"
@@ -230,7 +228,7 @@ export default function NetworkStatusIndicator() {
               style={{
                 background: 'transparent',
                 border: 'none',
-                color: '#a1a1aa',
+                color: isDark ? '#a1a1aa' : '#71717a',
                 cursor: 'pointer',
                 fontSize: '1rem',
                 lineHeight: 1,
@@ -245,24 +243,24 @@ export default function NetworkStatusIndicator() {
           {/* Active target details */}
           <div
             style={{
-              backgroundColor: 'rgba(39, 39, 42, 0.7)',
+              backgroundColor: isDark ? 'rgba(39, 39, 42, 0.7)' : 'rgba(244, 244, 245, 0.9)',
               borderRadius: '10px',
               padding: '8px 12px',
               marginBottom: '14px',
-              border: '1px solid rgba(255, 255, 255, 0.06)'
+              border: isDark ? '1px solid rgba(255, 255, 255, 0.06)' : '1px solid rgba(0, 0, 0, 0.06)'
             }}
           >
-            <div style={{ fontSize: '0.72rem', color: '#a1a1aa', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+            <div style={{ fontSize: '0.72rem', color: isDark ? '#a1a1aa' : '#71717a', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
               Active Server Endpoint
             </div>
-            <div style={{ fontWeight: '600', color: '#e4e4e7', wordBreak: 'break-all', marginTop: '2px', fontSize: '0.8rem' }}>
+            <div style={{ fontWeight: '600', color: isDark ? '#e4e4e7' : '#27272a', wordBreak: 'break-all', marginTop: '2px', fontSize: '0.8rem' }}>
               {mode === 'lan' ? (status.localUrl || 'http://localhost:3001') : (mode === 'cloud' ? (status.cloudUrl || getCloudUrl()) : 'Offline Engine (localhost:3001)')}
             </div>
           </div>
 
           {/* Connect to LAN Host Form */}
           <form onSubmit={handleConnect} style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-            <label style={{ fontSize: '0.75rem', fontWeight: '600', color: '#d4d4d8' }}>
+            <label style={{ fontSize: '0.75rem', fontWeight: '600', color: isDark ? '#d4d4d8' : '#3f3f46' }}>
               LAN Server Address (e.g. 192.168.254.101:3001)
             </label>
             <input
@@ -274,9 +272,9 @@ export default function NetworkStatusIndicator() {
                 width: '100%',
                 padding: '8px 12px',
                 borderRadius: '8px',
-                border: '1px solid rgba(255, 255, 255, 0.16)',
-                backgroundColor: 'rgba(9, 9, 11, 0.8)',
-                color: '#f4f4f5',
+                border: isDark ? '1px solid rgba(255, 255, 255, 0.16)' : '1px solid #d4d4d8',
+                backgroundColor: isDark ? 'rgba(9, 9, 11, 0.8)' : '#ffffff',
+                color: isDark ? '#f4f4f5' : '#18181b',
                 fontSize: '0.82rem',
                 outline: 'none',
                 boxSizing: 'border-box'
@@ -312,9 +310,9 @@ export default function NetworkStatusIndicator() {
                 style={{
                   padding: '7px 10px',
                   borderRadius: '8px',
-                  border: '1px solid rgba(255, 255, 255, 0.18)',
-                  backgroundColor: 'rgba(63, 63, 70, 0.5)',
-                  color: '#e4e4e7',
+                  border: isDark ? '1px solid rgba(255, 255, 255, 0.18)' : '1px solid #d4d4d8',
+                  backgroundColor: isDark ? 'rgba(63, 63, 70, 0.5)' : '#f4f4f5',
+                  color: isDark ? '#e4e4e7' : '#27272a',
                   fontWeight: '600',
                   fontSize: '0.8rem',
                   cursor: isScanning ? 'not-allowed' : 'pointer',
@@ -336,7 +334,7 @@ export default function NetworkStatusIndicator() {
                 fontSize: '0.75rem',
                 fontWeight: '500',
                 backgroundColor: feedback.type === 'success' ? 'rgba(34, 197, 94, 0.15)' : 'rgba(239, 68, 68, 0.15)',
-                color: feedback.type === 'success' ? '#4ade80' : '#f87171',
+                color: feedback.type === 'success' ? '#16a34a' : '#dc2626',
                 border: `1px solid ${feedback.type === 'success' ? 'rgba(34, 197, 94, 0.3)' : 'rgba(239, 68, 68, 0.3)'}`
               }}
             >
@@ -346,7 +344,7 @@ export default function NetworkStatusIndicator() {
 
           {/* Switch back to Cloud if currently on LAN */}
           {mode === 'lan' && (
-            <div style={{ marginTop: '12px', paddingTop: '10px', borderTop: '1px solid rgba(255, 255, 255, 0.08)' }}>
+            <div style={{ marginTop: '12px', paddingTop: '10px', borderTop: isDark ? '1px solid rgba(255, 255, 255, 0.08)' : '1px solid rgba(0, 0, 0, 0.08)' }}>
               <button
                 type="button"
                 onClick={handleSwitchToCloud}

@@ -504,12 +504,31 @@ export default function App() {
     }
 
     const handlePopState = () => {
+      if (currentScreen === 'student_workspace' && (activeAssignment?.disableBack || activeAssignment?.disable_back)) {
+        const cId = activeClassroom?.id != null ? String(activeClassroom.id) : (activeAssignment?.classroom_id || 'none');
+        const aId = activeAssignment?.id != null ? String(activeAssignment.id) : 'none';
+        const sId = currentUser?.id != null ? String(currentUser.id) : (currentUser?.email || currentUser?.name || 'none');
+        const sKeys = [
+          `verity_sub_${cId}_${aId}_${sId}`,
+          `verity_sub_${cId}_${aId}_${currentUser?.name}`,
+          `verity_sub_${cId}_${aId}`
+        ];
+        const isSub = sKeys.some(k => {
+          try { return Boolean(localStorage.getItem(k)); } catch { return false; }
+        });
+        if (!isSub) {
+          try {
+            window.history.pushState({ screen: 'student_workspace' }, '', window.location.pathname);
+          } catch {}
+          return;
+        }
+      }
       executeGoBack();
     };
 
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
-  }, [currentScreen, currentUser]);
+  }, [currentScreen, currentUser, activeAssignment, activeClassroom]);
 
   const [connStatus, setConnStatus] = useState(() => getConnectionStatus());
 
@@ -1340,8 +1359,10 @@ export default function App() {
         </motion.div>
       </AnimatePresence>
 
-      {/* Top-Left Network Connection Indicator Dot & Config Popover */}
-      <NetworkStatusIndicator />
+      {/* Top-Left Network Connection Indicator Dot & Config Popover (Hidden inside live monitoring and student workspace) */}
+      {!['student_workspace', 'sandbox_workspace', 'teacher_live_monitoring', 'teacher_proctoring', 'teacher_playback'].includes(currentScreen) && (
+        <NetworkStatusIndicator />
+      )}
     </div>
   );
 }

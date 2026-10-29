@@ -78,7 +78,7 @@ export default function ClassroomCard({
         backgroundColor: isDark ? '#242424' : '#ffffff',
         borderRadius: '16px',
         border: isDark ? '1px solid #383838' : '1px solid #dadce0',
-        overflow: 'hidden',
+        overflow: 'visible',
         boxShadow: isDark ? '0 4px 14px rgba(0,0,0,0.4)' : '0 1px 3px rgba(0,0,0,0.04)',
         cursor: 'pointer',
         display: 'flex',
@@ -96,7 +96,7 @@ export default function ClassroomCard({
           style={{
             position: 'absolute',
             top: '-3px',
-            right: '-3px',
+            left: '-3px',
             width: '14px',
             height: '14px',
             borderRadius: '50%',
@@ -115,6 +115,8 @@ export default function ClassroomCard({
       <div
         style={{
           height: '160px',
+          borderTopLeftRadius: '15px',
+          borderTopRightRadius: '15px',
           background: theme?.customImageUrl
             ? `url(${theme.customImageUrl}) center/cover no-repeat`
             : `linear-gradient(135deg, ${theme.primary}, ${theme.secondary})`,
@@ -243,6 +245,8 @@ export default function ClassroomCard({
       <div
         style={{
           height: '52px',
+          borderBottomLeftRadius: '15px',
+          borderBottomRightRadius: '15px',
           borderTop: isDark ? '1px solid #333333' : '1px solid #e2e8f0',
           backgroundColor: isDark ? '#202020' : '#ffffff',
           padding: '0 16px',

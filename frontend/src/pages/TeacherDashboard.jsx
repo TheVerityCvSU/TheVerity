@@ -184,7 +184,7 @@ const TeacherCourseCard = ({ classroom, onClick, onSettings, onArchive, onUnarch
           style={{
             position: 'absolute',
             top: '-3px',
-            right: '-3px',
+            left: '-3px',
             width: '14px',
             height: '14px',
             borderRadius: '50%',
