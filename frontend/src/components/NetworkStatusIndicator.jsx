@@ -251,7 +251,7 @@ export default function NetworkStatusIndicator({ hidden = false }) {
             }}
           >
             <div style={{ fontSize: '0.72rem', color: isDark ? '#a1a1aa' : '#71717a', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-              Active Server Endpoint
+              Active Server
             </div>
             <div style={{ fontWeight: '600', color: isDark ? '#e4e4e7' : '#27272a', wordBreak: 'break-all', marginTop: '2px', fontSize: '0.8rem' }}>
               {mode === 'lan' ? (status.localUrl || 'http://localhost:3001') : (mode === 'cloud' ? (status.cloudUrl || getCloudUrl()) : 'Offline Engine (localhost:3001)')}
@@ -261,7 +261,7 @@ export default function NetworkStatusIndicator({ hidden = false }) {
           {/* Connect to LAN Host Form */}
           <form onSubmit={handleConnect} style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
             <label style={{ fontSize: '0.75rem', fontWeight: '600', color: isDark ? '#d4d4d8' : '#3f3f46' }}>
-              LAN Server Address (e.g. 192.168.254.101:3001)
+              LAN Server Address
             </label>
             <input
               type="text"
