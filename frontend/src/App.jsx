@@ -1496,9 +1496,9 @@ export default function App() {
         </motion.div>
       </AnimatePresence>
 
-      {/* Top-Left Network Connection Indicator Dot & Config Popover (Hidden inside live monitoring and student workspace) */}
+      {/* Network Connection Indicator Dot & Config Popover (Right Side) */}
       {!['student_workspace', 'sandbox_workspace', 'teacher_live_monitoring', 'teacher_proctoring', 'teacher_playback'].includes(currentScreen) && (
-        <NetworkStatusIndicator />
+        <NetworkStatusIndicator position="right" />
       )}
     </div>
   );

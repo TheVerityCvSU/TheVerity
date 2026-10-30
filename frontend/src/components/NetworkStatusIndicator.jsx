@@ -1,19 +1,22 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { RefreshCw, X } from 'lucide-react';
+import { RefreshCw, X, Check } from 'lucide-react';
 import { 
   getConnectionStatus, 
   subscribeConnectionStatus, 
   setCustomLanServer, 
   switchToCloudMode,
+  switchToLanMode,
   getLocalApiUrl,
   getCloudUrl,
   apiFetch
 } from '../utils/api';
 import { useDarkMode } from '../hooks/useDarkMode';
+import { useCurrentUser } from '../hooks/useCurrentUser';
 
-export default function NetworkStatusIndicator({ hidden = false }) {
+export default function NetworkStatusIndicator({ hidden = false, position = 'right' }) {
   if (hidden) return null;
   const { isDark } = useDarkMode();
+  const isLeft = position === 'left';
   const [status, setStatus] = useState(() => getConnectionStatus());
   const [isOpen, setIsOpen] = useState(false);
   const [isHovered, setIsHovered] = useState(false);
@@ -21,6 +24,7 @@ export default function NetworkStatusIndicator({ hidden = false }) {
   const [isConnecting, setIsConnecting] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [syncCompleted, setSyncCompleted] = useState(false);
   const [feedback, setFeedback] = useState(null); // { type: 'success' | 'error', message: string }
   const popoverRef = useRef(null);
 
@@ -77,13 +81,13 @@ export default function NetworkStatusIndicator({ hidden = false }) {
 
   const modeLabel = mode === 'offline' 
     ? 'Offline Mode' 
-    : (mode === 'lan' ? 'LAN Server (Local ComLab)' : 'Online Server (Cloud)');
+    : (mode === 'lan' ? 'Local ComLab Server' : 'Online Cloud Server');
 
   const tooltipText = mode === 'offline'
-    ? 'Offline (No internet or LAN server) — Click to configure'
+    ? 'Network Configuration: Offline Mode — Click to configure'
     : (mode === 'lan'
-        ? `Connected to LAN Server (Local ComLab) (${status.lanHostDisplay || status.localUrl}) — Click to configure`
-        : 'Online (Connected to Cloud Server) — Click to configure');
+        ? `Network Configuration: Connected to Local ComLab Server (${status.lanHostDisplay || status.localUrl}) — Click to configure`
+        : `Network Configuration: Online Cloud Server (${status.cloudUrl || getCloudUrl()}) — Click to configure`);
 
   const handleConnect = async (e) => {
     if (e) e.preventDefault();
@@ -137,25 +141,48 @@ export default function NetworkStatusIndicator({ hidden = false }) {
 
   const handleSwitchToCloud = () => {
     switchToCloudMode();
-    setFeedback({ type: 'success', message: 'Switched to Cloud Server.' });
+    setFeedback({ type: 'success', message: 'Switched to Online Cloud Server.' });
     setTimeout(() => {
       setIsOpen(false);
       setFeedback(null);
     }, 1200);
   };
 
+  const handleSwitchToLan = async () => {
+    setIsConnecting(true);
+    setFeedback(null);
+    try {
+      const res = await switchToLanMode();
+      if (res && res.success) {
+        setFeedback({ type: 'success', message: 'Switched to Local ComLab Server.' });
+        setTimeout(() => {
+          setIsOpen(false);
+          setFeedback(null);
+        }, 1200);
+      }
+    } catch (err) {
+      setFeedback({ type: 'error', message: 'Could not connect to Local ComLab Server.' });
+    } finally {
+      setIsConnecting(false);
+    }
+  };
+
   const handleTriggerSync = async () => {
     setIsSyncing(true);
+    setSyncCompleted(false);
     setFeedback(null);
     try {
       const res = await apiFetch('/api/sync', { method: 'POST' });
       if (res.ok) {
-        setFeedback({ type: 'success', message: 'LAN & Cloud database synchronized!' });
+        setSyncCompleted(true);
         if (typeof window !== 'undefined') {
           window.dispatchEvent(new CustomEvent('verity:sync-completed'));
           window.dispatchEvent(new CustomEvent('verity:classrooms-changed'));
           window.dispatchEvent(new CustomEvent('verity:users-changed'));
         }
+        setTimeout(() => {
+          setSyncCompleted(false);
+        }, 2500);
       } else {
         setFeedback({ type: 'error', message: 'Sync completed with warnings or offline status.' });
       }
@@ -163,12 +190,41 @@ export default function NetworkStatusIndicator({ hidden = false }) {
       setFeedback({ type: 'error', message: 'Sync failed: Server unreachable.' });
     } finally {
       setIsSyncing(false);
-      setTimeout(() => setFeedback(null), 3500);
     }
   };
 
+  const containerStyle = {
+    position: 'fixed',
+    top: isLeft ? '14px' : '16px',
+    left: isLeft ? '14px' : undefined,
+    right: isLeft ? undefined : '16px',
+    zIndex: 999999
+  };
+
+  const popoverStyle = {
+    position: 'absolute',
+    top: '34px',
+    left: isLeft ? '0px' : undefined,
+    right: isLeft ? undefined : '0px',
+    width: '320px',
+    backgroundColor: isDark ? 'rgba(24, 24, 27, 0.94)' : 'rgba(255, 255, 255, 0.96)',
+    backdropFilter: 'blur(16px)',
+    WebkitBackdropFilter: 'blur(16px)',
+    border: isDark ? '1px solid rgba(255, 255, 255, 0.14)' : '1px solid rgba(0, 0, 0, 0.12)',
+    borderRadius: '16px',
+    padding: '16px',
+    color: isDark ? '#f4f4f5' : '#18181b',
+    boxShadow: isDark 
+      ? '0 12px 32px rgba(0, 0, 0, 0.5), 0 0 1px rgba(255, 255, 255, 0.2)' 
+      : '0 12px 32px rgba(0, 0, 0, 0.15), 0 1px 3px rgba(0, 0, 0, 0.06)',
+    fontSize: '0.82rem',
+    fontFamily: 'system-ui, -apple-system, sans-serif',
+    zIndex: 1000000,
+    animation: 'fadeInPop 0.18s ease-out'
+  };
+
   return (
-    <div style={{ position: 'fixed', top: '16px', right: '16px', zIndex: 999999 }}>
+    <div style={containerStyle}>
       {/* Top Right Indicator Dot Button */}
       <button
         type="button"
@@ -213,41 +269,13 @@ export default function NetworkStatusIndicator({ hidden = false }) {
       {isOpen && (
         <div
           ref={popoverRef}
-          style={{
-            position: 'absolute',
-            top: '34px',
-            right: '0px',
-            width: '320px',
-            backgroundColor: isDark ? 'rgba(24, 24, 27, 0.94)' : 'rgba(255, 255, 255, 0.96)',
-            backdropFilter: 'blur(16px)',
-            WebkitBackdropFilter: 'blur(16px)',
-            border: isDark ? '1px solid rgba(255, 255, 255, 0.14)' : '1px solid rgba(0, 0, 0, 0.12)',
-            borderRadius: '16px',
-            padding: '16px',
-            color: isDark ? '#f4f4f5' : '#18181b',
-            boxShadow: isDark 
-              ? '0 12px 32px rgba(0, 0, 0, 0.5), 0 0 1px rgba(255, 255, 255, 0.2)' 
-              : '0 12px 32px rgba(0, 0, 0, 0.15), 0 1px 3px rgba(0, 0, 0, 0.06)',
-            fontSize: '0.82rem',
-            fontFamily: 'system-ui, -apple-system, sans-serif',
-            zIndex: 1000000,
-            animation: 'fadeInPop 0.18s ease-out'
-          }}
+          style={popoverStyle}
         >
           {/* Header */}
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <span
-                style={{
-                  width: '9px',
-                  height: '9px',
-                  borderRadius: '50%',
-                  backgroundColor: dotColor,
-                  boxShadow: `0 0 6px ${dotColor}`
-                }}
-              />
-              <span style={{ fontWeight: '700', fontSize: '0.88rem', color: isDark ? '#f4f4f5' : '#18181b' }}>{modeLabel}</span>
-            </div>
+            <span style={{ fontWeight: '700', fontSize: '0.88rem', color: isDark ? '#f4f4f5' : '#18181b' }}>
+              Network Configuration
+            </span>
             <button
               type="button"
               onClick={() => setIsOpen(false)}
@@ -269,6 +297,46 @@ export default function NetworkStatusIndicator({ hidden = false }) {
             </button>
           </div>
 
+          {/* Current Status Pill */}
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              backgroundColor: isDark ? 'rgba(39, 39, 42, 0.7)' : 'rgba(244, 244, 245, 0.9)',
+              borderRadius: '10px',
+              padding: '8px 12px',
+              marginBottom: '10px',
+              border: isDark ? '1px solid rgba(255, 255, 255, 0.06)' : '1px solid rgba(0, 0, 0, 0.06)'
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span
+                style={{
+                  width: '8px',
+                  height: '8px',
+                  borderRadius: '50%',
+                  backgroundColor: dotColor,
+                  boxShadow: `0 0 6px ${dotColor}`
+                }}
+              />
+              <span style={{ fontWeight: '600', fontSize: '0.8rem', color: isDark ? '#f4f4f5' : '#18181b' }}>
+                {modeLabel}
+              </span>
+            </div>
+            <span
+              style={{
+                fontSize: '0.7rem',
+                fontWeight: '700',
+                textTransform: 'uppercase',
+                letterSpacing: '0.5px',
+                color: dotColor
+              }}
+            >
+              {mode === 'cloud' ? 'Online' : (mode === 'lan' ? 'Local LAN' : 'Offline')}
+            </span>
+          </div>
+
           {/* Active target details */}
           <div
             style={{
@@ -280,10 +348,10 @@ export default function NetworkStatusIndicator({ hidden = false }) {
             }}
           >
             <div style={{ fontSize: '0.72rem', color: isDark ? '#a1a1aa' : '#71717a', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-              Active Server
+              Active Server Endpoint
             </div>
             <div style={{ fontWeight: '600', color: isDark ? '#e4e4e7' : '#27272a', wordBreak: 'break-all', marginTop: '2px', fontSize: '0.8rem' }}>
-              {mode === 'lan' ? (status.localUrl || 'http://localhost:3001') : (mode === 'cloud' ? (status.cloudUrl || getCloudUrl()) : 'Offline Engine (localhost:3001)')}
+              {mode === 'cloud' ? (status.cloudUrl || getCloudUrl()) : (mode === 'lan' ? (status.localUrl || 'http://localhost:3001') : 'Offline Engine (localhost:3001)')}
             </div>
           </div>
 
@@ -376,34 +444,42 @@ export default function NetworkStatusIndicator({ hidden = false }) {
             <button
               type="button"
               onClick={handleTriggerSync}
-              disabled={isSyncing}
+              disabled={isSyncing || syncCompleted}
               style={{
                 width: '100%',
                 padding: '7px 10px',
                 borderRadius: '8px',
-                border: isDark ? '1px solid rgba(255, 255, 255, 0.14)' : '1px solid #cbd5e1',
-                backgroundColor: isDark ? 'rgba(39, 39, 42, 0.7)' : '#f8fafc',
-                color: isDark ? '#93c5fd' : '#0284c7',
+                border: syncCompleted
+                  ? (isDark ? '1px solid rgba(34, 197, 94, 0.4)' : '1px solid #86efac')
+                  : (isDark ? '1px solid rgba(255, 255, 255, 0.14)' : '1px solid #cbd5e1'),
+                backgroundColor: syncCompleted
+                  ? (isDark ? 'rgba(34, 197, 94, 0.16)' : '#f0fdf4')
+                  : (isDark ? 'rgba(39, 39, 42, 0.7)' : '#f8fafc'),
+                color: syncCompleted
+                  ? '#16a34a'
+                  : (isDark ? '#93c5fd' : '#0284c7'),
                 fontWeight: '600',
                 fontSize: '0.8rem',
-                cursor: isSyncing ? 'not-allowed' : 'pointer',
+                cursor: (isSyncing || syncCompleted) ? 'default' : 'pointer',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
                 gap: '6px',
-                transition: 'all 0.2s ease'
+                transition: 'all 0.25s ease'
               }}
             >
-              <RefreshCw size={14} className={isSyncing ? 'animate-spin' : ''} />
-              <span>{isSyncing ? 'Syncing Databases...' : 'Sync LAN & Cloud Database'}</span>
+              {syncCompleted ? (
+                <>
+                  <Check size={14} color="#16a34a" />
+                  <span>Synchronized Complete</span>
+                </>
+              ) : (
+                <>
+                  <RefreshCw size={14} className={isSyncing ? 'animate-spin' : ''} />
+                  <span>{isSyncing ? 'Syncing Databases...' : 'Sync LAN & Cloud Database'}</span>
+                </>
+              )}
             </button>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '8px', fontSize: '0.72rem', color: isDark ? '#a1a1aa' : '#71717a' }}>
-              <span>Auto-Sync</span>
-              <span style={{ color: '#22c55e', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '5px' }}>
-                <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#22c55e', display: 'inline-block' }} />
-                Active (Continuous 15s)
-              </span>
-            </div>
           </div>
 
           {/* Switch back to Cloud if currently on LAN */}
@@ -425,6 +501,29 @@ export default function NetworkStatusIndicator({ hidden = false }) {
                 }}
               >
                 Switch to Online Cloud Server
+              </button>
+            </div>
+          )}
+
+          {/* Switch to LAN if currently on Cloud */}
+          {mode === 'cloud' && (
+            <div style={{ marginTop: '12px', paddingTop: '10px', borderTop: isDark ? '1px solid rgba(255, 255, 255, 0.08)' : '1px solid rgba(0, 0, 0, 0.08)' }}>
+              <button
+                type="button"
+                onClick={handleSwitchToLan}
+                style={{
+                  width: '100%',
+                  background: 'transparent',
+                  border: 'none',
+                  color: '#38bdf8',
+                  cursor: 'pointer',
+                  fontSize: '0.78rem',
+                  fontWeight: '600',
+                  padding: '4px',
+                  textAlign: 'center'
+                }}
+              >
+                Switch to Local ComLab Server
               </button>
             </div>
           )}

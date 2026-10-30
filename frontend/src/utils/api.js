@@ -37,6 +37,18 @@ export const isPrivateHost = (hostname) => {
 
 // In-memory holder for auto-discovered LAN host from Electron UDP discovery
 let autoDiscoveredLanServer = null;
+let userPreferredMode = (() => {
+  if (typeof window !== 'undefined') {
+    try {
+      return localStorage.getItem('verity_preferred_mode') || null;
+    } catch (_) {
+      return null;
+    }
+  }
+  return null;
+})();
+
+export const getUserPreferredMode = () => userPreferredMode;
 
 const isElectronApp = () => typeof window !== 'undefined' && Boolean(window.electronAPI?.getDiscoveredServer);
 
@@ -220,6 +232,7 @@ export const getHasExplicitLanServer = () => {
 };
 
 export const getIsLanConnected = () => {
+  if (userPreferredMode === 'cloud') return false;
   // If local server or LAN endpoint is down, we are NOT connected to LAN!
   if (!isLocalServerUp) return false;
   const hasExplicitLanServer = getHasExplicitLanServer();
@@ -241,23 +254,35 @@ export const getConnectionStatus = () => {
   const isLanConnected = getIsLanConnected();
 
   let activeMode = 'offline';
-  if (isWebHosted) {
-    if (isLanConnected) {
-      activeMode = 'lan';
-    } else if (!isCloudDown && isNavOnline) {
+  if (userPreferredMode === 'cloud') {
+    if (hasCloud && !isCloudDown && isNavOnline) {
       activeMode = 'cloud';
     } else {
       activeMode = 'offline';
     }
-  } else {
-    // Desktop / Electron
-    // When connected to a responsive LAN Server in Electron or local network, prioritize LAN Server!
+  } else if (userPreferredMode === 'lan') {
     if (isLanConnected) {
       activeMode = 'lan';
-    } else if (hasCloud && !isCloudDown && isNavOnline) {
-      activeMode = 'cloud';
     } else {
       activeMode = 'offline';
+    }
+  } else {
+    if (isWebHosted) {
+      if (isLanConnected) {
+        activeMode = 'lan';
+      } else if (!isCloudDown && isNavOnline) {
+        activeMode = 'cloud';
+      } else {
+        activeMode = 'offline';
+      }
+    } else {
+      if (isLanConnected) {
+        activeMode = 'lan';
+      } else if (hasCloud && !isCloudDown && isNavOnline) {
+        activeMode = 'cloud';
+      } else {
+        activeMode = 'offline';
+      }
     }
   }
 
@@ -275,6 +300,7 @@ export const getConnectionStatus = () => {
     isCloudDown,
     isNavOnline,
     activeMode, // 'cloud' | 'lan' | 'offline'
+    userPreferredMode,
     isLanConnected,
     lanHostDisplay,
     cloudUrl,
@@ -286,8 +312,8 @@ export const getConnectionStatus = () => {
 export const getActiveSocketUrl = () => {
   const status = getConnectionStatus();
   if (status.isWebHosted) return status.cloudUrl || DEFAULT_CLOUD_API_URL;
-  if (status.activeMode === 'lan') return status.localUrl || getLocalApiUrl();
   if (status.activeMode === 'cloud') return status.cloudUrl || DEFAULT_CLOUD_API_URL;
+  if (status.activeMode === 'lan') return status.localUrl || getLocalApiUrl();
   return status.localUrl || getLocalApiUrl();
 };
 
@@ -534,8 +560,10 @@ export const setCustomLanServer = async (url) => {
     return { success: false, error: 'Could not connect. Please check IP and port.' };
   }
 
+  userPreferredMode = 'lan';
   autoDiscoveredLanServer = clean;
   try {
+    localStorage.setItem('verity_preferred_mode', 'lan');
     localStorage.setItem('verity_lan_server', clean);
     if (window.electronAPI?.localDB?.setLocal) {
       await window.electronAPI.localDB.setLocal('verity_lan_server', clean);
@@ -556,18 +584,47 @@ export const setCustomLanServer = async (url) => {
 };
 
 export const switchToCloudMode = () => {
-  autoDiscoveredLanServer = null;
+  userPreferredMode = 'cloud';
   try {
+    localStorage.setItem('verity_preferred_mode', 'cloud');
     localStorage.removeItem('verity_lan_server');
     if (window.electronAPI?.localDB?.setLocal) {
+      window.electronAPI.localDB.setLocal('verity_preferred_mode', 'cloud').catch(() => {});
       window.electronAPI.localDB.setLocal('verity_lan_server', null).catch(() => {});
     }
+    if (window.electronAPI?.setLanServer) {
+      window.electronAPI.setLanServer(null).catch(() => {});
+    }
   } catch (_) {}
+  autoDiscoveredLanServer = null;
   isCloudDown = false;
   if (typeof window !== 'undefined') {
     window.dispatchEvent(new CustomEvent('verity:server-changed', { detail: getCloudUrl() }));
+    window.dispatchEvent(new CustomEvent('verity:classrooms-changed'));
+    window.dispatchEvent(new CustomEvent('verity:users-changed'));
+  }
+  checkCloudHealth();
+  notifyListeners();
+};
+
+export const switchToLanMode = async () => {
+  userPreferredMode = 'lan';
+  try {
+    localStorage.setItem('verity_preferred_mode', 'lan');
+    if (window.electronAPI?.localDB?.setLocal) {
+      window.electronAPI.localDB.setLocal('verity_preferred_mode', 'lan').catch(() => {});
+    }
+  } catch (_) {}
+  await checkLocalHealth();
+  const localUrl = getLocalApiUrl();
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('verity:server-changed', { detail: localUrl }));
+    window.dispatchEvent(new CustomEvent('verity:lan-discovered', { detail: localUrl }));
+    window.dispatchEvent(new CustomEvent('verity:classrooms-changed'));
+    window.dispatchEvent(new CustomEvent('verity:users-changed'));
   }
   notifyListeners();
+  return { success: true, url: localUrl };
 };
 
 /**
@@ -721,8 +778,8 @@ export const apiFetch = async (url, options = {}) => {
   }
 
   // 2. Desktop / Electron / Local dev: Check if connected to LAN server
-  // When connected to LAN server (School / ComLab mode), route directly to LAN server first!
-  const isLanMode = getIsLanConnected();
+  // When user is explicitly in Cloud Mode, do NOT intercept with LAN server!
+  const isLanMode = userPreferredMode === 'cloud' ? false : (userPreferredMode === 'lan' || getIsLanConnected());
   if (isLanMode) {
     try {
       const currentLocalUrl = getLocalApiUrl();

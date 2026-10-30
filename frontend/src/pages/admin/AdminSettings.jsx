@@ -1055,16 +1055,19 @@ function SystemDataTab({ data, onChange, currentUserName = 'Admin', direction })
   };
 
   const [isSyncingData, setIsSyncingData] = useState(false);
+  const [syncDone, setSyncDone] = useState(false);
   const [syncResultMsg, setSyncResultMsg] = useState(null);
 
   const handleSyncNow = async () => {
     setIsSyncingData(true);
+    setSyncDone(false);
     setSyncResultMsg(null);
     try {
       const res = await apiFetch(`${API_BASE}/api/sync`, { method: 'POST' });
       const json = await res.json().catch(() => null);
       if (res.ok) {
-        setSyncResultMsg('Databases synchronized successfully!');
+        setSyncDone(true);
+        setTimeout(() => setSyncDone(false), 2500);
         logSecurityEvent({ user: currentUserName, type: 'Database Sync', severity: 'Normal', desc: 'Manual LAN & Cloud database sync triggered from Admin Settings' });
         window.dispatchEvent(new CustomEvent('verity:sync-completed'));
         window.dispatchEvent(new CustomEvent('verity:classrooms-changed'));
@@ -1227,8 +1230,8 @@ function SystemDataTab({ data, onChange, currentUserName = 'Admin', direction })
                   boxShadow: '0 4px 12px rgba(0, 123, 255, 0.25)'
                 }}
               >
-                <RefreshCw size={16} className={isSyncingData ? 'animate-spin' : ''} />
-                <span>{isSyncingData ? 'Synchronizing Databases...' : 'Sync LAN & Cloud Databases Now'}</span>
+                {syncDone ? <Check size={16} /> : <RefreshCw size={16} className={isSyncingData ? 'animate-spin' : ''} />}
+                <span>{isSyncingData ? 'Synchronizing Databases...' : (syncDone ? 'Synchronized Complete' : 'Sync LAN & Cloud Databases Now')}</span>
               </motion.button>
               {syncResultMsg && (
                 <span style={{ fontSize: '0.82rem', fontWeight: '600', color: syncResultMsg.includes('success') ? '#16a34a' : '#dc2626' }}>
