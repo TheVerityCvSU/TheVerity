@@ -180,6 +180,26 @@ export default function CompilerView() {
     // If a previous execution or socket exists, cleanly close it first
     cleanupRun();
 
+    if (window.electronAPI && typeof window.electronAPI.checkVmStatus === 'function') {
+      try {
+        const vmStatus = await window.electronAPI.checkVmStatus();
+        let storedUser = null;
+        try {
+          const u = localStorage.getItem('currentUser');
+          if (u) storedUser = JSON.parse(u);
+        } catch (_) {}
+        if (vmStatus && vmStatus.isVm && storedUser?.role === 'Student') {
+          setTermCollapsed(false);
+          setBottomTab('terminal');
+          setOutput([
+            { text: '⚠️ ACCESS DENIED: Exam and code execution is strictly prohibited inside a Virtual Machine.', type: 'err' },
+            { text: 'Please exit and run The Verity on a physical host computer.', type: 'err' }
+          ]);
+          return;
+        }
+      } catch (_) {}
+    }
+
     setIsRunning(true);
     setProgramStarted(false);
     setTermCollapsed(false);
@@ -309,6 +329,21 @@ export default function CompilerView() {
   };
 
   const handleRunAllTestCases = async () => {
+    if (window.electronAPI && typeof window.electronAPI.checkVmStatus === 'function') {
+      try {
+        const vmStatus = await window.electronAPI.checkVmStatus();
+        let storedUser = null;
+        try {
+          const u = localStorage.getItem('currentUser');
+          if (u) storedUser = JSON.parse(u);
+        } catch (_) {}
+        if (vmStatus && vmStatus.isVm && storedUser?.role === 'Student') {
+          alert('⚠️ ACCESS DENIED: Exam code execution is prohibited inside a Virtual Machine. Please run on a physical computer.');
+          return;
+        }
+      } catch (_) {}
+    }
+
     if (!testCases || testCases.length === 0) return;
     setBottomTab('testcases');
     setIsRunningTests(true);

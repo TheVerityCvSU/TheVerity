@@ -2,15 +2,16 @@
  * The Verity — Virtual Machine (VM) Detection Module
  * 
  * Inspects system hardware drivers, BIOS/Motherboard metadata,
- * disk controllers, video display adapters, and network MAC addresses
- * to detect whether The Verity is running inside a virtualized environment
+ * disk controllers, video display adapters, registry hardware keys,
+ * active hypervisor processes, and network MAC addresses to detect
+ * whether The Verity is running inside a virtualized environment
  * (e.g., VirtualBox, VMware, Microsoft Hyper-V, QEMU/KVM, Parallels, Xen).
  */
 
 const os = require('os');
 const fs = require('fs');
 const path = require('path');
-const { exec } = require('child_process');
+const { exec, execSync } = require('child_process');
 
 // IEEE Registered Virtualization Vendor MAC OUI prefixes
 const VM_MAC_OUIS = [
@@ -45,8 +46,22 @@ const VM_DRIVER_FILES = [
   { file: 'xenvbd.sys', vendor: 'Xen Storage Driver' }
 ];
 
+// Known VM guest services and agent processes
+const VM_PROCESS_NAMES = [
+  { process: 'vboxservice.exe', vendor: 'VirtualBox Service' },
+  { process: 'vboxtray.exe', vendor: 'VirtualBox Tray Agent' },
+  { process: 'vmtoolsd.exe', vendor: 'VMware Tools Daemon' },
+  { process: 'vgauthservice.exe', vendor: 'VMware Core Service' },
+  { process: 'qemu-ga.exe', vendor: 'QEMU Guest Agent' },
+  { process: 'prl_tools.exe', vendor: 'Parallels Tools' },
+  { process: 'prl_cc.exe', vendor: 'Parallels Control Center' },
+  { process: 'vmsrvc.exe', vendor: 'Virtual PC / Hyper-V Service' },
+  { process: 'vmusrvc.exe', vendor: 'Virtual PC User Service' }
+];
+
 let cachedResult = null;
 let detectionPromise = null;
+let lastCheckTime = 0;
 
 /**
  * Checks system network interfaces for MAC addresses belonging to VM vendors.
@@ -102,7 +117,134 @@ function checkDriverFiles() {
 }
 
 /**
- * Queries Windows CIM/WMI for hardware system, BIOS, disk drive, and video controller info.
+ * Fast synchronous check using Windows Registry for System BIOS and Motherboard manufacturer.
+ * Runs in ~10ms without invoking PowerShell.
+ */
+function checkFastRegistry() {
+  if (process.platform !== 'win32') return [];
+  const detected = [];
+
+  try {
+    const stdout = execSync('reg query HKLM\\HARDWARE\\DESCRIPTION\\System\\BIOS', {
+      encoding: 'utf8',
+      windowsHide: true,
+      timeout: 2000,
+      stdio: ['pipe', 'pipe', 'ignore']
+    });
+    const lower = stdout.toLowerCase();
+
+    const vmKeywords = [
+      { pattern: 'virtualbox', vendor: 'VirtualBox' },
+      { pattern: 'vbox', vendor: 'VirtualBox' },
+      { pattern: 'innotek', vendor: 'VirtualBox' },
+      { pattern: 'vmware', vendor: 'VMware' },
+      { pattern: 'qemu', vendor: 'QEMU' },
+      { pattern: 'kvm', vendor: 'KVM' },
+      { pattern: 'xen', vendor: 'Xen' },
+      { pattern: 'parallels', vendor: 'Parallels' },
+      { pattern: 'bochs', vendor: 'Bochs' },
+      { pattern: 'red hat', vendor: 'Red Hat / KVM' },
+      { pattern: 'virtio', vendor: 'VirtIO / KVM' }
+    ];
+
+    for (const kw of vmKeywords) {
+      if (lower.includes(kw.pattern)) {
+        detected.push({
+          type: 'registry_bios',
+          vendor: kw.vendor,
+          reason: `System BIOS Registry indicates ${kw.vendor} virtual machine.`
+        });
+        break;
+      }
+    }
+
+    // Hyper-V check in registry
+    if (lower.includes('microsoft') && (lower.includes('virtual') || lower.includes('hyper-v'))) {
+      detected.push({
+        type: 'registry_bios',
+        vendor: 'Microsoft Hyper-V',
+        reason: 'System BIOS Registry indicates Microsoft Hyper-V virtual machine.'
+      });
+    }
+  } catch (_) {}
+
+  // Check SCSI/Disk drive hardware identifiers
+  try {
+    const scsiOut = execSync('reg query HKLM\\HARDWARE\\DEVICEMAP\\Scsi /s', {
+      encoding: 'utf8',
+      windowsHide: true,
+      timeout: 2000,
+      stdio: ['pipe', 'pipe', 'ignore']
+    });
+    const scsiLower = scsiOut.toLowerCase();
+
+    for (const kw of ['vbox', 'vmware', 'qemu', 'virtual disk', 'virtual hd', 'virtio']) {
+      if (scsiLower.includes(kw)) {
+        detected.push({
+          type: 'registry_scsi',
+          vendor: kw.toUpperCase(),
+          reason: `Virtual Disk/Storage Controller detected in registry: "${kw.toUpperCase()}"`
+        });
+        break;
+      }
+    }
+  } catch (_) {}
+
+  // Check known VM guest service keys
+  const serviceKeys = [
+    { key: 'HKLM\\SYSTEM\\CurrentControlSet\\Services\\VBoxGuest', vendor: 'VirtualBox' },
+    { key: 'HKLM\\SYSTEM\\CurrentControlSet\\Services\\VBoxMouse', vendor: 'VirtualBox' },
+    { key: 'HKLM\\SYSTEM\\CurrentControlSet\\Services\\VBoxService', vendor: 'VirtualBox' },
+    { key: 'HKLM\\SYSTEM\\CurrentControlSet\\Services\\vmtools', vendor: 'VMware' }
+  ];
+
+  for (const sk of serviceKeys) {
+    try {
+      execSync(`reg query "${sk.key}"`, { encoding: 'utf8', windowsHide: true, timeout: 1000, stdio: ['pipe', 'pipe', 'ignore'] });
+      detected.push({
+        type: 'registry_service',
+        vendor: sk.vendor,
+        reason: `VM Guest Service installed: ${sk.vendor}`
+      });
+      break;
+    } catch (_) {}
+  }
+
+  return detected;
+}
+
+/**
+ * Checks for running VM guest processes (e.g., VBoxService, vmtoolsd).
+ */
+function checkVmProcesses() {
+  if (process.platform !== 'win32') return [];
+  const detected = [];
+
+  try {
+    const taskOutput = execSync('tasklist', {
+      encoding: 'utf8',
+      windowsHide: true,
+      timeout: 3000
+    });
+    const lower = taskOutput.toLowerCase();
+
+    for (const item of VM_PROCESS_NAMES) {
+      if (lower.includes(item.process)) {
+        detected.push({
+          type: 'process',
+          vendor: item.vendor,
+          process: item.process,
+          reason: `VM Guest Agent Process is currently running: ${item.process} (${item.vendor})`
+        });
+      }
+    }
+  } catch (_) {}
+
+  return detected;
+}
+
+/**
+ * Queries Windows CIM/WMI for hardware system, BIOS, disk drive, video controller, and HypervisorPresent flag.
  */
 function checkHardwareWmi() {
   return new Promise((resolve) => {
@@ -111,15 +253,15 @@ function checkHardwareWmi() {
     }
 
     const psStatements = [
-      '$cs = Get-CimInstance Win32_ComputerSystem | Select-Object -Property Manufacturer, Model',
+      '$cs = Get-CimInstance Win32_ComputerSystem | Select-Object -Property Manufacturer, Model, HypervisorPresent',
       '$bios = Get-CimInstance Win32_BIOS | Select-Object -Property Manufacturer, SerialNumber, SMBIOSBIOSVersion',
       '$disk = @(Get-CimInstance Win32_DiskDrive | Select-Object -Property Model)',
       '$video = @(Get-CimInstance Win32_VideoController | Select-Object -Property Name)',
-      '[PSCustomObject]@{ csManufacturer = $cs.Manufacturer; csModel = $cs.Model; biosManufacturer = $bios.Manufacturer; biosSerial = $bios.SerialNumber; biosVersion = $bios.SMBIOSBIOSVersion; disks = ($disk | ForEach-Object { $_.Model }); gpus = ($video | ForEach-Object { $_.Name }) } | ConvertTo-Json -Compress'
+      '[PSCustomObject]@{ csManufacturer = $cs.Manufacturer; csModel = $cs.Model; hypervisor = $cs.HypervisorPresent; biosManufacturer = $bios.Manufacturer; biosSerial = $bios.SerialNumber; biosVersion = $bios.SMBIOSBIOSVersion; disks = ($disk | ForEach-Object { $_.Model }); gpus = ($video | ForEach-Object { $_.Name }) } | ConvertTo-Json -Compress'
     ].join('; ');
 
     const cmd = `powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "${psStatements}"`;
-    exec(cmd, { timeout: 6000 }, (error, stdout) => {
+    exec(cmd, { timeout: 8000, windowsHide: true }, (error, stdout) => {
       if (error || !stdout) {
         return resolve([]);
       }
@@ -146,7 +288,9 @@ function checkHardwareWmi() {
           { pattern: 'xen', vendor: 'Xen' },
           { pattern: 'parallels', vendor: 'Parallels' },
           { pattern: 'bochs', vendor: 'Bochs' },
-          { pattern: 'hvm domu', vendor: 'Xen' }
+          { pattern: 'hvm domu', vendor: 'Xen' },
+          { pattern: 'red hat', vendor: 'Red Hat / KVM' },
+          { pattern: 'virtio', vendor: 'VirtIO / KVM' }
         ];
 
         for (const kw of vmKeywords) {
@@ -155,6 +299,11 @@ function checkHardwareWmi() {
           if (biosMan.includes(kw.pattern)) detected.push({ type: 'hardware_bios', vendor: kw.vendor, reason: `BIOS Manufacturer indicates ${kw.vendor}: "${data.biosManufacturer}"` });
           if (biosSer.includes(kw.pattern)) detected.push({ type: 'hardware_bios', vendor: kw.vendor, reason: `BIOS Serial indicates ${kw.vendor}: "${data.biosSerial}"` });
           if (biosVer.includes(kw.pattern)) detected.push({ type: 'hardware_bios', vendor: kw.vendor, reason: `BIOS Version indicates ${kw.vendor}: "${data.biosVersion}"` });
+        }
+
+        // HypervisorPresent flag (standard Windows hypervisor check)
+        if (data.hypervisor === true && (csMan.includes('microsoft') || csMod.includes('virtual') || csMan.includes('vmware') || csMod.includes('vmware'))) {
+          detected.push({ type: 'hardware_hypervisor', vendor: 'Hypervisor', reason: `Windows Hypervisor is active on system (${data.csModel || 'Virtual Environment'})` });
         }
 
         // Microsoft Hyper-V detection
@@ -194,14 +343,16 @@ function checkHardwareWmi() {
 
 /**
  * Runs the comprehensive VM detection check.
- * Checks drivers, MAC addresses, and hardware WMI.
+ * Checks drivers, registry, running processes, MAC addresses, and hardware WMI.
  */
 async function detectVirtualMachine() {
   const driverMatches = checkDriverFiles();
+  const regMatches = checkFastRegistry();
+  const procMatches = checkVmProcesses();
   const macMatches = checkMacAddresses();
   const hardwareMatches = await checkHardwareWmi();
 
-  const allHits = [...driverMatches, ...hardwareMatches, ...macMatches];
+  const allHits = [...driverMatches, ...regMatches, ...procMatches, ...hardwareMatches, ...macMatches];
   const isVm = allHits.length > 0;
   const reasons = allHits.map((h) => h.reason);
 
@@ -214,6 +365,7 @@ async function detectVirtualMachine() {
       ? `Virtual Machine detected (${allHits.length} indicator${allHits.length > 1 ? 's' : ''}): ${reasons[0]}`
       : 'Physical machine verified (No virtual machine indicators detected)'
   };
+  lastCheckTime = Date.now();
 
   return cachedResult;
 }
@@ -244,11 +396,22 @@ function initStartupVmDetection(logger = console.log) {
 
 /**
  * Returns the cached VM detection status, or awaits completion if still running.
+ * Once a VM is confirmed, it stays cached as true. If previously reported false,
+ * allows refreshing every 15 seconds to prevent startup timeout false-negatives.
  */
 async function getVmStatus() {
-  if (cachedResult) return cachedResult;
-  if (detectionPromise) return await detectionPromise;
-  return await detectVirtualMachine();
+  if (cachedResult && cachedResult.isVm) {
+    return cachedResult;
+  }
+  if (cachedResult && !cachedResult.isVm && Date.now() - lastCheckTime < 15000) {
+    return cachedResult;
+  }
+  if (detectionPromise) {
+    const res = await detectionPromise;
+    if (res && res.isVm) return res;
+  }
+  detectionPromise = detectVirtualMachine();
+  return await detectionPromise;
 }
 
 /**
@@ -264,5 +427,7 @@ module.exports = {
   getVmStatus,
   getCachedVmStatusSync,
   checkMacAddresses,
-  checkDriverFiles
+  checkDriverFiles,
+  checkFastRegistry,
+  checkVmProcesses
 };
