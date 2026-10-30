@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   Download, CheckCircle2, AlertCircle, X, 
-  ExternalLink, Loader2, Cpu, Sparkles, RefreshCw, ShieldAlert
+  ExternalLink, Loader2, Cpu, Sparkles, RefreshCw, ShieldAlert, Zap
 } from 'lucide-react';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { fetchDotnetStatus, triggerInstallDotnet, cancelInstallDotnet } from '../utils/dotnetHelper';
@@ -435,6 +435,9 @@ export default function DotnetSetupModal() {
                 </p>
 
                 <div style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
                   padding: '10px 14px',
                   borderRadius: '10px',
                   backgroundColor: isDarkTheme ? 'rgba(16, 185, 129, 0.1)' : 'rgba(16, 185, 129, 0.08)',
@@ -442,7 +445,8 @@ export default function DotnetSetupModal() {
                   fontSize: '0.82rem',
                   fontWeight: '600'
                 }}>
-                  ⚡ Offline C# Compiler and Roslyn engine are active and ready.
+                  <Zap size={14} />
+                  <span>Offline C# Compiler and Roslyn engine are active and ready.</span>
                 </div>
               </div>
             )}

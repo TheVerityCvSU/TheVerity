@@ -18,6 +18,11 @@ let syncTimer = null;
 let lastSyncTime = null;
 let lastSyncStatus = 'idle';
 let connectionString = null;
+let socketIoInstance = null;
+
+function setSocketIo(io) {
+    socketIoInstance = io;
+}
 
 function getCleanConnectionString(rawUrl) {
     if (!rawUrl) return null;
@@ -70,7 +75,7 @@ function initCloudSync(sqliteDatabase, dbUrl) {
         return;
     }
 
-    console.log('[Cloud Sync] 🔄 Bidirectional In-Memory Cloud Sync Engine initialized.');
+    console.log('[Cloud Sync] Bidirectional In-Memory Cloud Sync Engine initialized.');
 
     // Initial sync probe on startup (delayed 2s to allow server to bind)
     setTimeout(() => {
@@ -555,7 +560,15 @@ async function syncBidirectional() {
         lastSyncStatus = 'success';
 
         if (pushedCount > 0 || pulledCount > 0) {
-            console.log(`[Cloud Sync] 🔄 Sync complete! Pushed to Cloud: ${pushedCount} items | Pulled to Local: ${pulledCount} items`);
+            console.log(`[Cloud Sync] Sync complete! Pushed to Cloud: ${pushedCount} items | Pulled to Local: ${pulledCount} items`);
+            if (socketIoInstance) {
+                try {
+                    socketIoInstance.emit('classrooms_updated');
+                    socketIoInstance.emit('users_updated');
+                    socketIoInstance.emit('admin_stats_update');
+                    socketIoInstance.emit('verity_data_synced', { pushed: pushedCount, pulled: pulledCount });
+                } catch (_) {}
+            }
         }
 
         return {
@@ -567,6 +580,10 @@ async function syncBidirectional() {
 
     } catch (err) {
         lastSyncStatus = 'offline';
+        if (pgPool && (err.code === 'ECONNREFUSED' || err.code === 'ENOTFOUND' || (err.message && err.message.includes('closed')))) {
+            try { pgPool.end().catch(() => {}); } catch (_) {}
+            pgPool = null;
+        }
         // Network errors (offline router) are expected and handled silently
         return { status: 'offline', error: err.message };
     } finally {
@@ -600,5 +617,6 @@ module.exports = {
     initCloudSync,
     syncBidirectional,
     triggerSync,
-    getSyncStatus
+    getSyncStatus,
+    setSocketIo
 };

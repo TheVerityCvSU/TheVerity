@@ -42,7 +42,7 @@ const DATA_DIR = process.env.DATA_DIR || __dirname;
 
 const app = express();
 app.set('trust proxy', 1);
-const JWT_SECRET = process.env.JWT_SECRET || 'verity_super_secret_key';
+const JWT_SECRET = process.env.JWT_SECRET || 'c9JLTH$I6,vwWv=0tmQj6a+g|k9AwunzP#<$!@oX@Z0gpX2,De8XFYY/5A4_2-Y<u4V1QnwGV1+d34/QOJ3';
 
 if (process.env.NODE_ENV === 'production' && JWT_SECRET === 'verity_super_secret_key') {
     console.warn('⚠️  [SECURITY WARNING] JWT_SECRET is using the insecure default key in production! Set JWT_SECRET in your environment.');
@@ -68,11 +68,20 @@ app.get('/robots.txt', (req, res) => {
 const adminLoginAttempts = new Map();
 
 const isIpWhitelisted = (ip) => {
+    const rawAllowed = (process.env.ADMIN_ALLOWED_IPS || '').trim();
+    // If not explicitly restricted, or if contains '*', allow credential-verified admin access
+    if (!rawAllowed || rawAllowed.includes('*')) {
+        return true;
+    }
     if (!ip) return true;
     const cleanIp = ip.replace(/^.*:/, ''); // strip IPv6 prefix if mapped
-    const allowedEnv = (process.env.ADMIN_ALLOWED_IPS || '').split(',').map(s => s.trim()).filter(Boolean);
+    const allowedEnv = rawAllowed.split(',').map(s => s.trim()).filter(Boolean);
     const defaultAllowed = ['127.0.0.1', '::1', 'localhost', '192.168.8.115', '131.226.102.72'];
-    if (defaultAllowed.includes(cleanIp) || allowedEnv.includes(cleanIp) || allowedEnv.includes('*')) {
+    if (defaultAllowed.includes(cleanIp) || allowedEnv.includes(cleanIp)) {
+        return true;
+    }
+    // Also allow private LAN subnets (192.168.*, 10.*, 172.16-31.*) for school ComLabs
+    if (/^(192\\.168\\.|10\\.|172\\.(1[6-9]|2\\d|3[0-1])\\.)/.test(cleanIp)) {
         return true;
     }
     return false;
@@ -734,6 +743,11 @@ const server = http.createServer(app);
 const io = new Server(server, {
     cors: { origin: "*" }
 });
+
+try {
+    const { setSocketIo } = require('./db/cloudSync');
+    setSocketIo(io);
+} catch (_) {}
 
 // Socket.IO Authentication Middleware
 io.use((socket, next) => {

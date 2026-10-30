@@ -394,8 +394,9 @@ export default function DashboardOverview({ stats, users, query, setQuery, onDel
                 {flagHistoryLoading ? (
                   <div style={{ textAlign: 'center', padding: '16px', color: isDark ? '#94a3b8' : '#64748b', fontSize: '0.85rem' }}>Loading history...</div>
                 ) : flagHistory.length === 0 ? (
-                  <div style={{ textAlign: 'center', padding: '16px', backgroundColor: isDark ? '#2a2a2a' : '#f8fafc', borderRadius: '12px', color: isDark ? '#64748b' : '#94a3b8', fontSize: '0.85rem', border: isDark ? '1px solid #3a3a3a' : '1px solid #e2e8f0' }}>
-                    ✅ No flags recorded
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', textAlign: 'center', padding: '16px', backgroundColor: isDark ? '#2a2a2a' : '#f8fafc', borderRadius: '12px', color: isDark ? '#64748b' : '#94a3b8', fontSize: '0.85rem', border: isDark ? '1px solid #3a3a3a' : '1px solid #e2e8f0' }}>
+                    <CheckCircle size={16} color="#16a34a" />
+                    <span>No flags recorded</span>
                   </div>
                 ) : (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '240px', overflowY: 'auto', paddingRight: '4px' }}>

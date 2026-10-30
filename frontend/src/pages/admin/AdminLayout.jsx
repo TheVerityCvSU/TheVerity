@@ -273,7 +273,7 @@ export default function AdminLayout({
           </div>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginRight: '24px' }}>
           <div style={{ position: 'relative' }}>
             <button
               onClick={() => finalSetShowNotifications(!currentShowNotifications)}

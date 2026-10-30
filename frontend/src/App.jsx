@@ -761,6 +761,24 @@ export default function App() {
     return () => socket.off('classroom_theme_changed', handleThemeChanged);
   }, [socket]);
 
+  // Keep all dashboard views automatically synchronized when background differential sync fires
+  useEffect(() => {
+    if (!socket) return;
+    const handleDataSynced = () => {
+      window.dispatchEvent(new CustomEvent('verity:classrooms-changed'));
+      window.dispatchEvent(new CustomEvent('verity:users-changed'));
+      window.dispatchEvent(new CustomEvent('verity:sync-completed'));
+    };
+    socket.on('classrooms_updated', handleDataSynced);
+    socket.on('users_updated', handleDataSynced);
+    socket.on('verity_data_synced', handleDataSynced);
+    return () => {
+      socket.off('classrooms_updated', handleDataSynced);
+      socket.off('users_updated', handleDataSynced);
+      socket.off('verity_data_synced', handleDataSynced);
+    };
+  }, [socket]);
+
 
   // Lockdown helpers — no-op outside Electron (e.g. browser dev).
   const lockDown = () => window.electronAPI?.enableLockdown?.();

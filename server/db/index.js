@@ -25,7 +25,8 @@ let provider = 'sqlite';
 let pgPool = null;
 let sqliteDb = null;
 
-const DATABASE_URL = process.env.DATABASE_URL || process.env.SUPABASE_DATABASE_URL || process.env.POSTGRES_URL;
+const DEFAULT_SUPABASE_URL = 'postgresql://postgres.rhswlgkcvlubrqzbnvxf:3MK%25pe6HEpB%3F4Au@aws-0-ap-northeast-2.pooler.supabase.com:5432/postgres';
+const DATABASE_URL = process.env.DATABASE_URL || process.env.SUPABASE_DATABASE_URL || process.env.POSTGRES_URL || DEFAULT_SUPABASE_URL;
 
 // Helper to convert '?' placeholders to PostgreSQL '$1, $2, ...' placeholders
 function convertPlaceholders(sql) {

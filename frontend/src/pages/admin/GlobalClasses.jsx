@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Search, Plus, X, UserPlus, Check, Users, User, ShieldCheck, AlertTriangle } from 'lucide-react';
+import { Search, Plus, X, UserPlus, Check, Users, User, ShieldCheck, AlertTriangle, RefreshCw } from 'lucide-react';
 import { apiFetch } from '../../utils/api';
 import Skeleton from '../../components/Skeleton';
 import { generateClassCode } from '../../utils/classroomUtils';
@@ -87,6 +87,8 @@ export default function GlobalClassesTab() {
 
   const [classes, setClasses] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [authError, setAuthError] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
   const [query, setQuery] = useState('');
   const [viewClass, setViewClass] = useState(null);
   const [viewStudents, setViewStudents] = useState([]);
@@ -148,7 +150,8 @@ export default function GlobalClassesTab() {
       .catch(() => { });
   };
 
-  useEffect(() => {
+  const loadClassrooms = async (showLoading = true) => {
+    if (showLoading) setLoading(true);
     let savedLocal = [];
     try {
       const rawG = localStorage.getItem(GLOBAL_STORAGE_KEY);
@@ -157,23 +160,67 @@ export default function GlobalClassesTab() {
       else if (rawT) savedLocal = JSON.parse(rawT);
     } catch (e) { }
 
-    apiFetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/classrooms`)
-      .then(r => r.json())
-      .then(d => {
-        const serverList = Array.isArray(d) ? d : (d.classrooms || []);
-        const mergedMap = new Map();
-        [...savedLocal, ...serverList].forEach(c => {
-          const key = (c.id || c.name || c.className || '').toString();
-          if (key && !mergedMap.has(key)) mergedMap.set(key, c);
-        });
-        const finalClasses = Array.from(mergedMap.values());
-        if (finalClasses.length > 0) setClasses(finalClasses);
-        else if (savedLocal.length > 0) setClasses(savedLocal);
-      })
-      .catch(() => { if (savedLocal.length > 0) setClasses(savedLocal); })
-      .finally(() => setLoading(false));
+    try {
+      const r = await apiFetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/classrooms`);
+      if (r.status === 401 || r.status === 403) {
+        setAuthError(true);
+        if (savedLocal.length > 0) setClasses(savedLocal);
+        return;
+      }
+      setAuthError(false);
+      const d = await r.json();
+      const serverList = Array.isArray(d) ? d : (d.classrooms || []);
+      const mergedMap = new Map();
+      [...savedLocal, ...serverList].forEach(c => {
+        const key = (c.id || c.name || c.className || '').toString();
+        if (key && !mergedMap.has(key)) mergedMap.set(key, c);
+      });
+      const finalClasses = Array.from(mergedMap.values());
+      if (finalClasses.length > 0) {
+        setClasses(finalClasses);
+        try {
+          localStorage.setItem(GLOBAL_STORAGE_KEY, JSON.stringify(finalClasses));
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(finalClasses));
+        } catch (_) {}
+      } else if (savedLocal.length > 0) {
+        setClasses(savedLocal);
+      } else {
+        setClasses([]);
+      }
+    } catch (err) {
+      if (savedLocal.length > 0) setClasses(savedLocal);
+    } finally {
+      if (showLoading) setLoading(false);
+    }
+  };
 
+  const handleSyncClassrooms = async () => {
+    setIsSyncing(true);
+    try {
+      await apiFetch('/api/sync', { method: 'POST' }).catch(() => {});
+      await Promise.all([loadClassrooms(false), loadAllUsers()]);
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  useEffect(() => {
+    loadClassrooms(true);
     loadAllUsers();
+
+    const handleServerChanged = () => {
+      loadClassrooms(true);
+      loadAllUsers();
+    };
+
+    window.addEventListener('verity:server-changed', handleServerChanged);
+    window.addEventListener('verity:classrooms-changed', handleServerChanged);
+    window.addEventListener('verity:sync-completed', handleServerChanged);
+    return () => {
+      window.removeEventListener('verity:server-changed', handleServerChanged);
+      window.removeEventListener('verity:classrooms-changed', handleServerChanged);
+      window.removeEventListener('verity:sync-completed', handleServerChanged);
+    };
   }, []);
 
   // Fetch live student list when opening a class in view modal
@@ -376,6 +423,47 @@ export default function GlobalClassesTab() {
 
       {/* Classroom Directory Management */}
       <div style={sh.mainCard}>
+        {authError && (
+          <div style={{
+            backgroundColor: isDark ? 'rgba(239, 68, 68, 0.15)' : '#fee2e2',
+            border: isDark ? '1px solid #ef4444' : '1px solid #fca5a5',
+            color: isDark ? '#fca5a5' : '#991b1b',
+            borderRadius: '16px',
+            padding: '12px 18px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: '12px',
+            fontSize: '0.88rem',
+            marginBottom: '16px'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <AlertTriangle size={18} />
+              <span>Admin session expired or access unauthorized on this server. Please re-authenticate to view live classrooms.</span>
+            </div>
+            <button
+              onClick={() => {
+                localStorage.removeItem('currentUser');
+                localStorage.removeItem('verity_token');
+                localStorage.removeItem('token');
+                window.location.reload();
+              }}
+              style={{
+                backgroundColor: '#ef4444',
+                color: 'white',
+                border: 'none',
+                borderRadius: '9999px',
+                padding: '6px 16px',
+                fontSize: '0.8rem',
+                fontWeight: '700',
+                cursor: 'pointer'
+              }}
+            >
+              Re-login as Admin
+            </button>
+          </div>
+        )}
+
         <h2 style={{ ...sh.cardTitle, marginBottom: '16px' }}>Classroom Directory Management</h2>
 
         {/* Search & Action Bar */}
@@ -405,9 +493,28 @@ export default function GlobalClassesTab() {
               onBlur={() => setSearchFocused(false)}
             />
           </div>
-          <motion.button whileHover={{ scale: 1.04 }} whileTap={{ scale: 0.96 }} onClick={handleOpenCreateModal} style={sh.addBlueBtn} className="btn-anim">
-            <Plus size={16} /><span>Create New Class</span>
-          </motion.button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <motion.button
+              whileHover={{ scale: 1.04 }}
+              whileTap={{ scale: 0.96 }}
+              onClick={handleSyncClassrooms}
+              style={{
+                ...sh.actionBtn,
+                backgroundColor: isDark ? '#1e293b' : '#f1f5f9',
+                color: isDark ? '#93c5fd' : '#2563eb',
+                border: isDark ? '1px solid #334155' : '1px solid #cbd5e1',
+                boxShadow: 'none'
+              }}
+              title="Synchronize classrooms between LAN and Online Cloud"
+              disabled={isSyncing}
+            >
+              <RefreshCw size={15} className={isSyncing ? 'animate-spin' : ''} />
+              <span>{isSyncing ? 'Syncing...' : 'Sync & Refresh'}</span>
+            </motion.button>
+            <motion.button whileHover={{ scale: 1.04 }} whileTap={{ scale: 0.96 }} onClick={handleOpenCreateModal} style={sh.addBlueBtn} className="btn-anim">
+              <Plus size={16} /><span>Create New Class</span>
+            </motion.button>
+          </div>
         </div>
 
         {/* Table */}

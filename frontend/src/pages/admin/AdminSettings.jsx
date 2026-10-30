@@ -6,7 +6,8 @@ import {
   Bell, Monitor, Code2, Download, Moon, Sun,
   LayoutList, Volume2, VolumeX, Timer, Check,
   AlertTriangle, Clipboard, Sliders, RefreshCw,
-  CheckCircle2, AlertCircle
+  CheckCircle2, AlertCircle,
+  Server
 } from 'lucide-react';
 import { logSecurityEvent } from '../../utils/securityLogger';
 import { apiFetch } from '../../utils/api';
@@ -993,7 +994,10 @@ function NotificationsUITab({ notifData, uiData, onNotifChange, onUiChange, isDa
                       transition: 'all 0.2s ease',
                     }}
                   >
-                    {opt === 'Compact' ? '📋 Compact' : '📄 Comfortable'}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      {opt === 'Compact' ? <Clipboard size={15} /> : <LayoutList size={15} />}
+                      <span>{opt}</span>
+                    </div>
                     <div style={{ fontSize: '0.72rem', fontWeight: '500', marginTop: '3px', color: T.muted }}>
                       {opt === 'Compact' ? 'More rows visible, smaller text' : 'Larger text, easier to read'}
                     </div>
@@ -1048,6 +1052,31 @@ function SystemDataTab({ data, onChange, currentUserName = 'Admin', direction })
       logSecurityEvent({ user: currentUserName, type: 'Database Backup', severity: 'Normal', desc: 'Manual system backup triggered from Admin Settings' });
       setTimeout(() => setBackupStatus(null), 3000);
     }, 1200);
+  };
+
+  const [isSyncingData, setIsSyncingData] = useState(false);
+  const [syncResultMsg, setSyncResultMsg] = useState(null);
+
+  const handleSyncNow = async () => {
+    setIsSyncingData(true);
+    setSyncResultMsg(null);
+    try {
+      const res = await apiFetch(`${API_BASE}/api/sync`, { method: 'POST' });
+      const json = await res.json().catch(() => null);
+      if (res.ok) {
+        setSyncResultMsg('Databases synchronized successfully!');
+        logSecurityEvent({ user: currentUserName, type: 'Database Sync', severity: 'Normal', desc: 'Manual LAN & Cloud database sync triggered from Admin Settings' });
+        window.dispatchEvent(new CustomEvent('verity:sync-completed'));
+        window.dispatchEvent(new CustomEvent('verity:classrooms-changed'));
+      } else {
+        setSyncResultMsg(json?.error || 'Sync completed with warnings.');
+      }
+    } catch (e) {
+      setSyncResultMsg('Sync failed: Server connection error.');
+    } finally {
+      setIsSyncingData(false);
+      setTimeout(() => setSyncResultMsg(null), 4000);
+    }
   };
 
   const handleExportAuditCSV = async () => {
@@ -1153,6 +1182,61 @@ function SystemDataTab({ data, onChange, currentUserName = 'Admin', direction })
               </motion.div>
             )}
           </AnimatePresence>
+        </div>
+
+        <div style={styles.divider} />
+
+        {/* Server & Cloud Sync */}
+        <div>
+          <h3 style={styles.sectionTitle}><Server size={18} color={T.blue} /><span>Server Architecture & Cloud Sync</span></h3>
+          <p style={styles.sectionSub}>Manage synchronization between the Local / ComLab LAN server and Online Cloud server (Supabase PostgreSQL).</p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '14px' }}>
+              <div style={{ padding: '14px 18px', borderRadius: '16px', backgroundColor: isDark ? '#262626' : '#f8fafc', border: isDark ? '1px solid #3f3f46' : '1px solid #e2e8f0' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+                  <span style={{ fontSize: '0.85rem', fontWeight: '700', color: T.text }}>Online Cloud Server</span>
+                  <span style={{ fontSize: '0.75rem', fontWeight: '700', color: '#16a34a', backgroundColor: '#dcfce7', padding: '2px 8px', borderRadius: '6px' }}>Supabase / Render</span>
+                </div>
+                <div style={{ fontSize: '0.82rem', color: T.muted }}>
+                  Active Endpoint: <strong>https://verity-2z4v.onrender.com</strong>
+                </div>
+              </div>
+
+              <div style={{ padding: '14px 18px', borderRadius: '16px', backgroundColor: isDark ? '#262626' : '#f8fafc', border: isDark ? '1px solid #3f3f46' : '1px solid #e2e8f0' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+                  <span style={{ fontSize: '0.85rem', fontWeight: '700', color: T.text }}>Local ComLab LAN Server</span>
+                  <span style={{ fontSize: '0.75rem', fontWeight: '700', color: '#0284c7', backgroundColor: '#e0f2fe', padding: '2px 8px', borderRadius: '6px' }}>Offline Router</span>
+                </div>
+                <div style={{ fontSize: '0.82rem', color: T.muted }}>
+                  Auto-Discovered LAN or Localhost: <strong>http://localhost:3001</strong>
+                </div>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+              <motion.button
+                whileHover={{ scale: 1.03 }}
+                whileTap={{ scale: 0.97 }}
+                onClick={handleSyncNow}
+                disabled={isSyncingData}
+                style={{
+                  ...styles.secBtn,
+                  backgroundColor: '#007bff',
+                  color: 'white',
+                  border: 'none',
+                  boxShadow: '0 4px 12px rgba(0, 123, 255, 0.25)'
+                }}
+              >
+                <RefreshCw size={16} className={isSyncingData ? 'animate-spin' : ''} />
+                <span>{isSyncingData ? 'Synchronizing Databases...' : 'Sync LAN & Cloud Databases Now'}</span>
+              </motion.button>
+              {syncResultMsg && (
+                <span style={{ fontSize: '0.82rem', fontWeight: '600', color: syncResultMsg.includes('success') ? '#16a34a' : '#dc2626' }}>
+                  {syncResultMsg}
+                </span>
+              )}
+            </div>
+          </div>
         </div>
       </div>
     </motion.div>

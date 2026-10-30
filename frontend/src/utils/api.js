@@ -473,6 +473,26 @@ if (typeof window !== 'undefined') {
   });
   window.addEventListener('verity:server-changed', () => {
     checkLocalHealth();
+    try {
+      fetch(`${getLocalApiUrl()}/api/sync`, { method: 'POST' }).catch(() => {});
+    } catch (_) {}
+  });
+
+  // Automatic background synchronization between LAN and Cloud
+  setInterval(() => {
+    if (typeof navigator !== 'undefined' && navigator.onLine) {
+      try {
+        fetch(`${getLocalApiUrl()}/api/sync`, { method: 'POST' }).catch(() => {});
+      } catch (_) {}
+    }
+  }, 15000);
+
+  window.addEventListener('focus', () => {
+    if (typeof navigator !== 'undefined' && navigator.onLine) {
+      try {
+        fetch(`${getLocalApiUrl()}/api/sync`, { method: 'POST' }).catch(() => {});
+      } catch (_) {}
+    }
   });
 }
 

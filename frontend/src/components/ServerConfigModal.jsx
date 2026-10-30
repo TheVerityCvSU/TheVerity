@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Server, Globe, CheckCircle2, AlertCircle, X, Loader2, RotateCcw, Wifi } from 'lucide-react';
+import { Server, Globe, CheckCircle2, AlertCircle, X, Loader2, RotateCcw, Wifi, Info } from 'lucide-react';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { getCloudUrl, DEFAULT_CLOUD_API_URL } from '../utils/api';
 
@@ -234,7 +234,8 @@ export default function ServerConfigModal({ isOpen, onClose }) {
                 }}
               />
               <div style={{ marginTop: '6px', fontSize: '0.78rem', color: isDark ? '#94a3b8' : '#64748b' }}>
-                💡 Tip: If this laptop is connecting to the teacher/host laptop, type its Wi-Fi IP (e.g.{' '}
+                <Info size={13} style={{ display: 'inline', verticalAlign: -2, marginRight: 4 }} />
+                Tip: If this laptop is connecting to the teacher/host laptop, type its Wi-Fi IP (e.g.{' '}
                 <button
                   type="button"
                   onClick={() => { setInputUrl('192.168.1.10:3001'); setTestResult(null); }}

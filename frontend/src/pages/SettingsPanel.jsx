@@ -1331,7 +1331,7 @@ export default function SettingsPanel({ role = 'Student', onBack, loading = fals
                   Save Changes
                 </button>
                 {savedSection === section.title && (
-                  <span style={styles.savedNote}>✓ Saved</span>
+                  <span style={{ ...styles.savedNote, display: 'inline-flex', alignItems: 'center', gap: '4px' }}><CheckCircle2 size={13} color='#16a34a' /><span>Saved</span></span>
                 )}
               </div>
             )}

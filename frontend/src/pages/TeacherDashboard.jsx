@@ -1073,7 +1073,7 @@ export default function TeacherDashboard({ currentUser, onLogout, onEnterClassro
         </div>
 
         {/* Right: Profile */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', flex: 1, gap: '16px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', flex: 1, gap: '16px', marginRight: '24px' }}>
           <ProfileMenu currentUser={currentUser} onLogout={onLogout} />
         </div>
       </header>

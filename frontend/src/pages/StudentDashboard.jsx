@@ -1072,7 +1072,7 @@ export default function StudentDashboard({ currentUser, onLogout, onEnterClassro
         </div>
 
         {/* Right: Profile */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', flex: 1, gap: '16px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', flex: 1, gap: '16px', marginRight: '24px' }}>
           <button
             onClick={() => { setJoinError(''); setClassCode(''); setIsModalOpen(true); }}
             style={{

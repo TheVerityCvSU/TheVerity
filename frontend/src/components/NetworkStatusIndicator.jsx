@@ -1,11 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { RefreshCw, X } from 'lucide-react';
 import { 
   getConnectionStatus, 
   subscribeConnectionStatus, 
   setCustomLanServer, 
   switchToCloudMode,
   getLocalApiUrl,
-  getCloudUrl
+  getCloudUrl,
+  apiFetch
 } from '../utils/api';
 import { useDarkMode } from '../hooks/useDarkMode';
 
@@ -18,6 +20,7 @@ export default function NetworkStatusIndicator({ hidden = false }) {
   const [customIp, setCustomIp] = useState('');
   const [isConnecting, setIsConnecting] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
   const [feedback, setFeedback] = useState(null); // { type: 'success' | 'error', message: string }
   const popoverRef = useRef(null);
 
@@ -74,12 +77,12 @@ export default function NetworkStatusIndicator({ hidden = false }) {
 
   const modeLabel = mode === 'offline' 
     ? 'Offline Mode' 
-    : (mode === 'lan' ? 'LAN Server (School Network)' : 'Online Server (Cloud)');
+    : (mode === 'lan' ? 'LAN Server (Local ComLab)' : 'Online Server (Cloud)');
 
   const tooltipText = mode === 'offline'
     ? 'Offline (No internet or LAN server) — Click to configure'
     : (mode === 'lan'
-        ? `Connected to LAN Server (${status.lanHostDisplay || status.localUrl}) — Click to configure`
+        ? `Connected to LAN Server (Local ComLab) (${status.lanHostDisplay || status.localUrl}) — Click to configure`
         : 'Online (Connected to Cloud Server) — Click to configure');
 
   const handleConnect = async (e) => {
@@ -141,9 +144,32 @@ export default function NetworkStatusIndicator({ hidden = false }) {
     }, 1200);
   };
 
+  const handleTriggerSync = async () => {
+    setIsSyncing(true);
+    setFeedback(null);
+    try {
+      const res = await apiFetch('/api/sync', { method: 'POST' });
+      if (res.ok) {
+        setFeedback({ type: 'success', message: 'LAN & Cloud database synchronized!' });
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('verity:sync-completed'));
+          window.dispatchEvent(new CustomEvent('verity:classrooms-changed'));
+          window.dispatchEvent(new CustomEvent('verity:users-changed'));
+        }
+      } else {
+        setFeedback({ type: 'error', message: 'Sync completed with warnings or offline status.' });
+      }
+    } catch (err) {
+      setFeedback({ type: 'error', message: 'Sync failed: Server unreachable.' });
+    } finally {
+      setIsSyncing(false);
+      setTimeout(() => setFeedback(null), 3500);
+    }
+  };
+
   return (
-    <div style={{ position: 'fixed', top: '14px', left: '14px', zIndex: 999999 }}>
-      {/* Top Left Indicator Dot Button */}
+    <div style={{ position: 'fixed', top: '16px', right: '16px', zIndex: 999999 }}>
+      {/* Top Right Indicator Dot Button */}
       <button
         type="button"
         onClick={() => {
@@ -190,7 +216,7 @@ export default function NetworkStatusIndicator({ hidden = false }) {
           style={{
             position: 'absolute',
             top: '34px',
-            left: '0px',
+            right: '0px',
             width: '320px',
             backgroundColor: isDark ? 'rgba(24, 24, 27, 0.94)' : 'rgba(255, 255, 255, 0.96)',
             backdropFilter: 'blur(16px)',
@@ -230,13 +256,16 @@ export default function NetworkStatusIndicator({ hidden = false }) {
                 border: 'none',
                 color: isDark ? '#a1a1aa' : '#71717a',
                 cursor: 'pointer',
-                fontSize: '1rem',
-                lineHeight: 1,
-                padding: '2px 6px',
-                borderRadius: '4px'
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                padding: '4px',
+                borderRadius: '6px'
               }}
+              title="Close"
+              aria-label="Close"
             >
-              &times;
+              <X size={14} />
             </button>
           </div>
 
@@ -341,6 +370,41 @@ export default function NetworkStatusIndicator({ hidden = false }) {
               {feedback.message}
             </div>
           )}
+
+          {/* Synchronize LAN & Cloud Database */}
+          <div style={{ marginTop: '10px', paddingTop: '10px', borderTop: isDark ? '1px solid rgba(255, 255, 255, 0.08)' : '1px solid rgba(0, 0, 0, 0.08)' }}>
+            <button
+              type="button"
+              onClick={handleTriggerSync}
+              disabled={isSyncing}
+              style={{
+                width: '100%',
+                padding: '7px 10px',
+                borderRadius: '8px',
+                border: isDark ? '1px solid rgba(255, 255, 255, 0.14)' : '1px solid #cbd5e1',
+                backgroundColor: isDark ? 'rgba(39, 39, 42, 0.7)' : '#f8fafc',
+                color: isDark ? '#93c5fd' : '#0284c7',
+                fontWeight: '600',
+                fontSize: '0.8rem',
+                cursor: isSyncing ? 'not-allowed' : 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '6px',
+                transition: 'all 0.2s ease'
+              }}
+            >
+              <RefreshCw size={14} className={isSyncing ? 'animate-spin' : ''} />
+              <span>{isSyncing ? 'Syncing Databases...' : 'Sync LAN & Cloud Database'}</span>
+            </button>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '8px', fontSize: '0.72rem', color: isDark ? '#a1a1aa' : '#71717a' }}>
+              <span>Auto-Sync</span>
+              <span style={{ color: '#22c55e', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#22c55e', display: 'inline-block' }} />
+                Active (Continuous 15s)
+              </span>
+            </div>
+          </div>
 
           {/* Switch back to Cloud if currently on LAN */}
           {mode === 'lan' && (
