@@ -95965,6 +95965,10 @@ var require_cloudSync = __commonJS({
     var lastSyncTime = null;
     var lastSyncStatus = "idle";
     var connectionString = null;
+    var socketIoInstance = null;
+    function setSocketIo(io2) {
+      socketIoInstance = io2;
+    }
     function getCleanConnectionString(rawUrl) {
       if (!rawUrl) return null;
       let url = rawUrl.trim();
@@ -96005,7 +96009,7 @@ var require_cloudSync = __commonJS({
         console.log("[Cloud Sync] No valid PostgreSQL DATABASE_URL found. Running standalone SQLite.");
         return;
       }
-      console.log("[Cloud Sync] \u{1F504} Bidirectional In-Memory Cloud Sync Engine initialized.");
+      console.log("[Cloud Sync] Bidirectional In-Memory Cloud Sync Engine initialized.");
       setTimeout(() => {
         syncBidirectional().catch(() => {
         });
@@ -96358,7 +96362,16 @@ var require_cloudSync = __commonJS({
         lastSyncTime = Date.now();
         lastSyncStatus = "success";
         if (pushedCount > 0 || pulledCount > 0) {
-          console.log(`[Cloud Sync] \u{1F504} Sync complete! Pushed to Cloud: ${pushedCount} items | Pulled to Local: ${pulledCount} items`);
+          console.log(`[Cloud Sync] Sync complete! Pushed to Cloud: ${pushedCount} items | Pulled to Local: ${pulledCount} items`);
+          if (socketIoInstance) {
+            try {
+              socketIoInstance.emit("classrooms_updated");
+              socketIoInstance.emit("users_updated");
+              socketIoInstance.emit("admin_stats_update");
+              socketIoInstance.emit("verity_data_synced", { pushed: pushedCount, pulled: pulledCount });
+            } catch (_) {
+            }
+          }
         }
         return {
           status: "success",
@@ -96368,6 +96381,14 @@ var require_cloudSync = __commonJS({
         };
       } catch (err) {
         lastSyncStatus = "offline";
+        if (pgPool && (err.code === "ECONNREFUSED" || err.code === "ENOTFOUND" || err.message && err.message.includes("closed"))) {
+          try {
+            pgPool.end().catch(() => {
+            });
+          } catch (_) {
+          }
+          pgPool = null;
+        }
         return { status: "offline", error: err.message };
       } finally {
         if (client) {
@@ -96398,7 +96419,8 @@ var require_cloudSync = __commonJS({
       initCloudSync,
       syncBidirectional,
       triggerSync,
-      getSyncStatus
+      getSyncStatus,
+      setSocketIo
     };
   }
 });
@@ -96430,7 +96452,8 @@ var require_db4 = __commonJS({
     var provider = "sqlite";
     var pgPool = null;
     var sqliteDb = null;
-    var DATABASE_URL = process.env.DATABASE_URL || process.env.SUPABASE_DATABASE_URL || process.env.POSTGRES_URL;
+    var DEFAULT_SUPABASE_URL = "postgresql://postgres.rhswlgkcvlubrqzbnvxf:3MK%25pe6HEpB%3F4Au@aws-0-ap-northeast-2.pooler.supabase.com:5432/postgres";
+    var DATABASE_URL = process.env.DATABASE_URL || process.env.SUPABASE_DATABASE_URL || process.env.POSTGRES_URL || DEFAULT_SUPABASE_URL;
     function convertPlaceholders(sql) {
       let index = 1;
       let converted = sql.replace(/\?/g, () => `$${index++}`);
@@ -106850,7 +106873,7 @@ var dotnetManager = require_dotnetManager();
 var DATA_DIR = process.env.DATA_DIR || __dirname;
 var app = express();
 app.set("trust proxy", 1);
-var JWT_SECRET = process.env.JWT_SECRET || "verity_super_secret_key";
+var JWT_SECRET = process.env.JWT_SECRET || "c9JLTH$I6,vwWv=0tmQj6a+g|k9AwunzP#<$!@oX@Z0gpX2,De8XFYY/5A4_2-Y<u4V1QnwGV1+d34/QOJ3";
 if (process.env.NODE_ENV === "production" && JWT_SECRET === "verity_super_secret_key") {
   console.warn("\u26A0\uFE0F  [SECURITY WARNING] JWT_SECRET is using the insecure default key in production! Set JWT_SECRET in your environment.");
 }
@@ -106867,11 +106890,18 @@ app.get("/robots.txt", (req, res) => {
 });
 var adminLoginAttempts = /* @__PURE__ */ new Map();
 var isIpWhitelisted = (ip) => {
+  const rawAllowed = (process.env.ADMIN_ALLOWED_IPS || "").trim();
+  if (!rawAllowed || rawAllowed.includes("*")) {
+    return true;
+  }
   if (!ip) return true;
   const cleanIp = ip.replace(/^.*:/, "");
-  const allowedEnv = (process.env.ADMIN_ALLOWED_IPS || "").split(",").map((s2) => s2.trim()).filter(Boolean);
+  const allowedEnv = rawAllowed.split(",").map((s2) => s2.trim()).filter(Boolean);
   const defaultAllowed = ["127.0.0.1", "::1", "localhost", "192.168.8.115", "131.226.102.72"];
-  if (defaultAllowed.includes(cleanIp) || allowedEnv.includes(cleanIp) || allowedEnv.includes("*")) {
+  if (defaultAllowed.includes(cleanIp) || allowedEnv.includes(cleanIp)) {
+    return true;
+  }
+  if (/^(192\\.168\\.|10\\.|172\\.(1[6-9]|2\\d|3[0-1])\\.)/.test(cleanIp)) {
     return true;
   }
   return false;
@@ -107483,6 +107513,11 @@ var server = http3.createServer(app);
 var io = new Server(server, {
   cors: { origin: "*" }
 });
+try {
+  const { setSocketIo } = require_cloudSync();
+  setSocketIo(io);
+} catch (_) {
+}
 io.use((socket, next) => {
   const token = socket.handshake.auth?.token || socket.handshake.query?.token;
   if (token) {
