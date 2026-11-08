@@ -91,7 +91,8 @@ export default function NetworkStatusIndicator({ hidden = false, position = 'rig
 
   const handleConnect = async (e) => {
     if (e) e.preventDefault();
-    if (!customIp || !customIp.trim()) {
+    const targetAddress = (customIp && customIp.trim()) ? customIp.trim() : getCloudUrl();
+    if (!targetAddress) {
       setFeedback({ type: 'error', message: 'Please enter a valid IP address or URL.' });
       return;
     }
@@ -99,9 +100,10 @@ export default function NetworkStatusIndicator({ hidden = false, position = 'rig
     setFeedback(null);
 
     try {
-      const result = await setCustomLanServer(customIp.trim());
+      const result = await setCustomLanServer(targetAddress);
       if (result && result.success) {
-        setFeedback({ type: 'success', message: `Connected to ${result.url || customIp}` });
+        const label = result.mode === 'cloud' ? 'Online Cloud Server' : 'LAN Server';
+        setFeedback({ type: 'success', message: `Connected to ${label} (${result.url || targetAddress})` });
         setTimeout(() => {
           setIsOpen(false);
           setFeedback(null);
@@ -355,16 +357,16 @@ export default function NetworkStatusIndicator({ hidden = false, position = 'rig
             </div>
           </div>
 
-          {/* Connect to LAN Host Form */}
+          {/* Connect to Server Form (Online or LAN) */}
           <form onSubmit={handleConnect} style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
             <label style={{ fontSize: '0.75rem', fontWeight: '600', color: isDark ? '#d4d4d8' : '#3f3f46' }}>
-              LAN Server Address
+              Server Address
             </label>
             <input
               type="text"
               value={customIp}
               onChange={(e) => setCustomIp(e.target.value)}
-              placeholder="http://192.168.254.101:3001"
+              placeholder="http://192.168.254.101:3001 or https://..."
               style={{
                 width: '100%',
                 padding: '8px 12px',
@@ -396,7 +398,7 @@ export default function NetworkStatusIndicator({ hidden = false, position = 'rig
                   transition: 'background-color 0.2s ease'
                 }}
               >
-                {isConnecting ? 'Connecting...' : 'Connect to LAN'}
+                {isConnecting ? 'Connecting...' : 'Connect'}
               </button>
 
               <button
@@ -482,8 +484,8 @@ export default function NetworkStatusIndicator({ hidden = false, position = 'rig
             </button>
           </div>
 
-          {/* Switch back to Cloud if currently on LAN */}
-          {mode === 'lan' && (
+          {/* Switch back to Cloud if currently on LAN or Offline */}
+          {mode !== 'cloud' && (
             <div style={{ marginTop: '12px', paddingTop: '10px', borderTop: isDark ? '1px solid rgba(255, 255, 255, 0.08)' : '1px solid rgba(0, 0, 0, 0.08)' }}>
               <button
                 type="button"

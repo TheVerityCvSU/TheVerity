@@ -21,6 +21,10 @@ if (typeof window !== 'undefined') {
     if (cloud && (cloud.includes('localhost') || cloud.includes('127.0.0.1') || cloud.includes('vercel.app'))) {
       localStorage.removeItem('verity_cloud_url');
     }
+    // Prioritize online server when there is an internet connection on startup
+    if (typeof navigator === 'undefined' || navigator.onLine) {
+      localStorage.removeItem('verity_preferred_mode');
+    }
   } catch (_) {}
 }
 
@@ -114,10 +118,21 @@ if (typeof window !== 'undefined') {
 }
 
 /**
- * Cloud URL: Strictly the remote cloud (Render).
- * When internet is available, all requests go here.
+ * Cloud URL: Strictly the remote online cloud server (Render or custom online server).
+ * When internet is available, all requests go here by default.
  */
 export const getCloudUrl = () => {
+  if (typeof window !== 'undefined') {
+    try {
+      const customCloud = (localStorage.getItem('verity_cloud_url') || '').trim().replace(/\/$/, '');
+      if (customCloud && !customCloud.includes('localhost') && !customCloud.includes('127.0.0.1') && !customCloud.includes('vercel.app')) {
+        const host = customCloud.replace(/^https?:\/\//i, '').split('/')[0].split(':')[0];
+        if (!isPrivateHost(host)) {
+          return customCloud;
+        }
+      }
+    } catch (_) {}
+  }
   const envUrl = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
   if (envUrl && !envUrl.includes('localhost') && !envUrl.includes('127.0.0.1')) {
     return envUrl;
@@ -254,32 +269,37 @@ export const getConnectionStatus = () => {
   const isLanConnected = getIsLanConnected();
 
   let activeMode = 'offline';
-  if (userPreferredMode === 'cloud') {
-    if (hasCloud && !isCloudDown && isNavOnline) {
+  if (userPreferredMode === 'lan') {
+    if (isLanConnected) {
+      activeMode = 'lan';
+    } else if (hasCloud && !isCloudDown && isNavOnline) {
       activeMode = 'cloud';
     } else {
       activeMode = 'offline';
     }
-  } else if (userPreferredMode === 'lan') {
-    if (isLanConnected) {
+  } else if (userPreferredMode === 'cloud') {
+    if (hasCloud && !isCloudDown && isNavOnline) {
+      activeMode = 'cloud';
+    } else if (isLanConnected) {
       activeMode = 'lan';
     } else {
       activeMode = 'offline';
     }
   } else {
+    // Default automatic mode: ALWAYS prioritize the Online Cloud Server when internet is available!
     if (isWebHosted) {
-      if (isLanConnected) {
-        activeMode = 'lan';
-      } else if (!isCloudDown && isNavOnline) {
+      if (!isCloudDown && isNavOnline) {
         activeMode = 'cloud';
+      } else if (isLanConnected) {
+        activeMode = 'lan';
       } else {
         activeMode = 'offline';
       }
     } else {
-      if (isLanConnected) {
-        activeMode = 'lan';
-      } else if (hasCloud && !isCloudDown && isNavOnline) {
+      if (hasCloud && !isCloudDown && isNavOnline) {
         activeMode = 'cloud';
+      } else if (isLanConnected) {
+        activeMode = 'lan';
       } else {
         activeMode = 'offline';
       }
@@ -454,30 +474,41 @@ export const attemptAutoLanReconnect = async () => {
 
 // Run network probes immediately on startup and keep checking periodically for auto-recovery
 if (typeof window !== 'undefined') {
-  // Immediate initial health probe on app load
-  checkCloudHealth();
-  checkLocalHealth().then((ok) => {
-    if (!ok) attemptAutoLanReconnect();
+  // Immediate initial health probe on app load (Cloud prioritized first)
+  checkCloudHealth().then((cloudOk) => {
+    checkLocalHealth().then((localOk) => {
+      if (!cloudOk && !localOk) {
+        attemptAutoLanReconnect();
+      }
+    });
   });
 
   // Background auto-recovery check:
-  // - If connected to LAN: check local health every 2.5s to immediately catch disconnects
-  // - If NOT connected to LAN: attempt auto-reconnect every 2.5s to lock on as soon as Wi-Fi/router reconnects
+  // - Prioritize checking cloud health so we stay on or recover to Online Cloud Server when internet is available
+  // - Only auto-probe LAN if cloud is down or user explicitly selected LAN mode
   setInterval(() => {
-    if (getIsLanConnected()) {
-      checkLocalHealth();
-    } else {
-      attemptAutoLanReconnect();
+    if (isCloudDown || Date.now() - lastCloudCheckTime > 15000) {
+      checkCloudHealth();
     }
 
-    if (isCloudDown || Date.now() - lastCloudCheckTime > 25000) {
-      checkCloudHealth();
+    if (userPreferredMode === 'lan' || isCloudDown || (typeof navigator !== 'undefined' && !navigator.onLine)) {
+      if (getIsLanConnected()) {
+        checkLocalHealth();
+      } else {
+        attemptAutoLanReconnect();
+      }
+    } else if (getIsLanConnected()) {
+      checkLocalHealth();
     }
   }, 2500);
 
   window.addEventListener('online', () => {
-    console.log('🟢 [Network] Network connectivity restored. Reconnecting to LAN and Cloud...');
-    attemptAutoLanReconnect();
+    console.log('🟢 [Network] Internet connectivity restored. Prioritizing Online Cloud Server...');
+    // Automatically prioritize Online Cloud Server when internet is restored
+    if (userPreferredMode === 'lan') {
+      userPreferredMode = null;
+      try { localStorage.removeItem('verity_preferred_mode'); } catch (_) {}
+    }
     checkCloudHealth();
     checkLocalHealth();
     try {
@@ -535,33 +566,81 @@ export const setCustomLanServer = async (url) => {
     return { success: true };
   }
 
-  let clean = url.trim().replace(/\/$/, '');
+  const raw = url.trim().replace(/\/$/, '');
+  const withoutProto = raw.replace(/^https?:\/\//i, '');
+  const hostPart = withoutProto.split('/')[0].split(':')[0];
+  const isLocalOrLan = isPrivateHost(hostPart);
+
+  let clean = raw;
   if (!clean.startsWith('http://') && !clean.startsWith('https://')) {
-    clean = `http://${clean}`;
+    clean = isLocalOrLan ? `http://${clean}` : `https://${clean}`;
   }
-  if (!clean.replace(/^https?:\/\//, '').includes(':')) {
+  if (isLocalOrLan && !clean.replace(/^https?:\/\//i, '').includes(':')) {
     clean = `${clean}:3001`;
   }
 
-  // Pre-test the health of the target LAN server
+  // Pre-test the health of the target server (supports both Online Cloud Server and Local LAN Server)
+  let healthData = null;
   try {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 3000);
+    const timer = setTimeout(() => controller.abort(), isLocalOrLan ? 3500 : 6000);
     const res = await fetch(`${clean}/health`, { signal: controller.signal, cache: 'no-store' });
     clearTimeout(timer);
     if (!res.ok) {
       return { success: false, error: `Server returned HTTP ${res.status}` };
     }
-    const data = await res.json().catch(() => null);
-    if (!data || data.app !== 'the-verity') {
+    healthData = await res.json().catch(() => null);
+    if (!healthData || healthData.app !== 'the-verity') {
       return { success: false, error: 'Target reachable, but not a Verity server' };
     }
   } catch (err) {
-    return { success: false, error: 'Could not connect. Please check IP and port.' };
+    return {
+      success: false,
+      error: isLocalOrLan
+        ? 'Could not connect to LAN server. Please check IP and port.'
+        : 'Could not connect to Online Server. Please check your internet connection or URL.'
+    };
   }
 
+  // If the user entered an Online Server URL (non-private host), connect in Cloud Mode
+  if (!isLocalOrLan) {
+    userPreferredMode = 'cloud';
+    autoDiscoveredLanServer = null;
+    isCloudDown = false;
+    lastCloudCheckTime = Date.now();
+    try {
+      localStorage.setItem('verity_preferred_mode', 'cloud');
+      localStorage.removeItem('verity_lan_server');
+      if (clean === DEFAULT_CLOUD_API_URL) {
+        localStorage.removeItem('verity_cloud_url');
+      } else {
+        localStorage.setItem('verity_cloud_url', clean);
+      }
+      if (window.electronAPI?.localDB?.setLocal) {
+        await window.electronAPI.localDB.setLocal('verity_preferred_mode', 'cloud').catch(() => {});
+        await window.electronAPI.localDB.setLocal('verity_lan_server', null).catch(() => {});
+        await window.electronAPI.localDB.setLocal('verity_cloud_url', clean === DEFAULT_CLOUD_API_URL ? null : clean).catch(() => {});
+      }
+      if (window.electronAPI?.setLanServer) {
+        await window.electronAPI.setLanServer(null).catch(() => {});
+      }
+    } catch (_) {}
+
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('verity:server-changed', { detail: clean }));
+      window.dispatchEvent(new CustomEvent('verity:classrooms-changed'));
+      window.dispatchEvent(new CustomEvent('verity:users-changed'));
+    }
+
+    notifyListeners();
+    return { success: true, url: clean, mode: 'cloud' };
+  }
+
+  // Otherwise, connect in LAN Mode
   userPreferredMode = 'lan';
   autoDiscoveredLanServer = clean;
+  localHealthData = healthData;
+  isLocalServerUp = true;
   try {
     localStorage.setItem('verity_preferred_mode', 'lan');
     localStorage.setItem('verity_lan_server', clean);
@@ -576,11 +655,13 @@ export const setCustomLanServer = async (url) => {
   if (typeof window !== 'undefined') {
     window.dispatchEvent(new CustomEvent('verity:server-changed', { detail: clean }));
     window.dispatchEvent(new CustomEvent('verity:lan-discovered', { detail: clean }));
+    window.dispatchEvent(new CustomEvent('verity:classrooms-changed'));
+    window.dispatchEvent(new CustomEvent('verity:users-changed'));
   }
 
   checkLocalHealth();
   notifyListeners();
-  return { success: true, url: clean };
+  return { success: true, url: clean, mode: 'lan' };
 };
 
 export const switchToCloudMode = () => {
@@ -777,9 +858,17 @@ export const apiFetch = async (url, options = {}) => {
     }
   }
 
-  // 2. Desktop / Electron / Local dev: Check if connected to LAN server
-  // When user is explicitly in Cloud Mode, do NOT intercept with LAN server!
-  const isLanMode = userPreferredMode === 'cloud' ? false : (userPreferredMode === 'lan' || getIsLanConnected());
+  // 2. Desktop / Electron / Local dev: Prioritize Online Cloud Server when internet is available!
+  // Only route to LAN server first if user explicitly switched to LAN mode, or if Online Cloud is unavailable.
+  const isOnlineCloudAvailable = Boolean(
+    cloudUrl &&
+    cloudUrl !== localUrl &&
+    !isCloudDown &&
+    (typeof navigator === 'undefined' || navigator.onLine)
+  );
+  const isLanMode = userPreferredMode === 'lan'
+    ? getIsLanConnected()
+    : (userPreferredMode === 'cloud' ? false : (!isOnlineCloudAvailable && getIsLanConnected()));
   if (isLanMode) {
     try {
       const currentLocalUrl = getLocalApiUrl();
