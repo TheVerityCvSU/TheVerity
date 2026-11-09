@@ -191,6 +191,17 @@ try {
     ffmpegStaticPath = require('ffmpeg-static');
 } catch (_) {}
 
+// Fallback to system-installed ffmpeg binary (e.g. from apt-get install -y ffmpeg)
+if (!ffmpegStaticPath || typeof ffmpegStaticPath !== 'string') {
+    try {
+        const { execSync } = require('child_process');
+        execSync(process.platform === 'win32' ? 'where ffmpeg' : 'which ffmpeg', { stdio: 'ignore' });
+        ffmpegStaticPath = 'ffmpeg';
+    } catch (_) {
+        ffmpegStaticPath = null;
+    }
+}
+
 /**
  * Automatically extracts a lightweight thumbnail image (_thumb.jpg) and
  * compresses uploaded videos with faststart streaming headers so they are lightweight.

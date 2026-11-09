@@ -107089,6 +107089,15 @@ try {
   ffmpegStaticPath = require_ffmpeg_static();
 } catch (_) {
 }
+if (!ffmpegStaticPath || typeof ffmpegStaticPath !== "string") {
+  try {
+    const { execSync: execSync2 } = require("child_process");
+    execSync2(process.platform === "win32" ? "where ffmpeg" : "which ffmpeg", { stdio: "ignore" });
+    ffmpegStaticPath = "ffmpeg";
+  } catch (_) {
+    ffmpegStaticPath = null;
+  }
+}
 function processVideoUpload(targetPath) {
   if (!ffmpegStaticPath || !fs2.existsSync(targetPath)) return;
   const ext = path.extname(targetPath).toLowerCase();

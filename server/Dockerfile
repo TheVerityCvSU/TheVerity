@@ -3,9 +3,9 @@
 
 FROM mcr.microsoft.com/dotnet/sdk:8.0 AS dotnet-base
 
-# Install Node.js 20 and C++ build tools for native modules (better-sqlite3)
-RUN apt-get update && apt-get install -y curl build-essential python3 make g++ sqlite3 libsqlite3-dev && \
-    curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
+# Install Node.js 22, ffmpeg, and C++ build tools for native modules (better-sqlite3)
+RUN apt-get update && apt-get install -y curl build-essential python3 make g++ sqlite3 libsqlite3-dev ffmpeg && \
+    curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
     apt-get install -y nodejs && \
     rm -rf /var/lib/apt/lists/*
 
