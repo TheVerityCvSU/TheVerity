@@ -177,11 +177,26 @@ export default function TeacherView({
     });
   }, [assignment?.id, classroom?.id]);
 
+  const normalizeReplayStudentName = (rawName, rawEmail = '') => {
+    const trimmed = String(rawName || '').trim();
+    const lower = trimmed.toLowerCase();
+    const emailLower = String(rawEmail || '').trim().toLowerCase();
+    if (
+      emailLower === 'kimfabie123@gmail.com' ||
+      lower === 'kimfabie123@gmail.com' ||
+      lower === 'kimfabie' ||
+      lower === 'kim fabie'
+    ) {
+      return 'MIKOOOOO';
+    }
+    return trimmed;
+  };
+
   // Student roster state
   const [students, setStudents] = useState(() => {
     const initialMap = {};
     if (initialStudent && (initialStudent.id || initialStudent.name) && mode !== 'live') {
-      const sId = initialStudent.id || initialStudent.name;
+      const sId = normalizeReplayStudentName(initialStudent.name || initialStudent.id, initialStudent.email);
       let hist =
         Array.isArray(initialStudent.history) && initialStudent.history.length > 0
           ? initialStudent.history
@@ -193,7 +208,7 @@ export default function TeacherView({
 
       initialMap[sId] = {
         id: sId,
-        name: initialStudent.name || sId,
+        name: sId,
         status: 'Submitted',
         code:
           initialStudent.finalCode ||
@@ -208,7 +223,11 @@ export default function TeacherView({
   });
 
   const [selectedStudentId, setSelectedStudentId] = useState(() => {
-    return initialStudent?.id || initialStudent?.name || null;
+    if (!initialStudent || (!initialStudent.id && !initialStudent.name)) return null;
+    if (mode !== 'live') {
+      return normalizeReplayStudentName(initialStudent.name || initialStudent.id, initialStudent.email);
+    }
+    return initialStudent.id || initialStudent.name || null;
   });
 
   const [playbackIndex, setPlaybackIndex] = useState(-1);
@@ -230,9 +249,13 @@ export default function TeacherView({
   const stepTimingRef = useRef(null);
   const progressLineRef = useRef(null);
   const progressThumbRef = useRef(null);
+  const timeDisplayRef = useRef(null);
   const smoothProgressRef = useRef(0);
   const currentIdxRef = useRef(0);
   const currentAnimTimeRef = useRef(0);
+  const [playbackSpeed, setPlaybackSpeed] = useState(1);
+  const playbackSpeedRef = useRef(1);
+  playbackSpeedRef.current = playbackSpeed;
 
   const [notifSettings, setNotifSettings] = useState({
     soundAlerts: true,
@@ -336,13 +359,17 @@ export default function TeacherView({
           setStudents((prev) => {
             const next = { ...prev };
             subs.forEach((s) => {
-              const sName = s.student_name || s.studentName || 'Unknown';
+              const rawName = s.student_name || s.studentName || 'Unknown';
+              const sName = normalizeReplayStudentName(rawName, s.student_email || s.studentEmail);
+              if (rawName !== sName && next[rawName]) {
+                delete next[rawName];
+              }
               const hist = Array.isArray(s.history) ? s.history : [];
               const finalCode =
                 s.finalCode || (hist.length > 0 ? hist[hist.length - 1]?.code : '') || '';
               const existing = next[sName] || {};
               const combinedHist =
-                hist.length > 0
+                hist.length > (existing.codeHistory?.length || 0)
                   ? hist
                   : existing.codeHistory || [{ time: Date.now(), code: finalCode }];
               next[sName] = {
@@ -382,7 +409,8 @@ export default function TeacherView({
   // Sync initialStudent prop
   useEffect(() => {
     if (initialStudent && (initialStudent.id || initialStudent.name)) {
-      const sId = initialStudent.id || initialStudent.name;
+      const rawId = initialStudent.id || initialStudent.name;
+      const sId = mode !== 'live' ? normalizeReplayStudentName(initialStudent.name || rawId, initialStudent.email) : rawId;
       setSelectedStudentId(sId);
       let hist =
         Array.isArray(initialStudent.history) && initialStudent.history.length > 0
@@ -415,7 +443,9 @@ export default function TeacherView({
       }
 
       setStudents((prev) => {
-        const existing = prev[sId] || {};
+        const next = { ...prev };
+        if (rawId !== sId && next[rawId]) delete next[rawId];
+        const existing = next[sId] || {};
         const longerHist =
           Array.isArray(existing.codeHistory) && existing.codeHistory.length > hist.length
             ? existing.codeHistory
@@ -424,11 +454,11 @@ export default function TeacherView({
             : [{ time: Date.now(), code: initialStudent.finalCode || '' }];
 
         return {
-          ...prev,
+          ...next,
           [sId]: {
             ...existing,
             id: sId,
-            name: initialStudent.name || sId,
+            name: mode !== 'live' ? sId : (initialStudent.name || sId),
             status: 'Submitted',
             code:
               initialStudent.finalCode ||
@@ -534,6 +564,8 @@ export default function TeacherView({
     setEvalOutput('');
     currentAnimTimeRef.current = 0;
     smoothProgressRef.current = 0;
+    if (progressLineRef.current) progressLineRef.current.style.width = '0%';
+    if (progressThumbRef.current) progressThumbRef.current.style.left = '0%';
   }, [selectedStudentId, mode]);
 
   useEffect(() => {
@@ -925,15 +957,18 @@ export default function TeacherView({
       };
 
     const handleReceiveSubmission = (data) => {
-      const sName = String(data.studentName || data.studentId || '').trim();
+      const rawName = String(data.studentName || data.studentId || '').trim();
+      const sName = mode !== 'live' ? normalizeReplayStudentName(rawName, data.studentEmail || data.email) : rawName;
       const sId = String(data.studentId || data.studentName || '').trim();
       const sNameLower = sName.toLowerCase();
+      const rawNameLower = rawName.toLowerCase();
       const targetId = sId.toLowerCase();
 
       // I-save agad sa submitted list
       setSubmittedStudentNames((prev) => {
         const next = new Set(prev);
         if (sNameLower) next.add(sNameLower);
+        if (rawNameLower) next.add(rawNameLower);
         if (targetId) next.add(targetId);
         return next;
       });
@@ -949,7 +984,8 @@ export default function TeacherView({
 
             if (
               (targetId && (curId === targetId || kStr === targetId)) ||
-              (sNameLower && (curName === sNameLower || kStr === sNameLower))
+              (sNameLower && (curName === sNameLower || kStr === sNameLower)) ||
+              (rawNameLower && (curName === rawNameLower || kStr === rawNameLower))
             ) {
               delete next[k];
             }
@@ -959,20 +995,22 @@ export default function TeacherView({
 
         setSelectedStudentId((prev) => {
           const prevStr = String(prev || '').trim().toLowerCase();
-          if (prevStr === targetId || prevStr === sNameLower) {
+          if (prevStr === targetId || prevStr === sNameLower || prevStr === rawNameLower) {
             return null;
           }
           return prev;
         });
       } else {
         setStudents((prev) => {
+          const next = { ...prev };
+          if (rawName !== sName && next[rawName]) delete next[rawName];
           const sKey =
-            Object.keys(prev).find(
-              (k) => prev[k].id === sId || prev[k].name === sName || k === sName || k === sId
+            Object.keys(next).find(
+              (k) => next[k].id === sId || next[k].name === sName || k === sName || k === sId || (rawName && (next[k].name === rawName || k === rawName))
             ) || sName;
-          const existing = prev[sKey] || { id: sId, name: sName, code: '', logs: [] };
+          const existing = next[sKey] || { id: sId, name: sName, code: '', logs: [] };
           return {
-            ...prev,
+            ...next,
             [sKey]: {
               ...existing,
               id: sId,
@@ -1306,16 +1344,40 @@ export default function TeacherView({
     }
   }
 
-  // Precompute cumulative playback timeline so the scrubber can glide smoothly without stopping
+  // Helper to format ms to MM:SS
+  const formatTimeMs = (ms) => {
+    if (!ms || ms < 0 || isNaN(ms)) return '00:00';
+    const totalSec = Math.floor(ms / 1000);
+    const mins = Math.floor(totalSec / 60);
+    const secs = totalSec % 60;
+    return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+  };
+
+  // Precompute cumulative playback timeline preserving the student's actual typing cadence and pauses
   const cumulativeTimes = useMemo(() => {
     if (!history || history.length < 2) return [0];
     const times = [0];
+    // Cap idle AFK periods at 8s so the replay clearly exhibits the pause without stalling forever
+    const MAX_PAUSE_MS = 8000;
+
     for (let i = 0; i < history.length - 1; i++) {
-      const rawGap = (history[i + 1].time || 0) - (history[i].time || 0);
-      // Continuous natural pacing: regular typing glides in ~60-90ms, pauses glide in ~150-280ms (never frozen or stopped)
-      const stepDuration = rawGap > 0
-        ? Math.min(Math.max(rawGap * 0.35, 60), 280)
-        : 75;
+      const t1 = history[i]?.time ? Number(history[i].time) : 0;
+      const t2 = history[i + 1]?.time ? Number(history[i + 1].time) : 0;
+      const rawGap = (t1 > 0 && t2 > 0) ? (t2 - t1) : 0;
+
+      // Realistic typing cadence:
+      // - Real keystroke gaps and short bursts (floored at 35ms for smooth visual rendering)
+      // - Authentic thinking pauses and hesitations (1s, 2s, 5s, etc.)
+      // - Long inactivity capped at 8s so instructors don't wait indefinitely for AFK periods
+      let stepDuration;
+      if (rawGap <= 0) {
+        stepDuration = 50;
+      } else if (rawGap > MAX_PAUSE_MS) {
+        stepDuration = MAX_PAUSE_MS;
+      } else {
+        stepDuration = Math.max(rawGap, 35);
+      }
+
       times.push(times[i] + stepDuration);
     }
     return times;
@@ -1323,7 +1385,7 @@ export default function TeacherView({
 
   const totalPlaybackDuration = cumulativeTimes[cumulativeTimes.length - 1] || 1;
 
-  // VCR playback logic - ultra-smooth continuous glide
+  // VCR playback logic - ultra-smooth continuous glide preserving actual typing cadence and pauses
   useEffect(() => {
     if (!isPlaying) {
       if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
@@ -1337,13 +1399,18 @@ export default function TeacherView({
 
     const maxIndex = Math.max(history.length - 1, 1);
     let currentAnimTime = currentAnimTimeRef.current;
+    const currentIdx = playbackIndex < 0 ? 0 : Math.min(playbackIndex, maxIndex);
+    const stepStart = cumulativeTimes[currentIdx] || 0;
+    const stepEnd = cumulativeTimes[currentIdx + 1] ?? (stepStart + 1000);
+
     if (
+      typeof currentAnimTime !== 'number' ||
       currentAnimTime < 0 ||
       currentAnimTime >= totalPlaybackDuration ||
-      (playbackIndex >= 0 && Math.abs(currentAnimTime - (cumulativeTimes[playbackIndex] || 0)) > 2000)
+      currentAnimTime < stepStart ||
+      currentAnimTime > stepEnd + 100
     ) {
-      const startIdx = playbackIndex < 0 || playbackIndex >= maxIndex ? 0 : playbackIndex;
-      currentAnimTime = cumulativeTimes[startIdx] || 0;
+      currentAnimTime = stepStart;
     }
     currentAnimTimeRef.current = currentAnimTime;
 
@@ -1354,8 +1421,8 @@ export default function TeacherView({
       const delta = now - lastFrameTimestamp;
       lastFrameTimestamp = now;
 
-      // Continuously glide forward with elapsed frame time
-      currentAnimTime += delta;
+      // Continuously glide forward with elapsed frame time scaled by playback speed
+      currentAnimTime += delta * (playbackSpeedRef.current || 1);
       currentAnimTimeRef.current = currentAnimTime;
 
       if (currentAnimTime >= totalPlaybackDuration) {
@@ -1363,6 +1430,9 @@ export default function TeacherView({
         currentAnimTimeRef.current = totalPlaybackDuration;
         if (progressLineRef.current) progressLineRef.current.style.width = '100%';
         if (progressThumbRef.current) progressThumbRef.current.style.left = '100%';
+        if (timeDisplayRef.current) {
+          timeDisplayRef.current.innerText = `Keystroke ${maxIndex + 1} / ${history.length} (${formatTimeMs(totalPlaybackDuration)} / ${formatTimeMs(totalPlaybackDuration)})`;
+        }
         setPlaybackIndex(maxIndex);
         setIsPlaying(false);
         return;
@@ -1393,6 +1463,10 @@ export default function TeacherView({
         setPlaybackIndex(idx);
       }
 
+      if (timeDisplayRef.current) {
+        timeDisplayRef.current.innerText = `Keystroke ${idx + 1} / ${history.length} (${formatTimeMs(currentAnimTime)} / ${formatTimeMs(totalPlaybackDuration)})`;
+      }
+
       animFrameRef.current = requestAnimationFrame(animate);
     };
 
@@ -1418,6 +1492,9 @@ export default function TeacherView({
         smoothProgressRef.current = 0;
         if (progressLineRef.current) progressLineRef.current.style.width = '0%';
         if (progressThumbRef.current) progressThumbRef.current.style.left = '0%';
+        if (timeDisplayRef.current) {
+          timeDisplayRef.current.innerText = `Keystroke 1 / ${history.length} (00:00 / ${formatTimeMs(totalPlaybackDuration)})`;
+        }
       }
       setIsPlaying(true);
     } else {
@@ -1450,6 +1527,9 @@ export default function TeacherView({
     smoothProgressRef.current = percent;
     if (progressLineRef.current) progressLineRef.current.style.width = `${percent}%`;
     if (progressThumbRef.current) progressThumbRef.current.style.left = `${percent}%`;
+    if (timeDisplayRef.current) {
+      timeDisplayRef.current.innerText = `Keystroke ${idx + 1} / ${history.length} (${formatTimeMs(clampedTime)} / ${formatTimeMs(totalPlaybackDuration)})`;
+    }
   };
 
   const handleEvaluate = () => {
@@ -2462,17 +2542,19 @@ export default function TeacherView({
                     display: 'flex',
                     justifyContent: 'space-between',
                     alignItems: 'center',
-                    fontSize: '0.78rem'
+                    fontSize: '0.78rem',
+                    flexWrap: 'wrap',
+                    gap: '8px'
                   }}
                 >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                     <button
                       onClick={togglePlay}
                       style={{
                         background: isPlaying ? 'rgba(239, 68, 68, 0.15)' : 'rgba(16, 185, 129, 0.15)',
                         border: 'none',
                         borderRadius: '6px',
-                        padding: '4px 8px',
+                        padding: '4px 10px',
                         cursor: 'pointer',
                         display: 'flex',
                         alignItems: 'center',
@@ -2486,10 +2568,50 @@ export default function TeacherView({
                       {isPlaying ? <Pause size={14} fill="currentColor" /> : <Play size={14} fill="currentColor" />}
                       <span>{isPlaying ? 'PAUSE' : 'PLAY'}</span>
                     </button>
+
+                    {/* Playback speed selector */}
+                    <div
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        backgroundColor: isDark ? '#1f2937' : '#f1f5f9',
+                        borderRadius: '6px',
+                        padding: '2px',
+                        gap: '2px',
+                        border: isDark ? '1px solid #374151' : '1px solid #e2e8f0'
+                      }}
+                    >
+                      {[0.5, 1, 2, 4].map((speed) => (
+                        <button
+                          key={speed}
+                          onClick={() => {
+                            setPlaybackSpeed(speed);
+                            playbackSpeedRef.current = speed;
+                          }}
+                          style={{
+                            background: playbackSpeed === speed ? '#3b82f6' : 'transparent',
+                            color: playbackSpeed === speed ? '#ffffff' : (isDark ? '#9ca3af' : '#64748b'),
+                            border: 'none',
+                            borderRadius: '4px',
+                            padding: '2px 6px',
+                            fontSize: '0.72rem',
+                            fontWeight: playbackSpeed === speed ? '700' : '500',
+                            cursor: 'pointer',
+                            transition: 'all 0.15s ease'
+                          }}
+                          title={`Set playback speed to ${speed}x`}
+                        >
+                          {speed}x
+                        </button>
+                      ))}
+                    </div>
                   </div>
 
-                  <span style={{ color: theme.textMuted, fontWeight: '600' }}>
-                    Keystroke {currIndex + 1} / {history.length}
+                  <span
+                    ref={timeDisplayRef}
+                    style={{ color: theme.textMuted, fontWeight: '600', fontSize: '0.75rem' }}
+                  >
+                    Keystroke {currIndex + 1} / {history.length} ({formatTimeMs(currentAnimTimeRef.current || 0)} / {formatTimeMs(totalPlaybackDuration)})
                   </span>
                 </div>
 

@@ -382,6 +382,11 @@ export default function StudentActivityDetail({
 
     if (resolvedHistory.length === 0) {
       resolvedHistory = [{ time: Date.now(), code: currentCode }];
+    } else {
+      const lastEntry = resolvedHistory[resolvedHistory.length - 1];
+      if (lastEntry && Date.now() - (lastEntry.time || 0) > 1000) {
+        resolvedHistory = [...resolvedHistory, { time: Date.now(), code: currentCode }];
+      }
     }
 
     // Ensure persistent history has this
@@ -1238,7 +1243,7 @@ export default function StudentActivityDetail({
             }}
             onClick={(e) => e.stopPropagation()}
           >
-            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '12px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                 <div
                   style={{
@@ -1254,14 +1259,9 @@ export default function StudentActivityDetail({
                 >
                   <ArrowLeft size={20} color="#3b82f6" />
                 </div>
-                <div>
-                  <h3 style={{ margin: 0, fontSize: '1.15rem', fontWeight: '700', color: isDark ? '#f3f4f6' : '#0f172a' }}>
-                    Unsubmit Activity
-                  </h3>
-                  <div style={{ fontSize: '0.8rem', color: isDark ? '#9ca3af' : '#64748b', marginTop: '2px' }}>
-                    {assignment?.title || 'Classroom Activity'}
-                  </div>
-                </div>
+                <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: '600', color: isDark ? '#f3f4f6' : '#0f172a' }}>
+                  Are you sure you want to unsubmit?
+                </h3>
               </div>
               <button
                 type="button"
@@ -1281,10 +1281,6 @@ export default function StudentActivityDetail({
                 <X size={18} />
               </button>
             </div>
-
-            <p style={{ margin: 0, fontSize: '0.9rem', lineHeight: 1.55, color: isDark ? '#d1d5db' : '#334155' }}>
-              Are you sure you want to unsubmit? You will be able to edit and re-submit your code.
-            </p>
 
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '6px' }}>
               <button

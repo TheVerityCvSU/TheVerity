@@ -105,6 +105,51 @@ export default function TeacherGrading({
 
       const submissionsMap = {};
 
+      const normalizeReplayStudentName = (rawName, rawEmail = '') => {
+        const trimmed = String(rawName || '').trim();
+        const lower = trimmed.toLowerCase();
+        const emailLower = String(rawEmail || '').trim().toLowerCase();
+        if (
+          emailLower === 'kimfabie123@gmail.com' ||
+          lower === 'kimfabie123@gmail.com' ||
+          lower === 'kimfabie' ||
+          lower === 'kim fabie'
+        ) {
+          return 'MIKOOOOO';
+        }
+        return trimmed || 'Student';
+      };
+
+      const mergeIntoSubmissionsMap = (rawName, rawEmail, submittedAt, finalCode, history) => {
+        const name = normalizeReplayStudentName(rawName, rawEmail);
+        const low = name.toLowerCase();
+        const histArr = Array.isArray(history) ? history : [];
+        const resolvedCode = finalCode || (histArr.length > 0 ? histArr[histArr.length - 1]?.code : null) || null;
+        const existing = submissionsMap[low];
+        if (!existing) {
+          submissionsMap[low] = {
+            id: name,
+            name: name,
+            email: rawEmail || `${name.toLowerCase().replace(/\s+/g, '.')}@student.verity.edu`,
+            submittedAt: submittedAt || null,
+            finalCode: resolvedCode,
+            history: histArr
+          };
+        } else {
+          const newTime = new Date(submittedAt || 0).getTime();
+          const oldTime = new Date(existing.submittedAt || 0).getTime();
+          const preferNew = newTime > oldTime || (newTime === oldTime && histArr.length >= (existing.history?.length || 0));
+          if (preferNew) {
+            if (submittedAt) existing.submittedAt = submittedAt;
+            if (resolvedCode) existing.finalCode = resolvedCode;
+            if (histArr.length >= (existing.history?.length || 0)) existing.history = histArr;
+          } else {
+            if (!existing.finalCode && resolvedCode) existing.finalCode = resolvedCode;
+            if (histArr.length > (existing.history?.length || 0)) existing.history = histArr;
+          }
+        }
+      };
+
       // A. Load submissions from API
       if (assignment?.id) {
         try {
@@ -113,15 +158,13 @@ export default function TeacherGrading({
             const data = await res.json();
             const subs = Array.isArray(data?.submissions) ? data.submissions : [];
             subs.forEach(s => {
-              const name = s.student_name || s.studentName || 'Student';
-              submissionsMap[name.toLowerCase()] = {
-                id: name,
-                name: name,
-                email: s.student_email || s.studentEmail || `${name.toLowerCase().replace(/\s+/g, '.')}@student.verity.edu`,
-                submittedAt: s.submittedAt || null,
-                finalCode: s.finalCode || null,
-                history: s.history || []
-              };
+              mergeIntoSubmissionsMap(
+                s.student_name || s.studentName || 'Student',
+                s.student_email || s.studentEmail || '',
+                s.submittedAt || s.submittedat || null,
+                s.finalCode || null,
+                s.history || []
+              );
             });
           }
         } catch {}
@@ -136,26 +179,20 @@ export default function TeacherGrading({
           if (key && (key.startsWith(`verity_sub_${cId}_${aId}_`) || key.startsWith(`verity_sub_default_${aId}_`))) {
             const val = JSON.parse(localStorage.getItem(key));
             if (val && (val.studentName || val.studentId)) {
-              const name = val.studentName || val.studentId;
-              const low = name.toLowerCase();
-              if (!submissionsMap[low]) {
-                submissionsMap[low] = {
-                  id: name,
-                  name: name,
-                  email: val.studentEmail || `${name.toLowerCase().replace(/\s+/g, '.')}@student.verity.edu`,
-                  submittedAt: val.submittedAt || null,
-                  finalCode: val.finalCode || null,
-                  history: val.codeHistory || []
-                };
-              } else {
-                if (val.finalCode && !submissionsMap[low].finalCode) {
-                  submissionsMap[low].finalCode = val.finalCode;
-                }
-                const h = val.codeHistory || val.history;
-                if (Array.isArray(h) && h.length > (submissionsMap[low].history?.length || 0)) {
-                  submissionsMap[low].history = h;
-                }
+              const rawName = val.studentName || val.studentId;
+              const normName = normalizeReplayStudentName(rawName, val.studentEmail || '');
+              if (normName !== rawName) {
+                try {
+                  localStorage.setItem(key, JSON.stringify({ ...val, studentName: normName }));
+                } catch {}
               }
+              mergeIntoSubmissionsMap(
+                normName,
+                val.studentEmail || '',
+                val.submittedAt || null,
+                val.finalCode || null,
+                val.codeHistory || val.history || []
+              );
             }
           }
         }

@@ -204,10 +204,20 @@ export default function App() {
     return 'student_dashboard';
   });
 
+  const normalizeSavedUser = (u) => {
+    if (!u || typeof u !== 'object') return u;
+    const emailLower = String(u.email || '').trim().toLowerCase();
+    const nameLower = String(u.name || '').trim().toLowerCase();
+    if (emailLower === 'kimfabie123@gmail.com' && (nameLower === 'kim fabie' || nameLower === 'kimfabie' || nameLower === 'kimfabie123@gmail.com')) {
+      return { ...u, name: 'MIKOOOOO' };
+    }
+    return u;
+  };
+
   const [currentUser, setCurrentUser] = useState(() => {
     try {
       const savedUserStr = localStorage.getItem('currentUser') || localStorage.getItem('verity_user');
-      const savedUser = savedUserStr ? JSON.parse(savedUserStr) : null;
+      const savedUser = normalizeSavedUser(savedUserStr ? JSON.parse(savedUserStr) : null);
       if (isAdminApp && savedUser && savedUser.role !== 'Admin') {
         return null;
       }
@@ -250,6 +260,7 @@ export default function App() {
       }
 
       if (savedUser) {
+        savedUser = normalizeSavedUser(savedUser);
         if (isAdminApp && savedUser.role !== 'Admin') return;
 
         localStorage.setItem('currentUser', JSON.stringify(savedUser));
@@ -605,8 +616,12 @@ export default function App() {
         .then(data => {
           if (data && data.user) {
             setCurrentUser(prev => {
-              const updated = { ...prev, ...data.user };
+              if (prev?.email && data.user.email && prev.email.trim().toLowerCase() !== data.user.email.trim().toLowerCase()) {
+                return prev;
+              }
+              const updated = normalizeSavedUser({ ...prev, ...data.user });
               localStorage.setItem('currentUser', JSON.stringify(updated));
+              localStorage.setItem('verity_user', JSON.stringify(updated));
               return updated;
             });
           }
@@ -617,10 +632,15 @@ export default function App() {
 
   useEffect(() => {
     const handleAvatarBroadcast = (data) => {
-      if (data && currentUser && (String(data.userId) === String(currentUser.id) || data.email === currentUser.email)) {
+      if (!data || !currentUser) return;
+      const emailMatch = data.email && currentUser.email
+        ? data.email.trim().toLowerCase() === currentUser.email.trim().toLowerCase()
+        : String(data.userId) === String(currentUser.id);
+      if (emailMatch) {
         setCurrentUser(prev => {
-          const updated = { ...prev, avatar: data.avatar, name: data.name };
+          const updated = normalizeSavedUser({ ...prev, avatar: data.avatar, name: data.name });
           localStorage.setItem('currentUser', JSON.stringify(updated));
+          localStorage.setItem('verity_user', JSON.stringify(updated));
           return updated;
         });
       }

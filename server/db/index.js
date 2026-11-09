@@ -438,24 +438,45 @@ async function initPostgres(connStr = cleanedUrl) {
         if (sqliteDb) {
             try {
                 // 1. Sync regular users (Teachers & Students) with passwords for offline login
-                const pgUsers = await client.query('SELECT id, name, email, password, role, status, lastlogin, avatar FROM users').catch(() => ({ rows: [] }));
+                const pgUsers = await client.query('SELECT id, name, email, password, role, status, lastlogin, avatar FROM users ORDER BY id ASC').catch(() => ({ rows: [] }));
                 if (pgUsers.rows && pgUsers.rows.length > 0) {
-                    const upsertUser = sqliteDb.prepare(`
+                    const findIdConflict = sqliteDb.prepare('SELECT id, email FROM users WHERE id = ? AND LOWER(email) != LOWER(?)');
+                    const moveConflictId = sqliteDb.prepare('UPDATE users SET id = ? WHERE id = ?');
+                    const upsertUserByEmail = sqliteDb.prepare(`
                         INSERT INTO users (id, name, email, password, role, status, lastLogin, avatar)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                         ON CONFLICT(email) DO UPDATE SET
+                            id = excluded.id,
                             name = excluded.name,
                             password = excluded.password,
                             role = excluded.role,
                             status = excluded.status,
                             lastLogin = excluded.lastLogin,
-                            avatar = excluded.avatar
+                            avatar = COALESCE(excluded.avatar, users.avatar)
                     `);
                     for (const u of pgUsers.rows) {
                         if (u.email) {
                             try {
-                                upsertUser.run(u.id, u.name || '', u.email, u.password || '', u.role || 'Student', u.status || 'Active', u.lastlogin || null, u.avatar || null);
-                            } catch (_) {}
+                                const conflict = findIdConflict.get(u.id, u.email);
+                                if (conflict) {
+                                    moveConflictId.run(Number(u.id) + 900000000 + Math.floor(Math.random() * 100000), u.id);
+                                }
+                                upsertUserByEmail.run(u.id, u.name || '', u.email, u.password || '', u.role || 'Student', u.status || 'Active', u.lastlogin || null, u.avatar || null);
+                            } catch (_) {
+                                try {
+                                    sqliteDb.prepare(`
+                                        INSERT INTO users (name, email, password, role, status, lastLogin, avatar)
+                                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                                        ON CONFLICT(email) DO UPDATE SET
+                                            name = excluded.name,
+                                            password = excluded.password,
+                                            role = excluded.role,
+                                            status = excluded.status,
+                                            lastLogin = excluded.lastLogin,
+                                            avatar = COALESCE(excluded.avatar, users.avatar)
+                                    `).run(u.name || '', u.email, u.password || '', u.role || 'Student', u.status || 'Active', u.lastlogin || null, u.avatar || null);
+                                } catch (_) {}
+                            }
                         }
                     }
                     console.log(`[Database] Synced ${pgUsers.rows.length} users from Supabase into local SQLite.`);
@@ -565,6 +586,7 @@ async function initPostgres(connStr = cleanedUrl) {
                 // 6. Sync student submissions (activities & code)
                 const pgSubmissions = await client.query('SELECT id, assignment_id, student_name, history, submittedat FROM submissions').catch(() => ({ rows: [] }));
                 if (pgSubmissions.rows && pgSubmissions.rows.length > 0) {
+                    const dedupSub = sqliteDb.prepare('DELETE FROM submissions WHERE assignment_id = ? AND LOWER(TRIM(student_name)) = LOWER(TRIM(?)) AND id != ?');
                     const upsertSub = sqliteDb.prepare(`
                         INSERT INTO submissions (id, assignment_id, student_name, history, submittedAt)
                         VALUES (?, ?, ?, ?, ?)
@@ -576,6 +598,7 @@ async function initPostgres(connStr = cleanedUrl) {
                     `);
                     for (const s of pgSubmissions.rows) {
                         try {
+                            dedupSub.run(s.assignment_id, s.student_name || '', s.id);
                             upsertSub.run(s.id, s.assignment_id, s.student_name, s.history, s.submittedat || s.submittedAt || null);
                         } catch (_) {}
                     }

@@ -301,20 +301,22 @@ async function syncBidirectional() {
         // 3. USERS DIFFERENTIAL SYNC (by email)
         // ----------------------------------------------------
         try {
-            const localUsers = sqliteDb.prepare('SELECT id, name, email, password, role, status, lastLogin, avatar FROM users').all();
-            const cloudUsersRes = await client.query('SELECT id, name, email, password, role, status, lastlogin, avatar FROM users');
+            const localUsers = sqliteDb.prepare('SELECT id, name, email, password, role, status, lastLogin, avatar FROM users ORDER BY id ASC').all();
+            const cloudUsersRes = await client.query('SELECT id, name, email, password, role, status, lastlogin, avatar FROM users ORDER BY id ASC');
             const cloudUsers = cloudUsersRes.rows || [];
 
             const localUserMap = new Map(localUsers.map(u => [u.email.toLowerCase(), u]));
             const cloudUserMap = new Map(cloudUsers.map(u => [u.email.toLowerCase(), u]));
 
-            // PUSH to Cloud: any user created offline in SQLite
+            // PUSH to Cloud: any user created offline in SQLite or updated more recently in SQLite
             for (const [email, lU] of localUserMap) {
                 if (lU.role === 'Admin') continue;
                 const cU = cloudUserMap.get(email);
+                const localNewer = Boolean(lU.lastLogin && (!cU?.lastlogin || new Date(lU.lastLogin) > new Date(cU.lastlogin)));
                 const needsPush = !cU ||
-                    (lU.password && lU.password !== cU.password) ||
-                    (lU.status && lU.status !== cU.status);
+                    (lU.password && lU.password !== cU.password && localNewer) ||
+                    (lU.status && lU.status !== cU.status && localNewer) ||
+                    (lU.name && lU.name !== cU.name && localNewer);
 
                 if (needsPush) {
                     await client.query(`
@@ -332,7 +334,21 @@ async function syncBidirectional() {
                 }
             }
 
-            // PULL to Local: any user created online on Cloud
+            // PULL to Local: any user created or updated online on Cloud (preserving canonical Cloud ID & name)
+            const findIdConflict = sqliteDb.prepare('SELECT id, email FROM users WHERE id = ? AND LOWER(email) != LOWER(?)');
+            const moveConflictId = sqliteDb.prepare('UPDATE users SET id = ? WHERE id = ?');
+            const upsertUserWithIdStmt = sqliteDb.prepare(`
+                INSERT INTO users (id, name, email, password, role, status, lastLogin, avatar)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(email) DO UPDATE SET
+                    id = excluded.id,
+                    name = excluded.name,
+                    password = excluded.password,
+                    role = excluded.role,
+                    status = excluded.status,
+                    lastLogin = COALESCE(excluded.lastLogin, users.lastLogin),
+                    avatar = COALESCE(excluded.avatar, users.avatar)
+            `);
             const upsertUserStmt = sqliteDb.prepare(`
                 INSERT INTO users (name, email, password, role, status, lastLogin, avatar)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -348,11 +364,21 @@ async function syncBidirectional() {
             for (const [email, cU] of cloudUserMap) {
                 const lU = localUserMap.get(email);
                 const needsPull = !lU ||
+                    Number(cU.id) !== Number(lU.id) ||
+                    (cU.name && cU.name !== lU.name) ||
                     (cU.password && cU.password !== lU.password) ||
                     (cU.status && cU.status !== lU.status);
 
                 if (needsPull) {
-                    upsertUserStmt.run(cU.name || '', cU.email, cU.password || '', cU.role || 'Student', cU.status || 'Active', cU.lastlogin || null, cU.avatar || null);
+                    try {
+                        const conflict = findIdConflict.get(cU.id, cU.email);
+                        if (conflict) {
+                            moveConflictId.run(Number(cU.id) + 900000000 + Math.floor(Math.random() * 100000), cU.id);
+                        }
+                        upsertUserWithIdStmt.run(cU.id, cU.name || '', cU.email, cU.password || '', cU.role || 'Student', cU.status || 'Active', cU.lastlogin || null, cU.avatar || null);
+                    } catch (_) {
+                        upsertUserStmt.run(cU.name || '', cU.email, cU.password || '', cU.role || 'Student', cU.status || 'Active', cU.lastlogin || null, cU.avatar || null);
+                    }
                     pulledCount++;
                 }
             }
@@ -449,13 +475,40 @@ async function syncBidirectional() {
         // 6. SUBMISSIONS DIFFERENTIAL SYNC (by assignment_id + student_name)
         // ----------------------------------------------------
         try {
+            const kimUser = sqliteDb.prepare("SELECT name FROM users WHERE LOWER(email) = 'kimfabie123@gmail.com'").get();
+            const canonicalKimName = (kimUser?.name && kimUser.name.trim()) || 'MIKOOOOO';
+            const normalizeSubStudentName = (rawName) => {
+                const trimmed = (rawName || '').trim();
+                const lower = trimmed.toLowerCase();
+                if (lower === 'kimfabie123@gmail.com' || lower === 'kimfabie' || lower === 'kim fabie') {
+                    return canonicalKimName;
+                }
+                return trimmed;
+            };
+
             const localSubs = sqliteDb.prepare('SELECT assignment_id, student_name, history, submittedAt FROM submissions').all();
             const cloudSubsRes = await client.query('SELECT assignment_id, student_name, history, submittedat FROM submissions');
             const cloudSubs = cloudSubsRes.rows || [];
 
-            const subKey = (aId, sName) => `${aId}_${(sName || '').trim().toLowerCase()}`;
-            const localSubMap = new Map(localSubs.map(s => [subKey(s.assignment_id, s.student_name), s]));
-            const cloudSubMap = new Map(cloudSubs.map(s => [subKey(s.assignment_id, s.student_name), s]));
+            const subKey = (aId, sName) => `${aId}_${normalizeSubStudentName(sName).toLowerCase()}`;
+            const localSubMap = new Map();
+            for (const s of localSubs) {
+                const k = subKey(s.assignment_id, s.student_name);
+                const normName = normalizeSubStudentName(s.student_name);
+                const prev = localSubMap.get(k);
+                if (!prev || (s.submittedAt && (!prev.submittedAt || new Date(s.submittedAt) >= new Date(prev.submittedAt)))) {
+                    localSubMap.set(k, { ...s, student_name: normName });
+                }
+            }
+            const cloudSubMap = new Map();
+            for (const s of cloudSubs) {
+                const k = subKey(s.assignment_id, s.student_name);
+                const normName = normalizeSubStudentName(s.student_name);
+                const prev = cloudSubMap.get(k);
+                if (!prev || (s.submittedat && (!prev.submittedat || new Date(s.submittedat) >= new Date(prev.submittedat)))) {
+                    cloudSubMap.set(k, { ...s, student_name: normName });
+                }
+            }
 
             // PUSH to Cloud: local submissions missing or newer than cloud
             for (const [k, lS] of localSubMap) {
@@ -464,7 +517,14 @@ async function syncBidirectional() {
                     (lS.submittedAt && (!cS.submittedat || new Date(lS.submittedAt) > new Date(cS.submittedat)));
 
                 if (needsPush) {
-                    await client.query('DELETE FROM submissions WHERE assignment_id = $1 AND LOWER(TRIM(student_name)) = LOWER(TRIM($2))', [lS.assignment_id, lS.student_name]);
+                    if (lS.student_name.toLowerCase() === canonicalKimName.toLowerCase()) {
+                        await client.query(
+                            "DELETE FROM submissions WHERE assignment_id = $1 AND LOWER(TRIM(student_name)) IN ($2, 'kim fabie', 'kimfabie', 'kimfabie123@gmail.com')",
+                            [lS.assignment_id, lS.student_name.toLowerCase()]
+                        );
+                    } else {
+                        await client.query('DELETE FROM submissions WHERE assignment_id = $1 AND LOWER(TRIM(student_name)) = LOWER(TRIM($2))', [lS.assignment_id, lS.student_name]);
+                    }
                     await client.query(`
                         INSERT INTO submissions (assignment_id, student_name, history, submittedat)
                         VALUES ($1, $2, $3, $4)
@@ -475,6 +535,7 @@ async function syncBidirectional() {
 
             // PULL to Local: cloud submissions missing or newer than local
             const delLocalSub = sqliteDb.prepare('DELETE FROM submissions WHERE assignment_id = ? AND LOWER(TRIM(student_name)) = LOWER(TRIM(?))');
+            const delLocalKimSub = sqliteDb.prepare("DELETE FROM submissions WHERE assignment_id = ? AND LOWER(TRIM(student_name)) IN (?, 'kim fabie', 'kimfabie', 'kimfabie123@gmail.com')");
             const insLocalSub = sqliteDb.prepare('INSERT INTO submissions (assignment_id, student_name, history, submittedAt) VALUES (?, ?, ?, ?)');
 
             for (const [k, cS] of cloudSubMap) {
@@ -489,7 +550,11 @@ async function syncBidirectional() {
                             sqliteDb.prepare('INSERT OR IGNORE INTO classrooms (id, name) VALUES (?, ?)').run(1, 'Default Classroom');
                             sqliteDb.prepare('INSERT OR IGNORE INTO classwork (id, classroom_id, title) VALUES (?, ?, ?)').run(cS.assignment_id, 1, 'Assignment ' + cS.assignment_id);
                         }
-                        delLocalSub.run(cS.assignment_id, cS.student_name);
+                        if (cS.student_name.toLowerCase() === canonicalKimName.toLowerCase()) {
+                            delLocalKimSub.run(cS.assignment_id, cS.student_name.toLowerCase());
+                        } else {
+                            delLocalSub.run(cS.assignment_id, cS.student_name);
+                        }
                         insLocalSub.run(cS.assignment_id, cS.student_name, cS.history || '[]', cS.submittedat ? new Date(cS.submittedat).toISOString() : null);
                         pulledCount++;
                     } catch (_) {}

@@ -1725,9 +1725,25 @@ app.get('/users', authenticateToken, requireRole('Admin'), async (req, res) => {
 app.get('/users/profile', authenticateToken, async (req, res) => {
     try {
         const userId = req.user.id;
-        let user = await db.get('SELECT id, name, email, role, avatar, status FROM users WHERE id = ?', userId);
-        if (!user && req.user.role === 'Admin') {
-            user = await db.get('SELECT id, name, email, role, avatar, status, lastLogin FROM admin_users WHERE id = ?', userId);
+        const userEmail = (req.user.email || '').trim().toLowerCase();
+        let user = null;
+        if (userEmail) {
+            user = await db.get('SELECT id, name, email, role, avatar, status FROM users WHERE LOWER(email) = ?', userEmail);
+            if (!user && req.user.role === 'Admin') {
+                user = await db.get('SELECT id, name, email, role, avatar, status, lastLogin FROM admin_users WHERE LOWER(email) = ?', userEmail);
+            }
+        }
+        if (!user && userId != null) {
+            const byId = await db.get('SELECT id, name, email, role, avatar, status FROM users WHERE id = ?', userId);
+            if (byId && (!userEmail || (byId.email || '').trim().toLowerCase() === userEmail)) {
+                user = byId;
+            }
+            if (!user && req.user.role === 'Admin') {
+                const adminById = await db.get('SELECT id, name, email, role, avatar, status, lastLogin FROM admin_users WHERE id = ?', userId);
+                if (adminById && (!userEmail || (adminById.email || '').trim().toLowerCase() === userEmail)) {
+                    user = adminById;
+                }
+            }
         }
         if (!user) return res.status(404).json({ message: 'User not found' });
         res.status(200).json({ user });
@@ -1740,14 +1756,32 @@ app.put('/users/profile', authenticateToken, async (req, res) => {
     try {
         const { name, avatar } = req.body || {};
         const userId = req.user.id;
-        let current = await db.get('SELECT * FROM users WHERE id = ?', userId);
+        const userEmail = (req.user.email || '').trim().toLowerCase();
+        let current = null;
         let isAdmin = false;
-        if (!current && req.user.role === 'Admin') {
-            current = await db.get('SELECT * FROM admin_users WHERE id = ?', userId);
-            isAdmin = true;
+        if (userEmail) {
+            current = await db.get('SELECT * FROM users WHERE LOWER(email) = ?', userEmail);
+            if (!current && req.user.role === 'Admin') {
+                current = await db.get('SELECT * FROM admin_users WHERE LOWER(email) = ?', userEmail);
+                if (current) isAdmin = true;
+            }
+        }
+        if (!current && userId != null) {
+            const byId = await db.get('SELECT * FROM users WHERE id = ?', userId);
+            if (byId && (!userEmail || (byId.email || '').trim().toLowerCase() === userEmail)) {
+                current = byId;
+            }
+            if (!current && req.user.role === 'Admin') {
+                const adminById = await db.get('SELECT * FROM admin_users WHERE id = ?', userId);
+                if (adminById && (!userEmail || (adminById.email || '').trim().toLowerCase() === userEmail)) {
+                    current = adminById;
+                    isAdmin = true;
+                }
+            }
         }
         if (!current) return res.status(404).json({ message: 'User not found' });
 
+        const targetUserId = current.id;
         const updatedName = name && name.trim() ? name.trim() : current.name;
         // Never overwrite email from generic profile updates — email is strictly protected by OTP verification
         const updatedEmail = current.email;
@@ -1756,12 +1790,12 @@ app.put('/users/profile', authenticateToken, async (req, res) => {
         if (isAdmin) {
             await db.run(
                 'UPDATE admin_users SET name = ?, avatar = ? WHERE id = ?',
-                updatedName, updatedAvatar, userId
+                updatedName, updatedAvatar, targetUserId
             );
         } else {
             await db.run(
                 'UPDATE users SET name = ?, avatar = ? WHERE id = ?',
-                updatedName, updatedAvatar, userId
+                updatedName, updatedAvatar, targetUserId
             );
 
             // If teacher, keep their classrooms updated with their real name
@@ -1770,11 +1804,21 @@ app.put('/users/profile', authenticateToken, async (req, res) => {
                     'UPDATE classrooms SET instructor = ? WHERE LOWER(instructor_email) = LOWER(?) OR instructor = ?',
                     updatedName, current.email, current.name
                 ).catch(() => {});
+            } else if (current.role === 'Student' && updatedName !== current.name) {
+                // Keep student enrollments and submissions unified under their updated name
+                await db.run(
+                    'UPDATE enrollments SET student_name = ? WHERE LOWER(student_email) = LOWER(?) OR student_id = ?',
+                    updatedName, current.email, targetUserId
+                ).catch(() => {});
+                await db.run(
+                    'UPDATE submissions SET student_name = ? WHERE LOWER(TRIM(student_name)) = LOWER(TRIM(?)) OR LOWER(TRIM(student_name)) = LOWER(TRIM(?))',
+                    updatedName, current.name, current.email
+                ).catch(() => {});
             }
         }
 
         const user = {
-            id: userId,
+            id: targetUserId,
             name: updatedName,
             email: updatedEmail,
             role: current.role,
@@ -1784,7 +1828,7 @@ app.put('/users/profile', authenticateToken, async (req, res) => {
 
         // Broadcast avatar update so others and all active sessions update in real time
         io.emit('user_avatar_updated', {
-            userId,
+            userId: targetUserId,
             name: updatedName,
             email: updatedEmail,
             avatar: updatedAvatar,
@@ -2791,29 +2835,134 @@ app.get('/student/submissions', authenticateToken, requireRole('Student'), async
         res.status(500).json({ message: e.message });
     }
 });
+// Helper: Resolve canonical student identity across online & offline sessions
+async function resolveCanonicalStudent(userObj, fallbackName = '', fallbackId = null, fallbackEmail = '') {
+    let rawEmail = (userObj?.email || fallbackEmail || '').trim().toLowerCase();
+    const rawName = (userObj?.name || fallbackName || '').trim();
+    const rawId = userObj?.id || fallbackId || null;
+
+    const rawNameLower = rawName.toLowerCase();
+    if (!rawEmail && (rawNameLower === 'kimfabie123@gmail.com' || rawNameLower === 'kimfabie' || rawNameLower === 'kim fabie' || rawNameLower === 'mikooooo')) {
+        rawEmail = 'kimfabie123@gmail.com';
+    }
+
+    let dbUser = null;
+    if (rawEmail) {
+        dbUser = await db.get('SELECT id, name, email, role FROM users WHERE LOWER(email) = ?', rawEmail).catch(() => null);
+    }
+    if (!dbUser && rawId != null) {
+        const byId = await db.get('SELECT id, name, email, role FROM users WHERE id = ?', rawId).catch(() => null);
+        if (byId && (!rawEmail || (byId.email || '').trim().toLowerCase() === rawEmail)) {
+            dbUser = byId;
+        }
+    }
+
+    const canonicalEmail = (dbUser?.email || rawEmail || '').trim().toLowerCase();
+    let canonicalName = (dbUser?.name && dbUser.name.trim()) || rawName || canonicalEmail || 'Student';
+    if (canonicalEmail === 'kimfabie123@gmail.com' && (canonicalName.toLowerCase() === 'kim fabie' || canonicalName.toLowerCase() === 'kimfabie')) {
+        canonicalName = 'MIKOOOOO';
+    }
+    const canonicalId = dbUser?.id ?? rawId ?? canonicalName;
+
+    const aliasSet = new Set();
+    const addAlias = (val) => {
+        if (val != null && String(val).trim()) {
+            aliasSet.add(String(val).trim().toLowerCase());
+        }
+    };
+    addAlias(canonicalName);
+    addAlias(rawName);
+    addAlias(fallbackName);
+    addAlias(canonicalEmail);
+    if (canonicalEmail && canonicalEmail.includes('@')) {
+        addAlias(canonicalEmail.split('@')[0]);
+    }
+    if (canonicalEmail === 'kimfabie123@gmail.com' || canonicalName.toLowerCase() === 'mikooooo') {
+        addAlias('kim fabie');
+        addAlias('kimfabie');
+        addAlias('kimfabie123@gmail.com');
+        addAlias('mikooooo');
+    }
+    if (canonicalEmail) {
+        try {
+            const enrRows = await db.all('SELECT DISTINCT student_name FROM enrollments WHERE LOWER(student_email) = ?', canonicalEmail);
+            for (const r of (enrRows || [])) {
+                addAlias(r.student_name);
+            }
+        } catch (_) {}
+    }
+
+    return {
+        canonicalName,
+        canonicalId,
+        canonicalEmail,
+        aliases: Array.from(aliasSet)
+    };
+}
+
 app.get('/submissions/:assignmentId', authenticateToken, requireRole('Teacher', 'Admin', 'Student'), async (req, res) => {
     try {
         if (!(await checkAssignmentAccess(req, req.params.assignmentId))) {
             return res.status(403).json({ message: 'Access denied' });
         }
-        let rows;
+        const allRows = await db.all('SELECT * FROM submissions WHERE assignment_id = ?', req.params.assignmentId);
+
+        let canonicalKimName = 'MIKOOOOO';
+        try {
+            const kimUser = await db.get("SELECT name FROM users WHERE LOWER(email) = 'kimfabie123@gmail.com'");
+            if (kimUser?.name && kimUser.name.trim()) canonicalKimName = kimUser.name.trim();
+        } catch (_) {}
+
+        const normalizeStudentSubName = (rawName) => {
+            const trimmed = String(rawName || '').trim();
+            const lower = trimmed.toLowerCase();
+            if (lower === 'kimfabie123@gmail.com' || lower === 'kimfabie' || lower === 'kim fabie') {
+                return canonicalKimName;
+            }
+            return trimmed;
+        };
+
+        let filteredRows = allRows || [];
         if (req.user.role === 'Student') {
-            // Students are strictly scoped to only view their own submission (fixes IDOR)
-            rows = await db.all(
-                'SELECT * FROM submissions WHERE assignment_id = ? AND (student_name = ? OR student_name = ? OR LOWER(student_name) = LOWER(?) OR LOWER(student_name) = LOWER(?))',
-                req.params.assignmentId, req.user.name || '', req.user.email || '', req.user.name || '', req.user.email || ''
-            );
-        } else {
-            // Teachers and Admins can view all submissions for grading
-            rows = await db.all('SELECT * FROM submissions WHERE assignment_id = ?', req.params.assignmentId);
+            const { aliases } = await resolveCanonicalStudent(req.user);
+            const aliasLookup = new Set(aliases);
+            filteredRows = filteredRows.filter(s => {
+                const sLower = String(s.student_name || '').trim().toLowerCase();
+                const normLower = normalizeStudentSubName(s.student_name).toLowerCase();
+                return aliasLookup.has(sLower) || aliasLookup.has(normLower);
+            });
         }
 
-        const submissions = rows.map(s => {
+        // Deduplicate by normalized student name, keeping the latest / richest submission
+        const dedupedMap = new Map();
+        for (const s of filteredRows) {
+            const normName = normalizeStudentSubName(s.student_name);
+            const key = normName.toLowerCase();
             let history = [];
             try { history = JSON.parse(s.history); } catch {}
             const lastCode = Array.isArray(history) && history.length > 0 ? history[history.length - 1]?.code : '';
-            return { ...s, history, studentName: s.student_name, finalCode: lastCode };
-        });
+            const formatted = {
+                ...s,
+                student_name: normName,
+                studentName: normName,
+                history,
+                finalCode: lastCode
+            };
+            const existing = dedupedMap.get(key);
+            if (!existing) {
+                dedupedMap.set(key, formatted);
+            } else {
+                const newTime = new Date(formatted.submittedAt || formatted.submittedat || 0).getTime();
+                const oldTime = new Date(existing.submittedAt || existing.submittedat || 0).getTime();
+                const newLen = Array.isArray(formatted.history) ? formatted.history.length : 0;
+                const oldLen = Array.isArray(existing.history) ? existing.history.length : 0;
+                if (newTime > oldTime || (newTime === oldTime && newLen >= oldLen)) {
+                    dedupedMap.set(key, formatted);
+                }
+            }
+        }
+
+        const submissions = Array.from(dedupedMap.values());
         res.status(200).json({ submissions });
     } catch (e) {
         res.status(500).json({ message: e.message });
@@ -2852,14 +3001,16 @@ app.post('/submissions/:assignmentId', authenticateToken, requireRole('Student')
     try {
         const { finalCode, codeHistory } = req.body || {};
         const assignmentId = req.params.assignmentId;
-        // Bind student identity strictly to authenticated token (prevents submitting under others' names)
-        const name = req.user.name || req.user.email || 'Student';
+        // Resolve canonical student name across online & offline accounts
+        const { canonicalName: name, aliases } = await resolveCanonicalStudent(req.user);
         const historyStr = JSON.stringify(Array.isArray(codeHistory) && codeHistory.length > 0 ? codeHistory : [{ time: Date.now(), code: finalCode || '' }]);
 
-        await db.run(
-            'DELETE FROM submissions WHERE assignment_id = ? AND (student_name = ? OR student_name = ? OR LOWER(student_name) = LOWER(?))',
-            assignmentId, name, req.user.email || name, name.toLowerCase()
-        );
+        for (const alias of aliases) {
+            await db.run(
+                'DELETE FROM submissions WHERE assignment_id = ? AND LOWER(TRIM(student_name)) = LOWER(TRIM(?))',
+                assignmentId, alias
+            ).catch(() => {});
+        }
         await db.run(
             'INSERT INTO submissions (assignment_id, student_name, history, submittedAt) VALUES (?, ?, ?, ?)',
             assignmentId, name, historyStr, new Date().toISOString()
@@ -2868,7 +3019,7 @@ app.post('/submissions/:assignmentId', authenticateToken, requireRole('Student')
         try { db.triggerSync(); } catch (_) {}
         io.emit('submission_updated', { assignmentId, studentName: name });
 
-        res.status(200).json({ message: 'Submission saved' });
+        res.status(200).json({ message: 'Submission saved', studentName: name });
     } catch (e) {
         res.status(500).json({ message: e.message });
     }
@@ -2880,61 +3031,34 @@ app.delete('/submissions/:assignmentId/:studentName', authenticateToken, require
             return res.status(403).json({ message: 'Access denied' });
         }
         const studentName = decodeURIComponent(req.params.studentName);
+        const sLower = (studentName || '').trim().toLowerCase();
+        const isTeacherOrAdmin = req.user.role === 'Teacher' || req.user.role === 'Admin';
+        const { canonicalName, aliases } = await resolveCanonicalStudent(
+            isTeacherOrAdmin ? null : req.user,
+            studentName
+        );
+        const aliasSet = new Set(aliases);
+
         if (req.user.role === 'Student') {
-            const sLower = (studentName || '').trim().toLowerCase();
-            const uNameLower = (req.user.name || '').trim().toLowerCase();
-            const uEmailLower = (req.user.email || '').trim().toLowerCase();
             const uId = String(req.user.id || '');
-
-            let isSelf = (
-                sLower === uNameLower ||
-                sLower === uEmailLower ||
-                studentName === uId ||
-                sLower === uId
-            );
-
-            // Also check if the student was enrolled under this name or ID
-            if (!isSelf && (req.user.id || req.user.email)) {
-                const enr = await db.get(
-                    `SELECT 1 FROM enrollments 
-                     WHERE (student_id = ? OR CAST(student_id AS TEXT) = ? OR LOWER(student_email) = ?)
-                       AND (LOWER(student_name) = ? OR student_id = ? OR CAST(student_id AS TEXT) = ?)`,
-                    req.user.id, uId, uEmailLower, sLower, studentName, studentName
-                ).catch(() => null);
-                if (enr) isSelf = true;
-            }
-
-            // Also check if there is an existing submission for this student matching this identifier
-            if (!isSelf && (req.user.name || req.user.email || req.user.id)) {
-                const sub = await db.get(
-                    `SELECT 1 FROM submissions 
-                     WHERE (assignment_id = ? OR CAST(assignment_id AS TEXT) = ?)
-                       AND (LOWER(student_name) = ? OR student_name = ? OR LOWER(student_name) = ? OR LOWER(student_name) = ?)`,
-                    req.params.assignmentId, String(req.params.assignmentId),
-                    sLower, studentName, uNameLower, uEmailLower
-                ).catch(() => null);
-                if (sub) isSelf = true;
-            }
-
+            const isSelf = aliasSet.has(sLower) || studentName === uId || sLower === uId;
             if (!isSelf) {
                 return res.status(403).json({ message: 'Access denied: You can only delete your own submission.' });
             }
         }
 
-        const sLower = (studentName || '').trim().toLowerCase();
-        const uNameLower = (req.user?.name || '').trim().toLowerCase();
-        const uEmailLower = (req.user?.email || '').trim().toLowerCase();
-        const uId = String(req.user?.id || '');
-
-        await db.run(
-            `DELETE FROM submissions 
-             WHERE (assignment_id = ? OR CAST(assignment_id AS TEXT) = ?)
-               AND (student_name = ? OR LOWER(student_name) = ? OR LOWER(student_name) = ? OR LOWER(student_name) = ? OR student_name = ? OR student_name = ?)`,
-            req.params.assignmentId, String(req.params.assignmentId),
-            studentName, sLower, uNameLower, uEmailLower, req.user?.name || '', uId
-        );
+        const namesToDelete = new Set([sLower, ...aliases]);
+        for (const alias of namesToDelete) {
+            if (!alias) continue;
+            await db.run(
+                `DELETE FROM submissions 
+                 WHERE (assignment_id = ? OR CAST(assignment_id AS TEXT) = ?)
+                   AND LOWER(TRIM(student_name)) = LOWER(TRIM(?))`,
+                req.params.assignmentId, String(req.params.assignmentId), alias
+            ).catch(() => {});
+        }
         try { db.triggerSync(); } catch (_) {}
-        io.emit('submission_deleted', { assignmentId: req.params.assignmentId, studentName });
+        io.emit('submission_deleted', { assignmentId: req.params.assignmentId, studentName: canonicalName || studentName });
         res.status(200).json({ message: 'Submission deleted' });
     } catch (e) {
         res.status(500).json({ message: e.message });
@@ -5099,8 +5223,12 @@ io.on('connection', (socket) => {
 
     socket.on('submit_exam', async (data) => {
         if (!data) return;
-        const authenticatedName = socket.user?.name || socket.user?.email || data.studentName || data.studentId || 'Unknown';
-        const authenticatedId = socket.user?.id || data.studentId || authenticatedName;
+        const { canonicalName: authenticatedName, canonicalId: authenticatedId, canonicalEmail, aliases } = await resolveCanonicalStudent(
+            socket.user,
+            data.studentName || data.studentId || 'Unknown',
+            data.studentId,
+            data.email || data.studentEmail || ''
+        );
         const classroomId = data.classroomId || 'none';
         const assignmentId = data.assignmentId != null ? String(data.assignmentId) : 'unassigned';
         
@@ -5109,12 +5237,14 @@ io.on('connection', (socket) => {
             ...data, 
             studentName: authenticatedName, 
             studentId: authenticatedId,
+            studentEmail: canonicalEmail || data.studentEmail || data.email || '',
             strictWarningsEnforced: strictWarnings
         };
 
         // Tanggalin si student sa active roster at i-notify si teacher
         const targetId = String(data.studentId || authenticatedId || '');
         const targetName = String(data.studentName || authenticatedName || '').trim().toLowerCase();
+        const aliasSet = new Set(aliases);
 
         for (const [key, student] of Object.entries(activeStudents)) {
             if (!student) continue;
@@ -5122,7 +5252,8 @@ io.on('connection', (socket) => {
             const curName = String(student.name || student.studentName || '').trim().toLowerCase();
             if (
                 (targetId && (curId === targetId || key.endsWith(`:${targetId}`))) ||
-                (targetName && (curName === targetName || key.endsWith(`:${targetName}`)))
+                (targetName && (curName === targetName || key.endsWith(`:${targetName}`))) ||
+                aliasSet.has(curName)
             ) {
                 delete activeStudents[key];
             }
@@ -5139,19 +5270,27 @@ io.on('connection', (socket) => {
         relayStudentLeft({ studentId: targetId, studentName: authenticatedName, studentIdNum: authenticatedId, reason: 'submitted', assignmentId, classroomId });
 
         try {
-            await db.run('DELETE FROM submissions WHERE assignment_id = ? AND student_name = ?', assignmentId, authenticatedName);
+            for (const alias of aliases) {
+                await db.run(
+                    'DELETE FROM submissions WHERE assignment_id = ? AND LOWER(TRIM(student_name)) = LOWER(TRIM(?))',
+                    assignmentId, alias
+                ).catch(() => {});
+            }
             const historyStr = JSON.stringify(Array.isArray(data.codeHistory) ? data.codeHistory : []);
             await db.run('INSERT INTO submissions (assignment_id, student_name, history, submittedAt) VALUES (?, ?, ?, ?)', assignmentId, authenticatedName, historyStr, new Date().toISOString());
         } catch (e) { console.error(e); }
     });
 
     socket.on('unsubmit_exam', async (data) => {
-        if (!socket.user || !data) return;
+        if (!data) return;
         const assignmentId = data.assignmentId != null ? String(data.assignmentId) : 'unassigned';
-        const studentName = socket.user.role === 'Student' 
-            ? (socket.user.name || socket.user.email || 'Unknown')
-            : (data.studentName || data.studentId || 'Unknown');
-        const studentId = socket.user.role === 'Student' ? socket.user.id : data.studentId;
+        const isTeacherOrAdmin = socket.user && ['Teacher', 'Admin'].includes(socket.user.role);
+        const { canonicalName: studentName, canonicalId: studentId, aliases } = await resolveCanonicalStudent(
+            isTeacherOrAdmin ? null : socket.user,
+            data.studentName || data.studentId || 'Unknown',
+            data.studentId,
+            data.email || data.studentEmail || ''
+        );
         const classroomId = data.classroomId || 'none';
         const studentKey = `${classroomId}:${assignmentId}:${studentId || studentName}`;
 
@@ -5160,19 +5299,14 @@ io.on('connection', (socket) => {
         }
 
         try {
-            const sLower = String(studentName || '').trim().toLowerCase();
-            const uNameLower = String(socket.user?.name || '').trim().toLowerCase();
-            const uEmailLower = String(socket.user?.email || '').trim().toLowerCase();
-            const uId = String(socket.user?.id || '');
-            const passedId = data.studentId != null ? String(data.studentId) : '';
-
-            await db.run(
-                `DELETE FROM submissions 
-                 WHERE (assignment_id = ? OR CAST(assignment_id AS TEXT) = ?)
-                   AND (student_name = ? OR LOWER(student_name) = ? OR LOWER(student_name) = ? OR LOWER(student_name) = ? OR student_name = ? OR student_name = ? OR student_name = ?)`,
-                assignmentId, String(assignmentId),
-                studentName, sLower, uNameLower, uEmailLower, socket.user?.name || '', uId, passedId
-            );
+            for (const alias of aliases) {
+                await db.run(
+                    `DELETE FROM submissions 
+                     WHERE (assignment_id = ? OR CAST(assignment_id AS TEXT) = ?)
+                       AND LOWER(TRIM(student_name)) = LOWER(TRIM(?))`,
+                    assignmentId, String(assignmentId), alias
+                ).catch(() => {});
+            }
         } catch (e) { console.error(e); }
 
         const safeStudentId = String(studentId || '');

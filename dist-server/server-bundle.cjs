@@ -96163,15 +96163,16 @@ var require_cloudSync = __commonJS({
           console.warn("[Cloud Sync] Classwork sync notice:", cwErr.message);
         }
         try {
-          const localUsers = sqliteDb.prepare("SELECT id, name, email, password, role, status, lastLogin, avatar FROM users").all();
-          const cloudUsersRes = await client.query("SELECT id, name, email, password, role, status, lastlogin, avatar FROM users");
+          const localUsers = sqliteDb.prepare("SELECT id, name, email, password, role, status, lastLogin, avatar FROM users ORDER BY id ASC").all();
+          const cloudUsersRes = await client.query("SELECT id, name, email, password, role, status, lastlogin, avatar FROM users ORDER BY id ASC");
           const cloudUsers = cloudUsersRes.rows || [];
           const localUserMap = new Map(localUsers.map((u) => [u.email.toLowerCase(), u]));
           const cloudUserMap = new Map(cloudUsers.map((u) => [u.email.toLowerCase(), u]));
           for (const [email, lU] of localUserMap) {
             if (lU.role === "Admin") continue;
             const cU = cloudUserMap.get(email);
-            const needsPush = !cU || lU.password && lU.password !== cU.password || lU.status && lU.status !== cU.status;
+            const localNewer = Boolean(lU.lastLogin && (!cU?.lastlogin || new Date(lU.lastLogin) > new Date(cU.lastlogin)));
+            const needsPush = !cU || lU.password && lU.password !== cU.password && localNewer || lU.status && lU.status !== cU.status && localNewer || lU.name && lU.name !== cU.name && localNewer;
             if (needsPush) {
               await client.query(`
                         INSERT INTO users (name, email, password, role, status, lastlogin, avatar)
@@ -96187,6 +96188,20 @@ var require_cloudSync = __commonJS({
               pushedCount++;
             }
           }
+          const findIdConflict = sqliteDb.prepare("SELECT id, email FROM users WHERE id = ? AND LOWER(email) != LOWER(?)");
+          const moveConflictId = sqliteDb.prepare("UPDATE users SET id = ? WHERE id = ?");
+          const upsertUserWithIdStmt = sqliteDb.prepare(`
+                INSERT INTO users (id, name, email, password, role, status, lastLogin, avatar)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(email) DO UPDATE SET
+                    id = excluded.id,
+                    name = excluded.name,
+                    password = excluded.password,
+                    role = excluded.role,
+                    status = excluded.status,
+                    lastLogin = COALESCE(excluded.lastLogin, users.lastLogin),
+                    avatar = COALESCE(excluded.avatar, users.avatar)
+            `);
           const upsertUserStmt = sqliteDb.prepare(`
                 INSERT INTO users (name, email, password, role, status, lastLogin, avatar)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -96200,9 +96215,17 @@ var require_cloudSync = __commonJS({
             `);
           for (const [email, cU] of cloudUserMap) {
             const lU = localUserMap.get(email);
-            const needsPull = !lU || cU.password && cU.password !== lU.password || cU.status && cU.status !== lU.status;
+            const needsPull = !lU || Number(cU.id) !== Number(lU.id) || cU.name && cU.name !== lU.name || cU.password && cU.password !== lU.password || cU.status && cU.status !== lU.status;
             if (needsPull) {
-              upsertUserStmt.run(cU.name || "", cU.email, cU.password || "", cU.role || "Student", cU.status || "Active", cU.lastlogin || null, cU.avatar || null);
+              try {
+                const conflict = findIdConflict.get(cU.id, cU.email);
+                if (conflict) {
+                  moveConflictId.run(Number(cU.id) + 9e8 + Math.floor(Math.random() * 1e5), cU.id);
+                }
+                upsertUserWithIdStmt.run(cU.id, cU.name || "", cU.email, cU.password || "", cU.role || "Student", cU.status || "Active", cU.lastlogin || null, cU.avatar || null);
+              } catch (_) {
+                upsertUserStmt.run(cU.name || "", cU.email, cU.password || "", cU.role || "Student", cU.status || "Active", cU.lastlogin || null, cU.avatar || null);
+              }
               pulledCount++;
             }
           }
@@ -96278,17 +96301,50 @@ var require_cloudSync = __commonJS({
         } catch (_) {
         }
         try {
+          const kimUser = sqliteDb.prepare("SELECT name FROM users WHERE LOWER(email) = 'kimfabie123@gmail.com'").get();
+          const canonicalKimName = kimUser?.name && kimUser.name.trim() || "MIKOOOOO";
+          const normalizeSubStudentName = (rawName) => {
+            const trimmed = (rawName || "").trim();
+            const lower2 = trimmed.toLowerCase();
+            if (lower2 === "kimfabie123@gmail.com" || lower2 === "kimfabie" || lower2 === "kim fabie") {
+              return canonicalKimName;
+            }
+            return trimmed;
+          };
           const localSubs = sqliteDb.prepare("SELECT assignment_id, student_name, history, submittedAt FROM submissions").all();
           const cloudSubsRes = await client.query("SELECT assignment_id, student_name, history, submittedat FROM submissions");
           const cloudSubs = cloudSubsRes.rows || [];
-          const subKey = (aId, sName) => `${aId}_${(sName || "").trim().toLowerCase()}`;
-          const localSubMap = new Map(localSubs.map((s2) => [subKey(s2.assignment_id, s2.student_name), s2]));
-          const cloudSubMap = new Map(cloudSubs.map((s2) => [subKey(s2.assignment_id, s2.student_name), s2]));
+          const subKey = (aId, sName) => `${aId}_${normalizeSubStudentName(sName).toLowerCase()}`;
+          const localSubMap = /* @__PURE__ */ new Map();
+          for (const s2 of localSubs) {
+            const k = subKey(s2.assignment_id, s2.student_name);
+            const normName = normalizeSubStudentName(s2.student_name);
+            const prev = localSubMap.get(k);
+            if (!prev || s2.submittedAt && (!prev.submittedAt || new Date(s2.submittedAt) >= new Date(prev.submittedAt))) {
+              localSubMap.set(k, { ...s2, student_name: normName });
+            }
+          }
+          const cloudSubMap = /* @__PURE__ */ new Map();
+          for (const s2 of cloudSubs) {
+            const k = subKey(s2.assignment_id, s2.student_name);
+            const normName = normalizeSubStudentName(s2.student_name);
+            const prev = cloudSubMap.get(k);
+            if (!prev || s2.submittedat && (!prev.submittedat || new Date(s2.submittedat) >= new Date(prev.submittedat))) {
+              cloudSubMap.set(k, { ...s2, student_name: normName });
+            }
+          }
           for (const [k, lS] of localSubMap) {
             const cS = cloudSubMap.get(k);
             const needsPush = !cS || lS.submittedAt && (!cS.submittedat || new Date(lS.submittedAt) > new Date(cS.submittedat));
             if (needsPush) {
-              await client.query("DELETE FROM submissions WHERE assignment_id = $1 AND LOWER(TRIM(student_name)) = LOWER(TRIM($2))", [lS.assignment_id, lS.student_name]);
+              if (lS.student_name.toLowerCase() === canonicalKimName.toLowerCase()) {
+                await client.query(
+                  "DELETE FROM submissions WHERE assignment_id = $1 AND LOWER(TRIM(student_name)) IN ($2, 'kim fabie', 'kimfabie', 'kimfabie123@gmail.com')",
+                  [lS.assignment_id, lS.student_name.toLowerCase()]
+                );
+              } else {
+                await client.query("DELETE FROM submissions WHERE assignment_id = $1 AND LOWER(TRIM(student_name)) = LOWER(TRIM($2))", [lS.assignment_id, lS.student_name]);
+              }
               await client.query(`
                         INSERT INTO submissions (assignment_id, student_name, history, submittedat)
                         VALUES ($1, $2, $3, $4)
@@ -96297,6 +96353,7 @@ var require_cloudSync = __commonJS({
             }
           }
           const delLocalSub = sqliteDb.prepare("DELETE FROM submissions WHERE assignment_id = ? AND LOWER(TRIM(student_name)) = LOWER(TRIM(?))");
+          const delLocalKimSub = sqliteDb.prepare("DELETE FROM submissions WHERE assignment_id = ? AND LOWER(TRIM(student_name)) IN (?, 'kim fabie', 'kimfabie', 'kimfabie123@gmail.com')");
           const insLocalSub = sqliteDb.prepare("INSERT INTO submissions (assignment_id, student_name, history, submittedAt) VALUES (?, ?, ?, ?)");
           for (const [k, cS] of cloudSubMap) {
             const lS = localSubMap.get(k);
@@ -96308,7 +96365,11 @@ var require_cloudSync = __commonJS({
                   sqliteDb.prepare("INSERT OR IGNORE INTO classrooms (id, name) VALUES (?, ?)").run(1, "Default Classroom");
                   sqliteDb.prepare("INSERT OR IGNORE INTO classwork (id, classroom_id, title) VALUES (?, ?, ?)").run(cS.assignment_id, 1, "Assignment " + cS.assignment_id);
                 }
-                delLocalSub.run(cS.assignment_id, cS.student_name);
+                if (cS.student_name.toLowerCase() === canonicalKimName.toLowerCase()) {
+                  delLocalKimSub.run(cS.assignment_id, cS.student_name.toLowerCase());
+                } else {
+                  delLocalSub.run(cS.assignment_id, cS.student_name);
+                }
                 insLocalSub.run(cS.assignment_id, cS.student_name, cS.history || "[]", cS.submittedat ? new Date(cS.submittedat).toISOString() : null);
                 pulledCount++;
               } catch (_) {
@@ -96834,24 +96895,45 @@ var require_db4 = __commonJS({
         provider = "postgres";
         if (sqliteDb) {
           try {
-            const pgUsers = await client.query("SELECT id, name, email, password, role, status, lastlogin, avatar FROM users").catch(() => ({ rows: [] }));
+            const pgUsers = await client.query("SELECT id, name, email, password, role, status, lastlogin, avatar FROM users ORDER BY id ASC").catch(() => ({ rows: [] }));
             if (pgUsers.rows && pgUsers.rows.length > 0) {
-              const upsertUser = sqliteDb.prepare(`
+              const findIdConflict = sqliteDb.prepare("SELECT id, email FROM users WHERE id = ? AND LOWER(email) != LOWER(?)");
+              const moveConflictId = sqliteDb.prepare("UPDATE users SET id = ? WHERE id = ?");
+              const upsertUserByEmail = sqliteDb.prepare(`
                         INSERT INTO users (id, name, email, password, role, status, lastLogin, avatar)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                         ON CONFLICT(email) DO UPDATE SET
+                            id = excluded.id,
                             name = excluded.name,
                             password = excluded.password,
                             role = excluded.role,
                             status = excluded.status,
                             lastLogin = excluded.lastLogin,
-                            avatar = excluded.avatar
+                            avatar = COALESCE(excluded.avatar, users.avatar)
                     `);
               for (const u of pgUsers.rows) {
                 if (u.email) {
                   try {
-                    upsertUser.run(u.id, u.name || "", u.email, u.password || "", u.role || "Student", u.status || "Active", u.lastlogin || null, u.avatar || null);
+                    const conflict = findIdConflict.get(u.id, u.email);
+                    if (conflict) {
+                      moveConflictId.run(Number(u.id) + 9e8 + Math.floor(Math.random() * 1e5), u.id);
+                    }
+                    upsertUserByEmail.run(u.id, u.name || "", u.email, u.password || "", u.role || "Student", u.status || "Active", u.lastlogin || null, u.avatar || null);
                   } catch (_) {
+                    try {
+                      sqliteDb.prepare(`
+                                        INSERT INTO users (name, email, password, role, status, lastLogin, avatar)
+                                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                                        ON CONFLICT(email) DO UPDATE SET
+                                            name = excluded.name,
+                                            password = excluded.password,
+                                            role = excluded.role,
+                                            status = excluded.status,
+                                            lastLogin = excluded.lastLogin,
+                                            avatar = COALESCE(excluded.avatar, users.avatar)
+                                    `).run(u.name || "", u.email, u.password || "", u.role || "Student", u.status || "Active", u.lastlogin || null, u.avatar || null);
+                    } catch (_2) {
+                    }
                   }
                 }
               }
@@ -96956,6 +97038,7 @@ var require_db4 = __commonJS({
             }
             const pgSubmissions = await client.query("SELECT id, assignment_id, student_name, history, submittedat FROM submissions").catch(() => ({ rows: [] }));
             if (pgSubmissions.rows && pgSubmissions.rows.length > 0) {
+              const dedupSub = sqliteDb.prepare("DELETE FROM submissions WHERE assignment_id = ? AND LOWER(TRIM(student_name)) = LOWER(TRIM(?)) AND id != ?");
               const upsertSub = sqliteDb.prepare(`
                         INSERT INTO submissions (id, assignment_id, student_name, history, submittedAt)
                         VALUES (?, ?, ?, ?, ?)
@@ -96967,6 +97050,7 @@ var require_db4 = __commonJS({
                     `);
               for (const s2 of pgSubmissions.rows) {
                 try {
+                  dedupSub.run(s2.assignment_id, s2.student_name || "", s2.id);
                   upsertSub.run(s2.id, s2.assignment_id, s2.student_name, s2.history, s2.submittedat || s2.submittedAt || null);
                 } catch (_) {
                 }
@@ -108408,9 +108492,25 @@ app.get("/users", authenticateToken, requireRole("Admin"), async (req, res) => {
 app.get("/users/profile", authenticateToken, async (req, res) => {
   try {
     const userId = req.user.id;
-    let user = await db.get("SELECT id, name, email, role, avatar, status FROM users WHERE id = ?", userId);
-    if (!user && req.user.role === "Admin") {
-      user = await db.get("SELECT id, name, email, role, avatar, status, lastLogin FROM admin_users WHERE id = ?", userId);
+    const userEmail = (req.user.email || "").trim().toLowerCase();
+    let user = null;
+    if (userEmail) {
+      user = await db.get("SELECT id, name, email, role, avatar, status FROM users WHERE LOWER(email) = ?", userEmail);
+      if (!user && req.user.role === "Admin") {
+        user = await db.get("SELECT id, name, email, role, avatar, status, lastLogin FROM admin_users WHERE LOWER(email) = ?", userEmail);
+      }
+    }
+    if (!user && userId != null) {
+      const byId = await db.get("SELECT id, name, email, role, avatar, status FROM users WHERE id = ?", userId);
+      if (byId && (!userEmail || (byId.email || "").trim().toLowerCase() === userEmail)) {
+        user = byId;
+      }
+      if (!user && req.user.role === "Admin") {
+        const adminById = await db.get("SELECT id, name, email, role, avatar, status, lastLogin FROM admin_users WHERE id = ?", userId);
+        if (adminById && (!userEmail || (adminById.email || "").trim().toLowerCase() === userEmail)) {
+          user = adminById;
+        }
+      }
     }
     if (!user) return res.status(404).json({ message: "User not found" });
     res.status(200).json({ user });
@@ -108422,13 +108522,31 @@ app.put("/users/profile", authenticateToken, async (req, res) => {
   try {
     const { name, avatar } = req.body || {};
     const userId = req.user.id;
-    let current = await db.get("SELECT * FROM users WHERE id = ?", userId);
+    const userEmail = (req.user.email || "").trim().toLowerCase();
+    let current = null;
     let isAdmin = false;
-    if (!current && req.user.role === "Admin") {
-      current = await db.get("SELECT * FROM admin_users WHERE id = ?", userId);
-      isAdmin = true;
+    if (userEmail) {
+      current = await db.get("SELECT * FROM users WHERE LOWER(email) = ?", userEmail);
+      if (!current && req.user.role === "Admin") {
+        current = await db.get("SELECT * FROM admin_users WHERE LOWER(email) = ?", userEmail);
+        if (current) isAdmin = true;
+      }
+    }
+    if (!current && userId != null) {
+      const byId = await db.get("SELECT * FROM users WHERE id = ?", userId);
+      if (byId && (!userEmail || (byId.email || "").trim().toLowerCase() === userEmail)) {
+        current = byId;
+      }
+      if (!current && req.user.role === "Admin") {
+        const adminById = await db.get("SELECT * FROM admin_users WHERE id = ?", userId);
+        if (adminById && (!userEmail || (adminById.email || "").trim().toLowerCase() === userEmail)) {
+          current = adminById;
+          isAdmin = true;
+        }
+      }
     }
     if (!current) return res.status(404).json({ message: "User not found" });
+    const targetUserId = current.id;
     const updatedName = name && name.trim() ? name.trim() : current.name;
     const updatedEmail = current.email;
     const updatedAvatar = avatar !== void 0 ? avatar : current.avatar;
@@ -108437,14 +108555,14 @@ app.put("/users/profile", authenticateToken, async (req, res) => {
         "UPDATE admin_users SET name = ?, avatar = ? WHERE id = ?",
         updatedName,
         updatedAvatar,
-        userId
+        targetUserId
       );
     } else {
       await db.run(
         "UPDATE users SET name = ?, avatar = ? WHERE id = ?",
         updatedName,
         updatedAvatar,
-        userId
+        targetUserId
       );
       if (current.role === "Teacher") {
         await db.run(
@@ -108454,10 +108572,25 @@ app.put("/users/profile", authenticateToken, async (req, res) => {
           current.name
         ).catch(() => {
         });
+      } else if (current.role === "Student" && updatedName !== current.name) {
+        await db.run(
+          "UPDATE enrollments SET student_name = ? WHERE LOWER(student_email) = LOWER(?) OR student_id = ?",
+          updatedName,
+          current.email,
+          targetUserId
+        ).catch(() => {
+        });
+        await db.run(
+          "UPDATE submissions SET student_name = ? WHERE LOWER(TRIM(student_name)) = LOWER(TRIM(?)) OR LOWER(TRIM(student_name)) = LOWER(TRIM(?))",
+          updatedName,
+          current.name,
+          current.email
+        ).catch(() => {
+        });
       }
     }
     const user = {
-      id: userId,
+      id: targetUserId,
       name: updatedName,
       email: updatedEmail,
       role: current.role,
@@ -108465,7 +108598,7 @@ app.put("/users/profile", authenticateToken, async (req, res) => {
       status: current.status
     };
     io.emit("user_avatar_updated", {
-      userId,
+      userId: targetUserId,
       name: updatedName,
       email: updatedEmail,
       avatar: updatedAvatar,
@@ -109429,33 +109562,126 @@ app.get("/student/submissions", authenticateToken, requireRole("Student"), async
     res.status(500).json({ message: e2.message });
   }
 });
+async function resolveCanonicalStudent(userObj, fallbackName = "", fallbackId = null, fallbackEmail = "") {
+  let rawEmail = (userObj?.email || fallbackEmail || "").trim().toLowerCase();
+  const rawName = (userObj?.name || fallbackName || "").trim();
+  const rawId = userObj?.id || fallbackId || null;
+  const rawNameLower = rawName.toLowerCase();
+  if (!rawEmail && (rawNameLower === "kimfabie123@gmail.com" || rawNameLower === "kimfabie" || rawNameLower === "kim fabie" || rawNameLower === "mikooooo")) {
+    rawEmail = "kimfabie123@gmail.com";
+  }
+  let dbUser = null;
+  if (rawEmail) {
+    dbUser = await db.get("SELECT id, name, email, role FROM users WHERE LOWER(email) = ?", rawEmail).catch(() => null);
+  }
+  if (!dbUser && rawId != null) {
+    const byId = await db.get("SELECT id, name, email, role FROM users WHERE id = ?", rawId).catch(() => null);
+    if (byId && (!rawEmail || (byId.email || "").trim().toLowerCase() === rawEmail)) {
+      dbUser = byId;
+    }
+  }
+  const canonicalEmail = (dbUser?.email || rawEmail || "").trim().toLowerCase();
+  let canonicalName = dbUser?.name && dbUser.name.trim() || rawName || canonicalEmail || "Student";
+  if (canonicalEmail === "kimfabie123@gmail.com" && (canonicalName.toLowerCase() === "kim fabie" || canonicalName.toLowerCase() === "kimfabie")) {
+    canonicalName = "MIKOOOOO";
+  }
+  const canonicalId = dbUser?.id ?? rawId ?? canonicalName;
+  const aliasSet = /* @__PURE__ */ new Set();
+  const addAlias = (val) => {
+    if (val != null && String(val).trim()) {
+      aliasSet.add(String(val).trim().toLowerCase());
+    }
+  };
+  addAlias(canonicalName);
+  addAlias(rawName);
+  addAlias(fallbackName);
+  addAlias(canonicalEmail);
+  if (canonicalEmail && canonicalEmail.includes("@")) {
+    addAlias(canonicalEmail.split("@")[0]);
+  }
+  if (canonicalEmail === "kimfabie123@gmail.com" || canonicalName.toLowerCase() === "mikooooo") {
+    addAlias("kim fabie");
+    addAlias("kimfabie");
+    addAlias("kimfabie123@gmail.com");
+    addAlias("mikooooo");
+  }
+  if (canonicalEmail) {
+    try {
+      const enrRows = await db.all("SELECT DISTINCT student_name FROM enrollments WHERE LOWER(student_email) = ?", canonicalEmail);
+      for (const r2 of enrRows || []) {
+        addAlias(r2.student_name);
+      }
+    } catch (_) {
+    }
+  }
+  return {
+    canonicalName,
+    canonicalId,
+    canonicalEmail,
+    aliases: Array.from(aliasSet)
+  };
+}
 app.get("/submissions/:assignmentId", authenticateToken, requireRole("Teacher", "Admin", "Student"), async (req, res) => {
   try {
     if (!await checkAssignmentAccess(req, req.params.assignmentId)) {
       return res.status(403).json({ message: "Access denied" });
     }
-    let rows;
-    if (req.user.role === "Student") {
-      rows = await db.all(
-        "SELECT * FROM submissions WHERE assignment_id = ? AND (student_name = ? OR student_name = ? OR LOWER(student_name) = LOWER(?) OR LOWER(student_name) = LOWER(?))",
-        req.params.assignmentId,
-        req.user.name || "",
-        req.user.email || "",
-        req.user.name || "",
-        req.user.email || ""
-      );
-    } else {
-      rows = await db.all("SELECT * FROM submissions WHERE assignment_id = ?", req.params.assignmentId);
+    const allRows = await db.all("SELECT * FROM submissions WHERE assignment_id = ?", req.params.assignmentId);
+    let canonicalKimName = "MIKOOOOO";
+    try {
+      const kimUser = await db.get("SELECT name FROM users WHERE LOWER(email) = 'kimfabie123@gmail.com'");
+      if (kimUser?.name && kimUser.name.trim()) canonicalKimName = kimUser.name.trim();
+    } catch (_) {
     }
-    const submissions = rows.map((s2) => {
+    const normalizeStudentSubName = (rawName) => {
+      const trimmed = String(rawName || "").trim();
+      const lower2 = trimmed.toLowerCase();
+      if (lower2 === "kimfabie123@gmail.com" || lower2 === "kimfabie" || lower2 === "kim fabie") {
+        return canonicalKimName;
+      }
+      return trimmed;
+    };
+    let filteredRows = allRows || [];
+    if (req.user.role === "Student") {
+      const { aliases } = await resolveCanonicalStudent(req.user);
+      const aliasLookup = new Set(aliases);
+      filteredRows = filteredRows.filter((s2) => {
+        const sLower = String(s2.student_name || "").trim().toLowerCase();
+        const normLower = normalizeStudentSubName(s2.student_name).toLowerCase();
+        return aliasLookup.has(sLower) || aliasLookup.has(normLower);
+      });
+    }
+    const dedupedMap = /* @__PURE__ */ new Map();
+    for (const s2 of filteredRows) {
+      const normName = normalizeStudentSubName(s2.student_name);
+      const key = normName.toLowerCase();
       let history = [];
       try {
         history = JSON.parse(s2.history);
       } catch {
       }
       const lastCode = Array.isArray(history) && history.length > 0 ? history[history.length - 1]?.code : "";
-      return { ...s2, history, studentName: s2.student_name, finalCode: lastCode };
-    });
+      const formatted = {
+        ...s2,
+        student_name: normName,
+        studentName: normName,
+        history,
+        finalCode: lastCode
+      };
+      const existing = dedupedMap.get(key);
+      if (!existing) {
+        dedupedMap.set(key, formatted);
+      } else {
+        const newTime = new Date(formatted.submittedAt || formatted.submittedat || 0).getTime();
+        const oldTime = new Date(existing.submittedAt || existing.submittedat || 0).getTime();
+        const newLen = Array.isArray(formatted.history) ? formatted.history.length : 0;
+        const oldLen = Array.isArray(existing.history) ? existing.history.length : 0;
+        if (newTime > oldTime || newTime === oldTime && newLen >= oldLen) {
+          dedupedMap.set(key, formatted);
+        }
+      }
+    }
+    const submissions = Array.from(dedupedMap.values());
     res.status(200).json({ submissions });
   } catch (e2) {
     res.status(500).json({ message: e2.message });
@@ -109495,15 +109721,16 @@ app.post("/submissions/:assignmentId", authenticateToken, requireRole("Student")
   try {
     const { finalCode, codeHistory } = req.body || {};
     const assignmentId = req.params.assignmentId;
-    const name = req.user.name || req.user.email || "Student";
+    const { canonicalName: name, aliases } = await resolveCanonicalStudent(req.user);
     const historyStr = JSON.stringify(Array.isArray(codeHistory) && codeHistory.length > 0 ? codeHistory : [{ time: Date.now(), code: finalCode || "" }]);
-    await db.run(
-      "DELETE FROM submissions WHERE assignment_id = ? AND (student_name = ? OR student_name = ? OR LOWER(student_name) = LOWER(?))",
-      assignmentId,
-      name,
-      req.user.email || name,
-      name.toLowerCase()
-    );
+    for (const alias of aliases) {
+      await db.run(
+        "DELETE FROM submissions WHERE assignment_id = ? AND LOWER(TRIM(student_name)) = LOWER(TRIM(?))",
+        assignmentId,
+        alias
+      ).catch(() => {
+      });
+    }
     await db.run(
       "INSERT INTO submissions (assignment_id, student_name, history, submittedAt) VALUES (?, ?, ?, ?)",
       assignmentId,
@@ -109516,7 +109743,7 @@ app.post("/submissions/:assignmentId", authenticateToken, requireRole("Student")
     } catch (_) {
     }
     io.emit("submission_updated", { assignmentId, studentName: name });
-    res.status(200).json({ message: "Submission saved" });
+    res.status(200).json({ message: "Submission saved", studentName: name });
   } catch (e2) {
     res.status(500).json({ message: e2.message });
   }
@@ -109527,66 +109754,38 @@ app.delete("/submissions/:assignmentId/:studentName", authenticateToken, require
       return res.status(403).json({ message: "Access denied" });
     }
     const studentName = decodeURIComponent(req.params.studentName);
+    const sLower = (studentName || "").trim().toLowerCase();
+    const isTeacherOrAdmin = req.user.role === "Teacher" || req.user.role === "Admin";
+    const { canonicalName, aliases } = await resolveCanonicalStudent(
+      isTeacherOrAdmin ? null : req.user,
+      studentName
+    );
+    const aliasSet = new Set(aliases);
     if (req.user.role === "Student") {
-      const sLower2 = (studentName || "").trim().toLowerCase();
-      const uNameLower2 = (req.user.name || "").trim().toLowerCase();
-      const uEmailLower2 = (req.user.email || "").trim().toLowerCase();
-      const uId2 = String(req.user.id || "");
-      let isSelf = sLower2 === uNameLower2 || sLower2 === uEmailLower2 || studentName === uId2 || sLower2 === uId2;
-      if (!isSelf && (req.user.id || req.user.email)) {
-        const enr = await db.get(
-          `SELECT 1 FROM enrollments 
-                     WHERE (student_id = ? OR CAST(student_id AS TEXT) = ? OR LOWER(student_email) = ?)
-                       AND (LOWER(student_name) = ? OR student_id = ? OR CAST(student_id AS TEXT) = ?)`,
-          req.user.id,
-          uId2,
-          uEmailLower2,
-          sLower2,
-          studentName,
-          studentName
-        ).catch(() => null);
-        if (enr) isSelf = true;
-      }
-      if (!isSelf && (req.user.name || req.user.email || req.user.id)) {
-        const sub = await db.get(
-          `SELECT 1 FROM submissions 
-                     WHERE (assignment_id = ? OR CAST(assignment_id AS TEXT) = ?)
-                       AND (LOWER(student_name) = ? OR student_name = ? OR LOWER(student_name) = ? OR LOWER(student_name) = ?)`,
-          req.params.assignmentId,
-          String(req.params.assignmentId),
-          sLower2,
-          studentName,
-          uNameLower2,
-          uEmailLower2
-        ).catch(() => null);
-        if (sub) isSelf = true;
-      }
+      const uId = String(req.user.id || "");
+      const isSelf = aliasSet.has(sLower) || studentName === uId || sLower === uId;
       if (!isSelf) {
         return res.status(403).json({ message: "Access denied: You can only delete your own submission." });
       }
     }
-    const sLower = (studentName || "").trim().toLowerCase();
-    const uNameLower = (req.user?.name || "").trim().toLowerCase();
-    const uEmailLower = (req.user?.email || "").trim().toLowerCase();
-    const uId = String(req.user?.id || "");
-    await db.run(
-      `DELETE FROM submissions 
-             WHERE (assignment_id = ? OR CAST(assignment_id AS TEXT) = ?)
-               AND (student_name = ? OR LOWER(student_name) = ? OR LOWER(student_name) = ? OR LOWER(student_name) = ? OR student_name = ? OR student_name = ?)`,
-      req.params.assignmentId,
-      String(req.params.assignmentId),
-      studentName,
-      sLower,
-      uNameLower,
-      uEmailLower,
-      req.user?.name || "",
-      uId
-    );
+    const namesToDelete = /* @__PURE__ */ new Set([sLower, ...aliases]);
+    for (const alias of namesToDelete) {
+      if (!alias) continue;
+      await db.run(
+        `DELETE FROM submissions 
+                 WHERE (assignment_id = ? OR CAST(assignment_id AS TEXT) = ?)
+                   AND LOWER(TRIM(student_name)) = LOWER(TRIM(?))`,
+        req.params.assignmentId,
+        String(req.params.assignmentId),
+        alias
+      ).catch(() => {
+      });
+    }
     try {
       db.triggerSync();
     } catch (_) {
     }
-    io.emit("submission_deleted", { assignmentId: req.params.assignmentId, studentName });
+    io.emit("submission_deleted", { assignmentId: req.params.assignmentId, studentName: canonicalName || studentName });
     res.status(200).json({ message: "Submission deleted" });
   } catch (e2) {
     res.status(500).json({ message: e2.message });
@@ -111546,8 +111745,12 @@ io.on("connection", (socket) => {
   });
   socket.on("submit_exam", async (data) => {
     if (!data) return;
-    const authenticatedName = socket.user?.name || socket.user?.email || data.studentName || data.studentId || "Unknown";
-    const authenticatedId = socket.user?.id || data.studentId || authenticatedName;
+    const { canonicalName: authenticatedName, canonicalId: authenticatedId, canonicalEmail, aliases } = await resolveCanonicalStudent(
+      socket.user,
+      data.studentName || data.studentId || "Unknown",
+      data.studentId,
+      data.email || data.studentEmail || ""
+    );
     const classroomId = data.classroomId || "none";
     const assignmentId = data.assignmentId != null ? String(data.assignmentId) : "unassigned";
     const strictWarnings = await getTreatWarningsAsErrors();
@@ -111555,15 +111758,17 @@ io.on("connection", (socket) => {
       ...data,
       studentName: authenticatedName,
       studentId: authenticatedId,
+      studentEmail: canonicalEmail || data.studentEmail || data.email || "",
       strictWarningsEnforced: strictWarnings
     };
     const targetId = String(data.studentId || authenticatedId || "");
     const targetName = String(data.studentName || authenticatedName || "").trim().toLowerCase();
+    const aliasSet = new Set(aliases);
     for (const [key, student] of Object.entries(activeStudents)) {
       if (!student) continue;
       const curId = String(student.studentId || student.id || "");
       const curName = String(student.name || student.studentName || "").trim().toLowerCase();
-      if (targetId && (curId === targetId || key.endsWith(`:${targetId}`)) || targetName && (curName === targetName || key.endsWith(`:${targetName}`))) {
+      if (targetId && (curId === targetId || key.endsWith(`:${targetId}`)) || targetName && (curName === targetName || key.endsWith(`:${targetName}`)) || aliasSet.has(curName)) {
         delete activeStudents[key];
       }
     }
@@ -111577,7 +111782,14 @@ io.on("connection", (socket) => {
     relaySubmitExam(payload);
     relayStudentLeft({ studentId: targetId, studentName: authenticatedName, studentIdNum: authenticatedId, reason: "submitted", assignmentId, classroomId });
     try {
-      await db.run("DELETE FROM submissions WHERE assignment_id = ? AND student_name = ?", assignmentId, authenticatedName);
+      for (const alias of aliases) {
+        await db.run(
+          "DELETE FROM submissions WHERE assignment_id = ? AND LOWER(TRIM(student_name)) = LOWER(TRIM(?))",
+          assignmentId,
+          alias
+        ).catch(() => {
+        });
+      }
       const historyStr = JSON.stringify(Array.isArray(data.codeHistory) ? data.codeHistory : []);
       await db.run("INSERT INTO submissions (assignment_id, student_name, history, submittedAt) VALUES (?, ?, ?, ?)", assignmentId, authenticatedName, historyStr, (/* @__PURE__ */ new Date()).toISOString());
     } catch (e2) {
@@ -111585,35 +111797,32 @@ io.on("connection", (socket) => {
     }
   });
   socket.on("unsubmit_exam", async (data) => {
-    if (!socket.user || !data) return;
+    if (!data) return;
     const assignmentId = data.assignmentId != null ? String(data.assignmentId) : "unassigned";
-    const studentName = socket.user.role === "Student" ? socket.user.name || socket.user.email || "Unknown" : data.studentName || data.studentId || "Unknown";
-    const studentId = socket.user.role === "Student" ? socket.user.id : data.studentId;
+    const isTeacherOrAdmin = socket.user && ["Teacher", "Admin"].includes(socket.user.role);
+    const { canonicalName: studentName, canonicalId: studentId, aliases } = await resolveCanonicalStudent(
+      isTeacherOrAdmin ? null : socket.user,
+      data.studentName || data.studentId || "Unknown",
+      data.studentId,
+      data.email || data.studentEmail || ""
+    );
     const classroomId = data.classroomId || "none";
     const studentKey = `${classroomId}:${assignmentId}:${studentId || studentName}`;
     if (activeStudents[studentKey]) {
       activeStudents[studentKey] = { ...activeStudents[studentKey], status: "Active" };
     }
     try {
-      const sLower = String(studentName || "").trim().toLowerCase();
-      const uNameLower = String(socket.user?.name || "").trim().toLowerCase();
-      const uEmailLower = String(socket.user?.email || "").trim().toLowerCase();
-      const uId = String(socket.user?.id || "");
-      const passedId = data.studentId != null ? String(data.studentId) : "";
-      await db.run(
-        `DELETE FROM submissions 
-                 WHERE (assignment_id = ? OR CAST(assignment_id AS TEXT) = ?)
-                   AND (student_name = ? OR LOWER(student_name) = ? OR LOWER(student_name) = ? OR LOWER(student_name) = ? OR student_name = ? OR student_name = ? OR student_name = ?)`,
-        assignmentId,
-        String(assignmentId),
-        studentName,
-        sLower,
-        uNameLower,
-        uEmailLower,
-        socket.user?.name || "",
-        uId,
-        passedId
-      );
+      for (const alias of aliases) {
+        await db.run(
+          `DELETE FROM submissions 
+                     WHERE (assignment_id = ? OR CAST(assignment_id AS TEXT) = ?)
+                       AND LOWER(TRIM(student_name)) = LOWER(TRIM(?))`,
+          assignmentId,
+          String(assignmentId),
+          alias
+        ).catch(() => {
+        });
+      }
     } catch (e2) {
       console.error(e2);
     }

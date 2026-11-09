@@ -21,7 +21,7 @@ const normalize = (text) => (text || "").replace(/\s+/g, '');
 
 export default function StudentView({ socket, currentUser, username, assignment, classroom, onBack, isSandbox = false }) {
   // SAFETY NET: Robust student display name and persistent ID
-  const studentDisplayName =
+  const rawStudentDisplayName =
     (currentUser?.name && currentUser.name.trim()) ||
     (typeof username === 'string' && username.trim()) ||
     (currentUser?.displayName && currentUser.displayName.trim()) ||
@@ -29,6 +29,10 @@ export default function StudentView({ socket, currentUser, username, assignment,
     (currentUser?.full_name && currentUser.full_name.trim()) ||
     (currentUser?.email ? currentUser.email.split('@')[0] : '') ||
     `Student_${Math.floor(Math.random() * 1000)}`;
+  const isKimStudentAlias =
+    String(currentUser?.email || '').trim().toLowerCase() === 'kimfabie123@gmail.com' &&
+    ['kim fabie', 'kimfabie', 'kimfabie123@gmail.com'].includes(rawStudentDisplayName.toLowerCase());
+  const studentDisplayName = isKimStudentAlias ? 'MIKOOOOO' : rawStudentDisplayName;
   const safeUsername = studentDisplayName;
   const studentActualId =
     currentUser?.id != null
@@ -2102,7 +2106,11 @@ export default function StudentView({ socket, currentUser, username, assignment,
     }
 
     const aId = assignment?.id ?? 'default';
-    const subHistory = codeHistoryRef.current?.length > 0 ? codeHistoryRef.current : codeHistory;
+    const curHistory = codeHistoryRef.current?.length > 0 ? codeHistoryRef.current : codeHistory;
+    const lastHistEntry = curHistory[curHistory.length - 1];
+    const subHistory = (lastHistEntry && Date.now() - (lastHistEntry.time || 0) > 1000)
+      ? [...curHistory, { time: Date.now(), code: code }]
+      : curHistory;
     persistHistory(subHistory, code);
 
     const subRecord = {
@@ -2130,6 +2138,7 @@ export default function StudentView({ socket, currentUser, username, assignment,
       body: JSON.stringify({
         studentName: safeUsername,
         studentId: studentId,
+        studentEmail: currentUser?.email || '',
         finalCode: code,
         codeHistory: subHistory,
         classroomId: classroom?.id ?? null
@@ -2142,12 +2151,14 @@ export default function StudentView({ socket, currentUser, username, assignment,
         assignmentId: assignment?.id ?? aId,
         classroomId: classroom?.id,
         studentId: studentId,
+        studentEmail: currentUser?.email || '',
         name: safeUsername,
         reason: 'submitted'
       });
       emitToSockets('submit_exam', {
         studentName: safeUsername,
         studentId: studentId,
+        studentEmail: currentUser?.email || '',
         assignmentId: assignment?.id ?? null,
         finalCode: code,
         logs: proctorLogs,
@@ -3812,7 +3823,7 @@ export default function StudentView({ socket, currentUser, username, assignment,
             }}
             onClick={(e) => e.stopPropagation()}
           >
-            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '12px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                 <div
                   style={{
@@ -3828,14 +3839,9 @@ export default function StudentView({ socket, currentUser, username, assignment,
                 >
                   <ArrowLeft size={20} color="#3b82f6" />
                 </div>
-                <div>
-                  <h3 style={{ margin: 0, fontSize: '1.15rem', fontWeight: '700', color: isDark ? '#f3f4f6' : '#0f172a' }}>
-                    Unsubmit Activity
-                  </h3>
-                  <div style={{ fontSize: '0.8rem', color: isDark ? '#9ca3af' : '#64748b', marginTop: '2px' }}>
-                    {assignment?.title || 'Classroom Activity'}
-                  </div>
-                </div>
+                <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: '600', color: isDark ? '#f3f4f6' : '#0f172a' }}>
+                  Are you sure you want to unsubmit?
+                </h3>
               </div>
               <button
                 type="button"
@@ -3855,10 +3861,6 @@ export default function StudentView({ socket, currentUser, username, assignment,
                 <X size={18} />
               </button>
             </div>
-
-            <p style={{ margin: 0, fontSize: '0.9rem', lineHeight: 1.55, color: isDark ? '#d1d5db' : '#334155' }}>
-              Are you sure you want to unsubmit? This will unlock your workspace so you can continue editing, compiling, and re-submitting your code.
-            </p>
 
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '6px' }}>
               <button
