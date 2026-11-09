@@ -196,12 +196,24 @@ let isCloudDown = false;
 let lastCloudCheckTime = 0;
 let healthCheckPromise = null;
 let localHealthData = null;
-let isLocalServerUp = true;
+let isLocalServerUp = false;
 let localHealthPromise = null;
 const statusListeners = new Set();
 
+const isHostedWebEnv = () =>
+  typeof window !== 'undefined' &&
+  Boolean(window.location) &&
+  !isPrivateHost(window.location.hostname) &&
+  !window.electronAPI;
+
 // Probe Local Server health to discover LAN interface and ComLab host status
 export const checkLocalHealth = async () => {
+  // Never probe localhost:3001 from public hosted web (e.g. Vercel)
+  if (isHostedWebEnv()) {
+    isLocalServerUp = false;
+    localHealthData = null;
+    return false;
+  }
   if (localHealthPromise) return localHealthPromise;
   const localUrl = getLocalApiUrl();
   localHealthPromise = (async () => {
@@ -401,6 +413,7 @@ export const checkCloudHealth = async () => {
  * Locks on within milliseconds without user clicking 'Connect to LAN'.
  */
 export const attemptAutoLanReconnect = async () => {
+  if (isHostedWebEnv()) return false;
   if (typeof navigator !== 'undefined' && !navigator.onLine) {
     return false;
   }
@@ -474,31 +487,37 @@ export const attemptAutoLanReconnect = async () => {
 
 // Run network probes immediately on startup and keep checking periodically for auto-recovery
 if (typeof window !== 'undefined') {
+  const hostedWeb = isHostedWebEnv();
+
   // Immediate initial health probe on app load (Cloud prioritized first)
   checkCloudHealth().then((cloudOk) => {
-    checkLocalHealth().then((localOk) => {
-      if (!cloudOk && !localOk) {
-        attemptAutoLanReconnect();
-      }
-    });
+    if (!hostedWeb) {
+      checkLocalHealth().then((localOk) => {
+        if (!cloudOk && !localOk) {
+          attemptAutoLanReconnect();
+        }
+      });
+    }
   });
 
   // Background auto-recovery check:
   // - Prioritize checking cloud health so we stay on or recover to Online Cloud Server when internet is available
-  // - Only auto-probe LAN if cloud is down or user explicitly selected LAN mode
+  // - Only auto-probe LAN if not on hosted web and cloud is down or user explicitly selected LAN mode
   setInterval(() => {
     if (isCloudDown || Date.now() - lastCloudCheckTime > 15000) {
       checkCloudHealth();
     }
 
-    if (userPreferredMode === 'lan' || isCloudDown || (typeof navigator !== 'undefined' && !navigator.onLine)) {
-      if (getIsLanConnected()) {
+    if (!hostedWeb) {
+      if (userPreferredMode === 'lan' || isCloudDown || (typeof navigator !== 'undefined' && !navigator.onLine)) {
+        if (getIsLanConnected()) {
+          checkLocalHealth();
+        } else {
+          attemptAutoLanReconnect();
+        }
+      } else if (getIsLanConnected()) {
         checkLocalHealth();
-      } else {
-        attemptAutoLanReconnect();
       }
-    } else if (getIsLanConnected()) {
-      checkLocalHealth();
     }
   }, 2500);
 
@@ -510,10 +529,12 @@ if (typeof window !== 'undefined') {
       try { localStorage.removeItem('verity_preferred_mode'); } catch (_) {}
     }
     checkCloudHealth();
-    checkLocalHealth();
-    try {
-      fetch(`${getLocalApiUrl()}/api/sync`, { method: 'POST' }).catch(() => {});
-    } catch (_) {}
+    if (!hostedWeb) {
+      checkLocalHealth();
+      try {
+        fetch(`${getLocalApiUrl()}/api/sync`, { method: 'POST' }).catch(() => {});
+      } catch (_) {}
+    }
   });
 
   window.addEventListener('offline', () => {
@@ -522,35 +543,41 @@ if (typeof window !== 'undefined') {
     isLocalServerUp = false;
     localHealthData = null;
     notifyListeners();
-    checkLocalHealth();
+    if (!hostedWeb) {
+      checkLocalHealth();
+    }
   });
 
   window.addEventListener('verity:lan-discovered', () => {
-    checkLocalHealth();
+    if (!hostedWeb) checkLocalHealth();
   });
   window.addEventListener('verity:server-changed', () => {
-    checkLocalHealth();
-    try {
-      fetch(`${getLocalApiUrl()}/api/sync`, { method: 'POST' }).catch(() => {});
-    } catch (_) {}
-  });
-
-  // Automatic background synchronization between LAN and Cloud
-  setInterval(() => {
-    if (typeof navigator !== 'undefined' && navigator.onLine) {
-      try {
-        fetch(`${getLocalApiUrl()}/api/sync`, { method: 'POST' }).catch(() => {});
-      } catch (_) {}
-    }
-  }, 15000);
-
-  window.addEventListener('focus', () => {
-    if (typeof navigator !== 'undefined' && navigator.onLine) {
+    if (!hostedWeb) {
+      checkLocalHealth();
       try {
         fetch(`${getLocalApiUrl()}/api/sync`, { method: 'POST' }).catch(() => {});
       } catch (_) {}
     }
   });
+
+  // Automatic background synchronization between LAN and Cloud (only when running local/LAN server)
+  if (!hostedWeb) {
+    setInterval(() => {
+      if (typeof navigator !== 'undefined' && navigator.onLine && isLocalServerUp) {
+        try {
+          fetch(`${getLocalApiUrl()}/api/sync`, { method: 'POST' }).catch(() => {});
+        } catch (_) {}
+      }
+    }, 15000);
+
+    window.addEventListener('focus', () => {
+      if (typeof navigator !== 'undefined' && navigator.onLine && isLocalServerUp) {
+        try {
+          fetch(`${getLocalApiUrl()}/api/sync`, { method: 'POST' }).catch(() => {});
+        } catch (_) {}
+      }
+    });
+  }
 }
 
 export const setCustomLanServer = async (url) => {
@@ -833,18 +860,45 @@ export const apiFetch = async (url, options = {}) => {
 
   // 1. Hosted Web (e.g. Vercel): Pure cloud mode (no local fallback server)
   if (isWebHosted) {
+    const fetchWithTimeout = async (targetUrl, timeoutMs = 15000) => {
+      if (options.signal) {
+        return fetch(targetUrl, { ...options, headers });
+      }
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      try {
+        return await fetch(targetUrl, { ...options, headers, signal: controller.signal });
+      } finally {
+        clearTimeout(timer);
+      }
+    };
+
     try {
-      const response = await fetch(primaryCloudUrl, { ...options, headers });
+      const response = await fetchWithTimeout(primaryCloudUrl, 15000);
       if (isCloudDown) {
         isCloudDown = false;
         notifyListeners();
       }
       return response;
     } catch (err) {
-      isCloudDown = true;
-      notifyListeners();
-      console.warn(`[apiFetch] Request to cloud server failed: ${primaryCloudUrl}`, err.message);
-      throw err;
+      // If a custom cloud URL in localStorage failed, reset to DEFAULT_CLOUD_API_URL and retry immediately
+      const defaultTargetUrl = `${DEFAULT_CLOUD_API_URL}${pathWithQuery}`;
+      if (cloudUrl !== DEFAULT_CLOUD_API_URL) {
+        try { localStorage.removeItem('verity_cloud_url'); } catch (_) {}
+      }
+      try {
+        const retryResponse = await fetchWithTimeout(defaultTargetUrl, 20000);
+        if (isCloudDown) {
+          isCloudDown = false;
+          notifyListeners();
+        }
+        return retryResponse;
+      } catch (retryErr) {
+        isCloudDown = true;
+        notifyListeners();
+        console.warn(`[apiFetch] Request to cloud server failed: ${defaultTargetUrl}`, retryErr.message);
+        throw new Error('Could not reach the online server. Please check your connection or try again in a moment.');
+      }
     }
   }
 

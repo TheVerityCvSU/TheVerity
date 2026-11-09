@@ -147,6 +147,7 @@ function initSqlite() {
         } else {
             try { sqliteDb.pragma('journal_mode = DELETE'); } catch (e) {}
         }
+        try { sqliteDb.pragma('synchronous = NORMAL'); } catch (e) {}
         try { sqliteDb.pragma('busy_timeout = 5000'); } catch (e) {}
 
     // Run basic SQLite schema directly on this instance

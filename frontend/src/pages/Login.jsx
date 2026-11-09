@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useGoogleLogin } from '@react-oauth/google';
-import { Moon, Sun, Loader2, Construction, AlertTriangle, Eye, EyeOff, Monitor } from 'lucide-react';
+import { Moon, Sun, Loader2, Construction, AlertTriangle, Eye, EyeOff } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { apiFetch } from '../utils/api';
+import { apiFetch, getCloudUrl, getLocalApiUrl } from '../utils/api';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { io } from 'socket.io-client';
 import { isDesktopWebBrowser } from '../utils/deviceUtils';
@@ -230,13 +230,14 @@ export default function Login({ onLogin, onGoToRegister }) {
     const activeCloud = getCloudUrl() || 'https://verity-2z4v.onrender.com';
     const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
     const backendUrl = isOnline ? activeCloud : getLocalApiUrl();
-    
-    const socket = io(backendUrl, { transports: ['websocket', 'polling'] });
-    socketRef.current = socket;
-    
-    socket.on(`google-login-success-${sessionId}`, (data) => {
-      socket.disconnect();
-      socketRef.current = null;
+    let completed = false;
+
+    const cleanupAuth = () => {
+      window.removeEventListener('message', handlePopupMessage);
+      if (socketRef.current) {
+        socketRef.current.disconnect();
+        socketRef.current = null;
+      }
       if (authTimeoutRef.current) {
         clearTimeout(authTimeoutRef.current);
         authTimeoutRef.current = null;
@@ -244,29 +245,48 @@ export default function Login({ onLogin, onGoToRegister }) {
       if (window.electronAPI?.closeGoogleAuth) {
         window.electronAPI.closeGoogleAuth();
       }
+    };
+
+    const handleAuthSuccessData = (data) => {
+      if (completed) return;
+      completed = true;
+      cleanupAuth();
       if (data && data.token && data.user) {
         persistRememberedAccount(data.user?.email);
+        setIsGoogleLoading(false);
         onLogin(data.user, data.token);
       } else {
         setError('Received invalid data from external login.');
         setIsGoogleLoading(false);
       }
-    });
-    
-    socket.on(`google-login-error-${sessionId}`, (data) => {
-      socket.disconnect();
-      socketRef.current = null;
-      if (authTimeoutRef.current) {
-        clearTimeout(authTimeoutRef.current);
-        authTimeoutRef.current = null;
-      }
-      if (window.electronAPI?.closeGoogleAuth) {
-        window.electronAPI.closeGoogleAuth();
-      }
-      setError(data.message || 'External Google login failed.');
+    };
+
+    const handleAuthErrorData = (data) => {
+      if (completed) return;
+      completed = true;
+      cleanupAuth();
+      setError(data?.message || 'External Google login failed.');
       setIsGoogleLoading(false);
-    });
-    
+    };
+
+    const handlePopupMessage = (event) => {
+      const msg = event?.data;
+      if (!msg || msg.sessionId !== sessionId) return;
+      if (msg.type === 'verity-google-auth-success') {
+        handleAuthSuccessData(msg);
+      } else if (msg.type === 'verity-google-auth-error') {
+        handleAuthErrorData(msg);
+      }
+    };
+
+    window.addEventListener('message', handlePopupMessage);
+
+    const socket = io(backendUrl, { transports: ['websocket', 'polling'] });
+    socketRef.current = socket;
+
+    socket.on(`google-login-success-${sessionId}`, handleAuthSuccessData);
+    socket.on(`google-login-error-${sessionId}`, handleAuthErrorData);
+
     const url = `${backendUrl}/auth/google/external?sessionId=${sessionId}`;
     if (window.electronAPI && window.electronAPI.openGoogleAuth) {
       window.electronAPI.openGoogleAuth(url);
@@ -279,23 +299,25 @@ export default function Login({ onLogin, onGoToRegister }) {
         const pollTimer = setInterval(() => {
           if (!popup || popup.closed) {
             clearInterval(pollTimer);
-            setIsGoogleLoading(false);
-            if (socketRef.current) {
-              socketRef.current.disconnect();
-              socketRef.current = null;
-            }
+            setTimeout(() => {
+              if (!completed) {
+                cleanupAuth();
+                setIsGoogleLoading(false);
+              }
+            }, 1200);
           }
         }, 500);
+      } else {
+        cleanupAuth();
+        setIsGoogleLoading(false);
+        setError('Popup was blocked by your browser. Please allow popups for this site and try again.');
+        return;
       }
     }
-    
+
     authTimeoutRef.current = setTimeout(() => {
-      if (socketRef.current && socketRef.current.connected) {
-        socketRef.current.disconnect();
-        socketRef.current = null;
-        if (window.electronAPI?.closeGoogleAuth) {
-          window.electronAPI.closeGoogleAuth();
-        }
+      if (!completed) {
+        cleanupAuth();
         setIsGoogleLoading(false);
         setError('Login timed out. Please try again.');
       }
@@ -314,7 +336,7 @@ export default function Login({ onLogin, onGoToRegister }) {
         body: JSON.stringify({ email, password, username: email, identifier: email })
       });
 
-      const data = await response.json();
+      const data = await response.json().catch(() => ({}));
 
       if (data.maintenance) {
         setMaintenance({ enabled: true, message: data.message });
@@ -322,8 +344,9 @@ export default function Login({ onLogin, onGoToRegister }) {
         return;
       }
 
-      if (response.ok) {
+      if (response.ok && data.user) {
         persistRememberedAccount(data.user?.email || email);
+        setIsLoading(false);
         onLogin(data.user, data.token);
       } else {
         setError(data.message || 'Invalid login credentials');
@@ -331,7 +354,7 @@ export default function Login({ onLogin, onGoToRegister }) {
       }
     } catch (err) {
       console.error('[Login] Login request failed:', err);
-      setError(err?.message && !err.message.includes('fetch') ? err.message : 'Could not connect to server. Is server.js running?');
+      setError(err?.message && !err.message.includes('fetch') ? err.message : 'Could not connect to server. Please check your connection and try again.');
       setIsLoading(false);
     }
   };
@@ -550,33 +573,8 @@ export default function Login({ onLogin, onGoToRegister }) {
                 : '0 4px 14px rgba(220, 38, 38, 0.06)',
             }}
           >
-            <div
-              style={{
-                width: '32px',
-                height: '32px',
-                borderRadius: '8px',
-                backgroundColor: isDark ? 'rgba(239, 68, 68, 0.18)' : '#fee2e2',
-                border: isDark ? '1px solid rgba(239, 68, 68, 0.35)' : '1px solid #fca5a5',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                flexShrink: 0,
-                marginTop: '1px',
-              }}
-            >
-              <Monitor size={17} color={isDark ? '#f87171' : '#dc2626'} strokeWidth={2.2} />
-            </div>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '3px' }}>
-                <span
-                  style={{
-                    display: 'inline-block',
-                    width: '6px',
-                    height: '6px',
-                    borderRadius: '50%',
-                    backgroundColor: isDark ? '#f87171' : '#dc2626',
-                  }}
-                />
+              <div style={{ display: 'flex', alignItems: 'center', marginBottom: '3px' }}>
                 <strong
                   style={{
                     fontSize: '0.82rem',
@@ -741,12 +739,7 @@ export default function Login({ onLogin, onGoToRegister }) {
             <button
               type="button"
               onClick={() => {
-                if (window.electronAPI) {
-                  handleGoogleElectron();
-                } else {
-                  setIsGoogleLoading(true);
-                  googleLogin();
-                }
+                handleGoogleElectron();
               }}
               disabled={isGoogleLoading || isLoading}
               style={isGoogleLoading ? {

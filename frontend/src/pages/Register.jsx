@@ -208,13 +208,14 @@ export default function Register({ onBackToLogin, onLogin }) {
     const activeCloud = getCloudUrl() || 'https://verity-2z4v.onrender.com';
     const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
     const backendUrl = isOnline ? activeCloud : getLocalApiUrl();
+    let completed = false;
 
-    const socket = io(backendUrl, { transports: ['websocket', 'polling'] });
-    socketRef.current = socket;
-
-    socket.on(`google-login-success-${sessionId}`, (data) => {
-      socket.disconnect();
-      socketRef.current = null;
+    const cleanupAuth = () => {
+      window.removeEventListener('message', handlePopupMessage);
+      if (socketRef.current) {
+        socketRef.current.disconnect();
+        socketRef.current = null;
+      }
       if (authTimeoutRef.current) {
         clearTimeout(authTimeoutRef.current);
         authTimeoutRef.current = null;
@@ -222,6 +223,12 @@ export default function Register({ onBackToLogin, onLogin }) {
       if (window.electronAPI?.closeGoogleAuth) {
         window.electronAPI.closeGoogleAuth();
       }
+    };
+
+    const handleAuthSuccessData = (data) => {
+      if (completed) return;
+      completed = true;
+      cleanupAuth();
       if (data && data.token && data.user) {
         if (data.user.status === 'Pending') {
           setMessage({ type: 'info', text: 'Account created! Your instructor account is pending administrator approval.' });
@@ -239,6 +246,7 @@ export default function Register({ onBackToLogin, onLogin }) {
           }
         } catch (_) {}
 
+        setIsGoogleLoading(false);
         if (onLogin) {
           onLogin(data.user, data.token);
         } else {
@@ -249,21 +257,33 @@ export default function Register({ onBackToLogin, onLogin }) {
         setMessage({ type: 'error', text: 'Received invalid data from external authentication.' });
         setIsGoogleLoading(false);
       }
-    });
+    };
 
-    socket.on(`google-login-error-${sessionId}`, (data) => {
-      socket.disconnect();
-      socketRef.current = null;
-      if (authTimeoutRef.current) {
-        clearTimeout(authTimeoutRef.current);
-        authTimeoutRef.current = null;
-      }
-      if (window.electronAPI?.closeGoogleAuth) {
-        window.electronAPI.closeGoogleAuth();
-      }
-      setMessage({ type: 'error', text: data.message || 'External Google authentication failed.' });
+    const handleAuthErrorData = (data) => {
+      if (completed) return;
+      completed = true;
+      cleanupAuth();
+      setMessage({ type: 'error', text: data?.message || 'External Google authentication failed.' });
       setIsGoogleLoading(false);
-    });
+    };
+
+    const handlePopupMessage = (event) => {
+      const msg = event?.data;
+      if (!msg || msg.sessionId !== sessionId) return;
+      if (msg.type === 'verity-google-auth-success') {
+        handleAuthSuccessData(msg);
+      } else if (msg.type === 'verity-google-auth-error') {
+        handleAuthErrorData(msg);
+      }
+    };
+
+    window.addEventListener('message', handlePopupMessage);
+
+    const socket = io(backendUrl, { transports: ['websocket', 'polling'] });
+    socketRef.current = socket;
+
+    socket.on(`google-login-success-${sessionId}`, handleAuthSuccessData);
+    socket.on(`google-login-error-${sessionId}`, handleAuthErrorData);
 
     const roleParam = encodeURIComponent(formData.role || 'Student');
     const passParam = formData.password ? `&initialPassword=${encodeURIComponent(formData.password)}` : '';
@@ -274,14 +294,32 @@ export default function Register({ onBackToLogin, onLogin }) {
       window.electronAPI.openExternal(url);
     } else {
       const popup = window.open(url, '_blank', 'width=520,height=650');
-      authTimeoutRef.current = setTimeout(() => {
+      if (popup) {
+        const pollTimer = setInterval(() => {
+          if (!popup || popup.closed) {
+            clearInterval(pollTimer);
+            setTimeout(() => {
+              if (!completed) {
+                cleanupAuth();
+                setIsGoogleLoading(false);
+              }
+            }, 1200);
+          }
+        }, 500);
+      } else {
+        cleanupAuth();
         setIsGoogleLoading(false);
-        if (socketRef.current) {
-          socketRef.current.disconnect();
-          socketRef.current = null;
-        }
-      }, 5 * 60 * 1000);
+        setMessage({ type: 'error', text: 'Popup was blocked by your browser. Please allow popups for this site and try again.' });
+        return;
+      }
     }
+
+    authTimeoutRef.current = setTimeout(() => {
+      if (!completed) {
+        cleanupAuth();
+        setIsGoogleLoading(false);
+      }
+    }, 5 * 60 * 1000);
   };
 
   // Step 1: Submit Details & Request Email OTP
@@ -831,12 +869,7 @@ export default function Register({ onBackToLogin, onLogin }) {
               <button
                 type="button"
                 onClick={() => {
-                  if (window.electronAPI) {
-                    handleGoogleElectron();
-                  } else {
-                    setIsGoogleLoading(true);
-                    googleLogin();
-                  }
+                  handleGoogleElectron();
                 }}
                 disabled={isGoogleLoading || loading}
                 style={isGoogleLoading ? {

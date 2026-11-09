@@ -96563,6 +96563,10 @@ var require_db4 = __commonJS({
           }
         }
         try {
+          sqliteDb.pragma("synchronous = NORMAL");
+        } catch (e2) {
+        }
+        try {
           sqliteDb.pragma("busy_timeout = 5000");
         } catch (e2) {
         }
@@ -107987,7 +107991,8 @@ app.post("/login", async (req, res) => {
       return res.status(403).json({ message: "Your account is pending admin approval" });
     }
     user.lastLogin = (/* @__PURE__ */ new Date()).toISOString();
-    await db.run("UPDATE users SET lastLogin = ? WHERE id = ?", user.lastLogin, user.id);
+    db.run("UPDATE users SET lastLogin = ? WHERE id = ?", user.lastLogin, user.id).catch(() => {
+    });
     const token = jwt.sign({ id: user.id, email: user.email, role: user.role, name: user.name }, JWT_SECRET);
     res.status(200).json({ message: "Login successful", user, token });
   } catch (e2) {
@@ -108233,6 +108238,12 @@ app.get("/auth/google/callback", async (req, res) => {
     }
     const token = jwt.sign({ id: user.id, email: user.email, role: user.role, name: user.name }, JWT_SECRET);
     io.emit(`google-login-success-${sessionId}`, { user, token });
+    const safePayload = JSON.stringify({
+      type: "verity-google-auth-success",
+      sessionId,
+      user,
+      token
+    }).replace(/</g, "\\u003c");
     res.send(`
             <html>
                 <body style="font-family: sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; background: #1a1a1a; color: white;">
@@ -108240,7 +108251,12 @@ app.get("/auth/google/callback", async (req, res) => {
                         <h2 style="color: #10b981;">Authentication Successful!</h2>
                         <p>You can safely close this window and return to The Verity app.</p>
                         <script>
-                            setTimeout(() => window.close(), 3000);
+                            try {
+                                if (window.opener && !window.opener.closed) {
+                                    window.opener.postMessage(${safePayload}, '*');
+                                }
+                            } catch (e) {}
+                            setTimeout(() => window.close(), 1200);
                         </script>
                     </div>
                 </body>
