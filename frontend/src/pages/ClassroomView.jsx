@@ -377,10 +377,11 @@ export default function ClassroomView({
     } catch {}
     return [];
   });
-  const [loadingAssignments, setLoadingAssignments] = useState(false);
+  const [loadingAssignments, setLoadingAssignments] = useState(true);
 
-  const visibleClasswork = assignments.filter(item => item.activityType !== 'Material');
-  const visibleMaterials = assignments.filter(item => item.activityType === 'Material');
+  const isMaterialItem = (item) => Boolean(item && (item.activityType === 'Material' || String(item.activityType || '').toLowerCase() === 'material' || String(item.type || '').toLowerCase() === 'material'));
+  const visibleClasswork = assignments.filter(item => !isMaterialItem(item));
+  const visibleMaterials = assignments.filter(item => isMaterialItem(item));
 
   // Track seen materials to notify student of new uploads
   const seenMaterialsKey = `verity_seen_materials_${classroom?.id ?? 'default'}_${currentUser?.email || currentUser?.id || 'anon'}`;
@@ -459,9 +460,35 @@ export default function ClassroomView({
             .then(cached => {
               if (Array.isArray(cached) && cached.length > 0) {
                 applyList(cached);
+                return;
               }
             })
             .catch(() => {});
+        }
+        // Fallback: Check general cached classwork across classrooms
+        const userKey = currentUser?.id || currentUser?.email || 'default';
+        const globalCached = localStorage.getItem('verity_cached_classwork') || localStorage.getItem(`verity_cached_classwork_${userKey}`);
+        if (globalCached) {
+          const parsedGlobal = JSON.parse(globalCached);
+          if (Array.isArray(parsedGlobal)) {
+            const matching = parsedGlobal.filter(item => String(item.classroom_id || item.classroomId) === String(classroomId));
+            if (matching.length > 0) {
+              applyList(matching);
+              return;
+            }
+          }
+        }
+        // Fallback: Check upcoming activities cache
+        const upcomingCached = localStorage.getItem(`verity_cached_upcoming_activities_${userKey}`);
+        if (upcomingCached) {
+          const parsedUpcoming = JSON.parse(upcomingCached);
+          if (Array.isArray(parsedUpcoming)) {
+            const matching = parsedUpcoming.filter(item => String(item.classroom_id || item.classroomId) === String(classroomId));
+            if (matching.length > 0) {
+              applyList(matching);
+              return;
+            }
+          }
         }
       } catch {}
     };
@@ -471,7 +498,10 @@ export default function ClassroomView({
 
     let cancelled = false;
     apiFetch(`${import.meta.env.VITE_API_URL}/classwork/${classroomId}`)
-      .then(res => res.json())
+      .then(res => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      })
       .then(data => {
         if (cancelled) return;
         if (Array.isArray(data.classwork) && data.classwork.length > 0) {
@@ -548,7 +578,7 @@ export default function ClassroomView({
       const targetId = (currentUser?.id != null ? String(currentUser.id) : studentId).toLowerCase();
 
       assignments.forEach(task => {
-        if (task.activityType === 'Material') return;
+        if (isMaterialItem(task)) return;
         const aId = String(task.id);
         const cId = String(classroomId);
 
@@ -624,7 +654,7 @@ export default function ClassroomView({
 
     // Fetch individual task submissions from backend
     assignments.forEach(task => {
-      if (task.activityType === 'Material') return;
+      if (isMaterialItem(task)) return;
       apiFetch(`${import.meta.env.VITE_API_URL}/submissions/${task.id}`)
         .then(res => res.json())
         .then(data => {
@@ -828,7 +858,7 @@ export default function ClassroomView({
 
   // To Do items for left column in Stream (unsubmitted classwork, excluding materials)
   const upcomingItems = assignments
-    .filter(item => item.activityType !== 'Material' && !submittedTasks[item.id])
+    .filter(item => !isMaterialItem(item) && !submittedTasks[item.id])
     .sort((a, b) => {
       if (a.dueDate && b.dueDate) return new Date(a.dueDate) - new Date(b.dueDate);
       if (a.dueDate) return -1;

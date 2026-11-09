@@ -224,21 +224,59 @@ export default function TeacherClasswork({
   useEffect(() => {
     hydrated.current = false;
     let cancelled = false;
+
+    const applyClassworkList = (list) => {
+      if (!Array.isArray(list) || list.length === 0) return;
+      const valid = list.filter(item => item && !isLegacyHardcoded(item));
+      if (valid.length > 0) {
+        setClasswork(prev => {
+          if (!prev || prev.length === 0) return valid;
+          const incomingIds = new Set(valid.map(x => String(x.id)));
+          const offlineOnly = prev.filter(x => x && x.id && !incomingIds.has(String(x.id)) && !isLegacyHardcoded(x));
+          return [...valid, ...offlineOnly];
+        });
+      }
+    };
+
+    // 1. Check local storage key for this classroom
     try {
       const saved = localStorage.getItem(storageKey);
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          setClasswork(parsed.filter(item => !isLegacyHardcoded(item)));
+        applyClassworkList(parsed);
+      }
+    } catch {}
+
+    // 2. Check desktop SQLite localDB cache
+    if (window.electronAPI?.localDB?.getCachedClasswork) {
+      window.electronAPI.localDB.getCachedClasswork(classroomId)
+        .then(cached => {
+          if (!cancelled) applyClassworkList(cached);
+        })
+        .catch(() => {});
+    }
+
+    // 3. Fallback: Check general cached classwork
+    try {
+      const general = localStorage.getItem('verity_cached_classwork');
+      if (general) {
+        const parsedGen = JSON.parse(general);
+        if (Array.isArray(parsedGen)) {
+          const matching = parsedGen.filter(item => String(item.classroom_id || item.classroomId) === String(classroomId));
+          if (matching.length > 0) applyClassworkList(matching);
         }
       }
     } catch {}
 
+    // 4. Fetch authoritative classwork from server
     apiFetch(`${import.meta.env.VITE_API_URL}/classwork/${classroomId}`)
-      .then(res => res.json())
+      .then(res => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      })
       .then(data => {
         if (cancelled) return;
-        if (Array.isArray(data.classwork)) {
+        if (Array.isArray(data.classwork) && data.classwork.length > 0) {
           const filtered = data.classwork.filter(item => !isLegacyHardcoded(item));
           const serverCwIds = new Set(filtered.map(item => String(item.id)));
           setClasswork(prev => {
@@ -262,21 +300,15 @@ export default function TeacherClasswork({
           });
         }
       })
-      .catch(() => { /* offline — fall back to localStorage copy */ })
+      .catch(() => { /* offline or access denied — preserve existing local cache */ })
       .finally(() => { if (!cancelled) setLoadingClasswork(false); hydrated.current = true; });
     return () => { cancelled = true; };
   }, [classroomId, storageKey]);
 
   useEffect(() => {
-    // If classwork is empty but we have cached items in localStorage, do NOT overwrite cache!
-    if (classwork.length === 0) {
-      try {
-        const existing = localStorage.getItem(storageKey);
-        if (existing) {
-          const parsed = JSON.parse(existing);
-          if (Array.isArray(parsed) && parsed.length > 0) return;
-        }
-      } catch {}
+    // If classwork is empty, NEVER overwrite cache with [] or sync [] to server/socket!
+    if (!Array.isArray(classwork) || classwork.length === 0) {
+      return;
     }
     localStorage.setItem(storageKey, JSON.stringify(classwork));
     if (hydrated.current) {
@@ -290,6 +322,30 @@ export default function TeacherClasswork({
       }).catch(err => console.warn('Classwork REST sync warning:', err));
     }
   }, [classwork, storageKey, classroomId, socket]);
+
+  useEffect(() => {
+    if (!socket) return;
+    const onClassworkChanged = (payload) => {
+      if (String(payload?.classroomId) === String(classroomId) && Array.isArray(payload?.classwork)) {
+        if (payload.classwork.length > 0) {
+          const filtered = payload.classwork.filter(item => !isLegacyHardcoded(item));
+          if (filtered.length > 0) {
+            setClasswork(prev => {
+              const serverIds = new Set(filtered.map(item => String(item.id)));
+              const unuploadedLocal = (prev || []).filter(item => item && item.id && !serverIds.has(String(item.id)) && !isLegacyHardcoded(item));
+              const merged = [...filtered, ...unuploadedLocal];
+              try { localStorage.setItem(storageKey, JSON.stringify(merged)); } catch (_) {}
+              return merged;
+            });
+          }
+        }
+      }
+    };
+    socket.on('classwork_changed', onClassworkChanged);
+    return () => {
+      socket.off('classwork_changed', onClassworkChanged);
+    };
+  }, [socket, classroomId, storageKey]);
 
   const [activeMenu, setActiveMenu] = useState(null);
   const [expandedId, setExpandedId] = useState(null);
@@ -576,9 +632,11 @@ export default function TeacherClasswork({
     };
   }, [classroom?.id, classCode, classroom?.section, socket, currentUser, refreshStudentsKey]);
 
+  const isMaterialItem = (item) => Boolean(item && (item.activityType === 'Material' || String(item.activityType || '').toLowerCase() === 'material' || String(item.type || '').toLowerCase() === 'material'));
+
   // GRADES TAB STATE (Scoped to this classroom only)
-  const visibleClasswork = classwork.filter(item => !item.archived && item.activityType !== 'Material');
-  const visibleMaterials = classwork.filter(item => !item.archived && item.activityType === 'Material');
+  const visibleClasswork = classwork.filter(item => !item.archived && !isMaterialItem(item));
+  const visibleMaterials = classwork.filter(item => !item.archived && isMaterialItem(item));
 
   // STREAM FEED STATE: includes all active classwork and learning materials sorted newest first
   const visibleStreamItems = useMemo(() => {
@@ -1206,7 +1264,17 @@ export default function TeacherClasswork({
 
   const handleExecuteDeleteClasswork = () => {
     if (!deleteClassworkConfirm) return;
-    setClasswork(prev => prev.filter(c => c.id !== deleteClassworkConfirm.id));
+    const toDeleteId = deleteClassworkConfirm.id;
+    setClasswork(prev => {
+      const next = prev.filter(c => c.id !== toDeleteId);
+      try {
+        localStorage.setItem(storageKey, JSON.stringify(next));
+      } catch (_) {}
+      return next;
+    });
+    apiFetch(`${import.meta.env.VITE_API_URL}/classwork/${classroomId}/${toDeleteId}`, {
+      method: 'DELETE'
+    }).catch(() => {});
     setDeleteClassworkConfirm(null);
   };
 
@@ -1396,7 +1464,7 @@ export default function TeacherClasswork({
   );
 
   const getMaterialIcon = (item) => {
-    if (item.activityType === 'Material') {
+    if (isMaterialItem(item)) {
       const lessonType = getLessonType(item);
       if (lessonType === 'video') return Video;
       if (lessonType === 'link') return Link2;
@@ -1830,7 +1898,7 @@ export default function TeacherClasswork({
                       </div>
                     ) : (
                       filteredStreamItems.map((item, index) => {
-                        const isMaterial = item.activityType === 'Material';
+                        const isMaterial = isMaterialItem(item);
                         const plain = (item.details || '').replace(/<[^>]*>?/gm, '').replace(/&nbsp;/g, ' ').trim();
                         const postedLabel = formatShortDate(item.posted || item.createdAt || (typeof item.id === 'number' && item.id > 1e12 ? item.id : null));
                         const openItem = () => {

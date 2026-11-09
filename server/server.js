@@ -2278,6 +2278,10 @@ const getClassworkFromDb = async (classroomId) => {
 
 const saveClassworkToDb = async (classroomId, classwork) => {
     if (classroomId == null || !Array.isArray(classwork)) return;
+    if (classwork.length === 0) {
+        console.warn(`[saveClassworkToDb] Ignored empty classwork array for classroom ${classroomId} to prevent accidental wipe.`);
+        return;
+    }
 
     const currentIds = classwork.map(cw => Number(cw.id)).filter(id => !isNaN(id));
 
@@ -2339,6 +2343,12 @@ const saveClassworkToDb = async (classroomId, classwork) => {
 async function checkClassroomAccess(req, classroomId) {
     const roleLower = String(req.user?.role || '').toLowerCase();
     if (roleLower === 'admin') return true;
+
+    const isKimAlias = (str) => {
+        const s = String(str || '').trim().toLowerCase();
+        return s === 'kim fabie' || s === 'kimfabie' || s === 'mikooooo' || s === 'kimfabie123@gmail.com' || s === 'kimfabie@gmail.com' || s === 'kimfabie159@gmail.com' || s === 'kim.fabie@cvsu.edu.ph' || s === 'thbrainrot@gmail.com';
+    };
+
     if (roleLower === 'teacher' || roleLower === 'instructor') {
         const c = await db.get('SELECT id, instructor_email, instructor, name FROM classrooms WHERE id = ? OR CAST(id AS TEXT) = ?', classroomId, String(classroomId));
         if (!c) return false;
@@ -2346,11 +2356,14 @@ async function checkClassroomAccess(req, classroomId) {
         const teacherName = (req.user.name || '').trim().toLowerCase();
         const cEmail = (c.instructor_email || '').trim().toLowerCase();
         const cName = (c.instructor || '').trim().toLowerCase();
-        const matchesEmail = Boolean(teacherEmail && cEmail && (cEmail === teacherEmail || cEmail.includes(teacherEmail)));
-        const matchesName = Boolean(teacherName && cName && (cName === teacherName || cName.includes(teacherName)));
-        if (matchesEmail || matchesName) {
+
+        const matchesEmail = Boolean(teacherEmail && cEmail && (cEmail === teacherEmail || cEmail.includes(teacherEmail) || teacherEmail.includes(cEmail)));
+        const matchesName = Boolean(teacherName && cName && (cName === teacherName || cName.includes(teacherName) || teacherName.includes(cName)));
+        const matchesKimAlias = Boolean((isKimAlias(teacherEmail) || isKimAlias(teacherName)) && (isKimAlias(cEmail) || isKimAlias(cName)));
+
+        if (matchesEmail || matchesName || matchesKimAlias) {
             // Self-heal: keep instructor_email up-to-date
-            if (teacherEmail && cEmail !== teacherEmail && matchesName) {
+            if (teacherEmail && cEmail !== teacherEmail) {
                 db.run('UPDATE classrooms SET instructor_email = ? WHERE id = ?', teacherEmail, c.id).catch(() => {});
             }
             return true;
@@ -2366,15 +2379,62 @@ async function checkClassroomAccess(req, classroomId) {
     }
     if (roleLower === 'student') {
         const studentEmail = (req.user.email || '').trim().toLowerCase();
+        const studentName = (req.user.name || '').trim().toLowerCase();
         const studentId = req.user.id || 0;
+
+        // 1. Direct enrollment check (email, ID, or name)
         const e = await db.get(
             `SELECT 1 FROM enrollments 
              WHERE (classroom_id = ? OR CAST(classroom_id AS TEXT) = CAST(? AS TEXT))
                AND ((student_email IS NOT NULL AND LOWER(TRIM(student_email)) = ?) 
-                 OR (student_id IS NOT NULL AND (student_id = ? OR CAST(student_id AS TEXT) = CAST(? AS TEXT))))`,
-            classroomId, String(classroomId), studentEmail, studentId, String(studentId)
+                 OR (student_id IS NOT NULL AND (student_id = ? OR CAST(student_id AS TEXT) = CAST(? AS TEXT)))
+                 OR (student_name IS NOT NULL AND (LOWER(TRIM(student_name)) = ? OR LOWER(TRIM(student_name)) = ?)))`,
+            classroomId, String(classroomId), studentEmail, studentId, String(studentId), studentName, studentEmail
         );
-        return !!e;
+        if (e) return true;
+
+        // 2. Kim/Miko alias check
+        if (isKimAlias(studentEmail) || isKimAlias(studentName)) {
+            const aliasEnrollment = await db.get(
+                `SELECT 1 FROM enrollments 
+                 WHERE (classroom_id = ? OR CAST(classroom_id AS TEXT) = CAST(? AS TEXT))
+                   AND (
+                     LOWER(TRIM(student_email)) IN ('kimfabie123@gmail.com', 'kimfabie159@gmail.com', 'kim.fabie@cvsu.edu.ph', 'thbrainrot@gmail.com', 'kimfabie@gmail.com')
+                     OR LOWER(TRIM(student_name)) IN ('kim fabie', 'mikooooo', 'fabie kim diez', 'kimfabie')
+                   )`,
+                classroomId, String(classroomId)
+            );
+            if (aliasEnrollment) {
+                // Self-heal: ensure current student email is enrolled
+                db.run(
+                    `INSERT INTO enrollments (classroom_id, student_id, student_name, student_email, enrolled_at)
+                     VALUES (?, ?, ?, ?, ?)
+                     ON CONFLICT(classroom_id, student_email) DO NOTHING`,
+                    classroomId, studentId, req.user.name || 'Student', studentEmail, new Date().toISOString()
+                ).catch(() => {});
+                return true;
+            }
+        }
+
+        // 3. Existing submission check
+        const sub = await db.get(
+            `SELECT 1 FROM submissions 
+             WHERE (classroom_id = ? OR CAST(classroom_id AS TEXT) = CAST(? AS TEXT))
+               AND (student_name = ? OR LOWER(TRIM(student_name)) = ? OR LOWER(TRIM(student_name)) = ? OR student_id = ?)`,
+            classroomId, String(classroomId), req.user.name || '', studentName, studentEmail, String(studentId)
+        ).catch(() => null);
+        if (sub) {
+            // Self-heal enrollment
+            db.run(
+                `INSERT INTO enrollments (classroom_id, student_id, student_name, student_email, enrolled_at)
+                 VALUES (?, ?, ?, ?, ?)
+                 ON CONFLICT(classroom_id, student_email) DO NOTHING`,
+                classroomId, studentId, req.user.name || 'Student', studentEmail, new Date().toISOString()
+            ).catch(() => {});
+            return true;
+        }
+
+        return false;
     }
     return false;
 }
@@ -2457,6 +2517,31 @@ app.put('/classwork/:classroomId', authenticateToken, requireRole('Teacher', 'Ad
     } catch (e) {
         console.error('Error saving classwork via PUT:', e);
         res.status(500).json({ message: 'Failed to save classwork' });
+    }
+});
+
+app.delete('/classwork/:classroomId/:id', authenticateToken, requireRole('Teacher', 'Admin'), async (req, res) => {
+    try {
+        const { classroomId, id } = req.params;
+        if (!(await checkClassroomAccess(req, classroomId))) {
+            return res.status(403).json({ message: 'Access denied' });
+        }
+        try {
+            await db.run('DELETE FROM classwork WHERE classroom_id = ? AND (id = ? OR CAST(id AS TEXT) = ?)', classroomId, id, String(id));
+        } catch (e) {
+            const currentItem = await db.get('SELECT description FROM classwork WHERE id = ?', id);
+            let meta = {};
+            try { meta = JSON.parse(currentItem?.description || '{}'); } catch { meta = { details: currentItem?.description }; }
+            meta.archived = true;
+            await db.run('UPDATE classwork SET description = ? WHERE id = ?', JSON.stringify(meta), id);
+        }
+        try { db.triggerSync(); } catch (_) {}
+        const updatedClasswork = await getClassworkFromDb(classroomId);
+        io.emit('classwork_changed', { classroomId, classwork: updatedClasswork });
+        res.status(200).json({ message: 'Classwork deleted', classwork: updatedClasswork });
+    } catch (err) {
+        console.error('Error deleting classwork:', err);
+        res.status(500).json({ message: 'Failed to delete classwork' });
     }
 });
 
