@@ -32,6 +32,10 @@ export default function StudentDashboard({
   const [isFadingOut, setIsFadingOut] = useState(false);
 
   useEffect(() => {
+    setIsFadingOut(false);
+  }, []);
+
+  useEffect(() => {
     const handleSync = (e) => {
       const target = e.detail || localStorage.getItem('verity_student_view') || 'classrooms';
       const currentIdx = VIEW_ORDER[activeView] ?? 0;

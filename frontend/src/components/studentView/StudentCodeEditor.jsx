@@ -55,7 +55,7 @@ export default function StudentCodeEditor({
 
     if (monaco) {
       editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
-        if (!submitted) {
+        if (!submitted && typeof handleSaveCode === 'function') {
           handleSaveCode();
         }
       });
@@ -64,7 +64,9 @@ export default function StudentCodeEditor({
     const captureInternalCopy = () => {
       const selection = editor.getSelection();
       if (!selection || selection.isEmpty()) return;
-      const selectedText = editor.getModel().getValueInRange(selection);
+      const model = editor.getModel();
+      if (!model) return;
+      const selectedText = model.getValueInRange(selection);
       const key = normalize(selectedText);
       if (key && copiedInternallyRef.current) {
         copiedInternallyRef.current.add(key);
@@ -93,7 +95,7 @@ export default function StudentCodeEditor({
         e.stopPropagation();
         e.stopImmediatePropagation();
 
-        if (addProctorLog) addProctorLog('Strict Clipboard: External Paste Blocked', '#ef4444');
+        if (typeof addProctorLog === 'function') addProctorLog('Strict Clipboard: External Paste Blocked', '#ef4444');
         if (window.electronAPI?.clearClipboard) {
           window.electronAPI.clearClipboard().catch(() => {});
         }
@@ -108,7 +110,7 @@ export default function StudentCodeEditor({
           e.preventDefault();
           e.stopPropagation();
           e.stopImmediatePropagation();
-          if (addProctorLog) addProctorLog('Strict Clipboard: External Drop Blocked', '#ef4444');
+          if (typeof addProctorLog === 'function') addProctorLog('Strict Clipboard: External Drop Blocked', '#ef4444');
           return false;
         }
       };
@@ -123,12 +125,14 @@ export default function StudentCodeEditor({
         editor.trigger('keyboard', 'undo', null);
         return;
       }
-      const pastedText = editor.getModel().getValueInRange(e.range);
+      const model = editor.getModel();
+      if (!model) return;
+      const pastedText = model.getValueInRange(e.range);
       const key = normalize(pastedText);
       if (!key || (copiedInternallyRef.current && copiedInternallyRef.current.has(key))) return;
 
       editor.trigger('keyboard', 'undo', null);
-      if (addProctorLog) addProctorLog('Strict Clipboard: External Paste Blocked', '#ef4444');
+      if (typeof addProctorLog === 'function') addProctorLog('Strict Clipboard: External Paste Blocked', '#ef4444');
       if (window.electronAPI?.clearClipboard) {
         window.electronAPI.clearClipboard().catch(() => {});
       }

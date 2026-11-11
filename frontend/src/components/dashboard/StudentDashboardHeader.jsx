@@ -25,15 +25,20 @@ export default function StudentDashboardHeader({
   ];
 
   useLayoutEffect(() => {
-    const activeRef = navRefs.current[activeView];
-    if (activeRef) {
-      setIndicatorStyle(prev => ({
-        left: activeRef.offsetLeft,
-        width: activeRef.offsetWidth,
-        opacity: 1,
-        transition: prev.opacity === 0 ? 'none' : 'all 0.3s cubic-bezier(0.25, 1, 0.5, 1)'
-      }));
-    }
+    const updateIndicator = () => {
+      const activeRef = navRefs.current[activeView];
+      if (activeRef) {
+        setIndicatorStyle(prev => ({
+          left: activeRef.offsetLeft,
+          width: activeRef.offsetWidth,
+          opacity: 1,
+          transition: prev.opacity === 0 ? 'none' : 'all 0.3s cubic-bezier(0.25, 1, 0.5, 1)'
+        }));
+      }
+    };
+    updateIndicator();
+    window.addEventListener('resize', updateIndicator);
+    return () => window.removeEventListener('resize', updateIndicator);
   }, [activeView]);
 
   return (

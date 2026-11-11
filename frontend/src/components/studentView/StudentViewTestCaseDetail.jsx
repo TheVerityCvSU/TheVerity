@@ -63,7 +63,11 @@ export default function StudentViewTestCaseDetail({
             </div>
             <textarea
               value={activeCase.expectedOutput || ''}
-              onChange={(e) => handleUpdateTestCase(activeCase.id, 'expectedOutput', e.target.value)}
+              onChange={(e) => {
+                if (typeof handleUpdateTestCase === 'function') {
+                  handleUpdateTestCase(activeCase.id, 'expectedOutput', e.target.value);
+                }
+              }}
               disabled={submitted}
               placeholder={submitted ? 'Expected output (read only)' : 'Expected output from your code...'}
               style={{

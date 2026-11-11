@@ -9,26 +9,32 @@ export default function ClassroomViewHeader({
   textMuted,
   bgColor,
   currentUser,
+  activeTab,
+  onTabChange,
   onNavigateView,
   onBack,
   onOpenSettings,
   onLogout
 }) {
-  const [isHeaderHovered, setIsHeaderHovered] = useState(false);
   const [headerIndicatorStyle, setHeaderIndicatorStyle] = useState({ left: 0, width: 0, opacity: 0 });
   const headerNavRefs = useRef({});
 
   useLayoutEffect(() => {
-    const activeRef = headerNavRefs.current['classrooms'];
-    if (activeRef) {
-      setHeaderIndicatorStyle(prev => ({
-        left: activeRef.offsetLeft,
-        width: activeRef.offsetWidth,
-        opacity: 1,
-        transition: prev.opacity === 0 ? 'none' : 'all 0.3s cubic-bezier(0.25, 1, 0.5, 1)'
-      }));
-    }
-  }, [isHeaderHovered]);
+    const updateIndicator = () => {
+      const activeRef = headerNavRefs.current['classrooms'];
+      if (activeRef) {
+        setHeaderIndicatorStyle(prev => ({
+          left: activeRef.offsetLeft,
+          width: activeRef.offsetWidth,
+          opacity: 1,
+          transition: prev.opacity === 0 ? 'none' : 'all 0.3s cubic-bezier(0.25, 1, 0.5, 1)'
+        }));
+      }
+    };
+    updateIndicator();
+    window.addEventListener('resize', updateIndicator);
+    return () => window.removeEventListener('resize', updateIndicator);
+  }, []);
 
   const navItems = [
     { id: 'classrooms', label: 'Home', Icon: Home },
@@ -39,8 +45,6 @@ export default function ClassroomViewHeader({
 
   return (
     <header
-      onMouseEnter={() => setIsHeaderHovered(true)}
-      onMouseLeave={() => setIsHeaderHovered(false)}
       style={{
         display: 'flex',
         alignItems: 'center',
@@ -103,12 +107,24 @@ export default function ClassroomViewHeader({
         }} />
 
         {navItems.map(item => {
-          const active = item.id === 'classrooms';
+          const active = item.id === 'classrooms' && (!activeTab || activeTab === 'stream');
           return (
             <button
               key={item.id}
               ref={el => headerNavRefs.current[item.id] = el}
-              onClick={() => { if (onNavigateView) onNavigateView(item.id === 'stream' ? 'classrooms' : item.id); }}
+              onClick={() => {
+                if (item.id === 'classrooms') {
+                  if (activeTab && activeTab !== 'stream' && typeof onTabChange === 'function') {
+                    onTabChange('stream');
+                  } else if (typeof onNavigateView === 'function') {
+                    onNavigateView('classrooms');
+                  } else if (typeof onBack === 'function') {
+                    onBack();
+                  }
+                } else if (typeof onNavigateView === 'function') {
+                  onNavigateView(item.id);
+                }
+              }}
               style={{
                 position: 'relative',
                 zIndex: 1,

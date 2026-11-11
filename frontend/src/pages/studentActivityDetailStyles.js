@@ -1,6 +1,5 @@
 export const getStyles = (isDark, isMobile) => ({
   container: {
-    height: '100vh',
     height: '100dvh',
     minHeight: '100vh',
     width: '100%',

@@ -34,6 +34,21 @@ export function useStudentViewFiles({
   const codeRef = useRef(code);
   codeRef.current = code;
 
+  useEffect(() => {
+    if (assignment?.starterCode && (!code || code === initialCode)) {
+      try {
+        const savedCode = localStorage.getItem(draftKey);
+        if (savedCode && !savedCode.includes('UserInputApp')) {
+          setCode(savedCode);
+          codeRef.current = savedCode;
+          return;
+        }
+      } catch {}
+      setCode(assignment.starterCode);
+      codeRef.current = assignment.starterCode;
+    }
+  }, [assignment?.starterCode, draftKey, initialCode]);
+
   const [codeHistory, setCodeHistory] = useState(() =>
     propCodeHistory || loadInitialHistory(classroomId, assignmentId, studentId, safeUsername, currentUser, code)
   );

@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { useMediaQuery } from '../hooks/useMediaQuery';
@@ -43,6 +43,10 @@ export default function ClassroomView({
   const [isFadingOut, setIsFadingOut] = useState(false);
   const [isClassroomSettingsOpen, setIsClassroomSettingsOpen] = useState(false);
   const [isClassInfoModalOpen, setIsClassInfoModalOpen] = useState(false);
+
+  useEffect(() => {
+    setIsFadingOut(false);
+  }, []);
 
   const { activeTab, tabDirection, transitionMode, handleTabChange } = useClassroomTabs(classroom);
   const { bannerTheme } = useClassroomBannerTheme({ classroom, socket });
@@ -109,6 +113,8 @@ export default function ClassroomView({
         textMuted={textMuted}
         bgColor={bgColor}
         currentUser={currentUser}
+        activeTab={activeTab}
+        onTabChange={handleTabChange}
         onNavigateView={onNavigateView}
         onBack={onBack}
         onOpenSettings={() => setIsClassroomSettingsOpen(true)}

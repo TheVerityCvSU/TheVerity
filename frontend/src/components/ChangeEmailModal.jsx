@@ -27,6 +27,17 @@ export default function ChangeEmailModal({
   const [countdown, setCountdown] = useState(0);
 
   const emailInputRef = useRef(null);
+  const handleVerifyRef = useRef(null);
+
+  const {
+    otpDigits,
+    digitInputRefs,
+    resetOtp,
+    handleDigitChange,
+    handleDigitKeyDown,
+    handlePasteDirect,
+    handlePaste
+  } = useOtpInput((fullCode) => handleVerifyRef.current?.(null, fullCode));
 
   const handleVerifyCode = async (e, codeOverride = null) => {
     if (e && e.preventDefault) e.preventDefault();
@@ -65,16 +76,7 @@ export default function ChangeEmailModal({
       setLoading(false);
     }
   };
-
-  const {
-    otpDigits,
-    digitInputRefs,
-    resetOtp,
-    handleDigitChange,
-    handleDigitKeyDown,
-    handlePasteDirect,
-    handlePaste
-  } = useOtpInput((fullCode) => handleVerifyCode(null, fullCode));
+  handleVerifyRef.current = handleVerifyCode;
 
   useEffect(() => {
     if (isOpen) {

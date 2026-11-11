@@ -92,7 +92,7 @@ export default function StudentViewWarningDrawer({
               Monitoring active...
             </span>
           ) : (
-            safeLogs.map((log) => {
+            safeLogs.map((log, idx) => {
               const isCrash = Boolean(
                 log.isCrash ||
                   (log.action && log.action.toLowerCase().includes('crash')) ||
@@ -101,7 +101,7 @@ export default function StudentViewWarningDrawer({
               const text = isCrash ? 'System Crash' : log.message;
               const textColor = isCrash ? '#dc2626' : log.color || '#ef4444';
               return (
-                <div key={log.id} style={{ ...styles.logRow, fontSize: '0.88rem', marginBottom: '8px' }}>
+                <div key={log.id || `log_${idx}_${log.time || ''}`} style={{ ...styles.logRow, fontSize: '0.88rem', marginBottom: '8px' }}>
                   <span
                     style={{
                       color: textColor,

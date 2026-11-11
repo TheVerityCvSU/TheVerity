@@ -37,13 +37,15 @@ export default function StudentViewTerminalHeader({
     <div
       onMouseDown={(e) => {
         if (e.target.closest('button') || e.target.closest('input')) return;
-        handleDividerMouseDown(e);
+        if (typeof handleDividerMouseDown === 'function') handleDividerMouseDown(e);
       }}
       onTouchStart={(e) => {
         if (e.target.closest('button') || e.target.closest('input')) return;
-        handleDividerMouseDown(e);
+        if (typeof handleDividerMouseDown === 'function') handleDividerMouseDown(e);
       }}
-      onDoubleClick={toggleTerminalCollapse}
+      onDoubleClick={() => {
+        if (typeof toggleTerminalCollapse === 'function') toggleTerminalCollapse();
+      }}
       style={{
         ...styles.terminalHeader,
         cursor: 'row-resize',
@@ -141,7 +143,7 @@ export default function StudentViewTerminalHeader({
 
             <button
               type="button"
-              onClick={() => handleRunTestCase()}
+              onClick={() => { if (typeof handleRunTestCase === 'function') handleRunTestCase(); }}
               disabled={isRunningTests || isRunning || submitted}
               style={{
                 ...styles.terminalActionBtn,

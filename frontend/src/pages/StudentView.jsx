@@ -19,6 +19,7 @@ import StudentEditorWorkspace from '../components/studentView/StudentEditorWorks
 import StudentViewTerminalPanel from '../components/studentView/StudentViewTerminalPanel';
 import StudentViewModals from '../components/studentView/StudentViewModals';
 import StudentViewSecurityModals from '../components/studentView/StudentViewSecurityModals';
+import ErrorBoundary from '../components/ErrorBoundary';
 
 export default function StudentView({
   socket,
@@ -57,67 +58,114 @@ export default function StudentView({
   const { safeUsername, studentActualId, assignmentId, classroomId, studentDisplayName } =
     getStudentIdentity(currentUser, username, currentAssignment || assignment, classroom);
 
+  const extractInstructionText = (item) => {
+    if (!item) return '';
+    if (typeof item.details === 'string' && item.details.trim()) return item.details;
+    if (typeof item.instruction === 'string' && item.instruction.trim()) return item.instruction;
+    if (typeof item.instructions === 'string' && item.instructions.trim()) return item.instructions;
+    if (typeof item.description === 'string' && item.description.trim()) {
+      const raw = item.description.trim();
+      if (raw.startsWith('{') && raw.endsWith('}')) {
+        try {
+          const parsed = JSON.parse(raw);
+          if (parsed.details) return parsed.details;
+          if (parsed.instruction) return parsed.instruction;
+          if (parsed.instructions) return parsed.instructions;
+          if (parsed.description) return parsed.description;
+        } catch (_) {}
+      }
+      return raw;
+    }
+    return '';
+  };
+
+  const resolvedInstruction =
+    extractInstructionText(currentAssignment) ||
+    extractInstructionText(assignment) ||
+    '';
+
   // If assignment is missing instructions/details, look up in cache or fetch
   useEffect(() => {
-    const hasDetails = Boolean(
-      currentAssignment?.details ||
-      currentAssignment?.instruction ||
-      currentAssignment?.instructions ||
-      currentAssignment?.description
-    );
-    if (hasDetails) return;
+    if (resolvedInstruction) return;
+
+    const findInList = (list) => {
+      if (!Array.isArray(list)) return null;
+      const found = list.find((item) => String(item.id) === String(assignmentId));
+      if (found && extractInstructionText(found)) return found;
+      return null;
+    };
 
     const cId = classroomId !== 'none' ? classroomId : (classroom?.id != null ? String(classroom.id) : null);
+
+    // 1. Check classroom specific storage
     if (cId) {
       try {
         const raw = localStorage.getItem(`verity_classwork_${cId}`);
         if (raw) {
-          const list = JSON.parse(raw);
-          if (Array.isArray(list)) {
-            const found = list.find((item) => String(item.id) === String(assignmentId));
-            if (found && (found.details || found.instruction || found.instructions || found.description)) {
-              setCurrentAssignment((prev) => ({ ...(prev || {}), ...found }));
-              return;
-            }
+          const match = findInList(JSON.parse(raw));
+          if (match) {
+            const ex = extractInstructionText(match);
+            setCurrentAssignment((prev) => ({ ...(prev || {}), ...match, details: ex }));
+            return;
           }
         }
       } catch (_) {}
-
-      try {
-        const globalRaw =
-          localStorage.getItem('verity_cached_classwork') ||
-          localStorage.getItem(`verity_cached_classwork_${currentUser?.id || currentUser?.email}`);
-        if (globalRaw) {
-          const list = JSON.parse(globalRaw);
-          if (Array.isArray(list)) {
-            const found = list.find((item) => String(item.id) === String(assignmentId));
-            if (found && (found.details || found.instruction || found.instructions || found.description)) {
-              setCurrentAssignment((prev) => ({ ...(prev || {}), ...found }));
-              return;
-            }
-          }
-        }
-      } catch (_) {}
-
-      apiFetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/classwork/${cId}`)
-        .then((res) => (res.ok ? res.json() : null))
-        .then((data) => {
-          const list = data?.classwork || data?.assignments || (Array.isArray(data) ? data : []);
-          const found = list.find((item) => String(item.id) === String(assignmentId));
-          if (found && (found.details || found.instruction || found.instructions || found.description)) {
-            setCurrentAssignment((prev) => ({ ...(prev || {}), ...found }));
-          }
-        })
-        .catch(() => {});
     }
-  }, [currentAssignment, classroomId, classroom?.id, assignmentId, currentUser]);
 
-  const resolvedInstruction =
-    currentAssignment?.details ||
-    currentAssignment?.instruction ||
-    currentAssignment?.instructions ||
-    currentAssignment?.description ||
-    '';
+    // 2. Scan all localStorage keys for classwork
+    try {
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && (key.startsWith('verity_classwork_') || key.startsWith('verity_cached_classwork') || key.startsWith('verity_cached_upcoming_activities'))) {
+          const raw = localStorage.getItem(key);
+          if (raw) {
+            const match = findInList(JSON.parse(raw));
+            if (match) {
+              const ex = extractInstructionText(match);
+              setCurrentAssignment((prev) => ({ ...(prev || {}), ...match, details: ex }));
+              return;
+            }
+          }
+        }
+      }
+    } catch (_) {}
+
+    // 3. Fetch from API (/classwork/:classroomId or /classwork)
+    const baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+    const fetchUrl = cId ? `${baseUrl}/classwork/${cId}` : `${baseUrl}/classwork`;
+
+    apiFetch(fetchUrl)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        const list = data?.classwork || data?.assignments || (Array.isArray(data) ? data : []);
+        const match = findInList(list);
+        if (match) {
+          const extracted = extractInstructionText(match);
+          setCurrentAssignment((prev) => {
+            const updated = { ...(prev || {}), ...match, details: extracted };
+            try { localStorage.setItem('activeAssignment', JSON.stringify(updated)); } catch (_) {}
+            return updated;
+          });
+        } else if (cId) {
+          apiFetch(`${baseUrl}/classwork`)
+            .then((r) => (r.ok ? r.json() : null))
+            .then((allData) => {
+              const allList = allData?.classwork || allData?.assignments || (Array.isArray(allData) ? allData : []);
+              const m = findInList(allList);
+              if (m) {
+                const ex = extractInstructionText(m);
+                setCurrentAssignment((prev) => {
+                  const updated = { ...(prev || {}), ...m, details: ex };
+                  try { localStorage.setItem('activeAssignment', JSON.stringify(updated)); } catch (_) {}
+                  return updated;
+                });
+              }
+            })
+            .catch(() => {});
+        }
+      })
+      .catch(() => {});
+  }, [resolvedInstruction, classroomId, classroom?.id, assignmentId]);
 
   const [strictCompiler, setStrictCompiler] = useState(false);
 
@@ -141,29 +189,6 @@ export default function StudentView({
 
   const compilerHookRef = useRef(null);
 
-  // Test cases hook
-  const testCasesHook = useStudentViewTestCases({
-    ...studentCtx,
-    code: filesHook.code,
-    codeRef: filesHook.codeRef,
-    setBottomTab,
-    getCompilerSocket: () => compilerHookRef.current?.getCompilerSocket?.()
-  });
-
-  // Settings & Previews
-  const [editorFontSize, setEditorFontSize] = useState(() => {
-    try {
-      const saved = localStorage.getItem('verity_editor_font_size');
-      if (saved) return parseInt(saved, 10);
-    } catch {}
-    return 14;
-  });
-  const [showSettingsModal, setShowSettingsModal] = useState(false);
-  const [previewImage, setPreviewImage] = useState(null);
-  const [previewVideo, setPreviewVideo] = useState(null);
-  const [previewIframe, setPreviewIframe] = useState(null);
-  const [saveStatus, setSaveStatus] = useState(false);
-
   const [submitted, setSubmitted] = useState(() =>
     checkLocalSubmitted(classroomId, assignmentId, studentActualId, safeUsername, currentUser)
   );
@@ -185,6 +210,33 @@ export default function StudentView({
     emitToSockets: (...args) => compilerHookRef.current?.emitToSockets?.(...args),
     setStrictCompiler
   });
+
+  // Test cases hook
+  const testCasesHook = useStudentViewTestCases({
+    ...studentCtx,
+    submitted,
+    isDesktopWeb,
+    vmDetected: kioskHook.vmDetected,
+    kioskRules: kioskHook.kioskRules,
+    code: filesHook.code,
+    codeRef: filesHook.codeRef,
+    setBottomTab,
+    getCompilerSocket: () => compilerHookRef.current?.getCompilerSocket?.()
+  });
+
+  // Settings & Previews
+  const [editorFontSize, setEditorFontSize] = useState(() => {
+    try {
+      const saved = localStorage.getItem('verity_editor_font_size');
+      if (saved) return parseInt(saved, 10);
+    } catch {}
+    return 14;
+  });
+  const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [previewImage, setPreviewImage] = useState(null);
+  const [previewVideo, setPreviewVideo] = useState(null);
+  const [previewIframe, setPreviewIframe] = useState(null);
+  const [saveStatus, setSaveStatus] = useState(false);
 
   // Compiler socket & code runner hook
   const compilerHook = useStudentViewCompiler({
@@ -272,139 +324,141 @@ export default function StudentView({
   const isBackBlocked = !submissionHook.submitted && Boolean(kioskHook.kioskRules?.lockdownActive);
 
   return (
-    <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      transition={{ duration: 0.2 }}
-      style={{
-        ...styles.container,
-        ...(isDark ? { backgroundColor: '#181818', color: '#E8EAED' } : {})
-      }}
-    >
-      <StudentViewInstructionSidebar
-        isSandbox={isSandbox}
-        layout={layout}
-        isMobile={isMobile}
-        isDark={isDark}
-        proctorLogs={kioskHook.proctorLogs || []}
-        instruction={resolvedInstruction}
-        handleInstructionClick={handleInstructionClick}
-        assignment={currentAssignment || assignment}
-        setPreviewImage={setPreviewImage}
-        setPreviewVideo={setPreviewVideo}
-      />
-
-      <div style={styles.mainArea}>
-        <StudentViewToolbar
+    <ErrorBoundary onNavigateFallback={() => { if (typeof onBack === 'function') onBack(); }}>
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        transition={{ duration: 0.2 }}
+        style={{
+          ...styles.container,
+          ...(isDark ? { backgroundColor: '#181818', color: '#E8EAED' } : {})
+        }}
+      >
+        <StudentViewInstructionSidebar
           isSandbox={isSandbox}
-          isDark={isDark}
-          isBackBlocked={isBackBlocked}
-          submitted={submissionHook.submitted}
-          saveStatus={saveStatus}
-          isRunning={compilerHook.isRunning}
-          isRunningTests={testCasesHook.isRunningTests}
-          strictCompiler={strictCompiler}
-          handleBackClick={handleBackClick}
-          handleSaveCode={handleSaveCode}
-          handleRunCode={compilerHook.handleRunCode}
-          handleStopCode={compilerHook.handleStopCode}
-          handleSubmit={submissionHook.handleSubmit}
-          handleUnsubmit={submissionHook.handleUnsubmit}
-          setShowSettingsModal={setShowSettingsModal}
-        />
-
-        <StudentEditorWorkspace
-          isDark={isDark}
-          submitted={submissionHook.submitted}
-          filesHook={filesHook}
-          editorFontSize={editorFontSize}
-          editorRef={editorRef}
-          monacoRef={monacoRef}
-          diagnosticsRef={diagnosticsRef}
-          compilerHook={compilerHook}
-          handleSaveCode={handleSaveCode}
-          kioskHook={kioskHook}
-          studentActualId={studentActualId}
-          safeUsername={safeUsername}
-          assignmentId={assignmentId}
-          studentDisplayName={studentDisplayName}
-          currentUser={currentUser}
-          classroom={classroom}
-          classroomId={classroomId}
-          assignment={currentAssignment || assignment}
-          copiedInternallyRef={copiedInternallyRef}
           layout={layout}
-        />
-
-        <StudentViewTerminalPanel
-          bottomTab={bottomTab}
-          setBottomTab={setBottomTab}
+          isMobile={isMobile}
           isDark={isDark}
-          submitted={submissionHook.submitted}
-          isTerminalCollapsed={layout.isTerminalCollapsed}
-          isTerminalMaximized={layout.isTerminalMaximized}
-          terminalHeight={layout.terminalHeight}
-          isResizingTerminal={layout.isResizingTerminal}
-          handleDividerMouseDown={layout.handleDividerMouseDown}
-          toggleTerminalCollapse={layout.toggleTerminalCollapse}
-          toggleTerminalMaximize={layout.toggleTerminalMaximize}
-          testCases={testCasesHook.testCases}
-          passedTestsCount={testCasesHook.passedTestsCount}
-          hasTested={testCasesHook.hasTested}
-          handleClearTerminal={compilerHook.handleClearTerminal}
-          handleAddTestCase={testCasesHook.handleAddTestCase}
-          handleRunTestCase={testCasesHook.handleRunTestCase}
-          handleRunAllTestCases={testCasesHook.handleRunAllTestCases}
-          isRunningTests={testCasesHook.isRunningTests}
-          isRunning={compilerHook.isRunning}
-          programStarted={compilerHook.programStarted}
-          inputValue={compilerHook.inputValue}
-          setInputValue={compilerHook.setInputValue}
-          handleTerminalInput={compilerHook.handleTerminalInput}
-          copiedInternallyRef={copiedInternallyRef}
-          addProctorLog={kioskHook.addProctorLog}
-          output={compilerHook.output}
-          terminalBodyRef={compilerHook.terminalBodyRef}
-          terminalEndRef={compilerHook.terminalEndRef}
-          activeTestCaseId={testCasesHook.activeTestCaseId}
-          setActiveTestCaseId={testCasesHook.setActiveTestCaseId}
-          handleDeleteTestCase={testCasesHook.handleDeleteTestCase}
-          handleUpdateTestCase={testCasesHook.handleUpdateTestCase}
+          proctorLogs={kioskHook.proctorLogs || []}
+          instruction={resolvedInstruction}
+          handleInstructionClick={handleInstructionClick}
+          assignment={currentAssignment || assignment}
+          setPreviewImage={setPreviewImage}
+          setPreviewVideo={setPreviewVideo}
         />
-      </div>
 
-      <StudentViewModals
-        showSettingsModal={showSettingsModal}
-        setShowSettingsModal={setShowSettingsModal}
-        isDark={isDark}
-        toggleDarkMode={toggleDarkMode}
-        editorFontSize={editorFontSize}
-        setEditorFontSize={setEditorFontSize}
-        previewImage={previewImage}
-        setPreviewImage={setPreviewImage}
-        previewVideo={previewVideo}
-        setPreviewVideo={setPreviewVideo}
-        previewIframe={previewIframe}
-        setPreviewIframe={setPreviewIframe}
-        showSubmitModal={submissionHook.showSubmitModal}
-        setShowSubmitModal={submissionHook.setShowSubmitModal}
-        strictCompiler={strictCompiler}
-        diagnosticsCount={diagnosticsRef.current?.length || 0}
-        handleConfirmSubmit={submissionHook.handleConfirmSubmit}
-        showUnsubmitModal={submissionHook.showUnsubmitModal}
-        setShowUnsubmitModal={submissionHook.setShowUnsubmitModal}
-        handleConfirmUnsubmit={submissionHook.handleConfirmUnsubmit}
-      />
+        <div style={styles.mainArea}>
+          <StudentViewToolbar
+            isSandbox={isSandbox}
+            isDark={isDark}
+            isBackBlocked={isBackBlocked}
+            submitted={submissionHook.submitted}
+            saveStatus={saveStatus}
+            isRunning={compilerHook.isRunning}
+            isRunningTests={testCasesHook.isRunningTests}
+            strictCompiler={strictCompiler}
+            handleBackClick={handleBackClick}
+            handleSaveCode={handleSaveCode}
+            handleRunCode={compilerHook.handleRunCode}
+            handleStopCode={compilerHook.handleStopCode}
+            handleSubmit={submissionHook.handleSubmit}
+            handleUnsubmit={submissionHook.handleUnsubmit}
+            setShowSettingsModal={setShowSettingsModal}
+          />
 
-      <StudentViewSecurityModals
-        multiMonitorDetected={kioskHook.multiMonitorDetected}
-        vmDetected={kioskHook.vmDetected}
-        vmReasons={kioskHook.vmReasons}
-        kioskRules={kioskHook.kioskRules}
-        isDesktopWeb={isDesktopWeb}
-        onBack={onBack}
-      />
-    </motion.div>
+          <StudentEditorWorkspace
+            isDark={isDark}
+            submitted={submissionHook.submitted}
+            filesHook={filesHook}
+            editorFontSize={editorFontSize}
+            editorRef={editorRef}
+            monacoRef={monacoRef}
+            diagnosticsRef={diagnosticsRef}
+            compilerHook={compilerHook}
+            handleSaveCode={handleSaveCode}
+            kioskHook={kioskHook}
+            studentActualId={studentActualId}
+            safeUsername={safeUsername}
+            assignmentId={assignmentId}
+            studentDisplayName={studentDisplayName}
+            currentUser={currentUser}
+            classroom={classroom}
+            classroomId={classroomId}
+            assignment={currentAssignment || assignment}
+            copiedInternallyRef={copiedInternallyRef}
+            layout={layout}
+          />
+
+          <StudentViewTerminalPanel
+            bottomTab={bottomTab}
+            setBottomTab={setBottomTab}
+            isDark={isDark}
+            submitted={submissionHook.submitted}
+            isTerminalCollapsed={layout.isTerminalCollapsed}
+            isTerminalMaximized={layout.isTerminalMaximized}
+            terminalHeight={layout.terminalHeight}
+            isResizingTerminal={layout.isResizingTerminal}
+            handleDividerMouseDown={layout.handleDividerMouseDown}
+            toggleTerminalCollapse={layout.toggleTerminalCollapse}
+            toggleTerminalMaximize={layout.toggleTerminalMaximize}
+            testCases={testCasesHook.testCases}
+            passedTestsCount={testCasesHook.passedTestsCount}
+            hasTested={testCasesHook.hasTested}
+            handleClearTerminal={compilerHook.handleClearTerminal}
+            handleAddTestCase={testCasesHook.handleAddTestCase}
+            handleRunTestCase={testCasesHook.handleRunTestCase}
+            handleRunAllTestCases={testCasesHook.handleRunAllTestCases}
+            isRunningTests={testCasesHook.isRunningTests}
+            isRunning={compilerHook.isRunning}
+            programStarted={compilerHook.programStarted}
+            inputValue={compilerHook.inputValue}
+            setInputValue={compilerHook.setInputValue}
+            handleTerminalInput={compilerHook.handleTerminalInput}
+            copiedInternallyRef={copiedInternallyRef}
+            addProctorLog={kioskHook.addProctorLog}
+            output={compilerHook.output}
+            terminalBodyRef={compilerHook.terminalBodyRef}
+            terminalEndRef={compilerHook.terminalEndRef}
+            activeTestCaseId={testCasesHook.activeTestCaseId}
+            setActiveTestCaseId={testCasesHook.setActiveTestCaseId}
+            handleDeleteTestCase={testCasesHook.handleDeleteTestCase}
+            handleUpdateTestCase={testCasesHook.handleUpdateTestCase}
+          />
+        </div>
+
+        <StudentViewModals
+          showSettingsModal={showSettingsModal}
+          setShowSettingsModal={setShowSettingsModal}
+          isDark={isDark}
+          toggleDarkMode={toggleDarkMode}
+          editorFontSize={editorFontSize}
+          setEditorFontSize={setEditorFontSize}
+          previewImage={previewImage}
+          setPreviewImage={setPreviewImage}
+          previewVideo={previewVideo}
+          setPreviewVideo={setPreviewVideo}
+          previewIframe={previewIframe}
+          setPreviewIframe={setPreviewIframe}
+          showSubmitModal={submissionHook.showSubmitModal}
+          setShowSubmitModal={submissionHook.setShowSubmitModal}
+          strictCompiler={strictCompiler}
+          diagnosticsCount={diagnosticsRef.current?.length || 0}
+          handleConfirmSubmit={submissionHook.handleConfirmSubmit}
+          showUnsubmitModal={submissionHook.showUnsubmitModal}
+          setShowUnsubmitModal={submissionHook.setShowUnsubmitModal}
+          handleConfirmUnsubmit={submissionHook.handleConfirmUnsubmit}
+        />
+
+        <StudentViewSecurityModals
+          multiMonitorDetected={kioskHook.multiMonitorDetected}
+          vmDetected={kioskHook.vmDetected}
+          vmReasons={kioskHook.vmReasons}
+          kioskRules={kioskHook.kioskRules}
+          isDesktopWeb={isDesktopWeb}
+          onBack={onBack}
+        />
+      </motion.div>
+    </ErrorBoundary>
   );
 }

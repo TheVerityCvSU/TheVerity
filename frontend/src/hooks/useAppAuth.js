@@ -13,7 +13,9 @@ export function useAppAuth({
   releaseLockdown,
   setCurrentScreen,
   currentScreen,
-  setActiveClassroom
+  setActiveClassroom,
+  setActiveAssignment,
+  getCurrentScreen
 }) {
   const [currentUser, setCurrentUser] = useState(() => {
     try {
@@ -102,10 +104,12 @@ export function useAppAuth({
 
     const activeSocket = typeof getSocket === 'function' ? getSocket() : socket;
 
+    const activeScreen = (typeof getCurrentScreen === 'function' ? getCurrentScreen() : null) || currentScreen;
+
     if (currentUser?.role === 'Student') {
       const studentName = currentUser.name || currentUser.email || 'Student';
       const studentId = currentUser.id || currentUser.email || studentName;
-      const screenLabel = currentScreen ? currentScreen.replace('_', ' ') : 'session';
+      const screenLabel = activeScreen ? activeScreen.replace('_', ' ') : 'session';
       const desc = `Student exited the system: ${studentName} logged out of session (${screenLabel})`;
 
       if (activeSocket && typeof activeSocket.emit === 'function') {
@@ -156,6 +160,9 @@ export function useAppAuth({
     if (typeof setActiveClassroom === 'function') {
       setActiveClassroom(null);
     }
+    if (typeof setActiveAssignment === 'function') {
+      setActiveAssignment(null);
+    }
     if (typeof setCurrentScreen === 'function') {
       setCurrentScreen(targetScreen);
     }
@@ -165,7 +172,7 @@ export function useAppAuth({
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('verity:user-updated', { detail: null }));
     }
-  }, [currentUser, currentScreen, socket, getSocket, releaseLockdown, isAdminApp, setCurrentScreen, setActiveClassroom]);
+  }, [currentUser, currentScreen, socket, getSocket, releaseLockdown, isAdminApp, setCurrentScreen, setActiveClassroom, setActiveAssignment, getCurrentScreen]);
 
   useEffect(() => {
     const checkMaintenance = async () => {

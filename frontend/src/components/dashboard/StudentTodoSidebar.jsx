@@ -82,10 +82,11 @@ export default function StudentTodoSidebar({
               const bgCol = classObj?.theme?.color || '#059669';
 
               const handleOpenTask = () => {
-                if (classObj && onOpenAssignment) {
-                  onOpenAssignment(classObj, act);
-                } else if (classObj) {
-                  onEnterClassroom(classObj);
+                const targetClass = classObj || { id: act.classroom_id || act.classId, name: courseName };
+                if (typeof onOpenAssignment === 'function') {
+                  onOpenAssignment(targetClass, act);
+                } else if (typeof onEnterClassroom === 'function') {
+                  onEnterClassroom(targetClass);
                 }
               };
 

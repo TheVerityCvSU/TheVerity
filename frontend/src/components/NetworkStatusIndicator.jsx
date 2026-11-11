@@ -14,7 +14,6 @@ import NetworkStatusDot from './networkStatus/NetworkStatusDot';
 import NetworkConfigPopover from './networkStatus/NetworkConfigPopover';
 
 export default function NetworkStatusIndicator({ hidden = false, position = 'right' }) {
-  if (hidden) return null;
   const { isDark } = useDarkMode();
   const isLeft = position === 'left';
   const [status, setStatus] = useState(() => getConnectionStatus());
@@ -224,6 +223,8 @@ export default function NetworkStatusIndicator({ hidden = false, position = 'rig
     zIndex: 1000000,
     animation: 'fadeInPop 0.18s ease-out'
   };
+
+  if (hidden) return null;
 
   return (
     <div style={containerStyle}>

@@ -10,21 +10,25 @@ export default function ActivityDetailHeader({
   onNavigateView,
   onLogout
 }) {
-  const [isHeaderHovered, setIsHeaderHovered] = useState(false);
   const [headerIndicatorStyle, setHeaderIndicatorStyle] = useState({ left: 0, width: 0, opacity: 0 });
   const headerNavRefs = useRef({});
 
   useLayoutEffect(() => {
-    const activeRef = headerNavRefs.current['classrooms'];
-    if (activeRef) {
-      setHeaderIndicatorStyle(prev => ({
-        left: activeRef.offsetLeft,
-        width: activeRef.offsetWidth,
-        opacity: 1,
-        transition: prev.opacity === 0 ? 'none' : 'all 0.3s cubic-bezier(0.25, 1, 0.5, 1)'
-      }));
-    }
-  }, [isHeaderHovered]);
+    const updateIndicator = () => {
+      const activeRef = headerNavRefs.current['classrooms'];
+      if (activeRef) {
+        setHeaderIndicatorStyle(prev => ({
+          left: activeRef.offsetLeft,
+          width: activeRef.offsetWidth,
+          opacity: 1,
+          transition: prev.opacity === 0 ? 'none' : 'all 0.3s cubic-bezier(0.25, 1, 0.5, 1)'
+        }));
+      }
+    };
+    updateIndicator();
+    window.addEventListener('resize', updateIndicator);
+    return () => window.removeEventListener('resize', updateIndicator);
+  }, []);
 
   const navItems = [
     { id: 'classrooms', label: 'Home', Icon: Home },
@@ -36,8 +40,6 @@ export default function ActivityDetailHeader({
 
   return (
     <header 
-      onMouseEnter={() => setIsHeaderHovered(true)}
-      onMouseLeave={() => setIsHeaderHovered(false)}
       style={{
         display: 'flex',
         alignItems: 'center',

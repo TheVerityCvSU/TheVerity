@@ -76,10 +76,11 @@ export const generateClassCode = (existingListOrCodes = []) => {
   let code = '';
   let attempts = 0;
   do {
-    code = '';
+    let currentCode = '';
     for (let i = 0; i < 7; i++) {
-      code += chars.charAt(Math.floor(Math.random() * chars.length));
+      currentCode += chars.charAt(Math.floor(Math.random() * chars.length));
     }
+    code = currentCode;
     attempts++;
   } while (taken.has(code.toLowerCase()) && attempts < 1000);
 

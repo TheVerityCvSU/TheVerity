@@ -49,11 +49,13 @@ export default function ActivityContentCard({
     if (anchor && anchor.href) {
       e.preventDefault();
       e.stopPropagation();
-      onPreviewLink({
-        url: anchor.href,
-        name: anchor.innerText?.trim() || anchor.href,
-        type: 'link'
-      });
+      if (typeof onPreviewLink === 'function') {
+        onPreviewLink({
+          url: anchor.href,
+          name: anchor.innerText?.trim() || anchor.href,
+          type: 'link'
+        });
+      }
     }
   };
 

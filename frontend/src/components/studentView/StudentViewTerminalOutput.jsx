@@ -90,7 +90,7 @@ export default function StudentViewTerminalOutput({
               if (key && copiedInternallyRef?.current && !copiedInternallyRef.current.has(key)) {
                 e.preventDefault();
                 e.stopPropagation();
-                addProctorLog('Strict Clipboard: External Paste in Terminal Blocked', '#ef4444');
+                if (typeof addProctorLog === 'function') addProctorLog('Strict Clipboard: External Paste in Terminal Blocked', '#ef4444');
                 if (window.electronAPI?.clearClipboard) {
                   window.electronAPI.clearClipboard().catch(() => { });
                 }

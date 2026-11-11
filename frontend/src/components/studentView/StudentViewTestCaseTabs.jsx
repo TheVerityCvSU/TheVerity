@@ -76,7 +76,9 @@ export default function StudentViewTestCaseTabs({
 
             {safeCases.length > 1 && (
               <span
-                onClick={(e) => handleDeleteTestCase(tc.id, e)}
+                onClick={(e) => {
+                  if (typeof handleDeleteTestCase === 'function') handleDeleteTestCase(tc.id, e);
+                }}
                 title="Delete this test case"
                 style={{
                   marginLeft: '4px',
@@ -97,7 +99,9 @@ export default function StudentViewTestCaseTabs({
 
       <button
         type="button"
-        onClick={handleAddTestCase}
+        onClick={() => {
+          if (typeof handleAddTestCase === 'function') handleAddTestCase();
+        }}
         style={{
           display: 'inline-flex',
           alignItems: 'center',

@@ -5,9 +5,8 @@ import { useDarkMode } from '../hooks/useDarkMode';
 import { isDevToolsOrEmulation, DISABLE_DESKTOP_WEB_BLOCKER } from '../utils/deviceUtils';
 
 export default function ComLabWebBlocker({ currentUser, onLogout }) {
-  if (DISABLE_DESKTOP_WEB_BLOCKER) return null;
-
   const { isDark } = useDarkMode();
+  if (DISABLE_DESKTOP_WEB_BLOCKER) return null;
   const isDevTools = isDevToolsOrEmulation();
 
   const handleLogout = () => {

@@ -45,13 +45,16 @@ export function useStudentViewCompiler({
     if (!model) return;
 
     if (!Array.isArray(diagnostics) || diagnostics.length === 0) {
-      monaco.editor.setModelMarkers(model, 'csharp-compiler', []);
+      if (monaco?.editor && typeof monaco.editor.setModelMarkers === 'function') {
+        monaco.editor.setModelMarkers(model, 'csharp-compiler', []);
+      }
       return;
     }
 
     const markers = diagnostics.map((d) => {
-      const startLine = Math.max(1, Math.min(d.startLineNumber || 1, model.getLineCount()));
-      const lineContent = model.getLineContent(startLine) || '';
+      const lineCount = typeof model.getLineCount === 'function' ? model.getLineCount() : 1;
+      const startLine = Math.max(1, Math.min(d.startLineNumber || 1, lineCount));
+      const lineContent = typeof model.getLineContent === 'function' ? (model.getLineContent(startLine) || '') : '';
       const startCol = Math.max(1, Math.min(d.startColumn || 1, lineContent.length + 1));
       let endCol = d.endColumn;
       if (!endCol || endCol <= startCol) {
@@ -59,18 +62,20 @@ export function useStudentViewCompiler({
         const wordMatch = remaining.match(/^[a-zA-Z0-9_]+/);
         endCol = wordMatch && wordMatch[0].length > 0 ? startCol + wordMatch[0].length : Math.max(startCol + 1, lineContent.length + 1);
       }
-      const endLine = Math.max(startLine, Math.min(d.endLineNumber || startLine, model.getLineCount()));
+      const endLine = Math.max(startLine, Math.min(d.endLineNumber || startLine, lineCount));
 
       return {
-        severity: d.severity === 'warning' ? monaco.MarkerSeverity.Warning : monaco.MarkerSeverity.Error,
-        message: d.message,
+        severity: d.severity === 'warning' ? monaco.MarkerSeverity?.Warning : monaco.MarkerSeverity?.Error,
+        message: d.message || '',
         startLineNumber: startLine,
         startColumn: startCol,
         endLineNumber: endLine,
         endColumn: endCol
       };
     });
-    monaco.editor.setModelMarkers(model, 'csharp-compiler', markers);
+    if (monaco?.editor && typeof monaco.editor.setModelMarkers === 'function') {
+      monaco.editor.setModelMarkers(model, 'csharp-compiler', markers);
+    }
   };
 
   // Compiler output streaming listeners

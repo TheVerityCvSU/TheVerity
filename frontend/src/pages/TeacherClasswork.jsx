@@ -223,6 +223,12 @@ export default function TeacherClasswork({
     }
   });
 
+  const [loadingClasswork, setLoadingClasswork] = useState(true);
+  const [activeMenu, setActiveMenu] = useState(null);
+  const [expandedId, setExpandedId] = useState(null);
+  const [expandedInstructionId, setExpandedInstructionId] = useState(null);
+  const [submissionData, setSubmissionData] = useState({ counts: {}, studentCount: 0 });
+
   const hydrated = useRef(false);
 
   useEffect(() => {
@@ -350,12 +356,6 @@ export default function TeacherClasswork({
       socket.off('classwork_changed', onClassworkChanged);
     };
   }, [socket, classroomId, storageKey]);
-
-  const [activeMenu, setActiveMenu] = useState(null);
-  const [expandedId, setExpandedId] = useState(null);
-  const [expandedInstructionId, setExpandedInstructionId] = useState(null);
-  const [submissionData, setSubmissionData] = useState({ counts: {}, studentCount: 0 });
-  const [loadingClasswork, setLoadingClasswork] = useState(true);
 
   const toggleExpand = (id) => setExpandedId(prev => (prev === id ? null : id));
 

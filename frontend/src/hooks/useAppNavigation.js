@@ -134,6 +134,13 @@ export function useAppNavigation({ isAdminApp, currentUser }) {
     } catch {}
   }, [navigationStack]);
 
+  useEffect(() => {
+    if (currentScreen === 'login' || currentScreen === 'admin_login' || !currentUser) {
+      setNavigationStack([]);
+      try { sessionStorage.removeItem('verity_nav_stack'); } catch {}
+    }
+  }, [currentScreen, currentUser]);
+
   const navigateTo = (targetScreen, context = {}) => {
     const isSameScreen = targetScreen === currentScreen;
     if (isSameScreen && !context.force && !context.classroom && !context.assignment) return;

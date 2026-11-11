@@ -84,9 +84,9 @@ export default function StudentViewFileTabs({
               autoFocus
               value={renameValue}
               onChange={(e) => setRenameValue(e.target.value)}
-              onBlur={() => handleRenameFile(f.id, renameValue)}
+              onBlur={() => { if (typeof handleRenameFile === 'function') handleRenameFile(f.id, renameValue); }}
               onKeyDown={(e) => {
-                if (e.key === 'Enter') handleRenameFile(f.id, renameValue);
+                if (e.key === 'Enter' && typeof handleRenameFile === 'function') handleRenameFile(f.id, renameValue);
                 if (e.key === 'Escape') setRenamingFileId(null);
               }}
               onClick={(e) => e.stopPropagation()}
@@ -111,7 +111,7 @@ export default function StudentViewFileTabs({
             <button
               onClick={(e) => {
                 e.stopPropagation();
-                handleDeleteFile(f.id);
+                if (typeof handleDeleteFile === 'function') handleDeleteFile(f.id);
               }}
               title="Delete file"
               style={{
