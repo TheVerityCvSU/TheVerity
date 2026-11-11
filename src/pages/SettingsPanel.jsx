@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Settings, ArrowLeft, User, BookOpen, ShieldCheck, SlidersHorizontal, Bell, GraduationCap } from 'lucide-react';
+import { Settings, ArrowLeft, User, BookOpen, ShieldCheck, SlidersHorizontal, Bell, GraduationCap, Check } from 'lucide-react';
 
 /**
  * SettingsPanel — an independent, full-screen settings page (NOT a popup).
@@ -218,7 +218,9 @@ export default function SettingsPanel({ role = 'Student', onBack }) {
                   Save Changes
                 </button>
                 {savedSection === section.title && (
-                  <span style={styles.savedNote}>✓ Saved</span>
+                  <span style={{ ...styles.savedNote, display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                    <Check size={14} /> Saved
+                  </span>
                 )}
               </div>
             </div>

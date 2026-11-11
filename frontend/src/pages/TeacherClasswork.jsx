@@ -10,11 +10,15 @@ import {
   Paperclip, MoreHorizontal, Code2, Trash2, AlertTriangle, Lock
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { apiFetch } from '../utils/api';
+import { apiFetch } from '../data/api';
 import Skeleton from '../components/Skeleton';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { useMediaQuery } from '../hooks/useMediaQuery';
-import { isPhantomClassroom, mergeClassroomsPreservingOrder, THEME_PRESETS, getClassroomTheme, saveClassroomTheme, getClassroomStorageKey, getCachedClassrooms, saveCachedClassrooms, sortClassroomsAlphabetically, getLessonType } from '../utils/classroomUtils';
+import { isPhantomClassroom, mergeClassroomsPreservingOrder, sortClassroomsAlphabetically } from '../utils/classroomList';
+import { THEME_PRESETS } from '../utils/themePresets';
+import { getClassroomTheme, saveClassroomTheme } from '../data/classroomTheme';
+import { getClassroomStorageKey, getCachedClassrooms, saveCachedClassrooms } from '../data/classroomCache';
+import { getLessonType } from '../utils/lessonType';
 import ImagePreviewModal from '../components/ImagePreviewModal';
 import AddLinkModal from '../components/AddLinkModal';
 import VideoPreviewModal from '../components/VideoPreviewModal';
@@ -3493,13 +3497,15 @@ export default function TeacherClasswork({
                           border: 'none',
                           color: '#ef4444',
                           cursor: 'pointer',
-                          padding: '4px 8px',
-                          fontSize: '0.9rem',
-                          fontWeight: 'bold'
+                          padding: '4px',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          borderRadius: '4px'
                         }}
                         title="Remove test case"
                       >
-                        ✕
+                        <X size={15} />
                       </button>
                     </div>
                   ))}

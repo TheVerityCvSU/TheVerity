@@ -10,8 +10,8 @@ const ioClient = require('socket.io-client');
 
 const CLOUD_URL = process.env.CLOUD_SOCKET_URL || process.env.CLOUD_API_URL || 'https://verity-2z4v.onrender.com';
 const isRenderCloud = Boolean(
-    process.env.RENDER || 
-    process.env.RENDER_SERVICE_ID || 
+    process.env.RENDER ||
+    process.env.RENDER_SERVICE_ID ||
     process.env.IS_RENDER_SERVICE
 );
 
@@ -23,7 +23,7 @@ let heartbeatTimer = null;
 
 function initCloudRelay(activeStudents, localIo) {
     if (isRenderCloud) {
-        console.log('☁️ [Cloud Relay] Running directly on Render Cloud. Outbound relay disabled.');
+        console.log('[Cloud Relay] Running directly on Render Cloud. Outbound relay disabled.');
         return;
     }
 
@@ -31,7 +31,7 @@ function initCloudRelay(activeStudents, localIo) {
     localIoRef = localIo;
 
     try {
-        console.log(`☁️ [Cloud Relay] Initializing bridge to Cloud Server at ${CLOUD_URL}...`);
+        console.log(`[Cloud Relay] Initializing bridge to Cloud Server at ${CLOUD_URL}...`);
         cloudSocket = ioClient(CLOUD_URL, {
             reconnection: true,
             reconnectionAttempts: Infinity,
@@ -43,13 +43,13 @@ function initCloudRelay(activeStudents, localIo) {
 
         cloudSocket.on('connect', () => {
             isConnected = true;
-            console.log(`☁️ [Cloud Relay] ✅ Successfully connected LAN Server to Cloud at ${CLOUD_URL}`);
+            console.log(`[Cloud Relay] Successfully connected LAN Server to Cloud at ${CLOUD_URL}`);
             syncAllToCloud();
         });
 
         cloudSocket.on('disconnect', () => {
             isConnected = false;
-            console.log('☁️ [Cloud Relay] Disconnected from Cloud Server.');
+            console.log('[Cloud Relay] Disconnected from Cloud Server.');
         });
 
         cloudSocket.on('connect_error', (err) => {

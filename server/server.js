@@ -37,6 +37,20 @@ const crypto = require('crypto');
 const { sendOtpEmail } = require('./utils/emailService');
 const db = require('./db/index.js');
 const dotnetManager = require('./dotnetManager');
+const { scanCSharpCode } = require('./csharpSecurityScanner');
+
+function killProcessTree(proc) {
+    if (!proc || !proc.pid) return;
+    try {
+        if (process.platform === 'win32') {
+            exec(`taskkill /F /T /PID ${proc.pid}`, { stdio: 'ignore' }, () => {});
+        } else {
+            proc.kill('SIGKILL');
+        }
+    } catch (_) {
+        try { proc.kill(); } catch (__) {}
+    }
+}
 
 const DATA_DIR = process.env.DATA_DIR || __dirname;
 
@@ -45,7 +59,7 @@ app.set('trust proxy', 1);
 const JWT_SECRET = process.env.JWT_SECRET || 'c9JLTH$I6,vwWv=0tmQj6a+g|k9AwunzP#<$!@oX@Z0gpX2,De8XFYY/5A4_2-Y<u4V1QnwGV1+d34/QOJ3';
 
 if (process.env.NODE_ENV === 'production' && JWT_SECRET === 'verity_super_secret_key') {
-    console.warn('⚠️  [SECURITY WARNING] JWT_SECRET is using the insecure default key in production! Set JWT_SECRET in your environment.');
+    console.warn('[SECURITY WARNING] JWT_SECRET is using the insecure default key in production! Set JWT_SECRET in your environment.');
 }
 
 app.use(cors());
@@ -3725,7 +3739,7 @@ function resetDotnetCache() {
     cachedDotnetTargetFramework = null;
     cachedRoslynConfig = null;
     baseTemplatePromise = null;
-    console.log('⚡ Verity Compiler: Invalidate and reset local .NET SDK cache');
+    console.log('[Compiler] Invalidate and reset local .NET SDK cache');
 }
 
 const OFFLINE_DOTNET_ENV = {
@@ -3759,11 +3773,11 @@ function getDotnetTargetFramework() {
         const major = parseInt(output.split('.')[0], 10);
         if (!isNaN(major) && major >= 6) {
             cachedDotnetTargetFramework = `net${major}.0`;
-            console.log(`⚡ Verity Compiler: Detected .NET SDK ${output} -> targeting ${cachedDotnetTargetFramework}`);
+            console.log(`[Compiler] Detected .NET SDK ${output} -> targeting ${cachedDotnetTargetFramework}`);
             return cachedDotnetTargetFramework;
         }
     } catch (e) {
-        console.warn('⚠️ Could not determine dotnet version, defaulting to net8.0:', e.message);
+        console.warn('[Compiler] Could not determine dotnet version, defaulting to net8.0:', e.message);
     }
     cachedDotnetTargetFramework = 'net8.0';
     return cachedDotnetTargetFramework;
@@ -3808,11 +3822,11 @@ function getRoslynConfig() {
 
         if (cscPath && refDir) {
             cachedRoslynConfig = { cscPath, refDir, packVersion };
-            console.log(`⚡ Verity Fast Compiler: Discovered local .NET SDK Roslyn C# engine:\n  Compiler: ${cscPath}\n  Reference Assemblies: ${refDir}`);
+            console.log(`[Fast Compiler] Discovered local .NET SDK Roslyn C# engine:\n  Compiler: ${cscPath}\n  Reference Assemblies: ${refDir}`);
             return cachedRoslynConfig;
         }
     } catch (e) {
-        console.warn('⚠️ Could not locate direct Roslyn csc in local .NET SDK, will use optimized dotnet build:', e.message);
+        console.warn('[Compiler] Could not locate direct Roslyn csc in local .NET SDK, will use optimized dotnet build:', e.message);
     }
     cachedRoslynConfig = false;
     return false;
@@ -3901,23 +3915,23 @@ function ensureBaseTemplate() {
                     };
                     fs.writeFileSync(path.join(binDir, 'verity_base.runtimeconfig.json'), JSON.stringify(runtimeConfig, null, 2), 'utf8');
                 } catch (rspErr) {
-                    console.warn('⚠️ Could not generate framework_refs.rsp:', rspErr.message);
+                    console.warn('[Compiler] Could not generate framework_refs.rsp:', rspErr.message);
                 }
             }
 
-            console.log(`⚡ Verity Compiler: Pre-warming base .NET template (${targetFramework}) in offline mode...`);
+            console.log(`[Compiler] Pre-warming base .NET template (${targetFramework}) in offline mode...`);
             await new Promise((resolve) => {
                 // Restore offline first (cleared sources ensures 0 network requests)
                 exec(`dotnet restore "${projectFile}" --ignore-failed-sources -v q`, { cwd: COMPILER_BASE_DIR, env: OFFLINE_DOTNET_ENV }, (restoreErr) => {
                     if (restoreErr) {
-                        console.warn('⚠️ Base template restore warning:', restoreErr.message);
+                        console.warn('[Compiler] Base template restore warning:', restoreErr.message);
                     }
                     exec(`dotnet build --no-restore -v q -m -p:WarningLevel=0 -p:UseAppHost=false "${projectFile}"`, { cwd: COMPILER_BASE_DIR, env: OFFLINE_DOTNET_ENV }, (buildErr) => {
                         if (buildErr) {
-                            console.warn('⚠️ Base template build warning (falling back to standard build):', buildErr.message);
+                            console.warn('[Compiler] Base template build warning (falling back to standard build):', buildErr.message);
                             exec(`dotnet build -v q -m -p:WarningLevel=0 "${projectFile}"`, { cwd: COMPILER_BASE_DIR, env: OFFLINE_DOTNET_ENV }, () => resolve(COMPILER_BASE_DIR));
                         } else {
-                            console.log(`⚡ Verity Compiler: Base .NET template pre-warmed for ${targetFramework} with warm obj/bin cache (offline ready).`);
+                            console.log(`[Compiler] Base .NET template pre-warmed for ${targetFramework} with warm obj/bin cache (offline ready).`);
                             resolve(COMPILER_BASE_DIR);
                         }
                     });
@@ -4230,7 +4244,7 @@ app.get('/active-activities', (req, res) => {
 });
 
 io.on('connection', (socket) => {
-    console.log('🟢 Student Workspace Connected: ' + socket.id);
+    console.log('[Workspace] Student Connected: ' + socket.id);
 
     socket.on('get_active_activities', (data) => {
         socket.emit('active_activities_update', { 
@@ -4576,6 +4590,21 @@ io.on('connection', (socket) => {
             return socket.emit('process_exit', { code: 1 });
         }
 
+        // Security check: Scan C# code for dangerous APIs, process execution, reflection, native calls, etc.
+        const securityCheck = scanCSharpCode(code, extraFiles);
+        if (!securityCheck.isSafe) {
+            socket.emit('compiler_diagnostics', [{
+                severity: 'error',
+                message: `[Security Violation] ${securityCheck.message}`,
+                startLineNumber: securityCheck.line || 1,
+                startColumn: securityCheck.column || 1,
+                endLineNumber: securityCheck.line || 1,
+                endColumn: (securityCheck.column || 1) + 12
+            }]);
+            socket.emit('terminal_output', `\n[Security Alert: Code execution blocked by Verity Sandbox]\n[File: ${securityCheck.fileName}, Line ${securityCheck.line}:${securityCheck.column}]\n[Rule: ${securityCheck.rule}]\n[Detail: ${securityCheck.message}]\n\n`);
+            return socket.emit('process_exit', { code: 1 });
+        }
+
         const studentKey = socket.user?.id
             ? `u_${socket.user.id}`
             : (socket.user?.email ? `e_${socket.user.email.replace(/[^a-zA-Z0-9]/g, '_')}` : `s_${socket.id.replace(/[^a-zA-Z0-9]/g, '')}`);
@@ -4603,7 +4632,7 @@ io.on('connection', (socket) => {
         }
 
         if (activeProcess) {
-            try { activeProcess.kill(); } catch (_) {}
+            try { killProcessTree(activeProcess); } catch (_) {}
             activeProcess = null;
         }
 
@@ -4736,9 +4765,13 @@ io.on('connection', (socket) => {
             const runProcess = spawn('dotnet', [dllPath], { cwd: projectDir, env });
             activeProcess = runProcess;
 
+            let totalOutputBytes = 0;
+            const MAX_OUTPUT_BYTES = 128 * 1024; // 128 KB buffer flood protection
+            let isOutputCapped = false;
+
             const executionTimeout = setTimeout(() => {
                 if (activeProcess === runProcess) {
-                    try { runProcess.kill(); } catch (_) {}
+                    try { killProcessTree(runProcess); } catch (_) {}
                     socket.emit('terminal_output', "\n[Process terminated: Execution limit of 20s exceeded]\n");
                     socket.emit('process_exit', { code: 1 });
                     activeProcess = null;
@@ -4753,10 +4786,30 @@ io.on('connection', (socket) => {
             });
 
             runProcess.stdout.on('data', (data) => {
+                if (isOutputCapped) return;
+                totalOutputBytes += data.length;
+                if (totalOutputBytes > MAX_OUTPUT_BYTES) {
+                    isOutputCapped = true;
+                    try { killProcessTree(runProcess); } catch (_) {}
+                    socket.emit('terminal_output', "\n\n[Process terminated: Execution output exceeded 128 KB limit (Infinite output loop detected)]\n");
+                    socket.emit('process_exit', { code: 1 });
+                    activeProcess = null;
+                    return;
+                }
                 socket.emit('terminal_output', data.toString());
             });
 
             runProcess.stderr.on('data', (data) => {
+                if (isOutputCapped) return;
+                totalOutputBytes += data.length;
+                if (totalOutputBytes > MAX_OUTPUT_BYTES) {
+                    isOutputCapped = true;
+                    try { killProcessTree(runProcess); } catch (_) {}
+                    socket.emit('terminal_output', "\n\n[Process terminated: Execution output exceeded 128 KB limit (Infinite output loop detected)]\n");
+                    socket.emit('process_exit', { code: 1 });
+                    activeProcess = null;
+                    return;
+                }
                 socket.emit('terminal_output', data.toString());
             });
 
@@ -4777,7 +4830,7 @@ io.on('connection', (socket) => {
 
     socket.on('stop_code', () => {
         if (activeProcess) {
-            activeProcess.kill();
+            try { killProcessTree(activeProcess); } catch (_) {}
             socket.emit('terminal_output', "\n[Process stopped by user]\n");
             socket.emit('process_exit', { code: 0 });
             activeProcess = null;
@@ -4808,6 +4861,28 @@ io.on('connection', (socket) => {
         }
         if (!Array.isArray(testCases) || testCases.length === 0) {
             return socket.emit('test_cases_results', { results: [] });
+        }
+
+        // Security check: Scan C# code for dangerous APIs prior to test evaluation
+        const securityCheck = scanCSharpCode(code, extraFiles);
+        if (!securityCheck.isSafe) {
+            socket.emit('compiler_diagnostics', [{
+                severity: 'error',
+                message: `[Security Violation] ${securityCheck.message}`,
+                startLineNumber: securityCheck.line || 1,
+                startColumn: securityCheck.column || 1,
+                endLineNumber: securityCheck.line || 1,
+                endColumn: (securityCheck.column || 1) + 12
+            }]);
+            const results = (testCases || []).map(tc => ({
+                id: tc.id,
+                status: 'error',
+                passed: false,
+                actualOutput: '',
+                expectedOutput: tc.expectedOutput || '',
+                error: `Security Violation: ${securityCheck.message} (File: ${securityCheck.fileName}, Line ${securityCheck.line})`
+            }));
+            return socket.emit('test_cases_results', { results });
         }
 
         const studentKey = socket.user?.id
@@ -4935,7 +5010,7 @@ io.on('connection', (socket) => {
 
             const execTimeout = setTimeout(() => {
                 killed = true;
-                try { rp.kill(); } catch (_) {}
+                try { killProcessTree(rp); } catch (_) {}
                 const result = {
                     id: tc.id,
                     status: 'error',
@@ -5424,7 +5499,7 @@ io.on('connection', (socket) => {
 
     socket.on('student_leave_workspace', (data) => {
         if (activeProcess) {
-            try { activeProcess.kill(); } catch (_) {}
+            try { killProcessTree(activeProcess); } catch (_) {}
             activeProcess = null;
         }
         const studentId = socket.data.studentId || data?.studentId;
@@ -5467,7 +5542,7 @@ io.on('connection', (socket) => {
 
     socket.on('disconnect', async () => {
         if (activeProcess) {
-            try { activeProcess.kill(); } catch (_) {}
+            try { killProcessTree(activeProcess); } catch (_) {}
             activeProcess = null;
         }
         const studentId = socket.data.studentId || socket.user?.id;
@@ -5873,7 +5948,7 @@ function start(port = process.env.PORT || 3001) {
         server.listen(p, '0.0.0.0', () => {
             const lanIps = getLanIpAddresses();
             console.log('\n========================================================');
-            console.log('  🎓 THE VERITY - OFFLINE COMLAB / LAN SERVER READY');
+            console.log('  THE VERITY - OFFLINE COMLAB / LAN SERVER READY');
             console.log('========================================================');
             console.log(`  Local Machine:     http://localhost:${p}`);
             if (lanIps.length > 0) {
@@ -5883,11 +5958,11 @@ function start(port = process.env.PORT || 3001) {
                 });
             }
             console.log('--------------------------------------------------------');
-            console.log(`  📦 Database Provider: ${db.providerName}`);
+            console.log(`  Database Provider:   ${db.providerName}`);
             if (frontendDistPath) {
-                console.log(`  🌐 Serving Web App:   ${frontendDistPath}`);
+                console.log(`  Serving Web App:     ${frontendDistPath}`);
             }
-            console.log('  🔒 100% Offline Capable: No external internet required');
+            console.log('  100% Offline Capable: No external internet required');
             console.log('========================================================\n');
             
             // Check if this instance is designated as the Host/Teacher Server

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 // IMPORTING PROFESSIONAL SVGS
-import { Home, Calendar, ClipboardList, Settings, User, MoreVertical, Play, ArrowLeft } from 'lucide-react';
+import { Home, Calendar, ClipboardList, Settings, User, MoreVertical, Play, ArrowLeft, Link2 } from 'lucide-react';
 
 // Fallback shown only if the teacher hasn't created any classwork for this class yet.
 const DEFAULT_ASSIGNMENTS = [
@@ -152,7 +152,9 @@ export default function ClassroomView({ classroom, onBack, onOpenAssignment, soc
                               return <video key={i} src={att.url} controls style={styles.attachVideo} />;
                             }
                             return (
-                              <a key={i} href={att.url} target="_blank" rel="noreferrer" style={styles.attachLink}>🔗 {att.name}</a>
+                              <a key={i} href={att.url} target="_blank" rel="noreferrer" style={{ ...styles.attachLink, display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                                <Link2 size={13} /> {att.name}
+                              </a>
                             );
                           })}
                         </div>

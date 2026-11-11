@@ -6,7 +6,7 @@ function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
-    kiosk: true, // 👈 THIS IS THE LOCKDOWN: Makes it full screen, no exit
+    kiosk: true, // THIS IS THE LOCKDOWN: Makes it full screen, no exit
     webPreferences: {
   preload: path.join(__dirname, 'preload.js'), // Add this
   nodeIntegration: false, // Recommended for security

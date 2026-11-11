@@ -1,9 +1,9 @@
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { Search, AlertCircle } from 'lucide-react';
-import { getSecurityLogs, logSecurityEvent } from '../../utils/securityLogger';
+import { getSecurityLogs, logSecurityEvent } from '../../data/securityLogger';
 import { useDarkMode } from '../../hooks/useDarkMode';
-import { apiFetch } from '../../utils/api';
+import { apiFetch } from '../../data/api';
 
 const getStyles = (isDark) => ({
   pageWrap: {

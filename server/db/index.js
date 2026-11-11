@@ -17,7 +17,7 @@ for (const p of envCandidates) {
     if (fs.existsSync(p)) {
         try {
             require('dotenv').config({ path: p });
-        } catch (_) {}
+        } catch (_) { }
     }
 }
 
@@ -140,18 +140,18 @@ function initSqlite() {
         const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..');
         const DB_FILE = path.join(DATA_DIR, 'database.sqlite');
         sqliteDb = openSqliteDatabase(DB_FILE);
-        
+
         // WAL mode uses POSIX shared memory (mmap) which segfaults (exit 139) in Docker overlayfs
         if (process.platform === 'win32') {
-            try { sqliteDb.pragma('journal_mode = WAL'); } catch (e) {}
+            try { sqliteDb.pragma('journal_mode = WAL'); } catch (e) { }
         } else {
-            try { sqliteDb.pragma('journal_mode = DELETE'); } catch (e) {}
+            try { sqliteDb.pragma('journal_mode = DELETE'); } catch (e) { }
         }
-        try { sqliteDb.pragma('synchronous = NORMAL'); } catch (e) {}
-        try { sqliteDb.pragma('busy_timeout = 5000'); } catch (e) {}
+        try { sqliteDb.pragma('synchronous = NORMAL'); } catch (e) { }
+        try { sqliteDb.pragma('busy_timeout = 5000'); } catch (e) { }
 
-    // Run basic SQLite schema directly on this instance
-    sqliteDb.exec(`
+        // Run basic SQLite schema directly on this instance
+        sqliteDb.exec(`
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL,
@@ -304,48 +304,48 @@ function initSqlite() {
         VALUES ('System Admin', 'admin@verity.com', 'admin', 'Admin', 'Active');
     `);
 
-    try { sqliteDb.exec(`ALTER TABLE classrooms ADD COLUMN instructor_email TEXT;`); } catch (e) {}
-    try { sqliteDb.exec(`ALTER TABLE classrooms ADD COLUMN theme TEXT;`); } catch (e) {}
-    try { sqliteDb.exec(`ALTER TABLE users ADD COLUMN avatar TEXT;`); } catch (e) {}
-    try { sqliteDb.exec(`ALTER TABLE security_flags ADD COLUMN alt_tab_copy_paste_count INTEGER DEFAULT 0;`); } catch (e) {}
+        try { sqliteDb.exec(`ALTER TABLE classrooms ADD COLUMN instructor_email TEXT;`); } catch (e) { }
+        try { sqliteDb.exec(`ALTER TABLE classrooms ADD COLUMN theme TEXT;`); } catch (e) { }
+        try { sqliteDb.exec(`ALTER TABLE users ADD COLUMN avatar TEXT;`); } catch (e) { }
+        try { sqliteDb.exec(`ALTER TABLE security_flags ADD COLUMN alt_tab_copy_paste_count INTEGER DEFAULT 0;`); } catch (e) { }
 
-    try {
-        sqliteDb.exec(`
+        try {
+            sqliteDb.exec(`
             INSERT OR IGNORE INTO admin_users (name, email, password, role, lastLogin, status, avatar)
             SELECT name, email, password, role, lastLogin, status, avatar FROM users WHERE LOWER(role) = 'admin' OR LOWER(email) = 'admin@verity.com';
             DELETE FROM users WHERE LOWER(role) = 'admin' OR LOWER(email) = 'admin@verity.com';
         `);
-    } catch (e) {
-        console.warn('[Database] admin_users migration notice:', e.message);
-    }
+        } catch (e) {
+            console.warn('[Database] admin_users migration notice:', e.message);
+        }
 
-    // Ensure all classrooms have a unique class code and create unique index
-    try {
-        const rows = sqliteDb.prepare('SELECT id, code FROM classrooms').all();
-        const taken = new Set();
-        const duplicatesOrEmpty = [];
-        for (const r of rows) {
-            const c = (r.code || '').trim().toLowerCase();
-            if (!c || taken.has(c)) {
-                duplicatesOrEmpty.push(r);
-            } else {
-                taken.add(c);
+        // Ensure all classrooms have a unique class code and create unique index
+        try {
+            const rows = sqliteDb.prepare('SELECT id, code FROM classrooms').all();
+            const taken = new Set();
+            const duplicatesOrEmpty = [];
+            for (const r of rows) {
+                const c = (r.code || '').trim().toLowerCase();
+                if (!c || taken.has(c)) {
+                    duplicatesOrEmpty.push(r);
+                } else {
+                    taken.add(c);
+                }
             }
+            const updateStmt = sqliteDb.prepare('UPDATE classrooms SET code = ? WHERE id = ?');
+            for (const r of duplicatesOrEmpty) {
+                const newCode = generateClassCodeSync(taken);
+                updateStmt.run(newCode, r.id);
+            }
+            sqliteDb.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_classrooms_unique_code ON classrooms(code);`);
+        } catch (migErr) {
+            console.warn('[Database] Classroom code migration notice (SQLite):', migErr.message);
         }
-        const updateStmt = sqliteDb.prepare('UPDATE classrooms SET code = ? WHERE id = ?');
-        for (const r of duplicatesOrEmpty) {
-            const newCode = generateClassCodeSync(taken);
-            updateStmt.run(newCode, r.id);
-        }
-        sqliteDb.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_classrooms_unique_code ON classrooms(code);`);
-    } catch (migErr) {
-        console.warn('[Database] Classroom code migration notice (SQLite):', migErr.message);
-    }
 
-    provider = 'sqlite';
-    seedFromDatabaseJson(sqliteDb, DATA_DIR);
-    console.log(`[Database] Connected to SQLite (Local Storage, engine: ${sqliteDb.engine}): ${DB_FILE}`);
-    return sqliteDb;
+        provider = 'sqlite';
+        seedFromDatabaseJson(sqliteDb, DATA_DIR);
+        console.log(`[Database] Connected to SQLite (Local Storage, engine: ${sqliteDb.engine}): ${DB_FILE}`);
+        return sqliteDb;
     } catch (err) {
         console.error('[Database] Failed to initialize SQLite:', err.message);
     }
@@ -367,10 +367,10 @@ function parseDatabaseUrl(raw) {
     }
 
     // 3. Check for placeholders
-    const hasPlaceholder = url.includes('[YOUR-PASSWORD]') || 
-                           url.includes('[PASSWORD]') || 
-                           url.includes(':YOUR-PASSWORD@') || 
-                           url.includes(':PASSWORD@');
+    const hasPlaceholder = url.includes('[YOUR-PASSWORD]') ||
+        url.includes('[PASSWORD]') ||
+        url.includes(':YOUR-PASSWORD@') ||
+        url.includes(':PASSWORD@');
 
     // 4. Auto-strip brackets around password ONLY if user typed :[myActualPassword]@
     if (!hasPlaceholder) {
@@ -397,7 +397,7 @@ async function initPostgres(connStr = cleanedUrl) {
     // Supabase requires SSL with rejectUnauthorized: false in Node environments
     const isSupabase = connStr.includes('supabase.co') || connStr.includes('pooler.supabase.com');
     const sslConfig = isSupabase || process.env.PG_SSL === 'true' || !connStr.includes('localhost')
-        ? { rejectUnauthorized: false } 
+        ? { rejectUnauthorized: false }
         : undefined;
 
     pgPool = new Pool({
@@ -414,12 +414,12 @@ async function initPostgres(connStr = cleanedUrl) {
     const client = await pgPool.connect();
     try {
         console.log('[Database] Successfully connected to PostgreSQL / Supabase!');
-        
+
         // Prevent long lock acquisitions from hanging the server and deadlocking incoming queries
         try {
             await client.query("SET lock_timeout = '2000ms';");
             await client.query("SET statement_timeout = '5000ms';");
-        } catch (_) {}
+        } catch (_) { }
 
         // Check if schema already exists
         const tableCheck = await client.query("SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'users' LIMIT 1;").catch(() => ({ rows: [] }));
@@ -475,7 +475,7 @@ async function initPostgres(connStr = cleanedUrl) {
                                             lastLogin = excluded.lastLogin,
                                             avatar = COALESCE(excluded.avatar, users.avatar)
                                     `).run(u.name || '', u.email, u.password || '', u.role || 'Student', u.status || 'Active', u.lastlogin || null, u.avatar || null);
-                                } catch (_) {}
+                                } catch (_) { }
                             }
                         }
                     }
@@ -500,7 +500,7 @@ async function initPostgres(connStr = cleanedUrl) {
                         if (a.email) {
                             try {
                                 upsertAdmin.run(a.id, a.name || '', a.email, a.password || '', a.role || 'Admin', a.status || 'Active', a.lastlogin || null, a.avatar || null);
-                            } catch (_) {}
+                            } catch (_) { }
                         }
                     }
                 }
@@ -525,7 +525,7 @@ async function initPostgres(connStr = cleanedUrl) {
                         try {
                             upsertClassroom.run(c.id, c.code || '', c.section || '', c.name || '', c.subject || '', c.instructor || '', c.instructor_email || null, c.theme || null);
                             cCount++;
-                        } catch (_) {}
+                        } catch (_) { }
                     }
                     console.log(`[Database] Synced ${cCount} classrooms from Supabase into local SQLite.`);
                 }
@@ -549,7 +549,7 @@ async function initPostgres(connStr = cleanedUrl) {
                         try {
                             upsertCw.run(cw.id, cw.classroom_id, cw.title, cw.description, cw.duedate, cw.type || '', cw.created_at ? new Date(cw.created_at).toISOString() : null);
                             cwCount++;
-                        } catch (_) {}
+                        } catch (_) { }
                     }
                     console.log(`[Database] Synced ${cwCount} classwork activities from Supabase into local SQLite.`);
                 }
@@ -577,7 +577,7 @@ async function initPostgres(connStr = cleanedUrl) {
                                     en.enrolled_at ? new Date(en.enrolled_at).toISOString() : null
                                 );
                                 enCount++;
-                            } catch (_) {}
+                            } catch (_) { }
                         }
                     }
                     console.log(`[Database] Synced ${enCount} enrollments from Supabase into local SQLite.`);
@@ -600,7 +600,7 @@ async function initPostgres(connStr = cleanedUrl) {
                         try {
                             dedupSub.run(s.assignment_id, s.student_name || '', s.id);
                             upsertSub.run(s.id, s.assignment_id, s.student_name, s.history, s.submittedat || s.submittedAt || null);
-                        } catch (_) {}
+                        } catch (_) { }
                     }
                     console.log(`[Database] Synced ${pgSubmissions.rows.length} submissions from Supabase into local SQLite.`);
                 }
@@ -621,7 +621,7 @@ async function initPostgres(connStr = cleanedUrl) {
                         try {
                             upsertGrade.run(String(g.assignment_id), String(g.student_id), g.grade || '', g.feedback || '', g.graded_at ? new Date(g.graded_at).toISOString() : null);
                             gCount++;
-                        } catch (_) {}
+                        } catch (_) { }
                     }
                     console.log(`[Database] Synced ${gCount} grades from Supabase into local SQLite.`);
                 }
@@ -645,7 +645,7 @@ async function initPostgres(connStr = cleanedUrl) {
                         try {
                             upsertAnn.run(an.id, an.classroom_id, an.title || '', an.details || '', an.author || '', an.posted || null, an.created_at || null);
                             anCount++;
-                        } catch (_) {}
+                        } catch (_) { }
                     }
                     console.log(`[Database] Synced ${anCount} announcements from Supabase into local SQLite.`);
                 }
@@ -666,16 +666,16 @@ function isNetworkError(err) {
     const msg = String(err.message || '').toLowerCase();
     const code = String(err.code || '');
     return code === 'ECONNREFUSED' ||
-           code === 'ECONNRESET' ||
-           code === 'ETIMEDOUT' ||
-           code === 'ENOTFOUND' ||
-           code === 'EAI_AGAIN' ||
-           code === '57P01' ||
-           msg.includes('connection terminated') ||
-           msg.includes('client has already been closed') ||
-           msg.includes('timeout') ||
-           msg.includes('getaddrinfo') ||
-           msg.includes('connection error');
+        code === 'ECONNRESET' ||
+        code === 'ETIMEDOUT' ||
+        code === 'ENOTFOUND' ||
+        code === 'EAI_AGAIN' ||
+        code === '57P01' ||
+        msg.includes('connection terminated') ||
+        msg.includes('client has already been closed') ||
+        msg.includes('timeout') ||
+        msg.includes('getaddrinfo') ||
+        msg.includes('connection error');
 }
 
 // Initialization promise
@@ -685,11 +685,11 @@ const readyPromise = (async () => {
 
     if (cleanedUrl) {
         if (parsedDb && parsedDb.hasPlaceholder) {
-            console.error('❌ [Database] Configuration Error: Your DATABASE_URL still contains the placeholder "[YOUR-PASSWORD]".');
-            console.error('👉 Please go to Render Dashboard -> Environment -> edit DATABASE_URL and replace [YOUR-PASSWORD] with your actual Supabase database password.');
+            console.error('[Database] Configuration Error: Your DATABASE_URL still contains the placeholder "[YOUR-PASSWORD]".');
+            console.error('[Database] Please go to Render Dashboard -> Environment -> edit DATABASE_URL and replace [YOUR-PASSWORD] with your actual Supabase database password.');
             provider = 'sqlite';
         } else if (!cleanedUrl.startsWith('postgres://') && !cleanedUrl.startsWith('postgresql://')) {
-            console.error(`❌ [Database] Provided DATABASE_URL is not recognized as a PostgreSQL URL (must start with postgresql:// or postgres://).`);
+            console.error(`[Database] Provided DATABASE_URL is not recognized as a PostgreSQL URL (must start with postgresql:// or postgres://).`);
             provider = 'sqlite';
         } else {
             try {
@@ -698,8 +698,8 @@ const readyPromise = (async () => {
             } catch (err) {
                 console.warn(`[Database] PostgreSQL connection failed: ${err.message}`);
                 if (err.code === 'ENETUNREACH' || (cleanedUrl.includes('db.') && cleanedUrl.includes('.supabase.co'))) {
-                    console.warn('⚠️  [Database] IPv6 Error: Render does not support direct IPv6 connections (db.*.supabase.co).');
-                    console.warn('⚠️  [Database] Fix: In your Supabase Dashboard, click "Connect" -> select "Connection Pooler" (pooler.supabase.com:6543 or 5432) which supports IPv4!');
+                    console.warn('[Database] IPv6 Error: Render does not support direct IPv6 connections (db.*.supabase.co).');
+                    console.warn('[Database] Fix: In your Supabase Dashboard, click "Connect" -> select "Connection Pooler" (pooler.supabase.com:6543 or 5432) which supports IPv4!');
                 }
                 console.warn('[Database] Falling back to local SQLite so your app stays fully functional.');
                 provider = 'sqlite';
@@ -740,7 +740,7 @@ const db = {
         try {
             const { triggerSync } = require('./cloudSync');
             return triggerSync();
-        } catch (_) {}
+        } catch (_) { }
     },
     getSyncStatus: () => {
         try {
@@ -830,14 +830,14 @@ const db = {
                 if (sqliteDb) {
                     try {
                         sqliteDb.prepare(sql).run(...params);
-                    } catch (_) {}
+                    } catch (_) { }
                 }
 
                 // Trigger differential cloud sync to reconcile mutations with local SQLite
                 try {
                     const { triggerSync } = require('./cloudSync');
                     triggerSync();
-                } catch (_) {}
+                } catch (_) { }
 
                 return {
                     lastInsertRowid: lastId,
@@ -867,15 +867,15 @@ const db = {
                     if (isInsert && !hasReturning && !isIdLessTable) {
                         pgSql += ' RETURNING id';
                     }
-                    pgPool.query(pgSql, params).catch(() => {});
-                } catch (_) {}
+                    pgPool.query(pgSql, params).catch(() => { });
+                } catch (_) { }
             }
 
             // Trigger differential cloud sync to reconcile mutations with Supabase
             try {
                 const { triggerSync } = require('./cloudSync');
                 triggerSync();
-            } catch (_) {}
+            } catch (_) { }
 
             return res;
         }

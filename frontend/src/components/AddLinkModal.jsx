@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Link2, X, Clipboard, ExternalLink, Globe } from 'lucide-react';
+import { Clipboard, Globe } from 'lucide-react';
+import AddLinkHeader from './addLink/AddLinkHeader';
+import AddLinkPreview from './addLink/AddLinkPreview';
 
 /**
  * AddLinkModal
@@ -35,7 +37,7 @@ export default function AddLinkModal({ isOpen, onClose, onAdd, isDark = false })
     }
   }, [isOpen]);
 
-  // Keyboard navigation: Escape to close, Enter to submit
+  // Keyboard navigation: Escape to close
   useEffect(() => {
     if (!isOpen) return;
     const handleKeyDown = (e) => {
@@ -143,60 +145,7 @@ export default function AddLinkModal({ isOpen, onClose, onAdd, isDark = false })
           }}
           onClick={(e) => e.stopPropagation()}
         >
-          {/* Header */}
-          <div
-            style={{
-              padding: '20px 24px 16px',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              borderBottom: `1px solid ${colors.border}`
-            }}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-              <div
-                style={{
-                  width: '38px',
-                  height: '38px',
-                  borderRadius: '10px',
-                  backgroundColor: isDark ? '#133527' : '#ECFDF5',
-                  color: '#10B981',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center'
-                }}
-              >
-                <Link2 size={20} />
-              </div>
-              <div>
-                <h3 style={{ margin: 0, fontSize: '1.12rem', fontWeight: '700', color: colors.title }}>
-                  Paste a Link
-                </h3>
-                <p style={{ margin: 0, fontSize: '0.8rem', color: colors.subText, marginTop: '2px' }}>
-                  Attach an external URL or resource
-                </p>
-              </div>
-            </div>
-
-            <button
-              onClick={onClose}
-              style={{
-                background: 'transparent',
-                border: 'none',
-                cursor: 'pointer',
-                color: colors.subText,
-                padding: '6px',
-                borderRadius: '8px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center'
-              }}
-              title="Close (Esc)"
-              type="button"
-            >
-              <X size={20} />
-            </button>
-          </div>
+          <AddLinkHeader onClose={onClose} colors={colors} isDark={isDark} />
 
           {/* Body Form */}
           <form onSubmit={handleSubmit} style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
@@ -295,33 +244,7 @@ export default function AddLinkModal({ isOpen, onClose, onAdd, isDark = false })
             </div>
 
             {/* Live Preview if URL entered */}
-            {url.trim() && (
-              <div
-                style={{
-                  backgroundColor: colors.previewBg,
-                  border: `1px solid ${colors.previewBorder}`,
-                  borderRadius: '10px',
-                  padding: '10px 14px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '8px',
-                  fontSize: '0.82rem',
-                  color: colors.previewText
-                }}
-              >
-                <ExternalLink size={14} style={{ flexShrink: 0 }} />
-                <span style={{ fontWeight: '600', flexShrink: 0 }}>Preview:</span>
-                <span
-                  style={{
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap'
-                  }}
-                >
-                  {title.trim() || url.trim()}
-                </span>
-              </div>
-            )}
+            <AddLinkPreview url={url} title={title} colors={colors} />
 
             {/* Footer Buttons */}
             <div

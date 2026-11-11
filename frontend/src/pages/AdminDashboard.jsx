@@ -6,7 +6,7 @@ import UserManagement from './admin/UserManagement';
 import GlobalClasses from './admin/GlobalClasses';
 import SecurityLogs from './admin/SecurityLogs';
 import AdminSettings from './admin/AdminSettings';
-import { apiFetch } from '../utils/api';
+import { apiFetch } from '../data/api';
 
 // Shared styles for modals and global elements (moved from original file)
 const sh = {

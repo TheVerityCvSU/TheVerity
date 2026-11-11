@@ -1,7 +1,7 @@
 import React, { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import './index.css';
-import './utils/monacoConfig.js'; // offline Monaco (no CDN)
+import './utils/monaco/monacoConfig.js'; // offline Monaco (no CDN)
 import App from './App.jsx';
 import { GoogleOAuthProvider } from '@react-oauth/google';
 import { MotionConfig } from 'framer-motion';

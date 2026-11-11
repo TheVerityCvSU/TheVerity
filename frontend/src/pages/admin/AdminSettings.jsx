@@ -1,1319 +1,49 @@
-import { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import {
-  Shield, Users, HardDrive, Calendar,
-  AlertOctagon, Database, Clock, KeyRound, Sparkles,
-  Bell, Monitor, Code2, Download, Moon, Sun,
-  LayoutList, Volume2, VolumeX, Timer, Check,
-  AlertTriangle, Clipboard, Sliders, RefreshCw,
-  CheckCircle2, AlertCircle,
-  Server
-} from 'lucide-react';
-import { logSecurityEvent } from '../../utils/securityLogger';
-import { apiFetch } from '../../utils/api';
+import { Sparkles, Shield, Code2, Bell, Users, Database } from 'lucide-react';
 import { useDarkMode } from '../../hooks/useDarkMode';
 import { useCurrentUser } from '../../hooks/useCurrentUser';
+import {
+  DEFAULT_SETTINGS,
+  loadSystemSettings,
+  saveSystemSettings,
+} from '../../data/adminSettings';
+import { getStyles } from './adminSettingsStyles';
+
+import GeneralPreferencesTab from '../../components/admin/settings/GeneralPreferencesTab';
+import KioskSecurityTab from '../../components/admin/settings/KioskSecurityTab';
+import ExamDefaultsTab from '../../components/admin/settings/ExamDefaultsTab';
+import NotificationsUITab from '../../components/admin/settings/NotificationsUITab';
+import RolesPermissionsTab from '../../components/admin/settings/RolesPermissionsTab';
+import SystemDataTab from '../../components/admin/settings/SystemDataTab';
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:3001';
-
-// ═══ DESIGN TOKENS (dynamic) ═══
-const getTokens = (isDark) => ({
-  blue: '#007bff',
-  green: '#22c55e',
-  red: '#ef4444',
-  amber: '#f59e0b',
-  border: isDark ? '#3a3a3a' : '#e2e8f0',
-  muted: isDark ? '#94a3b8' : '#64748b',
-  text: isDark ? '#f1f5f9' : '#1e293b',
-  subtext: isDark ? '#94a3b8' : '#475569',
-  bg: isDark ? '#2a2a2a' : '#f8fafc',
-  card: isDark ? '#2c2c2c' : '#ffffff',
-});
-
-const getStyles = (isDark) => {
-  const T = getTokens(isDark);
-  return {
-    T,
-    pageWrap: {
-      flex: 1, display: 'flex', flexDirection: 'column', gap: '20px',
-      overflowY: 'auto', minWidth: 0, paddingBottom: '100px',
-      MsOverflowStyle: 'none', scrollbarWidth: 'none',
-    },
-    tabBar: {
-      display: 'flex', gap: '6px', padding: '6px',
-      backgroundColor: T.card, border: `1px solid ${T.border}`,
-      borderRadius: '9999px', width: 'fit-content', flexWrap: 'wrap',
-      boxShadow: isDark ? '0 2px 8px rgba(0,0,0,0.3)' : '0 2px 8px rgba(0,0,0,0.04)',
-    },
-    tabBtn: (active) => ({
-      display: 'flex', alignItems: 'center', gap: '7px',
-      padding: '9px 18px', borderRadius: '9999px', border: 'none',
-      backgroundColor: active ? T.blue : 'transparent',
-      color: active ? '#ffffff' : T.subtext,
-      fontWeight: '700', fontSize: '0.82rem', cursor: 'pointer',
-      transition: 'all 0.2s ease',
-      boxShadow: active ? '0 4px 12px rgba(0,123,255,0.3)' : 'none',
-    }),
-    card: {
-      backgroundColor: T.card, borderRadius: '24px', padding: '28px',
-      boxShadow: isDark ? '0 4px 20px rgba(0,0,0,0.3)' : '0 4px 20px rgba(0,0,0,0.04)',
-      border: `1px solid ${T.border}`,
-      display: 'flex', flexDirection: 'column', gap: '24px',
-    },
-    sectionTitle: {
-      margin: 0, fontSize: '1.05rem', fontWeight: '800', color: T.text,
-      display: 'flex', alignItems: 'center', gap: '8px',
-    },
-    sectionSub: { margin: '4px 0 16px', fontSize: '0.82rem', color: T.muted },
-    label: { display: 'block', fontSize: '0.82rem', fontWeight: '700', color: T.subtext, marginBottom: '6px' },
-    input: {
-      width: '100%', padding: '11px 18px', borderRadius: '9999px',
-      border: `1px solid ${T.border}`, backgroundColor: T.bg,
-      color: isDark ? '#e2e8f0' : '#334155', fontSize: '0.88rem', outline: 'none', boxSizing: 'border-box',
-    },
-    select: {
-      width: '100%', padding: '11px 18px', borderRadius: '9999px',
-      border: `1px solid ${T.border}`, backgroundColor: T.bg,
-      color: isDark ? '#e2e8f0' : '#334155', fontSize: '0.88rem', outline: 'none',
-      boxSizing: 'border-box', cursor: 'pointer',
-    },
-    textarea: {
-      width: '100%', padding: '12px 18px', borderRadius: '16px',
-      border: `1px solid ${T.border}`, backgroundColor: T.bg,
-      color: isDark ? '#e2e8f0' : '#334155', fontSize: '0.88rem', outline: 'none',
-      boxSizing: 'border-box', fontFamily: 'inherit', resize: 'vertical',
-    },
-    divider: { height: '1px', backgroundColor: T.border },
-    floatingBar: {
-      position: 'fixed', bottom: '24px', right: '32px',
-      backgroundColor: T.card, border: `1px solid ${T.border}`,
-      borderRadius: '9999px', padding: '12px 24px',
-      boxShadow: isDark ? '0 10px 30px rgba(0,0,0,0.4)' : '0 10px 30px rgba(0,0,0,0.12)',
-      display: 'flex', alignItems: 'center', gap: '16px', zIndex: 100,
-    },
-    saveBtn: (saved) => ({
-      display: 'inline-flex', alignItems: 'center', gap: '8px',
-      padding: '10px 24px',
-      backgroundColor: saved ? T.green : T.blue,
-      color: '#ffffff', border: 'none', borderRadius: '9999px',
-      fontWeight: '700', fontSize: '0.88rem', cursor: 'pointer',
-      boxShadow: saved ? '0 4px 14px rgba(34,197,94,0.35)' : '0 4px 14px rgba(0,123,255,0.35)',
-      transition: 'all 0.25s ease',
-    }),
-    secBtn: {
-      display: 'inline-flex', alignItems: 'center', gap: '8px',
-      padding: '10px 20px', backgroundColor: T.bg, color: isDark ? '#e2e8f0' : '#334155',
-      border: `1px solid ${T.border}`, borderRadius: '9999px',
-      fontWeight: '700', fontSize: '0.85rem', cursor: 'pointer',
-      transition: 'all 0.2s ease',
-    },
-  };
-};
-
-// Mutable module-level references updated by the main component on each render
-let styles = getStyles(false);
-let T = styles.T;
-
-// ═══ TOGGLE COMPONENT ═══
-const Toggle = ({ on, onToggle, label, subtext, accent }) => {
-  const tok = T;
-  const accentColor = accent || tok.green;
-  return (
-  <div style={{
-    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-    padding: '14px 18px', backgroundColor: tok.bg, borderRadius: '16px',
-    border: `1px solid ${tok.border}`,
-  }}>
-    <div>
-      <span style={{ fontSize: '0.88rem', fontWeight: '700', color: tok.text, display: 'block' }}>{label}</span>
-      {subtext && <span style={{ fontSize: '0.78rem', color: tok.muted, marginTop: '2px', display: 'block' }}>{subtext}</span>}
-    </div>
-    <motion.div
-      whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.9 }} onClick={onToggle}
-      style={{
-        width: '50px', height: '26px', borderRadius: '9999px',
-        backgroundColor: on ? accentColor : '#cbd5e1',
-        position: 'relative', transition: 'background 0.25s ease',
-        display: 'flex', alignItems: 'center', padding: '3px',
-        cursor: 'pointer', flexShrink: 0,
-      }}
-    >
-      <motion.div
-        animate={{ x: on ? 24 : 0 }}
-        transition={{ type: 'spring', stiffness: 500, damping: 30 }}
-        style={{ width: '20px', height: '20px', backgroundColor: '#ffffff', borderRadius: '50%', boxShadow: '0 2px 4px rgba(0,0,0,0.2)' }}
-      />
-    </motion.div>
-  </div>
-  );
-};
-
-// ═══ SLIDER COMPONENT ═══
-const Slider = ({ value, onChange, min, max, step = 1, label, unit = '', subtext }) => {
-  const tok = T;
-  return (
-  <div style={{ padding: '14px 18px', backgroundColor: tok.bg, borderRadius: '16px', border: `1px solid ${tok.border}` }}>
-    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-      <div>
-        <span style={{ fontSize: '0.88rem', fontWeight: '700', color: tok.text }}>{label}</span>
-        {subtext && <span style={{ fontSize: '0.78rem', color: tok.muted, display: 'block', marginTop: '2px' }}>{subtext}</span>}
-      </div>
-      <span style={{
-        fontSize: '1rem', fontWeight: '800', color: tok.blue,
-        backgroundColor: '#eff6ff', padding: '4px 14px', borderRadius: '9999px',
-      }}>
-        {value}{unit}
-      </span>
-    </div>
-    <input
-      type="range" min={min} max={max} step={step} value={value}
-      onChange={e => onChange(Number(e.target.value))}
-      style={{ width: '100%', accentColor: tok.blue, cursor: 'pointer' }}
-    />
-    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', color: tok.muted, marginTop: '4px' }}>
-      <span>{min}{unit}</span>
-      <span>{max}{unit}</span>
-    </div>
-  </div>
-  );
-};
-
-// ═══ DEFAULT SETTINGS ═══
-const DEFAULT_SETTINGS = {
-  general: {
-    institutionName: 'Verity Institute of Technology',
-    logoUrl: '',
-    currentTerm: 'Fall 2026',
-    termStart: '2026-09-01',
-    termEnd: '2026-12-18',
-    maintenanceMode: false,
-    offlineMessage: 'Verity LMS is currently undergoing scheduled system maintenance. Kiosk examinations and live proctoring will resume shortly.',
-  },
-  security: {
-    flagTabExits: true,
-    blockCopyPaste: true,
-    flagMultipleLogins: true,
-    violationThreshold: 3,
-    sessionTimeout: '30m',
-    passwordPolicies: { specialChars: true, numbers: true, minLength8: true },
-    // New kiosk thresholds
-    cognitivePauseThreshold: 45,
-    strictClipboardBlocking: true,
-    enforceSingleMonitor: false,
-    disableWindowsKeyAltTab: true,
-    blockVirtualMachine: true,
-  },
-  examDefaults: {
-    treatWarningsAsErrors: false,
-    autoSaveInterval: '30s',
-    defaultExamTimer: 60,
-  },
-  notifications: {
-    soundAlerts: true,
-    notifyOnSubmission: true,
-    showToastWarnings: false,
-    highSeverityBehavior: 'blinking',
-  },
-  roles: {
-    allowDeleteCourses: false,
-    allowManageStudents: true,
-    requireAdminApproval: true,
-  },
-  data: {
-    retentionPeriod: '3 Years',
-    lastBackupTime: 'Today at 02:00 AM',
-    autoArchiveAuditLogs: '30 Days',
-    clearLocalStorageOnLogout: true,
-  },
-  uiPrefs: {
-    auditTableDensity: 'Comfortable',
-  },
-};
-
-// ════════════════════════════════════════════════════════════════════
-// TAB 1 — GENERAL PREFERENCES
-// ════════════════════════════════════════════════════════════════════
-const tabVariants = {
-  initial: (direction) => ({ opacity: 0, x: direction > 0 ? 30 : -30 }),
-  animate: { opacity: 1, x: 0, transition: { duration: 0.25, ease: 'easeOut' } },
-  exit: (direction) => ({ opacity: 0, x: direction > 0 ? -30 : 30, transition: { duration: 0.2, ease: 'easeIn' } })
-};
-
-/**
- * Admin Software Update Checker Component
- * Clean, lightweight update checker with brief explanation and direct update flow.
- */
-function AdminCheckUpdateCard() {
-  const { isDark } = useDarkMode();
-  const [status, setStatus] = useState('idle'); // 'idle' | 'checking' | 'latest' | 'available' | 'error'
-  const [updateInfo, setUpdateInfo] = useState(null);
-  const [isDownloading, setIsDownloading] = useState(false);
-  const [downloadProgress, setDownloadProgress] = useState(null); // { percent, transferred, total }
-  const [isUpdateReady, setIsUpdateReady] = useState(false);
-  const [downloadError, setDownloadError] = useState(null);
-  const [isInstalling, setIsInstalling] = useState(false);
-  const [clientAppVersion, setClientAppVersion] = useState(() => import.meta.env.VITE_APP_VERSION || '1.0.0');
-
-  useEffect(() => {
-    if (window.electronAPI?.getAppVersion) {
-      window.electronAPI.getAppVersion().then(v => {
-        if (v) setClientAppVersion(v);
-      }).catch(() => {});
-    }
-
-    const cleanups = [];
-    if (window.electronAPI?.onUpdateDownloadProgress) {
-      cleanups.push(window.electronAPI.onUpdateDownloadProgress((progress) => {
-        setDownloadProgress(progress);
-        setIsDownloading(true);
-        setDownloadError(null);
-      }));
-    }
-    if (window.electronAPI?.onUpdateDownloadComplete) {
-      cleanups.push(window.electronAPI.onUpdateDownloadComplete(() => {
-        setIsDownloading(false);
-        setIsUpdateReady(true);
-        setDownloadProgress(null);
-        setDownloadError(null);
-      }));
-    }
-    if (window.electronAPI?.onUpdateDownloadError) {
-      cleanups.push(window.electronAPI.onUpdateDownloadError((err) => {
-        setIsDownloading(false);
-        setDownloadError(typeof err === 'string' ? err : (err?.error || 'Download failed. Please check network connection.'));
-      }));
-    }
-
-    return () => {
-      cleanups.forEach(fn => fn && fn());
-    };
-  }, []);
-
-  const handleCheckUpdate = async (e) => {
-    const force = e?.altKey || e?.shiftKey;
-    setStatus('checking');
-    setDownloadError(null);
-    setIsUpdateReady(false);
-    setIsDownloading(false);
-    setDownloadProgress(null);
-
-    try {
-      let activeVer = clientAppVersion;
-      if (window.electronAPI?.getAppVersion) {
-        try {
-          const v = await window.electronAPI.getAppVersion();
-          if (v) {
-            activeVer = v;
-            setClientAppVersion(v);
-          }
-        } catch (_) {}
-      }
-
-      const query = new URLSearchParams();
-      query.append('role', 'Administrator');
-      query.append('app', 'admin');
-      if (activeVer) query.append('clientVersion', activeVer);
-      if (force) query.append('force', 'true');
-      const res = await apiFetch(`/api/check-update?${query.toString()}`);
-      if (res && res.ok) {
-        const data = await res.json();
-        setUpdateInfo(data);
-        if (data.updateAvailable) {
-          setStatus('available');
-        } else {
-          setStatus('latest');
-        }
-      } else {
-        setStatus('error');
-      }
-    } catch (err) {
-      console.error('Failed to check for updates:', err);
-      setStatus('error');
-    }
-  };
-
-  const handleUpdateNow = async () => {
-    if (!updateInfo?.downloadUrl) return;
-    setIsDownloading(true);
-    setDownloadError(null);
-    setIsUpdateReady(false);
-    setDownloadProgress({ percent: 0, transferred: 0, total: 0 });
-
-    if (window.electronAPI?.startAppUpdate) {
-      try {
-        const res = await window.electronAPI.startAppUpdate(updateInfo.downloadUrl);
-        if (!res?.success) {
-          setIsDownloading(false);
-          setDownloadError(res?.error || 'Failed to start update download.');
-        }
-      } catch (err) {
-        setIsDownloading(false);
-        setDownloadError(err?.message || 'Update download failed.');
-      }
-    } else {
-      // In-browser fallback
-      try {
-        const a = document.createElement('a');
-        a.href = updateInfo.downloadUrl;
-        a.setAttribute('download', '');
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-      } catch (err) {
-        window.open(updateInfo.downloadUrl, '_blank');
-      }
-      setTimeout(() => setIsDownloading(false), 2000);
-    }
-  };
-
-  const handleRestartAndInstall = async () => {
-    setIsInstalling(true);
-    if (window.electronAPI?.installAppUpdate) {
-      try {
-        const res = await window.electronAPI.installAppUpdate();
-        if (!res?.success) {
-          setIsInstalling(false);
-          setDownloadError(res?.error || 'Failed to launch installer.');
-        }
-      } catch (err) {
-        setIsInstalling(false);
-        setDownloadError(err?.message || 'Failed to launch installer.');
-      }
-    }
-  };
-
-  return (
-    <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '12px' }}>
-        <div>
-          <h3 style={styles.sectionTitle}>
-            <RefreshCw size={18} color={T.blue} />
-            <span>Check for Updates</span>
-          </h3>
-          <p style={styles.sectionSub}>
-            Check if a newer version of The Verity is available. Keep your administrative software up to date with the latest security fixes and features.
-          </p>
-        </div>
-        <div style={{
-          display: 'inline-flex',
-          alignItems: 'center',
-          gap: '8px',
-          padding: '6px 14px',
-          borderRadius: '9999px',
-          backgroundColor: isDark ? '#3a3a3a' : '#f1f5f9',
-          color: isDark ? '#e2e8f0' : '#475569',
-          fontSize: '0.82rem',
-          fontWeight: '700',
-        }}>
-          <span>Current Version:</span>
-          <span style={{ color: T.blue }}>v{clientAppVersion || updateInfo?.currentVersion || '1.0.0'}</span>
-        </div>
-      </div>
-
-      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap', marginTop: '4px' }}>
-        <motion.button
-          whileHover={{ scale: 1.02 }}
-          whileTap={{ scale: 0.98 }}
-          onClick={handleCheckUpdate}
-          disabled={status === 'checking' || isDownloading || isInstalling}
-          style={{
-            ...styles.secBtn,
-            backgroundColor: (status === 'checking' || isDownloading || isInstalling) ? (isDark ? '#4b5563' : '#94a3b8') : T.blue,
-            color: '#ffffff',
-            border: 'none',
-            boxShadow: '0 4px 12px rgba(0, 123, 255, 0.25)',
-            cursor: (status === 'checking' || isDownloading || isInstalling) ? 'not-allowed' : 'pointer'
-          }}
-          title="Click to check for updates"
-        >
-          <RefreshCw
-            size={15}
-            style={{
-              animation: status === 'checking' ? 'spin 1s linear infinite' : 'none',
-            }}
-          />
-          <span>{status === 'checking' ? 'Checking for updates...' : status === 'latest' ? 'Check Again' : 'Check for Updates'}</span>
-        </motion.button>
-
-        {status === 'available' && !isUpdateReady && (
-          <motion.button
-            whileHover={{ scale: 1.02 }}
-            whileTap={{ scale: 0.98 }}
-            onClick={handleUpdateNow}
-            disabled={isDownloading}
-            style={{
-              ...styles.secBtn,
-              backgroundColor: isDownloading ? (isDark ? '#4b5563' : '#94a3b8') : '#16a34a',
-              color: '#ffffff',
-              border: 'none',
-              boxShadow: '0 4px 12px rgba(22, 163, 74, 0.3)',
-              cursor: isDownloading ? 'wait' : 'pointer'
-            }}
-            title="Download update inside The Verity"
-          >
-            <Download size={15} />
-            <span>{isDownloading ? 'Downloading Update...' : 'Update Now'}</span>
-          </motion.button>
-        )}
-
-        {isUpdateReady && (
-          <motion.button
-            whileHover={{ scale: 1.03 }}
-            whileTap={{ scale: 0.97 }}
-            onClick={handleRestartAndInstall}
-            disabled={isInstalling}
-            style={{
-              ...styles.secBtn,
-              backgroundColor: '#16a34a',
-              color: '#ffffff',
-              border: 'none',
-              boxShadow: '0 4px 14px rgba(22, 163, 74, 0.45)',
-              cursor: isInstalling ? 'wait' : 'pointer'
-            }}
-            title="Restart and install the downloaded update"
-          >
-            <RefreshCw size={15} style={{ animation: isInstalling ? 'spin 1s linear infinite' : 'none' }} />
-            <span>{isInstalling ? 'Restarting The Verity...' : 'Restart & Install Now'}</span>
-          </motion.button>
-        )}
-      </div>
-
-      <AnimatePresence>
-        {status === 'latest' && (
-          <motion.div
-            initial={{ opacity: 0, y: 6 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0 }}
-            style={{
-              marginTop: '16px',
-              padding: '12px 16px',
-              borderRadius: '12px',
-              backgroundColor: isDark ? 'rgba(34, 197, 94, 0.12)' : '#dcfce7',
-              border: '1px solid #22c55e',
-              color: isDark ? '#4ade80' : '#15803d',
-              fontSize: '0.85rem',
-              fontWeight: '600',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: '8px'
-            }}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <CheckCircle2 size={16} />
-              <span>You're up to date! The Verity Admin is running the latest version (v{clientAppVersion || updateInfo?.currentVersion || '1.0.0'}).</span>
-            </div>
-            {updateInfo?.downloadUrl && (
-              <div>
-                <button
-                  type="button"
-                  onClick={handleUpdateNow}
-                  disabled={isDownloading}
-                  style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: '6px',
-                    padding: '5px 12px',
-                    borderRadius: '6px',
-                    backgroundColor: isDark ? 'rgba(34, 197, 94, 0.2)' : 'rgba(34, 197, 94, 0.15)',
-                    border: '1px solid #22c55e',
-                    color: isDark ? '#4ade80' : '#15803d',
-                    fontSize: '0.78rem',
-                    fontWeight: '600',
-                    cursor: isDownloading ? 'wait' : 'pointer'
-                  }}
-                >
-                  <Download size={13} />
-                  {isDownloading ? 'Downloading...' : 'Reinstall / Re-sync from Local Server'}
-                </button>
-              </div>
-            )}
-          </motion.div>
-        )}
-
-        {status === 'available' && (
-          <motion.div
-            initial={{ opacity: 0, y: 6 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0 }}
-            style={{
-              marginTop: '16px',
-              padding: '16px 20px',
-              borderRadius: '12px',
-              backgroundColor: isDark ? 'rgba(0, 123, 255, 0.12)' : '#eff6ff',
-              border: `1px solid ${T.blue}`,
-              color: isDark ? '#93c5fd' : '#1d4ed8',
-              fontSize: '0.85rem',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: '10px'
-            }}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: '700' }}>
-              <Sparkles size={16} color={T.blue} />
-              <span>Update Available: Version {updateInfo?.latestVersion}</span>
-            </div>
-            {updateInfo?.releaseNotes && (
-              <div style={{ fontSize: '0.8rem', opacity: 0.9 }}>
-                {updateInfo.releaseNotes}
-              </div>
-            )}
-
-            {/* In-app download progress bar */}
-            {isDownloading && (
-              <div style={{
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '6px',
-                padding: '12px',
-                borderRadius: '10px',
-                backgroundColor: isDark ? 'rgba(0, 0, 0, 0.3)' : 'rgba(255, 255, 255, 0.7)',
-                border: `1px solid ${isDark ? 'rgba(0, 123, 255, 0.3)' : 'rgba(0, 123, 255, 0.2)'}`
-              }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.82rem', fontWeight: '600' }}>
-                  <span>Downloading update inside The Verity...</span>
-                  <span>{downloadProgress ? `${downloadProgress.percent}%` : 'Connecting...'}</span>
-                </div>
-                <div style={{
-                  width: '100%',
-                  height: '8px',
-                  borderRadius: '999px',
-                  backgroundColor: isDark ? '#374151' : '#e2e8f0',
-                  overflow: 'hidden'
-                }}>
-                  <div style={{
-                    width: `${downloadProgress?.percent || 0}%`,
-                    height: '100%',
-                    background: 'linear-gradient(90deg, #3b82f6, #10b981)',
-                    borderRadius: '999px',
-                    transition: 'width 0.2s ease'
-                  }} />
-                </div>
-              </div>
-            )}
-
-            {/* Update ready notice */}
-            {isUpdateReady && (
-              <div style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '10px',
-                padding: '10px 14px',
-                borderRadius: '8px',
-                backgroundColor: isDark ? 'rgba(34, 197, 94, 0.2)' : '#dcfce7',
-                border: '1px solid #22c55e',
-                color: isDark ? '#4ade80' : '#15803d',
-                fontWeight: '600',
-                fontSize: '0.85rem'
-              }}>
-                <CheckCircle2 size={16} color="#22c55e" style={{ flexShrink: 0 }} />
-                <span>Update downloaded successfully! Click "Restart & Install Now" to apply the update seamlessly.</span>
-              </div>
-            )}
-
-            {/* Download error alert */}
-            {downloadError && (
-              <div style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-                padding: '10px 14px',
-                borderRadius: '8px',
-                backgroundColor: isDark ? 'rgba(239, 68, 68, 0.2)' : '#fee2e2',
-                border: '1px solid #ef4444',
-                color: isDark ? '#f87171' : '#b91c1c',
-                fontSize: '0.83rem',
-                fontWeight: '600'
-              }}>
-                <AlertCircle size={16} color="#ef4444" style={{ flexShrink: 0 }} />
-                <span>{downloadError}</span>
-              </div>
-            )}
-          </motion.div>
-        )}
-
-        {status === 'error' && (
-          <motion.div
-            initial={{ opacity: 0, y: 6 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0 }}
-            style={{
-              marginTop: '16px',
-              padding: '12px 16px',
-              borderRadius: '12px',
-              backgroundColor: isDark ? 'rgba(239, 68, 68, 0.12)' : '#fee2e2',
-              border: '1px solid #ef4444',
-              color: isDark ? '#f87171' : '#b91c1c',
-              fontSize: '0.85rem',
-              fontWeight: '600',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px'
-            }}
-          >
-            <AlertCircle size={16} />
-            <span>Unable to check for updates right now. Please check your network connection and try again.</span>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
-  );
-}
-
-function GeneralPreferencesTab({ data, onChange, direction }) {
-  const update = (key, val) => onChange({ ...data, [key]: val });
-
-  return (
-    <motion.div custom={direction} variants={tabVariants} initial="initial" animate="animate" exit="exit" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-      <div style={styles.card}>
-        {/* Academic Calendar */}
-        <div>
-          <h3 style={styles.sectionTitle}><Calendar size={18} color={T.blue} /><span>Academic Calendar & Term Settings</span></h3>
-          <p style={styles.sectionSub}>Define current active term and system-wide semester boundaries.</p>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px' }}>
-            <div>
-              <label style={styles.label}>Current Term</label>
-              <select value={data.currentTerm} onChange={e => update('currentTerm', e.target.value)} style={styles.select}>
-                <option>Fall 2026</option>
-                <option>Spring 2027</option>
-                <option>Summer 2027</option>
-                <option>Winter 2026</option>
-              </select>
-            </div>
-            <div>
-              <label style={styles.label}>Term Start Date</label>
-              <input type="date" value={data.termStart} onChange={e => update('termStart', e.target.value)} style={styles.input} />
-            </div>
-            <div>
-              <label style={styles.label}>Term End Date</label>
-              <input type="date" value={data.termEnd} onChange={e => update('termEnd', e.target.value)} style={styles.input} />
-            </div>
-          </div>
-        </div>
-
-        <div style={styles.divider} />
-
-        {/* Maintenance Mode */}
-        <div>
-          <h3 style={styles.sectionTitle}><AlertOctagon size={18} color={T.red} /><span>System Maintenance Mode</span></h3>
-          <p style={styles.sectionSub}>Temporarily restrict examinee kiosk logins during system updates.</p>
-          <Toggle on={data.maintenanceMode} onToggle={() => update('maintenanceMode', !data.maintenanceMode)} label="Enable System Maintenance Mode" subtext="Locks out student examination logins and displays custom offline message." accent={T.red} />
-          <AnimatePresence>
-            {data.maintenanceMode && (
-              <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} style={{ marginTop: '16px', overflow: 'hidden' }}>
-                <label style={styles.label}>Custom System Offline Message</label>
-                <textarea rows={3} value={data.offlineMessage} onChange={e => update('offlineMessage', e.target.value)} style={styles.textarea} />
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </div>
-
-        <div style={styles.divider} />
-
-        {/* Software Updates */}
-        <AdminCheckUpdateCard />
-      </div>
-    </motion.div>
-  );
-}
-
-// ════════════════════════════════════════════════════════════════════
-// TAB 2 — KIOSK & SECURITY THRESHOLDS
-// ════════════════════════════════════════════════════════════════════
-function KioskSecurityTab({ data, onChange, direction }) {
-  const update = (key, val) => onChange({ ...data, [key]: val });
-  const updatePolicy = (k, v) => onChange({ ...data, passwordPolicies: { ...data.passwordPolicies, [k]: v } });
-
-  return (
-    <motion.div custom={direction} variants={tabVariants} initial="initial" animate="animate" exit="exit" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-
-      {/* Kiosk Enforcement */}
-      <div style={styles.card}>
-        <div>
-          <h3 style={styles.sectionTitle}><Monitor size={18} color={T.blue} /><span>Kiosk Enforcement Rules</span></h3>
-          <p style={styles.sectionSub}>Calibrate how strict the Electron kiosk wrapper is before and during exams.</p>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-            <Toggle
-              on={data.disableWindowsKeyAltTab}
-              onToggle={() => update('disableWindowsKeyAltTab', !data.disableWindowsKeyAltTab)}
-              label="Disable Windows Key & Alt-Tab"
-              subtext="Locks OS-level shortcuts. Requires the native KioskLockHook to be running."
-            />
-            <Toggle
-              on={data.enforceSingleMonitor}
-              onToggle={() => update('enforceSingleMonitor', !data.enforceSingleMonitor)}
-              label="Enforce Single Monitor Only"
-              subtext="Exam will not start if the system detects a second monitor (HDMI/VGA) connected."
-            />
-            <Toggle
-              on={data.blockVirtualMachine ?? true}
-              onToggle={() => update('blockVirtualMachine', data.blockVirtualMachine === undefined ? false : !data.blockVirtualMachine)}
-              label="Block Virtual Machine (VM) Environments"
-              subtext="Exams cannot be started or executed inside VMware, VirtualBox, Hyper-V, or QEMU."
-            />
-            <Toggle
-              on={data.strictClipboardBlocking}
-              onToggle={() => update('strictClipboardBlocking', !data.strictClipboardBlocking)}
-              label="Strict Clipboard Blocking"
-              subtext="ON = Ctrl+C and Ctrl+V are fully blocked. OFF = paste is allowed but flagged in Audit Log."
-            />
-            <Toggle
-              on={data.flagTabExits}
-              onToggle={() => update('flagTabExits', !data.flagTabExits)}
-              label="Flag Window Focus Loss / Tab Exits"
-              subtext="Triggers a security flag when a student switches windows or minimizes the kiosk."
-            />
-            <Toggle
-              on={data.flagMultipleLogins}
-              onToggle={() => update('flagMultipleLogins', !data.flagMultipleLogins)}
-              label="Flag Concurrent Multiple Login Locations"
-              subtext="Detects and blocks simultaneous sessions from distinct IP addresses."
-            />
-          </div>
-        </div>
-
-        <div style={styles.divider} />
-
-        {/* Cognitive Pause Threshold */}
-        <div>
-          <h3 style={styles.sectionTitle}><Sliders size={18} color={T.blue} /><span>Behavioral Detection Thresholds</span></h3>
-          <p style={styles.sectionSub}>Configure inactivity and session timer triggers for automatic incident logging.</p>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-            <Slider
-              label="Cognitive Pause Threshold"
-              subtext="Seconds of typing inactivity before the system records a 'Suspicious Pause' event."
-              value={data.cognitivePauseThreshold}
-              onChange={v => update('cognitivePauseThreshold', v)}
-              min={10} max={120} step={5} unit="s"
-            />
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '16px' }}>
-              <div>
-                <label style={styles.label}>Violation Threshold (Lock After X Flags)</label>
-                <input type="number" min="1" max="10" value={data.violationThreshold}
-                  onChange={e => update('violationThreshold', parseInt(e.target.value) || 3)} style={styles.input} />
-                <span style={{ fontSize: '0.75rem', color: T.muted, marginTop: '4px', display: 'block' }}>Account locks and notifies Admin after hitting this count.</span>
-              </div>
-              <div>
-                <label style={styles.label}>Idle Session Timeout</label>
-                <select value={data.sessionTimeout} onChange={e => update('sessionTimeout', e.target.value)} style={styles.select}>
-                  <option value="15m">15 Minutes</option>
-                  <option value="30m">30 Minutes</option>
-                  <option value="1h">1 Hour</option>
-                </select>
-                <span style={{ fontSize: '0.75rem', color: T.muted, marginTop: '4px', display: 'block' }}>Force re-authentication after inactivity.</span>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div style={styles.divider} />
-
-        {/* Password Policies */}
-        <div>
-          <h3 style={styles.sectionTitle}><KeyRound size={18} color={T.blue} /><span>Password & Authentication Rules</span></h3>
-          <p style={styles.sectionSub}>Set minimum complexity requirements for student and instructor credentials.</p>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-            {[
-              ['specialChars', 'Enforce Special Characters (!@#$%^&*)'],
-              ['numbers', 'Enforce Numerical Digits (0-9)'],
-              ['minLength8', 'Enforce Minimum Password Length (8 Characters)'],
-            ].map(([k, lbl]) => (
-              <label key={k} style={{ display: 'flex', alignItems: 'center', gap: '12px', cursor: 'pointer', padding: '10px 14px', backgroundColor: T.bg, borderRadius: '12px', border: `1px solid ${T.border}` }}>
-                <input type="checkbox" checked={!!data.passwordPolicies?.[k]} onChange={e => updatePolicy(k, e.target.checked)}
-                  style={{ width: '18px', height: '18px', accentColor: T.blue, cursor: 'pointer' }} />
-                <span style={{ fontSize: '0.88rem', fontWeight: '600', color: T.text }}>{lbl}</span>
-              </label>
-            ))}
-          </div>
-        </div>
-      </div>
-    </motion.div>
-  );
-}
-
-// ════════════════════════════════════════════════════════════════════
-// TAB 3 — COMPILER & EXAM DEFAULTS
-// ════════════════════════════════════════════════════════════════════
-function ExamDefaultsTab({ data, onChange, direction }) {
-  const update = (key, val) => onChange({ ...data, [key]: val });
-
-  return (
-    <motion.div custom={direction} variants={tabVariants} initial="initial" animate="animate" exit="exit" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-      <div style={styles.card}>
-        {/* Compiler Settings */}
-        <div>
-          <h3 style={styles.sectionTitle}><Code2 size={18} color={T.blue} /><span>C# Compiler Behavior</span></h3>
-          <p style={styles.sectionSub}>Configure the offline .NET C# compiler strictness for student code evaluation.</p>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-            <Toggle
-              on={data.treatWarningsAsErrors}
-              onToggle={() => update('treatWarningsAsErrors', !data.treatWarningsAsErrors)}
-              label="Treat Compiler Warnings as Errors"
-              subtext="When ON, code will fail submission if compiler warnings exist, even if it runs."
-              accent={T.amber}
-            />
-          </div>
-        </div>
-
-        <div style={styles.divider} />
-
-        {/* Auto-Save & Timer */}
-        <div>
-          <h3 style={styles.sectionTitle}><Timer size={18} color={T.blue} /><span>Auto-Save & Exam Timer Defaults</span></h3>
-          <p style={styles.sectionSub}>These values are applied automatically when a new exam assignment is created.</p>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '20px' }}>
-            <div>
-              <label style={styles.label}>Code Editor Auto-Save Interval</label>
-              <select value={data.autoSaveInterval} onChange={e => update('autoSaveInterval', e.target.value)} style={styles.select}>
-                <option value="10s">Every 10 Seconds</option>
-                <option value="30s">Every 30 Seconds</option>
-                <option value="1m">Every 1 Minute</option>
-              </select>
-              <span style={{ fontSize: '0.75rem', color: T.muted, marginTop: '4px', display: 'block' }}>
-                How often the student's code draft is saved to localStorage.
-              </span>
-            </div>
-            <div>
-              <label style={styles.label}>Default Exam Timer (Minutes)</label>
-              <input
-                type="number" min="10" max="300" step="5"
-                value={data.defaultExamTimer}
-                onChange={e => update('defaultExamTimer', parseInt(e.target.value) || 60)}
-                style={styles.input}
-              />
-              <span style={{ fontSize: '0.75rem', color: T.muted, marginTop: '4px', display: 'block' }}>
-                Default countdown timer auto-applied when creating a new exam.
-              </span>
-            </div>
-          </div>
-        </div>
-
-        {/* Timer Preview */}
-        <div style={{ padding: '16px 20px', backgroundColor: '#eff6ff', borderRadius: '16px', border: '1px solid #bfdbfe', display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <Clock size={20} color={T.blue} />
-          <span style={{ fontSize: '0.88rem', color: '#1d4ed8', fontWeight: '600' }}>
-            With current settings, new exams will default to a <strong>{data.defaultExamTimer}-minute</strong> countdown with auto-save every <strong>{data.autoSaveInterval === '10s' ? '10 seconds' : data.autoSaveInterval === '30s' ? '30 seconds' : '1 minute'}</strong>.
-          </span>
-        </div>
-      </div>
-    </motion.div>
-  );
-}
-
-// ════════════════════════════════════════════════════════════════════
-// TAB 4 — NOTIFICATIONS & UI PREFERENCES
-// ════════════════════════════════════════════════════════════════════
-function NotificationsUITab({ notifData, uiData, onNotifChange, onUiChange, isDark, onDarkToggle, direction }) {
-  const updateN = (key, val) => onNotifChange({ ...notifData, [key]: val });
-  const updateU = (key, val) => onUiChange({ ...uiData, [key]: val });
-  return (
-    <motion.div custom={direction} variants={tabVariants} initial="initial" animate="animate" exit="exit" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-
-      {/* Alert Notifications */}
-      <div style={styles.card}>
-        <div>
-          <h3 style={styles.sectionTitle}><Bell size={18} color={T.blue} /><span>Notifications & Alert Behavior</span></h3>
-          <p style={styles.sectionSub}>Control when and how warnings appear on the instructor's dashboard during live exams.</p>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-            <Toggle
-              on={notifData.soundAlerts}
-              onToggle={() => updateN('soundAlerts', !notifData.soundAlerts)}
-              label="Enable Sound Alerts for Security Flags"
-              subtext="Plays an audio chime on the instructor's dashboard when a student triggers a security event (e.g. Alt-Tab detected)."
-            />
-            <Toggle
-              on={notifData.notifyOnSubmission}
-              onToggle={() => updateN('notifyOnSubmission', !notifData.notifyOnSubmission)}
-              label="Notify on Exam Submission"
-              subtext="Shows a pop-up notification on the instructor's screen whenever a student submits their code."
-            />
-            <Toggle
-              on={notifData.showToastWarnings}
-              onToggle={() => updateN('showToastWarnings', !notifData.showToastWarnings)}
-              label="Show Toast Notifications for Minor Warnings"
-              subtext="Displays small side-panel toasts for low-severity events (e.g. long typing pause) instead of covering the full screen."
-            />
-          </div>
-        </div>
-      </div>
-
-      {/* UI Preferences */}
-      <div style={styles.card}>
-        <div>
-          <h3 style={styles.sectionTitle}><LayoutList size={18} color={T.blue} /><span>Dashboard UI Preferences</span></h3>
-          <p style={styles.sectionSub}>Personalize the look and layout of the admin and instructor dashboard.</p>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-
-            {/* Dark Mode */}
-            <div style={{
-              display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-              padding: '14px 18px', backgroundColor: T.bg, borderRadius: '16px', border: `1px solid ${T.border}`,
-            }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                {isDark ? <Moon size={18} color="#818cf8" /> : <Sun size={18} color={T.amber} />}
-                <div>
-                  <span style={{ fontSize: '0.88rem', fontWeight: '700', color: T.text, display: 'block' }}>
-                    {isDark ? 'Dark Mode' : 'Light Mode'}
-                  </span>
-                  <span style={{ fontSize: '0.78rem', color: T.muted, display: 'block', marginTop: '2px' }}>
-                    Toggle between light and dark themes for the entire dashboard.
-                  </span>
-                </div>
-              </div>
-              <motion.div
-                whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.9 }} onClick={onDarkToggle}
-                style={{
-                  width: '50px', height: '26px', borderRadius: '9999px',
-                  backgroundColor: isDark ? '#818cf8' : '#cbd5e1',
-                  position: 'relative', display: 'flex', alignItems: 'center',
-                  padding: '3px', cursor: 'pointer', flexShrink: 0, transition: 'background 0.25s ease',
-                }}
-              >
-                <motion.div
-                  animate={{ x: isDark ? 24 : 0 }}
-                  transition={{ type: 'spring', stiffness: 500, damping: 30 }}
-                  style={{ width: '20px', height: '20px', backgroundColor: '#ffffff', borderRadius: '50%', boxShadow: '0 2px 4px rgba(0,0,0,0.2)' }}
-                />
-              </motion.div>
-            </div>
-
-            {/* Audit Table Density */}
-            <div style={{ padding: '14px 18px', backgroundColor: T.bg, borderRadius: '16px', border: `1px solid ${T.border}` }}>
-              <label style={{ ...styles.label, marginBottom: '10px' }}>Audit Log Table Density</label>
-              <div style={{ display: 'flex', gap: '10px' }}>
-                {['Compact', 'Comfortable'].map(opt => (
-                  <motion.button
-                    key={opt}
-                    whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}
-                    onClick={() => updateU('auditTableDensity', opt)}
-                    style={{
-                      flex: 1, padding: '12px', borderRadius: '12px',
-                      border: `2px solid ${uiData.auditTableDensity === opt ? T.blue : T.border}`,
-                      backgroundColor: uiData.auditTableDensity === opt ? (isDark ? 'rgba(59, 130, 246, 0.15)' : '#eff6ff') : T.card,
-                      cursor: 'pointer', fontWeight: '700', fontSize: '0.85rem',
-                      color: uiData.auditTableDensity === opt ? T.blue : T.subtext,
-                      transition: 'all 0.2s ease',
-                    }}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                      {opt === 'Compact' ? <Clipboard size={15} /> : <LayoutList size={15} />}
-                      <span>{opt}</span>
-                    </div>
-                    <div style={{ fontSize: '0.72rem', fontWeight: '500', marginTop: '3px', color: T.muted }}>
-                      {opt === 'Compact' ? 'More rows visible, smaller text' : 'Larger text, easier to read'}
-                    </div>
-                  </motion.button>
-                ))}
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </motion.div>
-  );
-}
-
-// ════════════════════════════════════════════════════════════════════
-// TAB 5 — ROLES & PERMISSIONS
-// ════════════════════════════════════════════════════════════════════
-function RolesPermissionsTab({ data, onChange, direction }) {
-  const update = (key, val) => onChange({ ...data, [key]: val });
-
-  return (
-    <motion.div custom={direction} variants={tabVariants} initial="initial" animate="animate" exit="exit" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-      <div style={styles.card}>
-        <div>
-          <h3 style={styles.sectionTitle}><Users size={18} color={T.blue} /><span>Instructor Capabilities & Administrative Controls</span></h3>
-          <p style={styles.sectionSub}>Configure delegated authority for course managers and teaching faculty.</p>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-            <Toggle on={data.allowDeleteCourses} onToggle={() => update('allowDeleteCourses', !data.allowDeleteCourses)} label="Allow instructors to permanently delete courses" subtext="Default: Off. When disabled, only System Admins can erase class history." accent={T.red} />
-            <Toggle on={data.allowManageStudents} onToggle={() => update('allowManageStudents', !data.allowManageStudents)} label="Allow instructors to manually add or remove students" subtext="Default: On. Permits teachers to adjust their classroom rosters." />
-            <Toggle on={data.requireAdminApproval} onToggle={() => update('requireAdminApproval', !data.requireAdminApproval)} label="Require admin approval for new instructor accounts" subtext="Default: On. Places new teacher registrations into Pending state." />
-          </div>
-        </div>
-      </div>
-    </motion.div>
-  );
-}
-
-// ════════════════════════════════════════════════════════════════════
-// TAB 6 — SYSTEM & DATA MANAGEMENT
-// ════════════════════════════════════════════════════════════════════
-function SystemDataTab({ data, onChange, currentUserName = 'Admin', direction }) {
-  const [backupStatus, setBackupStatus] = useState(null);
-  const [exporting, setExporting] = useState(false);
-  const update = (key, val) => onChange({ ...data, [key]: val });
-
-  const handleGenerateBackup = () => {
-    setBackupStatus('Generating full database snapshot...');
-    setTimeout(() => {
-      const nowStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-      onChange({ ...data, lastBackupTime: `Today at ${nowStr}` });
-      setBackupStatus('System backup completed successfully!');
-      logSecurityEvent({ user: currentUserName, type: 'Database Backup', severity: 'Normal', desc: 'Manual system backup triggered from Admin Settings' });
-      setTimeout(() => setBackupStatus(null), 3000);
-    }, 1200);
-  };
-
-  const [isSyncingData, setIsSyncingData] = useState(false);
-  const [syncDone, setSyncDone] = useState(false);
-  const [syncResultMsg, setSyncResultMsg] = useState(null);
-
-  const handleSyncNow = async () => {
-    setIsSyncingData(true);
-    setSyncDone(false);
-    setSyncResultMsg(null);
-    try {
-      const res = await apiFetch(`${API_BASE}/api/sync`, { method: 'POST' });
-      const json = await res.json().catch(() => null);
-      if (res.ok) {
-        setSyncDone(true);
-        setTimeout(() => setSyncDone(false), 2500);
-        logSecurityEvent({ user: currentUserName, type: 'Database Sync', severity: 'Normal', desc: 'Manual LAN & Cloud database sync triggered from Admin Settings' });
-        window.dispatchEvent(new CustomEvent('verity:sync-completed'));
-        window.dispatchEvent(new CustomEvent('verity:classrooms-changed'));
-      } else {
-        setSyncResultMsg(json?.error || 'Sync completed with warnings.');
-      }
-    } catch (e) {
-      setSyncResultMsg('Sync failed: Server connection error.');
-    } finally {
-      setIsSyncingData(false);
-      setTimeout(() => setSyncResultMsg(null), 4000);
-    }
-  };
-
-  const handleExportAuditCSV = async () => {
-    setExporting(true);
-    try {
-      const res = await apiFetch(`${API_BASE}/audit-logs`);
-      const json = await res.json();
-      const logs = json.logs || [];
-
-      const headers = ['ID', 'Timestamp', 'User', 'Type', 'Severity', 'Description'];
-      const rows = logs.map(l => [l.id, l.timestamp, l.user, l.type, l.severity, `"${(l.desc || '').replace(/"/g, '""')}"`]);
-      const csv = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
-
-      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `verity_audit_report_${new Date().toISOString().split('T')[0]}.csv`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-
-      logSecurityEvent({ user: currentUserName, type: 'Audit Export', severity: 'Normal', desc: 'Exported global audit log as CSV' });
-    } catch (e) {
-      console.error('Export failed:', e);
-    }
-    setExporting(false);
-  };
-
-  return (
-    <motion.div custom={direction} variants={tabVariants} initial="initial" animate="animate" exit="exit" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-      <div style={styles.card}>
-
-        {/* Data Retention */}
-        <div>
-          <h3 style={styles.sectionTitle}><Database size={18} color={T.blue} /><span>Data Retention & Archival Policies</span></h3>
-          <p style={styles.sectionSub}>Automate cleanup of old examination logs and archived course records.</p>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '16px' }}>
-            <div>
-              <label style={styles.label}>Delete Archived Classes Older Than:</label>
-              <select value={data.retentionPeriod} onChange={e => update('retentionPeriod', e.target.value)} style={styles.select}>
-                <option value="1 Year">1 Year</option>
-                <option value="3 Years">3 Years</option>
-                <option value="Never">Never (Retain indefinitely)</option>
-              </select>
-            </div>
-            <div>
-              <label style={styles.label}>Auto-Archive Audit Logs:</label>
-              <select value={data.autoArchiveAuditLogs} onChange={e => update('autoArchiveAuditLogs', e.target.value)} style={styles.select}>
-                <option value="7 Days">After 7 Days</option>
-                <option value="30 Days">After 30 Days</option>
-                <option value="Never">Never</option>
-              </select>
-            </div>
-          </div>
-        </div>
-
-        <div style={styles.divider} />
-
-        {/* Cache & Session */}
-        <div>
-          <h3 style={styles.sectionTitle}><Clipboard size={18} color={T.blue} /><span>Cache & Session Management</span></h3>
-          <p style={styles.sectionSub}>Prevent UI slowdowns by cleaning up browser storage on session end.</p>
-          <Toggle
-            on={data.clearLocalStorageOnLogout}
-            onToggle={() => update('clearLocalStorageOnLogout', !data.clearLocalStorageOnLogout)}
-            label="Clear Browser LocalStorage on Logout"
-            subtext="Wipes cached UI preferences and draft data on logout to keep the browser lean."
-          />
-        </div>
-
-        <div style={styles.divider} />
-
-        {/* Backup & Export */}
-        <div>
-          <h3 style={styles.sectionTitle}><HardDrive size={18} color={T.blue} /><span>System Snapshot & Audit Export</span></h3>
-          <p style={styles.sectionSub}>Create instant SQLite snapshots or export security reports for the dean or parents.</p>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', alignItems: 'center' }}>
-            <motion.button whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }} onClick={handleGenerateBackup} style={styles.secBtn}>
-              <HardDrive size={16} color={T.blue} />
-              <span>Generate System Backup</span>
-            </motion.button>
-            <motion.button whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }} onClick={handleExportAuditCSV} disabled={exporting}
-              style={{ ...styles.secBtn, opacity: exporting ? 0.6 : 1 }}>
-              <Download size={16} color="#16a34a" />
-              <span>{exporting ? 'Exporting...' : 'Export Global Audit Report (.CSV)'}</span>
-            </motion.button>
-            <span style={{ fontSize: '0.82rem', color: T.muted, fontWeight: '500' }}>
-              Last backup: <strong style={{ color: T.text }}>{data.lastBackupTime}</strong>
-            </span>
-          </div>
-          <AnimatePresence>
-            {backupStatus && (
-              <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
-                style={{
-                  marginTop: '12px', padding: '10px 14px', borderRadius: '10px', fontSize: '0.82rem',
-                  backgroundColor: backupStatus.includes('completed') ? '#dcfce7' : '#dbeafe',
-                  color: backupStatus.includes('completed') ? '#15803d' : '#1d4ed8',
-                  fontWeight: '600', width: 'fit-content',
-                }}>
-                {backupStatus}
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </div>
-
-        <div style={styles.divider} />
-
-        {/* Server & Cloud Sync */}
-        <div>
-          <h3 style={styles.sectionTitle}><Server size={18} color={T.blue} /><span>Server Architecture & Cloud Sync</span></h3>
-          <p style={styles.sectionSub}>Manage synchronization between the Local / ComLab LAN server and Online Cloud server (Supabase PostgreSQL).</p>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '14px' }}>
-              <div style={{ padding: '14px 18px', borderRadius: '16px', backgroundColor: isDark ? '#262626' : '#f8fafc', border: isDark ? '1px solid #3f3f46' : '1px solid #e2e8f0' }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
-                  <span style={{ fontSize: '0.85rem', fontWeight: '700', color: T.text }}>Online Cloud Server</span>
-                  <span style={{ fontSize: '0.75rem', fontWeight: '700', color: '#16a34a', backgroundColor: '#dcfce7', padding: '2px 8px', borderRadius: '6px' }}>Supabase / Render</span>
-                </div>
-                <div style={{ fontSize: '0.82rem', color: T.muted }}>
-                  Active Endpoint: <strong>https://verity-2z4v.onrender.com</strong>
-                </div>
-              </div>
-
-              <div style={{ padding: '14px 18px', borderRadius: '16px', backgroundColor: isDark ? '#262626' : '#f8fafc', border: isDark ? '1px solid #3f3f46' : '1px solid #e2e8f0' }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
-                  <span style={{ fontSize: '0.85rem', fontWeight: '700', color: T.text }}>Local ComLab LAN Server</span>
-                  <span style={{ fontSize: '0.75rem', fontWeight: '700', color: '#0284c7', backgroundColor: '#e0f2fe', padding: '2px 8px', borderRadius: '6px' }}>Offline Router</span>
-                </div>
-                <div style={{ fontSize: '0.82rem', color: T.muted }}>
-                  Auto-Discovered LAN or Localhost: <strong>http://localhost:3001</strong>
-                </div>
-              </div>
-            </div>
-
-            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
-              <motion.button
-                whileHover={{ scale: 1.03 }}
-                whileTap={{ scale: 0.97 }}
-                onClick={handleSyncNow}
-                disabled={isSyncingData}
-                style={{
-                  ...styles.secBtn,
-                  backgroundColor: '#007bff',
-                  color: 'white',
-                  border: 'none',
-                  boxShadow: '0 4px 12px rgba(0, 123, 255, 0.25)'
-                }}
-              >
-                {syncDone ? <Check size={16} /> : <RefreshCw size={16} className={isSyncingData ? 'animate-spin' : ''} />}
-                <span>{isSyncingData ? 'Synchronizing Databases...' : (syncDone ? 'Synchronized Complete' : 'Sync LAN & Cloud Databases Now')}</span>
-              </motion.button>
-              {syncResultMsg && (
-                <span style={{ fontSize: '0.82rem', fontWeight: '600', color: syncResultMsg.includes('success') ? '#16a34a' : '#dc2626' }}>
-                  {syncResultMsg}
-                </span>
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
-    </motion.div>
-  );
-}
-
-// ════════════════════════════════════════════════════════════════════
-// MAIN COMPONENT
-// ════════════════════════════════════════════════════════════════════
 export default function SystemSettingsTab({ currentUser: propCurrentUser }) {
   const [activeTab, setActiveTab] = useState('general');
   const [direction, setDirection] = useState(1);
   const [settings, setSettings] = useState(DEFAULT_SETTINGS);
-  const [saved, setSaved] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [saveError, setSaveError] = useState('');
   const { isDark, toggle: toggleDark } = useDarkMode();
   const { currentUser: hookUser } = useCurrentUser();
   const currentUser = propCurrentUser || hookUser;
   const currentUserName = currentUser?.name || currentUser?.email || 'Admin';
 
-  // Rebuild dynamic styles whenever theme changes
-  styles = getStyles(isDark);
-  T = styles.T;
+  const styles = getStyles(isDark);
+  const T = styles.T;
 
-  useEffect(() => { loadSettings(); }, []);
-
-  // Deep-merge helper: merges nested objects from server on top of defaults
-  const deepMerge = (defaults, incoming) => {
-    const result = { ...defaults };
-    for (const key of Object.keys(incoming)) {
-      if (
-        incoming[key] && typeof incoming[key] === 'object' && !Array.isArray(incoming[key]) &&
-        defaults[key] && typeof defaults[key] === 'object' && !Array.isArray(defaults[key])
-      ) {
-        result[key] = { ...defaults[key], ...incoming[key] };
-      } else {
-        result[key] = incoming[key];
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      setLoading(true);
+      const data = await loadSystemSettings();
+      if (mounted && data) {
+        setSettings(data);
       }
-    }
-    return result;
-  };
-
-  const loadSettings = async () => {
-    setLoading(true);
-    try {
-      const res = await apiFetch(`${API_BASE}/system-settings`);
-      if (res.ok) {
-        const d = await res.json();
-        if (d.settings && Object.keys(d.settings).length > 0) {
-          // If server stores as single global_config blob, unwrap it
-          const serverData = d.settings.global_config || d.settings;
-          setSettings(deepMerge(DEFAULT_SETTINGS, serverData));
-        }
-      }
-    } catch {
-      // Network error — keep defaults
-    }
-    setLoading(false);
-  };
-
-  const handleSave = async (newSettings) => {
-    const toSave = newSettings && typeof newSettings === 'object' && !newSettings.preventDefault ? newSettings : settings;
-    try {
-      await apiFetch(`${API_BASE}/system-settings`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ settings: { global_config: toSave } }),
-      });
-      logSecurityEvent({ user: currentUserName, type: 'Settings Updated', severity: 'Normal', desc: `Updated system settings tab: ${activeTab.toUpperCase()}` });
-    } catch (e) {
-      console.warn('Auto-save error:', e);
-    }
-  };
+      if (mounted) setLoading(false);
+    })();
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   const isInitialLoad = useRef(true);
   useEffect(() => {
@@ -1323,79 +53,127 @@ export default function SystemSettingsTab({ currentUser: propCurrentUser }) {
       return;
     }
     const timer = setTimeout(() => {
-      handleSave(settings);
+      saveSystemSettings(settings, activeTab, currentUserName);
     }, 600);
     return () => clearTimeout(timer);
-  }, [settings, loading]);
+  }, [settings, loading, activeTab, currentUserName]);
 
   const tabs = [
-    { id: 'general',       Icon: Sparkles,  label: 'General' },
-    { id: 'kiosk',         Icon: Shield,    label: 'Kiosk & Security' },
-    { id: 'exam',          Icon: Code2,     label: 'Exam Defaults' },
-    { id: 'notifications', Icon: Bell,      label: 'Notifications & UI' },
-    { id: 'roles',         Icon: Users,     label: 'Roles & Permissions' },
-    { id: 'data',          Icon: Database,  label: 'System & Data' },
+    { id: 'general', Icon: Sparkles, label: 'General' },
+    { id: 'kiosk', Icon: Shield, label: 'Kiosk & Security' },
+    { id: 'exam', Icon: Code2, label: 'Exam Defaults' },
+    { id: 'notifications', Icon: Bell, label: 'Notifications & UI' },
+    { id: 'roles', Icon: Users, label: 'Roles & Permissions' },
+    { id: 'data', Icon: Database, label: 'System & Data' },
   ];
 
-  const update = (section, val) => setSettings(prev => ({ ...prev, [section]: val }));
+  const update = (section, val) => setSettings((prev) => ({ ...prev, [section]: val }));
 
   return (
     <div style={styles.pageWrap}>
-      {/* ═══ TAB BAR ═══ */}
+      {/* TAB BAR */}
       <div style={styles.tabBar}>
         {tabs.map(({ id, Icon, label }, index) => (
-          <motion.button key={id} whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}
+          <motion.button
+            key={id}
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
             onClick={() => {
-              const currentIndex = tabs.findIndex(t => t.id === activeTab);
+              const currentIndex = tabs.findIndex((t) => t.id === activeTab);
               setDirection(index > currentIndex ? 1 : -1);
               setActiveTab(id);
-            }} style={styles.tabBtn(activeTab === id)}>
+            }}
+            style={styles.tabBtn(activeTab === id)}
+          >
             <Icon size={15} />
             <span>{label}</span>
           </motion.button>
         ))}
       </div>
 
-      {/* ═══ TAB PANELS ═══ */}
+      {/* TAB PANELS */}
       {loading ? (
         <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '80px 0' }}>
-          <div style={{
-            width: '36px', height: '36px', border: `3px solid ${T.border}`,
-            borderTop: `3px solid ${T.blue}`, borderRadius: '50%',
-            animation: 'spin 0.8s linear infinite',
-          }} />
+          <div
+            style={{
+              width: '36px',
+              height: '36px',
+              border: `3px solid ${T.border}`,
+              borderTop: `3px solid ${T.blue}`,
+              borderRadius: '50%',
+              animation: 'spin 0.8s linear infinite',
+            }}
+          />
           <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
         </div>
       ) : (
-      <AnimatePresence mode="wait" custom={direction}>
-        {activeTab === 'general' && (
-          <GeneralPreferencesTab key="general" data={settings.general} onChange={v => update('general', v)} direction={direction} />
-        )}
-        {activeTab === 'kiosk' && (
-          <KioskSecurityTab key="kiosk" data={settings.security} onChange={v => update('security', v)} direction={direction} />
-        )}
-        {activeTab === 'exam' && (
-          <ExamDefaultsTab key="exam" data={settings.examDefaults} onChange={v => update('examDefaults', v)} direction={direction} />
-        )}
-        {activeTab === 'notifications' && (
-          <NotificationsUITab
-            key="notifications"
-            notifData={settings.notifications}
-            uiData={settings.uiPrefs}
-            onNotifChange={v => update('notifications', v)}
-            onUiChange={v => update('uiPrefs', v)}
-            isDark={isDark}
-            onDarkToggle={toggleDark}
-            direction={direction}
-          />
-        )}
-        {activeTab === 'roles' && (
-          <RolesPermissionsTab key="roles" data={settings.roles} onChange={v => update('roles', v)} direction={direction} />
-        )}
-        {activeTab === 'data' && (
-          <SystemDataTab key="data" data={settings.data} onChange={v => update('data', v)} currentUserName={currentUserName} direction={direction} />
-        )}
-      </AnimatePresence>
+        <AnimatePresence mode="wait" custom={direction}>
+          {activeTab === 'general' && (
+            <GeneralPreferencesTab
+              key="general"
+              data={settings.general}
+              onChange={(v) => update('general', v)}
+              direction={direction}
+              styles={styles}
+              T={T}
+            />
+          )}
+          {activeTab === 'kiosk' && (
+            <KioskSecurityTab
+              key="kiosk"
+              data={settings.security}
+              onChange={(v) => update('security', v)}
+              direction={direction}
+              styles={styles}
+              T={T}
+            />
+          )}
+          {activeTab === 'exam' && (
+            <ExamDefaultsTab
+              key="exam"
+              data={settings.examDefaults}
+              onChange={(v) => update('examDefaults', v)}
+              direction={direction}
+              styles={styles}
+              T={T}
+            />
+          )}
+          {activeTab === 'notifications' && (
+            <NotificationsUITab
+              key="notifications"
+              notifData={settings.notifications}
+              uiData={settings.uiPrefs}
+              onNotifChange={(v) => update('notifications', v)}
+              onUiChange={(v) => update('uiPrefs', v)}
+              isDark={isDark}
+              onDarkToggle={toggleDark}
+              direction={direction}
+              styles={styles}
+              T={T}
+            />
+          )}
+          {activeTab === 'roles' && (
+            <RolesPermissionsTab
+              key="roles"
+              data={settings.roles}
+              onChange={(v) => update('roles', v)}
+              direction={direction}
+              styles={styles}
+              T={T}
+            />
+          )}
+          {activeTab === 'data' && (
+            <SystemDataTab
+              key="data"
+              data={settings.data}
+              onChange={(v) => update('data', v)}
+              currentUserName={currentUserName}
+              direction={direction}
+              styles={styles}
+              T={T}
+            />
+          )}
+        </AnimatePresence>
       )}
     </div>
   );

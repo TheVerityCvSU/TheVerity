@@ -1,15 +1,23 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { useGoogleLogin } from '@react-oauth/google';
-import { Moon, Sun, Eye, EyeOff, Mail, ArrowLeft, RefreshCw, KeyRound, CheckCircle2, ShieldCheck, Loader2, AlertCircle, X, Info } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
-import { apiFetch, getCloudUrl, getLocalApiUrl } from '../utils/api';
+import React, { useState, useEffect } from 'react';
+import { Moon, Sun } from 'lucide-react';
+import { motion } from 'framer-motion';
 import { useDarkMode } from '../hooks/useDarkMode';
-import PasswordRequirements from '../components/PasswordRequirements';
-import { io } from 'socket.io-client';
+import { useGoogleAuthFlow } from '../hooks/useGoogleAuthFlow';
+import { useOtpInput } from '../hooks/useOtpInput';
+import {
+  fetchPasswordPolicies,
+  sendRegisterOtp,
+  verifyRegisterOtp,
+  resendRegisterOtp
+} from '../data/registerService';
+import RegisterFormCard from '../components/auth/RegisterFormCard';
+import RegisterOtpCard from '../components/auth/RegisterOtpCard';
+import AuthToast from '../components/auth/AuthToast';
+import { styles } from './registerStyles';
 
 export default function Register({ onBackToLogin, onLogin }) {
   const { isDark, toggle } = useDarkMode();
-  const [step, setStep] = useState('form'); // 'form' | 'otp'
+  const [step, setStep] = useState('form');
   const [formData, setFormData] = useState({
     firstName: '',
     lastName: '',
@@ -18,315 +26,120 @@ export default function Register({ onBackToLogin, onLogin }) {
     confirmPassword: '',
     role: 'Student'
   });
-  const [otpDigits, setOtpDigits] = useState(['', '', '', '', '', '']);
-  const [message, setMessage] = useState(null); // { type: 'error' | 'success' | 'info', text }
+  const [message, setMessage] = useState(null);
   const [policies, setPolicies] = useState(null);
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
-  
   const [loading, setLoading] = useState(false);
-  const [isGoogleLoading, setIsGoogleLoading] = useState(false);
   const [resendCooldown, setResendCooldown] = useState(0);
   const [resending, setResending] = useState(false);
-  const inputRefs = useRef([]);
-  const socketRef = useRef(null);
-  const authTimeoutRef = useRef(null);
+
+  const handleVerifyOtp = async (e, codeOverride = null) => {
+    if (e) e.preventDefault();
+    const cleanOtp = (codeOverride || otpDigits.join('')).trim();
+    if (!cleanOtp || cleanOtp.length < 6) {
+      setMessage({ type: 'error', text: 'Please enter all 6 digits of the verification code.' });
+      return;
+    }
+
+    setLoading(true);
+    setMessage(null);
+    try {
+      const { ok, data } = await verifyRegisterOtp({ email: formData.email, otp: cleanOtp });
+      if (ok) {
+        setMessage({
+          type: 'success',
+          text: data?.pendingApproval
+            ? 'Account created! Your instructor account is pending administrator approval. Redirecting to login...'
+            : 'Account verified and created successfully! Redirecting to login...'
+        });
+        setTimeout(() => onBackToLogin(), 2000);
+      } else {
+        setMessage({ type: 'error', text: data?.message || 'Verification failed. Please check your code.' });
+      }
+    } catch (_) {
+      setMessage({ type: 'error', text: 'Could not connect to server.' });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const {
+    otpDigits,
+    inputRefs,
+    resetOtp,
+    handleOtpChange,
+    handleOtpKeyDown,
+    handleOtpPaste,
+  } = useOtpInput({
+    onComplete: (code) => handleVerifyOtp(null, code),
+    onClearError: () => {
+      if (message && message.type === 'error') setMessage(null);
+    }
+  });
+
+  const { isGoogleLoading, startExternalGoogleAuth } = useGoogleAuthFlow({
+    onSuccess: (user, token, data) => {
+      if (data?.user?.status === 'Pending') {
+        setMessage({ type: 'info', text: 'Account created! Your instructor account is pending administrator approval.' });
+        setTimeout(() => onBackToLogin(), 3500);
+        return;
+      }
+      try {
+        localStorage.setItem('verity_saved_account_email', data?.user?.email || '');
+        localStorage.setItem('verity_remember_account', 'true');
+        if (window.electronAPI?.localDB?.setLocal) {
+          window.electronAPI.localDB.setLocal('verity_saved_account_email', data?.user?.email || '').catch(() => {});
+          window.electronAPI.localDB.setLocal('verity_remember_account', 'true').catch(() => {});
+        }
+      } catch (_) {}
+
+      if (onLogin && data?.user && data?.token) {
+        onLogin(data.user, data.token);
+      } else {
+        setMessage({ type: 'success', text: 'Google sign-up successful! Redirecting...' });
+        setTimeout(() => onBackToLogin(), 1200);
+      }
+    },
+    onError: (errMsg) => setMessage({ type: 'error', text: errMsg || 'Google Registration failed' })
+  });
 
   useEffect(() => {
-    apiFetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/kiosk-settings`)
-      .then(res => res.json())
-      .then(data => {
-        if (data && data.settings && data.settings.passwordPolicies) {
-          setPolicies(data.settings.passwordPolicies);
-        }
-      })
-      .catch(() => {});
+    fetchPasswordPolicies().then(p => { if (p) setPolicies(p); });
   }, []);
 
-  // Cooldown countdown effect
   useEffect(() => {
     let timer;
     if (resendCooldown > 0) {
-      timer = setInterval(() => {
-        setResendCooldown(prev => (prev > 0 ? prev - 1 : 0));
-      }, 1000);
+      timer = setInterval(() => setResendCooldown(prev => (prev > 0 ? prev - 1 : 0)), 1000);
     }
     return () => clearInterval(timer);
   }, [resendCooldown]);
 
-  // Auto-dismiss popup messages after 5 seconds (unless redirecting on success)
   useEffect(() => {
     if (message && message.type !== 'success') {
-      const timer = setTimeout(() => {
-        setMessage(null);
-      }, 5000);
+      const timer = setTimeout(() => setMessage(null), 5000);
       return () => clearTimeout(timer);
     }
   }, [message]);
 
-  // Auto-focus first OTP input when step changes
   useEffect(() => {
     if (step === 'otp') {
       setTimeout(() => inputRefs.current[0]?.focus(), 120);
     }
-  }, [step]);
+  }, [step, inputRefs]);
 
-  // Listen for Google Auth Window closed event from Electron .exe
-  useEffect(() => {
-    if (window.electronAPI?.onGoogleAuthClosed) {
-      const unsubscribe = window.electronAPI.onGoogleAuthClosed(() => {
-        setIsGoogleLoading(false);
-        if (socketRef.current) {
-          socketRef.current.disconnect();
-          socketRef.current = null;
-        }
-        if (authTimeoutRef.current) {
-          clearTimeout(authTimeoutRef.current);
-          authTimeoutRef.current = null;
-        }
-      });
-      return () => {
-        if (typeof unsubscribe === 'function') unsubscribe();
-      };
-    }
-  }, []);
-
-  // When mainWindow regains focus, check if auth window was closed
-  useEffect(() => {
-    const handleFocus = async () => {
-      if (isGoogleLoading && window.electronAPI?.checkGoogleAuthStatus) {
-        try {
-          const isOpen = await window.electronAPI.checkGoogleAuthStatus();
-          if (!isOpen) {
-            setIsGoogleLoading(false);
-            if (socketRef.current) {
-              socketRef.current.disconnect();
-              socketRef.current = null;
-            }
-            if (authTimeoutRef.current) {
-              clearTimeout(authTimeoutRef.current);
-              authTimeoutRef.current = null;
-            }
-          }
-        } catch (_) {}
-      }
-    };
-
-    window.addEventListener('focus', handleFocus);
-    return () => window.removeEventListener('focus', handleFocus);
-  }, [isGoogleLoading]);
-
-  // Clean up any pending socket or timer on unmount
-  useEffect(() => {
-    return () => {
-      if (socketRef.current) {
-        socketRef.current.disconnect();
-        socketRef.current = null;
-      }
-      if (authTimeoutRef.current) {
-        clearTimeout(authTimeoutRef.current);
-        authTimeoutRef.current = null;
-      }
-    };
-  }, []);
-
-  const handleGoogleSuccess = async (tokenResponse) => {
-    setIsGoogleLoading(true);
-    try {
-      const response = await apiFetch('/auth/google', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          token: tokenResponse.credential,
-          access_token: tokenResponse.access_token,
-          role: formData.role,
-          password: formData.password || undefined
-        })
-      });
-      const data = await response.json();
-      if (response.ok) {
-        if (data.user?.status === 'Pending') {
-          setMessage({ type: 'info', text: 'Account created! Your instructor account is pending administrator approval.' });
-          setIsGoogleLoading(false);
-          setTimeout(() => onBackToLogin(), 3500);
-          return;
-        }
-
-        try {
-          localStorage.setItem('verity_saved_account_email', data.user?.email || '');
-          localStorage.setItem('verity_remember_account', 'true');
-          if (window.electronAPI?.localDB?.setLocal) {
-            window.electronAPI.localDB.setLocal('verity_saved_account_email', data.user?.email || '').catch(() => {});
-            window.electronAPI.localDB.setLocal('verity_remember_account', 'true').catch(() => {});
-          }
-        } catch (_) {}
-
-        if (onLogin && data.user && data.token) {
-          onLogin(data.user, data.token);
-        } else {
-          setMessage({ type: 'success', text: 'Google sign-up successful! Redirecting...' });
-          setTimeout(() => onBackToLogin(), 1200);
-        }
-      } else {
-        setMessage({ type: 'error', text: data.message || 'Google registration failed on server' });
-        setIsGoogleLoading(false);
-      }
-    } catch (_) {
-      setMessage({ type: 'error', text: 'Could not connect to server.' });
-      setIsGoogleLoading(false);
-    }
-  };
-
-  const handleGoogleError = () => {
-    setMessage({ type: 'error', text: 'Google Registration failed' });
-    setIsGoogleLoading(false);
-  };
-
-  const googleLogin = useGoogleLogin({
-    onSuccess: handleGoogleSuccess,
-    onError: handleGoogleError,
-    onNonOAuthError: handleGoogleError,
-    flow: 'implicit',
-    hosted_domain: 'cvsu.edu.ph',
-  });
-
-  const handleGoogleElectron = () => {
-    setIsGoogleLoading(true);
+  const handleGoogleClick = () => {
     setMessage(null);
-
-    // Clean up any previous session
-    if (socketRef.current) {
-      socketRef.current.disconnect();
-      socketRef.current = null;
-    }
-    if (authTimeoutRef.current) {
-      clearTimeout(authTimeoutRef.current);
-      authTimeoutRef.current = null;
-    }
-
-    const sessionId = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
-    const activeCloud = getCloudUrl() || 'https://verity-2z4v.onrender.com';
-    const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
-    const backendUrl = isOnline ? activeCloud : getLocalApiUrl();
-    let completed = false;
-
-    const cleanupAuth = () => {
-      window.removeEventListener('message', handlePopupMessage);
-      if (socketRef.current) {
-        socketRef.current.disconnect();
-        socketRef.current = null;
-      }
-      if (authTimeoutRef.current) {
-        clearTimeout(authTimeoutRef.current);
-        authTimeoutRef.current = null;
-      }
-      if (window.electronAPI?.closeGoogleAuth) {
-        window.electronAPI.closeGoogleAuth();
-      }
-    };
-
-    const handleAuthSuccessData = (data) => {
-      if (completed) return;
-      completed = true;
-      cleanupAuth();
-      if (data && data.token && data.user) {
-        if (data.user.status === 'Pending') {
-          setMessage({ type: 'info', text: 'Account created! Your instructor account is pending administrator approval.' });
-          setIsGoogleLoading(false);
-          setTimeout(() => onBackToLogin(), 3500);
-          return;
-        }
-
-        try {
-          localStorage.setItem('verity_saved_account_email', data.user.email || '');
-          localStorage.setItem('verity_remember_account', 'true');
-          if (window.electronAPI?.localDB?.setLocal) {
-            window.electronAPI.localDB.setLocal('verity_saved_account_email', data.user.email || '').catch(() => {});
-            window.electronAPI.localDB.setLocal('verity_remember_account', 'true').catch(() => {});
-          }
-        } catch (_) {}
-
-        setIsGoogleLoading(false);
-        if (onLogin) {
-          onLogin(data.user, data.token);
-        } else {
-          setMessage({ type: 'success', text: 'Google sign-up successful! Redirecting...' });
-          setTimeout(() => onBackToLogin(), 1200);
-        }
-      } else {
-        setMessage({ type: 'error', text: 'Received invalid data from external authentication.' });
-        setIsGoogleLoading(false);
-      }
-    };
-
-    const handleAuthErrorData = (data) => {
-      if (completed) return;
-      completed = true;
-      cleanupAuth();
-      setMessage({ type: 'error', text: data?.message || 'External Google authentication failed.' });
-      setIsGoogleLoading(false);
-    };
-
-    const handlePopupMessage = (event) => {
-      const msg = event?.data;
-      if (!msg || msg.sessionId !== sessionId) return;
-      if (msg.type === 'verity-google-auth-success') {
-        handleAuthSuccessData(msg);
-      } else if (msg.type === 'verity-google-auth-error') {
-        handleAuthErrorData(msg);
-      }
-    };
-
-    window.addEventListener('message', handlePopupMessage);
-
-    const socket = io(backendUrl, { transports: ['websocket', 'polling'] });
-    socketRef.current = socket;
-
-    socket.on(`google-login-success-${sessionId}`, handleAuthSuccessData);
-    socket.on(`google-login-error-${sessionId}`, handleAuthErrorData);
-
-    const roleParam = encodeURIComponent(formData.role || 'Student');
-    const passParam = formData.password ? `&initialPassword=${encodeURIComponent(formData.password)}` : '';
-    const url = `${backendUrl}/auth/google/external?sessionId=${sessionId}&role=${roleParam}${passParam}`;
-    if (window.electronAPI && window.electronAPI.openGoogleAuth) {
-      window.electronAPI.openGoogleAuth(url);
-    } else if (window.electronAPI && window.electronAPI.openExternal) {
-      window.electronAPI.openExternal(url);
-    } else {
-      const popup = window.open(url, '_blank', 'width=520,height=650');
-      if (popup) {
-        const pollTimer = setInterval(() => {
-          if (!popup || popup.closed) {
-            clearInterval(pollTimer);
-            setTimeout(() => {
-              if (!completed) {
-                cleanupAuth();
-                setIsGoogleLoading(false);
-              }
-            }, 1200);
-          }
-        }, 500);
-      } else {
-        cleanupAuth();
-        setIsGoogleLoading(false);
-        setMessage({ type: 'error', text: 'Popup was blocked by your browser. Please allow popups for this site and try again.' });
-        return;
-      }
-    }
-
-    authTimeoutRef.current = setTimeout(() => {
-      if (!completed) {
-        cleanupAuth();
-        setIsGoogleLoading(false);
-      }
-    }, 5 * 60 * 1000);
+    startExternalGoogleAuth({
+      role: formData.role || 'Student',
+      initialPassword: formData.password || ''
+    });
   };
 
-  // Step 1: Submit Details & Request Email OTP
   const handleInitiateOtp = async (e) => {
     e.preventDefault();
     setMessage(null);
-
     if (formData.password !== formData.confirmPassword) {
       setMessage({ type: 'error', text: 'Passwords do not match. Please try again.' });
       return;
@@ -340,27 +153,15 @@ export default function Register({ onBackToLogin, onLogin }) {
     };
 
     setLoading(true);
-
     try {
-      const response = await apiFetch('/auth/send-otp', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-
-      const data = await response.json();
-
-      if (response.ok) {
+      const { ok, data } = await sendRegisterOtp(payload);
+      if (ok) {
         setStep('otp');
-        setOtpDigits(['', '', '', '', '', '']);
-        setMessage({
-          type: 'info',
-          text: `A 6-digit verification code has been sent to ${payload.email}.`
-        });
+        resetOtp();
+        setMessage({ type: 'info', text: `A 6-digit verification code has been sent to ${payload.email}.` });
         setResendCooldown(30);
-        setTimeout(() => inputRefs.current[0]?.focus(), 100);
       } else {
-        setMessage({ type: 'error', text: data.message || 'Failed to send verification code.' });
+        setMessage({ type: 'error', text: data?.message || 'Failed to send verification code.' });
       }
     } catch (_) {
       setMessage({ type: 'error', text: 'Could not connect to server. Make sure server is running.' });
@@ -369,158 +170,18 @@ export default function Register({ onBackToLogin, onLogin }) {
     }
   };
 
-  // Step 2: Individual Box Handlers
-  const handleOtpChange = (index, value) => {
-    const clean = value.replace(/\D/g, '');
-    if (!clean) {
-      const newDigits = [...otpDigits];
-      newDigits[index] = '';
-      setOtpDigits(newDigits);
-      return;
-    }
-
-    if (clean.length > 1) {
-      handleOtpPasteDirect(clean, index);
-      return;
-    }
-
-    const char = clean.slice(-1);
-    const newDigits = [...otpDigits];
-    newDigits[index] = char;
-    setOtpDigits(newDigits);
-    if (message && message.type === 'error') setMessage(null);
-
-    // Auto-advance focus to next input box
-    if (char && index < 5) {
-      inputRefs.current[index + 1]?.focus();
-    }
-
-    // Auto-verify if all 6 digits are filled
-    const fullCode = newDigits.join('');
-    if (fullCode.length === 6 && !newDigits.includes('')) {
-      handleVerifyOtp(null, fullCode);
-    }
-  };
-
-  const handleOtpKeyDown = (index, e) => {
-    if (e.key === 'Backspace') {
-      const newDigits = [...otpDigits];
-      if (!newDigits[index] && index > 0) {
-        newDigits[index - 1] = '';
-        setOtpDigits(newDigits);
-        inputRefs.current[index - 1]?.focus();
-        e.preventDefault();
-      } else {
-        newDigits[index] = '';
-        setOtpDigits(newDigits);
-      }
-    } else if (e.key === 'ArrowLeft' && index > 0) {
-      inputRefs.current[index - 1]?.focus();
-      e.preventDefault();
-    } else if (e.key === 'ArrowRight' && index < 5) {
-      inputRefs.current[index + 1]?.focus();
-      e.preventDefault();
-    }
-  };
-
-  const handleOtpPasteDirect = (pastedText, startIndex = 0) => {
-    const clean = (pastedText || '').replace(/\D/g, '').slice(0, 6);
-    if (!clean) return;
-
-    const newDigits = [...otpDigits];
-    for (let i = 0; i < clean.length; i++) {
-      const targetIndex = (startIndex + i < 6) ? startIndex + i : i;
-      newDigits[targetIndex] = clean[i];
-    }
-    setOtpDigits(newDigits);
-    if (message && message.type === 'error') setMessage(null);
-
-    const nextFocus = Math.min(5, startIndex + clean.length);
-    inputRefs.current[nextFocus]?.focus();
-
-    const fullCode = newDigits.join('');
-    if (fullCode.length === 6 && !newDigits.includes('')) {
-      handleVerifyOtp(null, fullCode);
-    }
-  };
-
-  const handleOtpPaste = (e) => {
-    const paste = e.clipboardData?.getData('text');
-    if (paste) {
-      handleOtpPasteDirect(paste, 0);
-      e.preventDefault();
-    }
-  };
-
-  // Step 2: Submit OTP & Complete Registration
-  const handleVerifyOtp = async (e, codeOverride = null) => {
-    if (e) e.preventDefault();
-    const cleanOtp = (codeOverride || otpDigits.join('')).trim();
-    if (!cleanOtp || cleanOtp.length < 6) {
-      setMessage({ type: 'error', text: 'Please enter all 6 digits of the verification code.' });
-      return;
-    }
-
-    setLoading(true);
-    setMessage(null);
-
-    try {
-      const response = await apiFetch('/auth/verify-otp', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          email: formData.email.trim(),
-          otp: cleanOtp
-        })
-      });
-
-      const data = await response.json();
-
-      if (response.ok) {
-        if (data.pendingApproval) {
-          setMessage({
-            type: 'success',
-            text: 'Account created! Your instructor account is pending administrator approval. Redirecting to login...'
-          });
-        } else {
-          setMessage({
-            type: 'success',
-            text: 'Account verified and created successfully! Redirecting to login...'
-          });
-        }
-        setTimeout(() => onBackToLogin(), 2000);
-      } else {
-        setMessage({ type: 'error', text: data.message || 'Verification failed. Please check your code.' });
-      }
-    } catch (_) {
-      setMessage({ type: 'error', text: 'Could not connect to server.' });
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Resend OTP code
   const handleResendOtp = async () => {
     if (resendCooldown > 0 || resending) return;
     setResending(true);
     setMessage(null);
-
     try {
-      const response = await apiFetch('/auth/resend-otp', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: formData.email.trim() })
-      });
-
-      const data = await response.json();
-
-      if (response.ok) {
-        setOtpDigits(['', '', '', '', '', '']);
+      const { ok, data } = await resendRegisterOtp(formData.email);
+      if (ok) {
+        resetOtp();
         setMessage({ type: 'info', text: 'A new 6-digit verification code was sent to your email.' });
         setResendCooldown(45);
-        setTimeout(() => inputRefs.current[0]?.focus(), 100);
       } else {
-        setMessage({ type: 'error', text: data.message || 'Failed to resend code.' });
+        setMessage({ type: 'error', text: data?.message || 'Failed to resend code.' });
       }
     } catch (_) {
       setMessage({ type: 'error', text: 'Could not connect to server.' });
@@ -539,13 +200,11 @@ export default function Register({ onBackToLogin, onLogin }) {
           : 'linear-gradient(to bottom, #f3f4f6 0%, #9ca3af 100%)',
       }}
     >
-      {/* Top Left Logo */}
       <div style={styles.logoContainer}>
         <span style={styles.logoV}>V</span>
         <span style={{ ...styles.logoText, color: isDark ? '#f4f4f5' : 'white' }}>erity</span>
       </div>
 
-      {/* Top Right Dark Mode Switch */}
       <button
         onClick={toggle}
         type="button"
@@ -569,98 +228,11 @@ export default function Register({ onBackToLogin, onLogin }) {
         className="btn-anim"
         title="Toggle dark/light mode"
       >
-        {isDark ? <Sun size={19} color="#f59e0b" /> : <Moon size={19} color="#6366f1" />}
+        {isDark ? <Moon size={19} color="#6366f1" /> : <Sun size={19} color="#f59e0b" />}
       </button>
 
-      {/* FLOATING POP-UP TOAST / NOTIFICATION (Zero layout shift, perfectly centered) */}
-      <AnimatePresence>
-        {message && (
-          <div
-            style={{
-              position: 'fixed',
-              top: '28px',
-              left: 0,
-              right: 0,
-              display: 'flex',
-              justifyContent: 'center',
-              alignItems: 'center',
-              pointerEvents: 'none',
-              zIndex: 99999,
-              padding: '0 16px'
-            }}
-          >
-            <motion.div
-              initial={{ opacity: 0, y: -20, scale: 0.95 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: -20, scale: 0.95 }}
-              transition={{ duration: 0.22, ease: 'easeOut' }}
-              style={{
-                pointerEvents: 'auto',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '10px',
-                padding: '12px 20px',
-                borderRadius: '14px',
-                backgroundColor: message.type === 'error'
-                  ? (isDark ? '#3b1212' : '#fef2f2')
-                  : message.type === 'success'
-                  ? (isDark ? '#0f291e' : '#ecfdf5')
-                  : (isDark ? '#1a2233' : '#eff6ff'),
-                border: `1px solid ${
-                  message.type === 'error'
-                    ? (isDark ? '#7f1d1d' : '#fca5a5')
-                    : message.type === 'success'
-                    ? (isDark ? '#065f46' : '#6ee7b7')
-                    : (isDark ? '#1e3a8a' : '#93c5fd')
-                }`,
-                color: message.type === 'error'
-                  ? (isDark ? '#fca5a5' : '#b91c1c')
-                  : message.type === 'success'
-                  ? (isDark ? '#6ee7b7' : '#047857')
-                  : (isDark ? '#93c5fd' : '#1d4ed8'),
-                boxShadow: '0 12px 30px rgba(0,0,0,0.25)',
-                backdropFilter: 'blur(10px)',
-                WebkitBackdropFilter: 'blur(10px)',
-                maxWidth: '480px',
-                width: 'auto',
-                fontSize: '0.92rem',
-                fontWeight: '500',
-                textAlign: 'left'
-              }}
-            >
-              {message.type === 'error' && <AlertCircle size={18} style={{ flexShrink: 0 }} />}
-              {message.type === 'success' && <CheckCircle2 size={18} style={{ flexShrink: 0 }} />}
-              {message.type === 'info' && <Info size={18} style={{ flexShrink: 0 }} />}
+      <AuthToast message={message} isDark={isDark} onClose={() => setMessage(null)} />
 
-              <span style={{ lineHeight: 1.4, flex: 1 }}>{message.text}</span>
-
-              <button
-                type="button"
-                onClick={() => setMessage(null)}
-                style={{
-                  background: 'none',
-                  border: 'none',
-                  cursor: 'pointer',
-                  color: 'currentColor',
-                  padding: '4px',
-                  borderRadius: '6px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  opacity: 0.75,
-                  marginLeft: '6px',
-                  flexShrink: 0
-                }}
-                title="Dismiss"
-              >
-                <X size={16} />
-              </button>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-
-      {/* Main Registration Card */}
       <motion.div
         layout
         initial={{ opacity: 0, y: 16 }}
@@ -674,524 +246,40 @@ export default function Register({ onBackToLogin, onLogin }) {
         }}
       >
         {step === 'form' ? (
-          /* STEP 1: REGISTRATION FORM */
-          <form onSubmit={handleInitiateOtp} style={styles.form}>
-            {/* Name Fields */}
-            <div style={styles.flexRow}>
-              <input
-                type="text"
-                placeholder="First Name"
-                required
-                value={formData.firstName}
-                onChange={(e) => setFormData({ ...formData, firstName: e.target.value })}
-                style={{
-                  ...styles.input,
-                  flex: 1,
-                  backgroundColor: isDark ? '#333338' : '#f9fafb',
-                  borderColor: isDark ? '#4a4a52' : '#e5e7eb',
-                  color: isDark ? '#f4f4f5' : '#4b5563',
-                }}
-              />
-              <input
-                type="text"
-                placeholder="Last Name"
-                required
-                value={formData.lastName}
-                onChange={(e) => setFormData({ ...formData, lastName: e.target.value })}
-                style={{
-                  ...styles.input,
-                  flex: 1,
-                  backgroundColor: isDark ? '#333338' : '#f9fafb',
-                  borderColor: isDark ? '#4a4a52' : '#e5e7eb',
-                  color: isDark ? '#f4f4f5' : '#4b5563',
-                }}
-              />
-            </div>
-
-            <input
-              type="email"
-              placeholder="Email"
-              required
-              value={formData.email}
-              onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-              style={{
-                ...styles.input,
-                backgroundColor: isDark ? '#333338' : '#f9fafb',
-                borderColor: isDark ? '#4a4a52' : '#e5e7eb',
-                color: isDark ? '#f4f4f5' : '#4b5563',
-              }}
-            />
-
-            <div style={{ position: 'relative' }}>
-              <input
-                type={showPassword ? 'text' : 'password'}
-                placeholder="Password"
-                required
-                value={formData.password}
-                onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                style={{
-                  ...styles.input,
-                  backgroundColor: isDark ? '#333338' : '#f9fafb',
-                  borderColor: isDark ? '#4a4a52' : '#e5e7eb',
-                  color: isDark ? '#f4f4f5' : '#4b5563',
-                  paddingRight: '40px'
-                }}
-              />
-              <button
-                type="button"
-                onClick={() => setShowPassword(!showPassword)}
-                style={{
-                  position: 'absolute',
-                  right: '12px',
-                  top: 0,
-                  bottom: 0,
-                  margin: 'auto 0',
-                  height: '24px',
-                  width: '24px',
-                  background: 'none',
-                  border: 'none',
-                  cursor: 'pointer',
-                  padding: 0,
-                  color: isDark ? '#9ca3af' : '#64748b',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  outline: 'none',
-                  transition: 'color 0.15s ease'
-                }}
-                onMouseEnter={e => e.currentTarget.style.color = isDark ? '#e4e4e7' : '#1f2937'}
-                onMouseLeave={e => e.currentTarget.style.color = isDark ? '#9ca3af' : '#64748b'}
-                title={showPassword ? 'Hide password' : 'Show password'}
-                tabIndex={-1}
-              >
-                {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
-              </button>
-            </div>
-            <PasswordRequirements password={formData.password} policies={policies} />
-
-            <div style={{ position: 'relative' }}>
-              <input
-                type={showConfirmPassword ? 'text' : 'password'}
-                placeholder="Retype Password"
-                required
-                value={formData.confirmPassword}
-                onChange={(e) => setFormData({ ...formData, confirmPassword: e.target.value })}
-                style={{
-                  ...styles.input,
-                  backgroundColor: isDark ? '#333338' : '#f9fafb',
-                  borderColor: isDark ? '#4a4a52' : '#e5e7eb',
-                  color: isDark ? '#f4f4f5' : '#4b5563',
-                  paddingRight: '40px'
-                }}
-              />
-              <button
-                type="button"
-                onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                style={{
-                  position: 'absolute',
-                  right: '12px',
-                  top: 0,
-                  bottom: 0,
-                  margin: 'auto 0',
-                  height: '24px',
-                  width: '24px',
-                  background: 'none',
-                  border: 'none',
-                  cursor: 'pointer',
-                  padding: 0,
-                  color: isDark ? '#9ca3af' : '#64748b',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  outline: 'none',
-                  transition: 'color 0.15s ease'
-                }}
-                onMouseEnter={e => e.currentTarget.style.color = isDark ? '#e4e4e7' : '#1f2937'}
-                onMouseLeave={e => e.currentTarget.style.color = isDark ? '#9ca3af' : '#64748b'}
-                title={showConfirmPassword ? 'Hide password' : 'Show password'}
-                tabIndex={-1}
-              >
-                {showConfirmPassword ? <EyeOff size={18} /> : <Eye size={18} />}
-              </button>
-            </div>
-
-            {/* Role Checkboxes */}
-            <div style={styles.checkboxContainer}>
-              <label style={{ ...styles.checkboxLabel, color: isDark ? '#d4d4d8' : '#6b7280' }}>
-                <input
-                  type="checkbox"
-                  checked={formData.role === 'Student'}
-                  onChange={() => setFormData({ ...formData, role: 'Student' })}
-                  style={styles.checkbox}
-                /> Student
-              </label>
-              <label style={{ ...styles.checkboxLabel, color: isDark ? '#d4d4d8' : '#6b7280' }}>
-                <input
-                  type="checkbox"
-                  checked={formData.role === 'Teacher'}
-                  onChange={() => setFormData({ ...formData, role: 'Teacher' })}
-                  style={styles.checkbox}
-                /> Teacher
-              </label>
-            </div>
-
-            {/* Submit Button */}
-            <button
-              type="submit"
-              disabled={loading}
-              style={{
-                ...styles.button,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: '8px',
-                opacity: loading ? 0.75 : 1,
-                cursor: loading ? 'not-allowed' : 'pointer'
-              }}
-            >
-              {loading ? (
-                <>
-                  <Loader2 size={18} className="animate-spin" />
-                  <span>Sending Code...</span>
-                </>
-              ) : (
-                <span>Continue & Verify Email</span>
-              )}
-            </button>
-
-            <div style={{ display: 'flex', alignItems: 'center', margin: '10px 0' }}>
-              <div style={{ flex: 1, height: '1px', backgroundColor: isDark ? '#3f3f46' : '#e5e7eb' }}></div>
-              <span style={{ padding: '0 10px', color: isDark ? '#71717a' : '#9ca3af', fontSize: '0.9rem' }}>OR</span>
-              <div style={{ flex: 1, height: '1px', backgroundColor: isDark ? '#3f3f46' : '#e5e7eb' }}></div>
-            </div>
-
-            <div style={{ display: 'flex', justifyContent: 'center' }}>
-              <button
-                type="button"
-                onClick={() => {
-                  handleGoogleElectron();
-                }}
-                disabled={isGoogleLoading || loading}
-                style={isGoogleLoading ? {
-                  ...styles.button,
-                  opacity: 0.7,
-                  cursor: 'not-allowed',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: '8px'
-                } : {
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '10px',
-                  padding: '10px 20px',
-                  borderRadius: '8px',
-                  border: isDark ? '1px solid #3f3f46' : '1px solid #d1d5db',
-                  backgroundColor: isDark ? '#262626' : '#ffffff',
-                  color: isDark ? '#e4e4e7' : '#374151',
-                  fontSize: '0.95rem',
-                  fontWeight: '500',
-                  cursor: loading ? 'not-allowed' : 'pointer',
-                  opacity: loading ? 0.7 : 1,
-                  transition: 'background 0.2s, border-color 0.2s',
-                  width: '100%',
-                  justifyContent: 'center',
-                }}
-                onMouseEnter={e => { if (!isGoogleLoading && !loading) e.currentTarget.style.backgroundColor = isDark ? '#333333' : '#f9fafb' }}
-                onMouseLeave={e => { if (!isGoogleLoading && !loading) e.currentTarget.style.backgroundColor = isDark ? '#262626' : '#ffffff' }}
-              >
-                {isGoogleLoading ? (
-                  <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
-                    <Loader2 size={18} className="animate-spin" />
-                    Authenticating...
-                  </span>
-                ) : (
-                  <>
-                    <svg width="18" height="18" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg">
-                      <path d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844c-.209 1.125-.843 2.078-1.796 2.717v2.258h2.908c1.702-1.567 2.684-3.875 2.684-6.615z" fill="#4285F4"/>
-                      <path d="M9 18c2.43 0 4.467-.806 5.956-2.184l-2.908-2.258c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332C2.438 15.983 5.482 18 9 18z" fill="#34A853"/>
-                      <path d="M3.964 10.707c-.18-.54-.282-1.117-.282-1.707s.102-1.167.282-1.707V4.961H.957C.347 6.175 0 7.55 0 9s.348 2.825.957 4.039l3.007-2.332z" fill="#FBBC05"/>
-                      <path d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0 5.482 0 2.438 2.017.957 4.961L3.964 7.293C4.672 5.166 6.656 3.58 9 3.58z" fill="#EA4335"/>
-                    </svg>
-                    Sign up with Google
-                  </>
-                )}
-              </button>
-            </div>
-
-            {/* Back to login link */}
-            <p style={{ ...styles.loginText, color: isDark ? '#a1a1aa' : '#9ca3af' }}>
-              Already have an account? <span onClick={onBackToLogin} style={styles.loginLink}>Login</span>
-            </p>
-          </form>
+          <RegisterFormCard
+            isDark={isDark}
+            formData={formData}
+            setFormData={setFormData}
+            policies={policies}
+            showPassword={showPassword}
+            setShowPassword={setShowPassword}
+            showConfirmPassword={showConfirmPassword}
+            setShowConfirmPassword={setShowConfirmPassword}
+            loading={loading}
+            isGoogleLoading={isGoogleLoading}
+            onSubmit={handleInitiateOtp}
+            onGoogleClick={handleGoogleClick}
+            onBackToLogin={onBackToLogin}
+          />
         ) : (
-          /* STEP 2: OTP VERIFICATION */
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
-            
-            {/* Back to Edit Details */}
-            <button
-              type="button"
-              onClick={() => {
-                setStep('form');
-                setMessage(null);
-              }}
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '6px',
-                background: 'none',
-                border: 'none',
-                color: isDark ? '#a1a1aa' : '#64748b',
-                cursor: 'pointer',
-                fontSize: '0.85rem',
-                fontWeight: '600',
-                padding: 0,
-                alignSelf: 'flex-start'
-              }}
-            >
-              <ArrowLeft size={16} /> Edit details
-            </button>
-
-            {/* Icon & Heading */}
-            <div style={{ textAlign: 'center', margin: '6px 0 10px 0' }}>
-              <div
-                style={{
-                  width: '56px',
-                  height: '56px',
-                  borderRadius: '16px',
-                  backgroundColor: isDark ? '#133527' : '#ECFDF5',
-                  color: '#10b981',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  margin: '0 auto 12px auto'
-                }}
-              >
-                <ShieldCheck size={32} />
-              </div>
-              <h2 style={{ margin: '0 0 6px 0', fontSize: '1.4rem', fontWeight: '700', color: isDark ? '#f4f4f5' : '#1e293b' }}>
-                Verify your email
-              </h2>
-              <p style={{ margin: 0, fontSize: '0.88rem', color: isDark ? '#a1a1aa' : '#64748b', lineHeight: 1.4 }}>
-                Enter the 6-digit code sent to<br />
-                <strong style={{ color: isDark ? '#e4e4e7' : '#1e293b' }}>{formData.email}</strong>
-              </p>
-            </div>
-
-            <form onSubmit={handleVerifyOtp} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-              {/* 6 Individual Digit Boxes */}
-              <div
-                style={{
-                  display: 'flex',
-                  justifyContent: 'center',
-                  alignItems: 'center',
-                  gap: '10px',
-                  margin: '8px 0 4px 0'
-                }}
-                onPaste={handleOtpPaste}
-              >
-                {otpDigits.map((digit, idx) => (
-                  <input
-                    key={idx}
-                    ref={el => (inputRefs.current[idx] = el)}
-                    type="text"
-                    inputMode="numeric"
-                    autoComplete="one-time-code"
-                    maxLength={1}
-                    value={digit}
-                    onChange={e => handleOtpChange(idx, e.target.value)}
-                    onKeyDown={e => handleOtpKeyDown(idx, e)}
-                    onFocus={e => e.target.select()}
-                    style={{
-                      width: '50px',
-                      height: '58px',
-                      borderRadius: '14px',
-                      border: digit
-                        ? '2px solid #10b981'
-                        : isDark
-                        ? '1.5px solid #4a4a52'
-                        : '1.5px solid #cbd5e1',
-                      backgroundColor: isDark ? '#1f1f23' : '#f8fafc',
-                      color: isDark ? '#f4f4f5' : '#111827',
-                      fontSize: '1.6rem',
-                      fontWeight: '700',
-                      textAlign: 'center',
-                      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
-                      boxSizing: 'border-box',
-                      outline: 'none',
-                      transition: 'all 0.15s ease',
-                      boxShadow: digit ? '0 0 0 3px rgba(16, 185, 129, 0.18)' : 'none'
-                    }}
-                  />
-                ))}
-              </div>
-
-              <p style={{ margin: '0 0 4px 0', textAlign: 'center', fontSize: '0.78rem', color: isDark ? '#71717a' : '#94a3b8' }}>
-                This code is valid for 15 minutes.
-              </p>
-
-              {/* Verify Button */}
-              <button
-                type="submit"
-                disabled={loading || otpDigits.join('').length < 6}
-                style={{
-                  ...styles.button,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: '8px',
-                  opacity: loading || otpDigits.join('').length < 6 ? 0.65 : 1,
-                  cursor: loading || otpDigits.join('').length < 6 ? 'not-allowed' : 'pointer'
-                }}
-              >
-                {loading ? (
-                  <>
-                    <Loader2 size={18} className="animate-spin" />
-                    <span>Verifying...</span>
-                  </>
-                ) : (
-                  <>
-                    <KeyRound size={18} />
-                    <span>Verify & Create Account</span>
-                  </>
-                )}
-              </button>
-            </form>
-
-            {/* Resend Code Section */}
-            <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '6px', fontSize: '0.85rem' }}>
-              <span style={{ color: isDark ? '#a1a1aa' : '#64748b' }}>Didn't receive the code?</span>
-              <button
-                type="button"
-                onClick={handleResendOtp}
-                disabled={resendCooldown > 0 || resending}
-                style={{
-                  background: 'none',
-                  border: 'none',
-                  color: resendCooldown > 0 ? (isDark ? '#71717a' : '#9ca3af') : '#10b981',
-                  fontWeight: '700',
-                  cursor: resendCooldown > 0 ? 'default' : 'pointer',
-                  padding: 0,
-                  fontSize: '0.85rem'
-                }}
-              >
-                {resending ? 'Sending...' : resendCooldown > 0 ? `Resend in ${resendCooldown}s` : 'Resend code'}
-              </button>
-            </div>
-
-            {/* Back to Login */}
-            <p style={{ ...styles.loginText, marginTop: '8px', color: isDark ? '#a1a1aa' : '#9ca3af' }}>
-              Already have an account? <span onClick={onBackToLogin} style={styles.loginLink}>Login</span>
-            </p>
-          </div>
+          <RegisterOtpCard
+            isDark={isDark}
+            email={formData.email}
+            otpDigits={otpDigits}
+            inputRefs={inputRefs}
+            onOtpChange={handleOtpChange}
+            onOtpKeyDown={handleOtpKeyDown}
+            onOtpPaste={handleOtpPaste}
+            loading={loading}
+            resending={resending}
+            resendCooldown={resendCooldown}
+            onResendOtp={handleResendOtp}
+            onVerifyOtp={handleVerifyOtp}
+            onBackToForm={() => { setStep('form'); setMessage(null); }}
+            onBackToLogin={onBackToLogin}
+          />
         )}
       </motion.div>
     </div>
   );
 }
-
-// STYLES 
-const styles = {
-  container: {
-    minHeight: '100vh',
-    width: '100%',
-    display: 'flex',
-    justifyContent: 'center',
-    alignItems: 'center',
-    fontFamily: 'Arial, Helvetica, sans-serif',
-    position: 'relative',
-    padding: '20px',
-    boxSizing: 'border-box',
-    transition: 'background 0.3s ease',
-  },
-  logoContainer: {
-    position: 'absolute',
-    top: '30px',
-    left: '40px',
-    fontSize: '2.5rem',
-    fontWeight: '900',
-    fontStyle: 'italic',
-    textShadow: '2px 2px 4px rgba(0,0,0,0.15)'
-  },
-  logoV: { color: '#10b981' },
-  logoText: { color: 'white' },
-  card: {
-    backgroundColor: 'white',
-    padding: '40px 44px',
-    borderRadius: '24px',
-    width: '100%',
-    maxWidth: '460px',
-    boxShadow: '0 10px 30px rgba(0,0,0,0.15)',
-    boxSizing: 'border-box',
-    transition: 'background-color 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease',
-  },
-  form: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '15px'
-  },
-  flexRow: {
-    display: 'flex',
-    gap: '10px',
-    width: '100%'
-  },
-  input: {
-    width: '100%',
-    padding: '15px',
-    borderRadius: '15px',
-    border: '1px solid #e5e7eb',
-    backgroundColor: '#f9fafb',
-    color: '#4b5563',
-    fontSize: '1rem',
-    boxSizing: 'border-box',
-    boxShadow: 'inset 0 2px 4px rgba(0,0,0,0.02)',
-    outline: 'none',
-    transition: 'background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease',
-  },
-  checkboxContainer: {
-    display: 'flex',
-    justifyContent: 'center',
-    gap: '30px',
-    margin: '10px 0'
-  },
-  checkboxLabel: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '8px',
-    cursor: 'pointer',
-    color: '#6b7280',
-    fontSize: '1rem'
-  },
-  checkbox: {
-    width: '18px',
-    height: '18px',
-    cursor: 'pointer'
-  },
-  button: {
-    width: '100%',
-    padding: '15px',
-    backgroundColor: '#10b981',
-    border: 'none',
-    borderRadius: '15px',
-    color: 'white',
-    fontWeight: 'bold',
-    fontSize: '1.05rem',
-    cursor: 'pointer',
-    marginTop: '6px',
-    boxShadow: '0 4px 6px rgba(16, 185, 129, 0.2)'
-  },
-  loginText: {
-    textAlign: 'center',
-    marginTop: '16px',
-    color: '#9ca3af',
-    fontSize: '0.9rem'
-  },
-  loginLink: {
-    color: '#10b981',
-    cursor: 'pointer',
-    fontWeight: 'bold'
-  },
-  error: { backgroundColor: '#fee2e2', color: '#991b1b', padding: '12px 16px', borderRadius: '12px', marginBottom: '12px', fontSize: '0.88rem', textAlign: 'center', lineHeight: 1.4 },
-  success: { backgroundColor: '#d1fae5', color: '#065f46', padding: '12px 16px', borderRadius: '12px', marginBottom: '12px', fontSize: '0.88rem', textAlign: 'center', lineHeight: 1.4 },
-  info: { padding: '12px 16px', borderRadius: '12px', marginBottom: '12px', fontSize: '0.88rem', textAlign: 'center', lineHeight: 1.4 }
-};

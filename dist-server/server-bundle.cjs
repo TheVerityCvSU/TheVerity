@@ -89550,13 +89550,13 @@ var require_emailService = __commonJS({
           });
           const data = await res.json();
           if (res.ok) {
-            console.log(`\u2705 [EMAIL SERVICE] Email sent via Resend REST API to ${email} (ID: ${data.id})`);
+            console.log(`[EMAIL SERVICE] Email sent via Resend REST API to ${email} (ID: ${data.id})`);
             return { success: true, messageId: data.id, otp };
           } else {
-            console.warn(`\u26A0\uFE0F [EMAIL SERVICE] Resend API error:`, data);
+            console.warn(`[EMAIL SERVICE] Resend API error:`, data);
           }
         } catch (e2) {
-          console.warn(`\u26A0\uFE0F [EMAIL SERVICE] Resend fetch failed:`, e2.message);
+          console.warn(`[EMAIL SERVICE] Resend fetch failed:`, e2.message);
         }
       }
       const brevoKey = process.env.BREVO_API_KEY;
@@ -89578,13 +89578,13 @@ var require_emailService = __commonJS({
           });
           const data = await res.json();
           if (res.ok) {
-            console.log(`\u2705 [EMAIL SERVICE] Email sent via Brevo REST API to ${email} (ID: ${data.messageId})`);
+            console.log(`[EMAIL SERVICE] Email sent via Brevo REST API to ${email} (ID: ${data.messageId})`);
             return { success: true, messageId: data.messageId, otp };
           } else {
-            console.warn(`\u26A0\uFE0F [EMAIL SERVICE] Brevo API error:`, data);
+            console.warn(`[EMAIL SERVICE] Brevo API error:`, data);
           }
         } catch (e2) {
-          console.warn(`\u26A0\uFE0F [EMAIL SERVICE] Brevo fetch failed:`, e2.message);
+          console.warn(`[EMAIL SERVICE] Brevo fetch failed:`, e2.message);
         }
       }
       return null;
@@ -89692,9 +89692,9 @@ The Verity Team
 
 You're receiving this email because a verification code was requested to create a new Verity account. If this wasn't you, please ignore this email.`;
       console.log("\n========================================");
-      console.log(`\u{1F511} [VERITY OTP CODE] To: ${email} | Name: ${name || "User"}`);
-      console.log(`\u{1F449} CODE: ${otp}`);
-      console.log(`\u23F0 Expires in: 15 minutes`);
+      console.log(`[VERITY OTP CODE] To: ${email} | Name: ${name || "User"}`);
+      console.log(`CODE: ${otp}`);
+      console.log(`Expires in: 15 minutes`);
       console.log("========================================\n");
       const user = (process.env.SMTP_USER || process.env.EMAIL_USER || DEFAULT_SMTP_USER).trim();
       const from = process.env.SMTP_FROM || process.env.EMAIL_FROM || (user ? `"The Verity Team" <${user}>` : '"The Verity Team" <kimfabie159@gmail.com>');
@@ -89704,12 +89704,12 @@ You're receiving this email because a verification code was requested to create 
       }
       const isRenderFree = Boolean(process.env.RENDER && !process.env.RENDER_SMTP_ENABLED && !process.env.RESEND_API_KEY && !process.env.BREVO_API_KEY);
       if (isRenderFree) {
-        console.warn(`\u2139\uFE0F [EMAIL SERVICE] Running on Render Free Tier container. Outbound raw SMTP ports (25, 465, 587) are restricted by host policy. Code logged above.`);
+        console.warn(`[EMAIL SERVICE] Running on Render Free Tier container. Outbound raw SMTP ports (25, 465, 587) are restricted by host policy. Code logged above.`);
         return { success: false, error: "Raw SMTP ports restricted by cloud container (Render Free Tier)", simulated: false, otp };
       }
       const primaryTransporter = getTransporter();
       if (!primaryTransporter) {
-        console.log(`\u2139\uFE0F [EMAIL SERVICE] SMTP not configured. OTP logged above for development.`);
+        console.log(`[EMAIL SERVICE] SMTP not configured. OTP logged above for development.`);
         return { success: false, simulated: true, otp, error: "SMTP not configured" };
       }
       try {
@@ -89720,10 +89720,10 @@ You're receiving this email because a verification code was requested to create 
           text,
           html
         });
-        console.log(`\u2705 [EMAIL SERVICE] Email sent successfully to ${email}. MessageId: ${info.messageId}`);
+        console.log(`[EMAIL SERVICE] Email sent successfully to ${email}. MessageId: ${info.messageId}`);
         return { success: true, messageId: info.messageId, otp };
       } catch (error) {
-        console.warn(`\u26A0\uFE0F [EMAIL SERVICE] Primary send to ${email} failed: ${error.message}. Retrying via fallback port 465...`);
+        console.warn(`[EMAIL SERVICE] Primary send to ${email} failed: ${error.message}. Retrying via fallback port 465...`);
         try {
           const fallbackTransporter = createTransporter(true);
           if (!fallbackTransporter) {
@@ -89736,10 +89736,10 @@ You're receiving this email because a verification code was requested to create 
             text,
             html
           });
-          console.log(`\u2705 [EMAIL SERVICE] Email sent successfully via fallback port 465 to ${email}. MessageId: ${fallbackInfo.messageId}`);
+          console.log(`[EMAIL SERVICE] Email sent successfully via fallback port 465 to ${email}. MessageId: ${fallbackInfo.messageId}`);
           return { success: true, messageId: fallbackInfo.messageId, otp };
         } catch (fallbackError) {
-          console.error(`\u274C [EMAIL SERVICE] All email attempts failed for ${email}:`, fallbackError.message);
+          console.error(`[EMAIL SERVICE] All email attempts failed for ${email}:`, fallbackError.message);
           return { success: false, error: fallbackError.message, simulated: false, otp };
         }
       }
@@ -97121,11 +97121,11 @@ var require_db4 = __commonJS({
       initSqlite();
       if (cleanedUrl) {
         if (parsedDb && parsedDb.hasPlaceholder) {
-          console.error('\u274C [Database] Configuration Error: Your DATABASE_URL still contains the placeholder "[YOUR-PASSWORD]".');
-          console.error("\u{1F449} Please go to Render Dashboard -> Environment -> edit DATABASE_URL and replace [YOUR-PASSWORD] with your actual Supabase database password.");
+          console.error('[Database] Configuration Error: Your DATABASE_URL still contains the placeholder "[YOUR-PASSWORD]".');
+          console.error("[Database] Please go to Render Dashboard -> Environment -> edit DATABASE_URL and replace [YOUR-PASSWORD] with your actual Supabase database password.");
           provider = "sqlite";
         } else if (!cleanedUrl.startsWith("postgres://") && !cleanedUrl.startsWith("postgresql://")) {
-          console.error(`\u274C [Database] Provided DATABASE_URL is not recognized as a PostgreSQL URL (must start with postgresql:// or postgres://).`);
+          console.error(`[Database] Provided DATABASE_URL is not recognized as a PostgreSQL URL (must start with postgresql:// or postgres://).`);
           provider = "sqlite";
         } else {
           try {
@@ -97134,8 +97134,8 @@ var require_db4 = __commonJS({
           } catch (err) {
             console.warn(`[Database] PostgreSQL connection failed: ${err.message}`);
             if (err.code === "ENETUNREACH" || cleanedUrl.includes("db.") && cleanedUrl.includes(".supabase.co")) {
-              console.warn("\u26A0\uFE0F  [Database] IPv6 Error: Render does not support direct IPv6 connections (db.*.supabase.co).");
-              console.warn('\u26A0\uFE0F  [Database] Fix: In your Supabase Dashboard, click "Connect" -> select "Connection Pooler" (pooler.supabase.com:6543 or 5432) which supports IPv4!');
+              console.warn("[Database] IPv6 Error: Render does not support direct IPv6 connections (db.*.supabase.co).");
+              console.warn('[Database] Fix: In your Supabase Dashboard, click "Connect" -> select "Connection Pooler" (pooler.supabase.com:6543 or 5432) which supports IPv4!');
             }
             console.warn("[Database] Falling back to local SQLite so your app stays fully functional.");
             provider = "sqlite";
@@ -97683,6 +97683,222 @@ var require_dotnetManager = __commonJS({
       cancelInstallDotnet,
       getDotnetState,
       ensureDotnetInPath
+    };
+  }
+});
+
+// server/csharpSecurityScanner.js
+var require_csharpSecurityScanner = __commonJS({
+  "server/csharpSecurityScanner.js"(exports2, module2) {
+    function maskCommentsAndStrings(code) {
+      let maskedCode = "";
+      let inLineComment = false;
+      let inBlockComment = false;
+      let inNormalString = false;
+      let inVerbatimString = false;
+      const strings = [];
+      let currentString = "";
+      let stringStartLine = 1;
+      let stringStartCol = 1;
+      let line = 1;
+      let col = 0;
+      for (let i2 = 0; i2 < code.length; i2++) {
+        const ch = code[i2];
+        const next = code[i2 + 1] || "";
+        if (ch === "\n") {
+          line++;
+          col = 0;
+        } else {
+          col++;
+        }
+        if (inLineComment) {
+          if (ch === "\n") {
+            inLineComment = false;
+            maskedCode += "\n";
+          } else {
+            maskedCode += " ";
+          }
+          continue;
+        }
+        if (inBlockComment) {
+          if (ch === "*" && next === "/") {
+            inBlockComment = false;
+            maskedCode += "  ";
+            i2++;
+            col++;
+          } else {
+            maskedCode += ch === "\n" ? "\n" : " ";
+          }
+          continue;
+        }
+        if (inVerbatimString) {
+          if (ch === '"' && next === '"') {
+            currentString += '""';
+            maskedCode += "  ";
+            i2++;
+            col++;
+          } else if (ch === '"') {
+            inVerbatimString = false;
+            maskedCode += '"';
+            strings.push({ value: currentString, line: stringStartLine, col: stringStartCol });
+            currentString = "";
+          } else {
+            currentString += ch;
+            maskedCode += ch === "\n" ? "\n" : " ";
+          }
+          continue;
+        }
+        if (inNormalString) {
+          if (ch === "\\") {
+            currentString += ch + next;
+            maskedCode += "  ";
+            i2++;
+            col++;
+          } else if (ch === '"') {
+            inNormalString = false;
+            maskedCode += '"';
+            strings.push({ value: currentString, line: stringStartLine, col: stringStartCol });
+            currentString = "";
+          } else {
+            currentString += ch;
+            maskedCode += ch === "\n" ? "\n" : " ";
+          }
+          continue;
+        }
+        if (ch === "/" && next === "/") {
+          inLineComment = true;
+          maskedCode += "  ";
+          i2++;
+          col++;
+          continue;
+        }
+        if (ch === "/" && next === "*") {
+          inBlockComment = true;
+          maskedCode += "  ";
+          i2++;
+          col++;
+          continue;
+        }
+        if (ch === "@" && next === '"') {
+          inVerbatimString = true;
+          stringStartLine = line;
+          stringStartCol = col;
+          maskedCode += "  ";
+          i2++;
+          col++;
+          continue;
+        }
+        if (ch === "$" && next === '"') {
+          inNormalString = true;
+          stringStartLine = line;
+          stringStartCol = col;
+          maskedCode += "  ";
+          i2++;
+          col++;
+          continue;
+        }
+        if (ch === '"') {
+          inNormalString = true;
+          stringStartLine = line;
+          stringStartCol = col;
+          maskedCode += '"';
+          continue;
+        }
+        maskedCode += ch;
+      }
+      return { maskedCode, strings };
+    }
+    var BANNED_CODE_PATTERNS = [
+      { pattern: /\bSystem\s*\.\s*Diagnostics\s*\.\s*Process\b/i, rule: "PROCESS_SPAWN", message: "Restricted API: System.Diagnostics.Process is prohibited." },
+      { pattern: /\bProcess\s*\.\s*Start\b/i, rule: "PROCESS_SPAWN", message: "Restricted API: Process.Start is prohibited." },
+      { pattern: /\bProcessStartInfo\b/i, rule: "PROCESS_SPAWN", message: "Restricted API: ProcessStartInfo is prohibited." },
+      { pattern: /\[\s*DllImport\b/i, rule: "NATIVE_INTEROP", message: "Restricted API: Native DllImport interop is prohibited." },
+      { pattern: /\bSystem\s*\.\s*Runtime\s*\.\s*InteropServices\b/i, rule: "NATIVE_INTEROP", message: "Restricted API: Native InteropServices are prohibited." },
+      { pattern: /\bunsafe\b/i, rule: "UNSAFE_CODE", message: "Restricted API: Unsafe code blocks are prohibited." },
+      { pattern: /\bSystem\s*\.\s*Reflection\b/i, rule: "REFLECTION", message: "Restricted API: System.Reflection is prohibited." },
+      { pattern: /\bType\s*\.\s*GetType\b/i, rule: "REFLECTION", message: "Restricted API: Dynamic Type.GetType reflection is prohibited." },
+      { pattern: /\bAssembly\s*\.\s*Load\b/i, rule: "REFLECTION", message: "Restricted API: Dynamic Assembly.Load reflection is prohibited." },
+      { pattern: /\bActivator\s*\.\s*CreateInstance\b/i, rule: "REFLECTION", message: "Restricted API: Dynamic Activator is prohibited." },
+      { pattern: /\bSystem\s*\.\s*Net\b/i, rule: "NETWORK_ACCESS", message: "Restricted API: System.Net networking is prohibited." },
+      { pattern: /\bHttpClient\b/i, rule: "NETWORK_ACCESS", message: "Restricted API: HttpClient network calls are prohibited." },
+      { pattern: /\bTcpClient\b/i, rule: "NETWORK_ACCESS", message: "Restricted API: TcpClient network calls are prohibited." },
+      { pattern: /\bUdpClient\b/i, rule: "NETWORK_ACCESS", message: "Restricted API: UdpClient network calls are prohibited." },
+      { pattern: /\bWebClient\b/i, rule: "NETWORK_ACCESS", message: "Restricted API: WebClient network calls are prohibited." },
+      { pattern: /\bMicrosoft\s*\.\s*Win32\s*\.\s*Registry\b/i, rule: "SYSTEM_TAMPER", message: "Restricted API: Registry access is prohibited." },
+      { pattern: /\bRegistryKey\b/i, rule: "SYSTEM_TAMPER", message: "Restricted API: RegistryKey access is prohibited." },
+      { pattern: /\bEnvironment\s*\.\s*Exit\b/i, rule: "PROCESS_KILL", message: "Restricted API: Environment.Exit is prohibited in classroom IDE." },
+      { pattern: /\bEnvironment\s*\.\s*FailFast\b/i, rule: "PROCESS_KILL", message: "Restricted API: Environment.FailFast is prohibited." },
+      { pattern: /\bAppDomain\s*\.\s*CurrentDomain\b/i, rule: "SYSTEM_TAMPER", message: "Restricted API: AppDomain manipulation is prohibited." }
+    ];
+    var BANNED_STRING_PATTERNS = [
+      { pattern: /\bcmd(\.exe)?\b/i, rule: "DANGEROUS_COMMAND", message: 'Forbidden command reference: "cmd.exe" is blocked.' },
+      { pattern: /\bpowershell(\.exe)?\b/i, rule: "DANGEROUS_COMMAND", message: 'Forbidden command reference: "powershell" is blocked.' },
+      { pattern: /\b(shutdown|format|regedit)\b/i, rule: "DANGEROUS_COMMAND", message: "Forbidden system command is blocked in string literal." },
+      { pattern: /^[a-zA-Z]:[\\/]/, rule: "PATH_TRAVERSAL", message: "Absolute file paths (e.g. C:\\...) are prohibited." },
+      { pattern: /\.\.[\\/]/, rule: "PATH_TRAVERSAL", message: "Directory traversal (..) is prohibited." }
+    ];
+    function scanSingleFile(code, fileName = "Program.cs") {
+      if (!code || typeof code !== "string") return { isSafe: true };
+      const { maskedCode, strings } = maskCommentsAndStrings(code);
+      const lines = code.split("\n");
+      for (const check of BANNED_CODE_PATTERNS) {
+        const match = check.pattern.exec(maskedCode);
+        if (match) {
+          const index = match.index;
+          let curLen = 0;
+          let lineNum = 1;
+          let colNum = 1;
+          for (let l = 0; l < lines.length; l++) {
+            const lineLen = lines[l].length + 1;
+            if (curLen + lineLen > index) {
+              lineNum = l + 1;
+              colNum = index - curLen + 1;
+              break;
+            }
+            curLen += lineLen;
+          }
+          return {
+            isSafe: false,
+            rule: check.rule,
+            message: check.message,
+            fileName,
+            line: lineNum,
+            column: colNum
+          };
+        }
+      }
+      for (const strObj of strings) {
+        for (const check of BANNED_STRING_PATTERNS) {
+          if (check.pattern.test(strObj.value)) {
+            return {
+              isSafe: false,
+              rule: check.rule,
+              message: check.message,
+              fileName,
+              line: strObj.line,
+              column: strObj.col
+            };
+          }
+        }
+      }
+      return { isSafe: true };
+    }
+    function scanCSharpCode2(code, extraFiles = []) {
+      const mainResult = scanSingleFile(code, "Program.cs");
+      if (!mainResult.isSafe) return mainResult;
+      if (Array.isArray(extraFiles)) {
+        for (const file of extraFiles) {
+          if (file && file.code) {
+            const extraResult = scanSingleFile(file.code, file.name || "ExtraFile.cs");
+            if (!extraResult.isSafe) return extraResult;
+          }
+        }
+      }
+      return { isSafe: true };
+    }
+    module2.exports = {
+      scanCSharpCode: scanCSharpCode2,
+      scanSingleFile
     };
   }
 });
@@ -106619,13 +106835,13 @@ var require_cloudRelay = __commonJS({
     var heartbeatTimer = null;
     function initCloudRelay2(activeStudents2, localIo) {
       if (isRenderCloud) {
-        console.log("\u2601\uFE0F [Cloud Relay] Running directly on Render Cloud. Outbound relay disabled.");
+        console.log("[Cloud Relay] Running directly on Render Cloud. Outbound relay disabled.");
         return;
       }
       activeStudentsRef = activeStudents2;
       localIoRef = localIo;
       try {
-        console.log(`\u2601\uFE0F [Cloud Relay] Initializing bridge to Cloud Server at ${CLOUD_URL}...`);
+        console.log(`[Cloud Relay] Initializing bridge to Cloud Server at ${CLOUD_URL}...`);
         cloudSocket = ioClient(CLOUD_URL, {
           reconnection: true,
           reconnectionAttempts: Infinity,
@@ -106636,12 +106852,12 @@ var require_cloudRelay = __commonJS({
         });
         cloudSocket.on("connect", () => {
           isConnected = true;
-          console.log(`\u2601\uFE0F [Cloud Relay] \u2705 Successfully connected LAN Server to Cloud at ${CLOUD_URL}`);
+          console.log(`[Cloud Relay] Successfully connected LAN Server to Cloud at ${CLOUD_URL}`);
           syncAllToCloud();
         });
         cloudSocket.on("disconnect", () => {
           isConnected = false;
-          console.log("\u2601\uFE0F [Cloud Relay] Disconnected from Cloud Server.");
+          console.log("[Cloud Relay] Disconnected from Cloud Server.");
         });
         cloudSocket.on("connect_error", (err) => {
           isConnected = false;
@@ -106815,7 +107031,7 @@ var require_lanDiscovery = __commonJS({
           } catch (_) {
           }
           isRunning = true;
-          console.log(`\u{1F4E1} [LAN Discovery] Host Beacon active on UDP port ${DISCOVERY_PORT} (HTTP port: ${httpPort})`);
+          console.log(`[LAN Discovery] Host Beacon active on UDP port ${DISCOVERY_PORT} (HTTP port: ${httpPort})`);
           const sendBeacon = () => {
             if (!isRunning || !beaconSocket) return;
             try {
@@ -106958,12 +107174,29 @@ var crypto2 = require("crypto");
 var { sendOtpEmail } = require_emailService();
 var db = require_db4();
 var dotnetManager = require_dotnetManager();
+var { scanCSharpCode } = require_csharpSecurityScanner();
+function killProcessTree(proc) {
+  if (!proc || !proc.pid) return;
+  try {
+    if (process.platform === "win32") {
+      exec(`taskkill /F /T /PID ${proc.pid}`, { stdio: "ignore" }, () => {
+      });
+    } else {
+      proc.kill("SIGKILL");
+    }
+  } catch (_) {
+    try {
+      proc.kill();
+    } catch (__) {
+    }
+  }
+}
 var DATA_DIR = process.env.DATA_DIR || __dirname;
 var app = express();
 app.set("trust proxy", 1);
 var JWT_SECRET = process.env.JWT_SECRET || "c9JLTH$I6,vwWv=0tmQj6a+g|k9AwunzP#<$!@oX@Z0gpX2,De8XFYY/5A4_2-Y<u4V1QnwGV1+d34/QOJ3";
 if (process.env.NODE_ENV === "production" && JWT_SECRET === "verity_super_secret_key") {
-  console.warn("\u26A0\uFE0F  [SECURITY WARNING] JWT_SECRET is using the insecure default key in production! Set JWT_SECRET in your environment.");
+  console.warn("[SECURITY WARNING] JWT_SECRET is using the insecure default key in production! Set JWT_SECRET in your environment.");
 }
 app.use(cors());
 app.use(express.json({ limit: "150mb" }));
@@ -110389,7 +110622,7 @@ function resetDotnetCache() {
   cachedDotnetTargetFramework = null;
   cachedRoslynConfig = null;
   baseTemplatePromise = null;
-  console.log("\u26A1 Verity Compiler: Invalidate and reset local .NET SDK cache");
+  console.log("[Compiler] Invalidate and reset local .NET SDK cache");
 }
 var OFFLINE_DOTNET_ENV = {
   ...process.env,
@@ -110418,11 +110651,11 @@ function getDotnetTargetFramework() {
     const major = parseInt(output.split(".")[0], 10);
     if (!isNaN(major) && major >= 6) {
       cachedDotnetTargetFramework = `net${major}.0`;
-      console.log(`\u26A1 Verity Compiler: Detected .NET SDK ${output} -> targeting ${cachedDotnetTargetFramework}`);
+      console.log(`[Compiler] Detected .NET SDK ${output} -> targeting ${cachedDotnetTargetFramework}`);
       return cachedDotnetTargetFramework;
     }
   } catch (e2) {
-    console.warn("\u26A0\uFE0F Could not determine dotnet version, defaulting to net8.0:", e2.message);
+    console.warn("[Compiler] Could not determine dotnet version, defaulting to net8.0:", e2.message);
   }
   cachedDotnetTargetFramework = "net8.0";
   return cachedDotnetTargetFramework;
@@ -110462,13 +110695,13 @@ function getRoslynConfig() {
     }
     if (cscPath && refDir) {
       cachedRoslynConfig = { cscPath, refDir, packVersion };
-      console.log(`\u26A1 Verity Fast Compiler: Discovered local .NET SDK Roslyn C# engine:
+      console.log(`[Fast Compiler] Discovered local .NET SDK Roslyn C# engine:
   Compiler: ${cscPath}
   Reference Assemblies: ${refDir}`);
       return cachedRoslynConfig;
     }
   } catch (e2) {
-    console.warn("\u26A0\uFE0F Could not locate direct Roslyn csc in local .NET SDK, will use optimized dotnet build:", e2.message);
+    console.warn("[Compiler] Could not locate direct Roslyn csc in local .NET SDK, will use optimized dotnet build:", e2.message);
   }
   cachedRoslynConfig = false;
   return false;
@@ -110552,21 +110785,21 @@ function ensureBaseTemplate() {
           };
           fs2.writeFileSync(path.join(binDir, "verity_base.runtimeconfig.json"), JSON.stringify(runtimeConfig, null, 2), "utf8");
         } catch (rspErr) {
-          console.warn("\u26A0\uFE0F Could not generate framework_refs.rsp:", rspErr.message);
+          console.warn("[Compiler] Could not generate framework_refs.rsp:", rspErr.message);
         }
       }
-      console.log(`\u26A1 Verity Compiler: Pre-warming base .NET template (${targetFramework}) in offline mode...`);
+      console.log(`[Compiler] Pre-warming base .NET template (${targetFramework}) in offline mode...`);
       await new Promise((resolve) => {
         exec(`dotnet restore "${projectFile}" --ignore-failed-sources -v q`, { cwd: COMPILER_BASE_DIR, env: OFFLINE_DOTNET_ENV }, (restoreErr) => {
           if (restoreErr) {
-            console.warn("\u26A0\uFE0F Base template restore warning:", restoreErr.message);
+            console.warn("[Compiler] Base template restore warning:", restoreErr.message);
           }
           exec(`dotnet build --no-restore -v q -m -p:WarningLevel=0 -p:UseAppHost=false "${projectFile}"`, { cwd: COMPILER_BASE_DIR, env: OFFLINE_DOTNET_ENV }, (buildErr) => {
             if (buildErr) {
-              console.warn("\u26A0\uFE0F Base template build warning (falling back to standard build):", buildErr.message);
+              console.warn("[Compiler] Base template build warning (falling back to standard build):", buildErr.message);
               exec(`dotnet build -v q -m -p:WarningLevel=0 "${projectFile}"`, { cwd: COMPILER_BASE_DIR, env: OFFLINE_DOTNET_ENV }, () => resolve(COMPILER_BASE_DIR));
             } else {
-              console.log(`\u26A1 Verity Compiler: Base .NET template pre-warmed for ${targetFramework} with warm obj/bin cache (offline ready).`);
+              console.log(`[Compiler] Base .NET template pre-warmed for ${targetFramework} with warm obj/bin cache (offline ready).`);
               resolve(COMPILER_BASE_DIR);
             }
           });
@@ -110846,7 +111079,7 @@ app.get("/active-activities", (req, res) => {
   }
 });
 io.on("connection", (socket) => {
-  console.log("\u{1F7E2} Student Workspace Connected: " + socket.id);
+  console.log("[Workspace] Student Connected: " + socket.id);
   socket.on("get_active_activities", (data) => {
     socket.emit("active_activities_update", {
       counts: getActiveActivitiesMap(data?.classroomId),
@@ -111142,6 +111375,25 @@ io.on("connection", (socket) => {
         socket.emit("dotnet_missing", { error: "DOTNET_NOT_INSTALLED" });
         return socket.emit("process_exit", { code: 1 });
       }
+      const securityCheck = scanCSharpCode(code, extraFiles);
+      if (!securityCheck.isSafe) {
+        socket.emit("compiler_diagnostics", [{
+          severity: "error",
+          message: `[Security Violation] ${securityCheck.message}`,
+          startLineNumber: securityCheck.line || 1,
+          startColumn: securityCheck.column || 1,
+          endLineNumber: securityCheck.line || 1,
+          endColumn: (securityCheck.column || 1) + 12
+        }]);
+        socket.emit("terminal_output", `
+[Security Alert: Code execution blocked by Verity Sandbox]
+[File: ${securityCheck.fileName}, Line ${securityCheck.line}:${securityCheck.column}]
+[Rule: ${securityCheck.rule}]
+[Detail: ${securityCheck.message}]
+
+`);
+        return socket.emit("process_exit", { code: 1 });
+      }
       const studentKey = socket.user?.id ? `u_${socket.user.id}` : socket.user?.email ? `e_${socket.user.email.replace(/[^a-zA-Z0-9]/g, "_")}` : `s_${socket.id.replace(/[^a-zA-Z0-9]/g, "")}`;
       let projectDir = sessionWorkspaces.get(studentKey)?.projectDir;
       if (!projectDir) {
@@ -111168,7 +111420,7 @@ io.on("connection", (socket) => {
       }
       if (activeProcess) {
         try {
-          activeProcess.kill();
+          killProcessTree(activeProcess);
         } catch (_) {
         }
         activeProcess = null;
@@ -111296,10 +111548,13 @@ io.on("connection", (socket) => {
       socket2.emit("program_started");
       const runProcess = spawn("dotnet", [dllPath], { cwd: projectDir, env: env2 });
       activeProcess = runProcess;
+      let totalOutputBytes = 0;
+      const MAX_OUTPUT_BYTES = 128 * 1024;
+      let isOutputCapped = false;
       const executionTimeout = setTimeout(() => {
         if (activeProcess === runProcess) {
           try {
-            runProcess.kill();
+            killProcessTree(runProcess);
           } catch (_) {
           }
           socket2.emit("terminal_output", "\n[Process terminated: Execution limit of 20s exceeded]\n");
@@ -111316,9 +111571,35 @@ io.on("connection", (socket) => {
         activeProcess = null;
       });
       runProcess.stdout.on("data", (data) => {
+        if (isOutputCapped) return;
+        totalOutputBytes += data.length;
+        if (totalOutputBytes > MAX_OUTPUT_BYTES) {
+          isOutputCapped = true;
+          try {
+            killProcessTree(runProcess);
+          } catch (_) {
+          }
+          socket2.emit("terminal_output", "\n\n[Process terminated: Execution output exceeded 128 KB limit (Infinite output loop detected)]\n");
+          socket2.emit("process_exit", { code: 1 });
+          activeProcess = null;
+          return;
+        }
         socket2.emit("terminal_output", data.toString());
       });
       runProcess.stderr.on("data", (data) => {
+        if (isOutputCapped) return;
+        totalOutputBytes += data.length;
+        if (totalOutputBytes > MAX_OUTPUT_BYTES) {
+          isOutputCapped = true;
+          try {
+            killProcessTree(runProcess);
+          } catch (_) {
+          }
+          socket2.emit("terminal_output", "\n\n[Process terminated: Execution output exceeded 128 KB limit (Infinite output loop detected)]\n");
+          socket2.emit("process_exit", { code: 1 });
+          activeProcess = null;
+          return;
+        }
         socket2.emit("terminal_output", data.toString());
       });
       runProcess.on("close", (runCode) => {
@@ -111338,7 +111619,10 @@ io.on("connection", (socket) => {
   });
   socket.on("stop_code", () => {
     if (activeProcess) {
-      activeProcess.kill();
+      try {
+        killProcessTree(activeProcess);
+      } catch (_) {
+      }
       socket.emit("terminal_output", "\n[Process stopped by user]\n");
       socket.emit("process_exit", { code: 0 });
       activeProcess = null;
@@ -111366,6 +111650,26 @@ io.on("connection", (socket) => {
       }
       if (!Array.isArray(testCases) || testCases.length === 0) {
         return socket.emit("test_cases_results", { results: [] });
+      }
+      const securityCheck = scanCSharpCode(code, extraFiles);
+      if (!securityCheck.isSafe) {
+        socket.emit("compiler_diagnostics", [{
+          severity: "error",
+          message: `[Security Violation] ${securityCheck.message}`,
+          startLineNumber: securityCheck.line || 1,
+          startColumn: securityCheck.column || 1,
+          endLineNumber: securityCheck.line || 1,
+          endColumn: (securityCheck.column || 1) + 12
+        }]);
+        const results2 = (testCases || []).map((tc) => ({
+          id: tc.id,
+          status: "error",
+          passed: false,
+          actualOutput: "",
+          expectedOutput: tc.expectedOutput || "",
+          error: `Security Violation: ${securityCheck.message} (File: ${securityCheck.fileName}, Line ${securityCheck.line})`
+        }));
+        return socket.emit("test_cases_results", { results: results2 });
       }
       const studentKey = socket.user?.id ? `u_${socket.user.id}` : socket.user?.email ? `e_${socket.user.email.replace(/[^a-zA-Z0-9]/g, "_")}` : `s_${socket.id.replace(/[^a-zA-Z0-9]/g, "")}`;
       let ws = sessionWorkspaces.get(studentKey);
@@ -111484,7 +111788,7 @@ io.on("connection", (socket) => {
         const execTimeout = setTimeout(() => {
           killed = true;
           try {
-            rp.kill();
+            killProcessTree(rp);
           } catch (_) {
           }
           const result = {
@@ -111949,7 +112253,7 @@ io.on("connection", (socket) => {
   socket.on("student_leave_workspace", (data) => {
     if (activeProcess) {
       try {
-        activeProcess.kill();
+        killProcessTree(activeProcess);
       } catch (_) {
       }
       activeProcess = null;
@@ -111989,7 +112293,7 @@ io.on("connection", (socket) => {
   socket.on("disconnect", async () => {
     if (activeProcess) {
       try {
-        activeProcess.kill();
+        killProcessTree(activeProcess);
       } catch (_) {
       }
       activeProcess = null;
@@ -112368,7 +112672,7 @@ function start(port = process.env.PORT || 3001) {
     server.listen(p, "0.0.0.0", () => {
       const lanIps = getLanIpAddresses();
       console.log("\n========================================================");
-      console.log("  \u{1F393} THE VERITY - OFFLINE COMLAB / LAN SERVER READY");
+      console.log("  THE VERITY - OFFLINE COMLAB / LAN SERVER READY");
       console.log("========================================================");
       console.log(`  Local Machine:     http://localhost:${p}`);
       if (lanIps.length > 0) {
@@ -112378,11 +112682,11 @@ function start(port = process.env.PORT || 3001) {
         });
       }
       console.log("--------------------------------------------------------");
-      console.log(`  \u{1F4E6} Database Provider: ${db.providerName}`);
+      console.log(`  Database Provider:   ${db.providerName}`);
       if (frontendDistPath) {
-        console.log(`  \u{1F310} Serving Web App:   ${frontendDistPath}`);
+        console.log(`  Serving Web App:     ${frontendDistPath}`);
       }
-      console.log("  \u{1F512} 100% Offline Capable: No external internet required");
+      console.log("  100% Offline Capable: No external internet required");
       console.log("========================================================\n");
       const isExplicitClient = process.env.IS_LAN_HOST === "false";
       const isHost = !isExplicitClient && (process.env.IS_LAN_HOST === "true" || process.env.IS_VERITY_ADMIN === "true" || fs2.existsSync(path.join(DATA_DIR, "host.flag")) || fs2.existsSync(path.join(__dirname, "host.flag")) || process.argv.includes("--host") || require.main === module);

@@ -1,8 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Server, Globe, CheckCircle2, AlertCircle, X, Loader2, RotateCcw, Wifi, Info } from 'lucide-react';
+import { Loader2, RotateCcw, Wifi, Info } from 'lucide-react';
 import { useDarkMode } from '../hooks/useDarkMode';
-import { getCloudUrl, DEFAULT_CLOUD_API_URL } from '../utils/api';
+import { getCloudUrl, DEFAULT_CLOUD_API_URL } from '../data/api';
+import { normalizeServerUrl, testServerHealth } from '../data/serverConfigHelper';
+import ServerConfigHeader from './serverConfig/ServerConfigHeader';
+import ServerTestResultBanner from './serverConfig/ServerTestResultBanner';
 
 export default function ServerConfigModal({ isOpen, onClose }) {
   const { isDark } = useDarkMode();
@@ -24,74 +27,35 @@ export default function ServerConfigModal({ isOpen, onClose }) {
             setCurrentUrl(saved);
             setInputUrl(saved);
           }
-        }).catch(() => {});
+        }).catch(() => { });
       }
     }
   }, [isOpen]);
 
-  const normalizeUrl = (raw) => {
-    let u = (raw || '').trim();
-    if (!u) return DEFAULT_CLOUD_API_URL;
-    if (!u.startsWith('http://') && !u.startsWith('https://')) {
-      u = `http://${u}`;
-    }
-    // If it looks like a raw IP without port (e.g. http://192.168.1.10), add :3001
-    const match = u.match(/^http:\/\/(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/);
-    if (match) {
-      u = `${u}:3001`;
-    }
-    return u.replace(/\/$/, '');
-  };
-
   const handleTestConnection = async () => {
-    const target = normalizeUrl(inputUrl);
+    const target = normalizeServerUrl(inputUrl);
     setTesting(true);
     setTestResult(null);
-
-    const startTime = Date.now();
-    try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 4000);
-      const res = await fetch(`${target}/health`, { signal: controller.signal });
-      clearTimeout(timer);
-      const latency = Date.now() - startTime;
-
-      if (res.ok) {
-        setTestResult({
-          success: true,
-          message: `Connected successfully! (${latency}ms) — Server is online and ready.`
-        });
-      } else {
-        setTestResult({
-          success: false,
-          message: `Server returned HTTP ${res.status}. Verify the server is running on the Host PC.`
-        });
-      }
-    } catch (err) {
-      setTestResult({
-        success: false,
-        message: `Could not reach ${target}. Ensure the Host PC is on the same Wi-Fi router, port 3001 is open, and server.js is running.`
-      });
-    } finally {
-      setTesting(false);
-    }
+    const result = await testServerHealth(target);
+    setTestResult(result);
+    setTesting(false);
   };
 
   const handleSave = () => {
-    const target = normalizeUrl(inputUrl);
+    const target = normalizeServerUrl(inputUrl);
     if (target === DEFAULT_CLOUD_API_URL) {
       localStorage.removeItem('verity_cloud_url');
       localStorage.removeItem('verity_custom_server');
       if (window.electronAPI?.localDB?.setLocal) {
-        window.electronAPI.localDB.setLocal('verity_custom_server', null).catch(() => {});
-        window.electronAPI.localDB.setLocal('verity_cloud_url', null).catch(() => {});
+        window.electronAPI.localDB.setLocal('verity_custom_server', null).catch(() => { });
+        window.electronAPI.localDB.setLocal('verity_cloud_url', null).catch(() => { });
       }
     } else {
       localStorage.setItem('verity_cloud_url', target);
       localStorage.setItem('verity_custom_server', target);
       if (window.electronAPI?.localDB?.setLocal) {
-        window.electronAPI.localDB.setLocal('verity_custom_server', target).catch(() => {});
-        window.electronAPI.localDB.setLocal('verity_cloud_url', target).catch(() => {});
+        window.electronAPI.localDB.setLocal('verity_custom_server', target).catch(() => { });
+        window.electronAPI.localDB.setLocal('verity_cloud_url', target).catch(() => { });
       }
     }
     onClose();
@@ -104,8 +68,8 @@ export default function ServerConfigModal({ isOpen, onClose }) {
     localStorage.removeItem('verity_cloud_url');
     localStorage.removeItem('verity_custom_server');
     if (window.electronAPI?.localDB?.setLocal) {
-      window.electronAPI.localDB.setLocal('verity_custom_server', null).catch(() => {});
-      window.electronAPI.localDB.setLocal('verity_cloud_url', null).catch(() => {});
+      window.electronAPI.localDB.setLocal('verity_custom_server', null).catch(() => { });
+      window.electronAPI.localDB.setLocal('verity_cloud_url', null).catch(() => { });
     }
     setTestResult(null);
   };
@@ -142,54 +106,7 @@ export default function ServerConfigModal({ isOpen, onClose }) {
             overflow: 'hidden'
           }}
         >
-          {/* Header */}
-          <div style={{
-            padding: '22px 24px 16px',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            borderBottom: isDark ? '1px solid rgba(255, 255, 255, 0.08)' : '1px solid rgba(0, 0, 0, 0.06)'
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-              <div style={{
-                width: '40px',
-                height: '40px',
-                borderRadius: '12px',
-                backgroundColor: isDark ? 'rgba(99, 102, 241, 0.15)' : 'rgba(79, 70, 229, 0.1)',
-                color: isDark ? '#818cf8' : '#4f46e5',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center'
-              }}>
-                <Server size={22} />
-              </div>
-              <div>
-                <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: '700' }}>
-                  Server Connection
-                </h3>
-                <p style={{ margin: '2px 0 0', fontSize: '0.8rem', color: isDark ? '#94a3b8' : '#64748b' }}>
-                  Configure Cloud or Offline School LAN Host
-                </p>
-              </div>
-            </div>
-
-            <button
-              onClick={onClose}
-              style={{
-                background: 'transparent',
-                border: 'none',
-                color: isDark ? '#94a3b8' : '#64748b',
-                cursor: 'pointer',
-                padding: '6px',
-                borderRadius: '8px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center'
-              }}
-            >
-              <X size={18} />
-            </button>
-          </div>
+          <ServerConfigHeader onClose={onClose} isDark={isDark} />
 
           {/* Body */}
           <div style={{ padding: '20px 24px' }}>
@@ -258,29 +175,7 @@ export default function ServerConfigModal({ isOpen, onClose }) {
             </div>
 
             {/* Test result status box */}
-            {testResult && (
-              <div style={{
-                padding: '10px 14px',
-                borderRadius: '10px',
-                backgroundColor: testResult.success
-                  ? (isDark ? 'rgba(16, 185, 129, 0.15)' : '#dcfce7')
-                  : (isDark ? 'rgba(239, 68, 68, 0.15)' : '#fee2e2'),
-                color: testResult.success ? '#10b981' : '#ef4444',
-                fontSize: '0.82rem',
-                display: 'flex',
-                alignItems: 'flex-start',
-                gap: '8px',
-                marginBottom: '14px',
-                lineHeight: '1.4'
-              }}>
-                {testResult.success ? (
-                  <CheckCircle2 size={16} style={{ flexShrink: 0, marginTop: '2px' }} />
-                ) : (
-                  <AlertCircle size={16} style={{ flexShrink: 0, marginTop: '2px' }} />
-                )}
-                <span>{testResult.message}</span>
-              </div>
-            )}
+            <ServerTestResultBanner testResult={testResult} isDark={isDark} />
 
             {/* Helper Quick Actions */}
             <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>

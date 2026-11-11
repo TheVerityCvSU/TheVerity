@@ -1,9 +1,12 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { motion } from 'framer-motion';
-import { MoreVertical, Copy, Check, Trash2, Archive, RotateCcw, Settings } from 'lucide-react';
+import { MoreVertical } from 'lucide-react';
 import { useDarkMode } from '../hooks/useDarkMode';
-import { getClassroomTheme } from '../utils/classroomUtils';
-import ClassroomBannerIllustration from './ClassroomBannerIllustration';
+import { getClassroomTheme } from '../data/classroomTheme';
+import { useClassroomBannerTheme } from './classroomCard/useClassroomBannerTheme';
+import ClassroomCardBanner from './classroomCard/ClassroomCardBanner';
+import ClassroomCardMenu from './classroomCard/ClassroomCardMenu';
+
 export const getClassroomCardTheme = (cls) => getClassroomTheme(cls);
 
 export default function ClassroomCard({
@@ -22,42 +25,8 @@ export default function ClassroomCard({
   const [menuOpen, setMenuOpen] = useState(false);
   const [copied, setCopied] = useState(false);
 
-  // Reactive banner theme: re-reads from localStorage when storage changes
-  const [theme, setTheme] = useState(() => getClassroomTheme(classroom));
-
-  useEffect(() => {
-    setTheme(getClassroomTheme(classroom));
-  }, [classroom?.id, classroom?.code, classroom?.section, classroom?.name, classroom?.theme]);
-
-  useEffect(() => {
-    const handleBannerUpdate = (e) => {
-      const detail = e.detail;
-      if (!detail) return;
-      const matches =
-        (classroom?.id != null && String(detail.classroomId) === String(classroom.id)) ||
-        (classroom?.code && detail.code && String(detail.code).toLowerCase() === String(classroom.code).toLowerCase()) ||
-        (classroom?.section && detail.code && String(detail.code).toLowerCase() === String(classroom.section).toLowerCase()) ||
-        (classroom?.name && detail.name && String(detail.name).toLowerCase() === String(classroom.name).toLowerCase()) ||
-        (detail.keys && detail.keys.includes(`verity_classroom_theme_${classroom?.id}`));
-
-      if (matches && detail.theme) {
-        setTheme(detail.theme);
-      }
-    };
-
-    const handleVisibility = () => {
-      if (document.visibilityState === 'visible') {
-        setTheme(getClassroomTheme(classroom));
-      }
-    };
-
-    window.addEventListener('verity:banner-updated', handleBannerUpdate);
-    document.addEventListener('visibilitychange', handleVisibility);
-    return () => {
-      window.removeEventListener('verity:banner-updated', handleBannerUpdate);
-      document.removeEventListener('visibilitychange', handleVisibility);
-    };
-  }, [classroom?.id, classroom?.code, classroom?.section, classroom?.name, classroom?.theme]);
+  // Reactive banner theme
+  const theme = useClassroomBannerTheme(classroom);
 
   const handleCopyCode = (e) => {
     e.stopPropagation();
@@ -89,7 +58,7 @@ export default function ClassroomCard({
       }}
       onClick={() => onEnter && onEnter(classroom)}
     >
-      {/* Live activity green notification dot aligned with the card corner */}
+      {/* Live activity green notification dot */}
       {Number(activeCount) > 0 && (
         <span
           title={`${activeCount} student${Number(activeCount) > 1 ? 's' : ''} currently working on an activity in this classroom`}
@@ -111,89 +80,15 @@ export default function ClassroomCard({
         />
       )}
 
-      {/* ═══ TOP BANNER HEADER ═══ */}
-      <div
-        style={{
-          height: '160px',
-          borderTopLeftRadius: '15px',
-          borderTopRightRadius: '15px',
-          background: theme?.customImageUrl
-            ? `url(${theme.customImageUrl}) center/cover no-repeat`
-            : `linear-gradient(135deg, ${theme.primary}, ${theme.secondary})`,
-          padding: '16px 20px',
-          position: 'relative',
-          display: 'flex',
-          flexDirection: 'column',
-          justifyContent: 'flex-start',
-          overflow: 'hidden',
-          flexShrink: 0
-        }}
-      >
-        {/* SVG Illustration in Top-Right Corner */}
-        {!theme?.customImageUrl && (
-          <div style={{ position: 'absolute', right: 0, top: 0, height: '100%', width: '55%', pointerEvents: 'none', overflow: 'hidden' }}>
-            <ClassroomBannerIllustration themeId={theme?.id} style={{ width: '100%', height: '100%' }} />
-          </div>
-        )}
+      {/* Top Banner Header */}
+      <ClassroomCardBanner
+        classroom={classroom}
+        theme={theme}
+        role={role}
+      />
 
-        {/* Title */}
-        <h3
-          style={{
-            color: '#ffffff',
-            fontSize: '1.45rem',
-            fontWeight: '700',
-            textDecoration: 'none',
-            margin: 0,
-            lineHeight: 1.2,
-            zIndex: 2,
-            textShadow: '0 1px 3px rgba(0,0,0,0.2)',
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap'
-          }}
-          title={classroom.name}
-        >
-          {classroom.name}
-        </h3>
-
-        {/* Subtitle / Section */}
-        <div
-          style={{
-            color: 'rgba(255,255,255,0.92)',
-            fontSize: '0.95rem',
-            fontWeight: '600',
-            textDecoration: 'none',
-            marginTop: '4px',
-            zIndex: 2,
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap'
-          }}
-        >
-          {classroom.section || classroom.subject || '2'}
-        </div>
-
-        {/* Instructor/Subject subtitle if available */}
-        {classroom.instructor && role === 'Student' && (
-          <div
-            style={{
-              color: 'rgba(255,255,255,0.85)',
-              fontSize: '0.8rem',
-              marginTop: 'auto',
-              zIndex: 2,
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              whiteSpace: 'nowrap'
-            }}
-          >
-            {classroom.instructor}
-          </div>
-        )}
-      </div>
-
-      {/* ═══ MIDDLE WHITE BODY ═══ */}
+      {/* Middle Body with Floating Avatar */}
       <div style={{ flex: 1, backgroundColor: isDark ? '#242424' : '#ffffff', padding: '14px 20px', position: 'relative' }}>
-        {/* Floating Instructor Profile Picture (Google Classroom signature element) */}
         {role === 'Student' && (
           <div
             style={{
@@ -241,7 +136,7 @@ export default function ClassroomCard({
         )}
       </div>
 
-      {/* ═══ BOTTOM FOOTER ACTION BAR ═══ */}
+      {/* Bottom Footer Action Bar */}
       <div
         style={{
           height: '52px',
@@ -258,7 +153,6 @@ export default function ClassroomCard({
           position: 'relative'
         }}
       >
-        {/* MoreVertical Menu */}
         <button
           style={iconButtonStyle}
           onClick={(e) => {
@@ -270,85 +164,20 @@ export default function ClassroomCard({
           <MoreVertical size={20} color={isDark ? '#a3a3a3' : '#5f6368'} />
         </button>
 
-        {/* Dropdown Menu */}
         {menuOpen && (
-          <div
-            style={{
-              position: 'absolute',
-              bottom: '48px',
-              right: '12px',
-              backgroundColor: isDark ? '#222222' : '#ffffff',
-              borderRadius: '12px',
-              padding: '6px',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: '4px',
-              boxShadow: isDark ? '0 8px 24px rgba(0,0,0,0.5)' : '0 8px 24px rgba(0,0,0,0.15)',
-              border: isDark ? '1px solid #383838' : '1px solid #e2e8f0',
-              zIndex: 60,
-              minWidth: '140px'
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            {isArchived ? (
-              <div
-                style={{ ...dropdownItemStyle, color: isDark ? '#E8EAED' : '#334155' }}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  if (onUnarchive) onUnarchive(e, classroom.id);
-                  else if (onArchive) onArchive(e, classroom.id);
-                  setMenuOpen(false);
-                }}
-              >
-                <RotateCcw size={15} style={{ marginRight: '8px' }} /> Unarchive
-              </div>
-            ) : (
-              <>
-                <div
-                  style={{ ...dropdownItemStyle, color: isDark ? '#E8EAED' : '#334155' }}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    if (onArchive) onArchive(e, classroom.id);
-                    setMenuOpen(false);
-                  }}
-                >
-                  <Archive size={15} style={{ marginRight: '8px' }} /> Archive
-                </div>
-                {role === 'Teacher' && onSettings && (
-                  <div
-                    style={{ ...dropdownItemStyle, color: isDark ? '#E8EAED' : '#334155' }}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onSettings(classroom);
-                      setMenuOpen(false);
-                    }}
-                  >
-                    <Settings size={15} style={{ marginRight: '8px' }} /> Settings
-                  </div>
-                )}
-                <div
-                  style={{ ...dropdownItemStyle, color: isDark ? '#f5f5f5' : '#334155' }}
-                  onClick={handleCopyCode}
-                >
-                  {copied ? <Check size={15} color="#10b981" style={{ marginRight: '8px' }} /> : <Copy size={15} style={{ marginRight: '8px' }} />}
-                  {copied ? 'Code Copied!' : 'Copy Code'}
-                </div>
-              </>
-            )}
-
-            {onDelete && (
-              <div
-                style={{ ...dropdownItemStyle, color: '#ef4444' }}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onDelete(e, classroom.id);
-                  setMenuOpen(false);
-                }}
-              >
-                <Trash2 size={15} style={{ marginRight: '8px' }} /> Delete
-              </div>
-            )}
-          </div>
+          <ClassroomCardMenu
+            classroom={classroom}
+            isArchived={isArchived}
+            role={role}
+            onArchive={onArchive}
+            onUnarchive={onUnarchive}
+            onSettings={onSettings}
+            onDelete={onDelete}
+            handleCopyCode={handleCopyCode}
+            copied={copied}
+            setMenuOpen={setMenuOpen}
+            isDark={isDark}
+          />
         )}
       </div>
     </motion.div>
@@ -364,17 +193,5 @@ const iconButtonStyle = {
   display: 'flex',
   alignItems: 'center',
   justifyContent: 'center',
-  transition: 'background-color 0.15s'
-};
-
-const dropdownItemStyle = {
-  padding: '8px 12px',
-  color: '#334155',
-  fontSize: '0.85rem',
-  fontWeight: '600',
-  cursor: 'pointer',
-  display: 'flex',
-  alignItems: 'center',
-  borderRadius: '6px',
   transition: 'background-color 0.15s'
 };

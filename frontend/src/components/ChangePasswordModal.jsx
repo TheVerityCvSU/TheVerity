@@ -1,8 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Lock, X, Eye, EyeOff, AlertCircle, CheckCircle2, Loader2, KeyRound, ShieldCheck } from 'lucide-react';
-import { apiFetch } from '../utils/api';
+import { AlertCircle, Loader2, ShieldCheck } from 'lucide-react';
+import { changeUserPassword } from '../data/passwordService';
 import { useCurrentUser, updateCurrentUser } from '../hooks/useCurrentUser';
+import PasswordInputField from './passwordModal/PasswordInputField';
+import ChangePasswordHeader from './passwordModal/ChangePasswordHeader';
+import GoogleSsoNotice from './passwordModal/GoogleSsoNotice';
 
 /**
  * ChangePasswordModal
@@ -88,18 +91,10 @@ export default function ChangePasswordModal({
     try {
       setLoading(true);
       setError('');
-      const res = await apiFetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/users/change-password`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          currentPassword: isGoogleSso ? 'google_sso_user' : currentPassword,
-          newPassword
-        })
+      const data = await changeUserPassword({
+        currentPassword: isGoogleSso ? 'google_sso_user' : currentPassword,
+        newPassword
       });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.message || 'Current password is incorrect.');
-      }
 
       updateCurrentUser({ password: newPassword });
 
@@ -126,6 +121,8 @@ export default function ChangePasswordModal({
     inputBorder: isDark ? '#4B5563' : '#D1D5DB',
     inputText: isDark ? '#F9FAFB' : '#111827'
   };
+
+  const isSubmitDisabled = loading || (!isGoogleSso && !currentPassword) || !newPassword || !confirmPassword;
 
   return (
     <AnimatePresence>
@@ -165,78 +162,15 @@ export default function ChangePasswordModal({
           }}
           onClick={(e) => e.stopPropagation()}
         >
-          {/* Header */}
-          <div
-            style={{
-              padding: '20px 24px 16px',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              borderBottom: `1px solid ${colors.border}`
-            }}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-              <div
-                style={{
-                  width: '40px',
-                  height: '40px',
-                  borderRadius: '12px',
-                  backgroundColor: isDark ? 'rgba(16, 185, 129, 0.15)' : '#ecfdf5',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  color: '#10b981'
-                }}
-              >
-                <KeyRound size={20} />
-              </div>
-              <div>
-                <h3
-                  style={{
-                    margin: 0,
-                    fontSize: '1.1rem',
-                    fontWeight: '700',
-                    color: colors.title
-                  }}
-                >
-                  Change Password
-                </h3>
-                <p
-                  style={{
-                    margin: '2px 0 0',
-                    fontSize: '0.8rem',
-                    color: colors.subText
-                  }}
-                >
-                  Enter current password to verify identity
-                </p>
-              </div>
-            </div>
-
-            <button
-              onClick={onClose}
-              disabled={loading}
-              style={{
-                background: 'none',
-                border: 'none',
-                cursor: loading ? 'not-allowed' : 'pointer',
-                color: colors.subText,
-                padding: '6px',
-                borderRadius: '8px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                transition: 'background-color 0.15s ease'
-              }}
-              title="Close modal"
-            >
-              <X size={18} />
-            </button>
-          </div>
+          <ChangePasswordHeader
+            onClose={onClose}
+            loading={loading}
+            colors={colors}
+            isDark={isDark}
+          />
 
           {/* Body */}
           <div style={{ padding: '24px' }}>
-            {/* Error banner */}
             {error && (
               <div
                 style={{
@@ -258,216 +192,52 @@ export default function ChangePasswordModal({
             )}
 
             <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-              {/* Current Password Field */}
               {isGoogleSso ? (
-                <div
-                  style={{
-                    padding: '12px 16px',
-                    borderRadius: '12px',
-                    backgroundColor: isDark ? 'rgba(56, 189, 248, 0.12)' : '#e0f2fe',
-                    border: isDark ? '1px solid #0284c7' : '1px solid #bae6fd',
-                    color: isDark ? '#38bdf8' : '#0369a1',
-                    fontSize: '0.84rem',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '10px'
-                  }}
-                >
-                  <ShieldCheck size={20} style={{ flexShrink: 0 }} />
-                  <span>
-                    Your account was created via <strong>Google Sign-In</strong>. Set your password below to enable standard email & password sign-in.
-                  </span>
-                </div>
+                <GoogleSsoNotice isDark={isDark} />
               ) : (
-                <div>
-                  <label
-                    style={{
-                      display: 'block',
-                      fontSize: '0.84rem',
-                      fontWeight: '600',
-                      color: colors.title,
-                      marginBottom: '6px'
-                    }}
-                  >
-                    Current Password
-                  </label>
-                  <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
-                    <input
-                      ref={currentInputRef}
-                      type={showCurrent ? 'text' : 'password'}
-                      placeholder="Enter current password"
-                      value={currentPassword}
-                      onChange={(e) => {
-                        setCurrentPassword(e.target.value);
-                        if (error) setError('');
-                      }}
-                      style={{
-                        width: '100%',
-                        padding: '12px 42px 12px 14px',
-                        borderRadius: '10px',
-                        border: `1px solid ${colors.inputBorder}`,
-                        backgroundColor: colors.inputBg,
-                        color: colors.inputText,
-                        fontSize: '0.92rem',
-                        boxSizing: 'border-box',
-                        outline: 'none',
-                        transition: 'border-color 0.2s'
-                      }}
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowCurrent(!showCurrent)}
-                      style={{
-                        position: 'absolute',
-                        right: '10px',
-                        top: 0,
-                        bottom: 0,
-                        margin: 'auto 0',
-                        height: '24px',
-                        width: '24px',
-                        background: 'none',
-                        border: 'none',
-                        cursor: 'pointer',
-                        color: colors.subText,
-                        padding: 0,
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        outline: 'none'
-                      }}
-                      title={showCurrent ? 'Hide password' : 'Show password'}
-                    >
-                      {showCurrent ? <EyeOff size={16} /> : <Eye size={16} />}
-                    </button>
-                  </div>
-                </div>
+                <PasswordInputField
+                  label="Current Password"
+                  placeholder="Enter current password"
+                  value={currentPassword}
+                  onChange={(e) => {
+                    setCurrentPassword(e.target.value);
+                    if (error) setError('');
+                  }}
+                  showPassword={showCurrent}
+                  onToggleShow={() => setShowCurrent(!showCurrent)}
+                  inputRef={currentInputRef}
+                  colors={colors}
+                  iconSize={16}
+                />
               )}
 
-              {/* New Password Field */}
-              <div>
-                <label
-                  style={{
-                    display: 'block',
-                    fontSize: '0.84rem',
-                    fontWeight: '600',
-                    color: colors.title,
-                    marginBottom: '6px'
-                  }}
-                >
-                  New Password
-                </label>
-                <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
-                  <input
-                    type={showNew ? 'text' : 'password'}
-                    placeholder="At least 8 characters"
-                    value={newPassword}
-                    onChange={(e) => {
-                      setNewPassword(e.target.value);
-                      if (error) setError('');
-                    }}
-                    style={{
-                      width: '100%',
-                      padding: '12px 42px 12px 14px',
-                      borderRadius: '10px',
-                      border: `1px solid ${colors.inputBorder}`,
-                      backgroundColor: colors.inputBg,
-                      color: colors.inputText,
-                      fontSize: '0.92rem',
-                      boxSizing: 'border-box',
-                      outline: 'none',
-                      transition: 'border-color 0.2s'
-                    }}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowNew(!showNew)}
-                    style={{
-                      position: 'absolute',
-                      right: '10px',
-                      top: 0,
-                      bottom: 0,
-                      margin: 'auto 0',
-                      height: '24px',
-                      width: '24px',
-                      background: 'none',
-                      border: 'none',
-                      cursor: 'pointer',
-                      color: colors.subText,
-                      padding: 0,
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      outline: 'none'
-                    }}
-                    title={showNew ? 'Hide password' : 'Show password'}
-                  >
-                    {showNew ? <EyeOff size={18} /> : <Eye size={18} />}
-                  </button>
-                </div>
-              </div>
+              <PasswordInputField
+                label="New Password"
+                placeholder="At least 8 characters"
+                value={newPassword}
+                onChange={(e) => {
+                  setNewPassword(e.target.value);
+                  if (error) setError('');
+                }}
+                showPassword={showNew}
+                onToggleShow={() => setShowNew(!showNew)}
+                colors={colors}
+                iconSize={18}
+              />
 
-              {/* Confirm New Password Field */}
-              <div>
-                <label
-                  style={{
-                    display: 'block',
-                    fontSize: '0.84rem',
-                    fontWeight: '600',
-                    color: colors.title,
-                    marginBottom: '6px'
-                  }}
-                >
-                  Confirm New Password
-                </label>
-                <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
-                  <input
-                    type={showConfirm ? 'text' : 'password'}
-                    placeholder="Re-enter new password"
-                    value={confirmPassword}
-                    onChange={(e) => {
-                      setConfirmPassword(e.target.value);
-                      if (error) setError('');
-                    }}
-                    style={{
-                      width: '100%',
-                      padding: '12px 42px 12px 14px',
-                      borderRadius: '10px',
-                      border: `1px solid ${colors.inputBorder}`,
-                      backgroundColor: colors.inputBg,
-                      color: colors.inputText,
-                      fontSize: '0.92rem',
-                      boxSizing: 'border-box',
-                      outline: 'none',
-                      transition: 'border-color 0.2s'
-                    }}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowConfirm(!showConfirm)}
-                    style={{
-                      position: 'absolute',
-                      right: '10px',
-                      top: 0,
-                      bottom: 0,
-                      margin: 'auto 0',
-                      height: '24px',
-                      width: '24px',
-                      background: 'none',
-                      border: 'none',
-                      cursor: 'pointer',
-                      color: colors.subText,
-                      padding: 0,
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      outline: 'none'
-                    }}
-                    title={showConfirm ? 'Hide password' : 'Show password'}
-                  >
-                    {showConfirm ? <EyeOff size={18} /> : <Eye size={18} />}
-                  </button>
-                </div>
-              </div>
+              <PasswordInputField
+                label="Confirm New Password"
+                placeholder="Re-enter new password"
+                value={confirmPassword}
+                onChange={(e) => {
+                  setConfirmPassword(e.target.value);
+                  if (error) setError('');
+                }}
+                showPassword={showConfirm}
+                onToggleShow={() => setShowConfirm(!showConfirm)}
+                colors={colors}
+                iconSize={18}
+              />
 
               {/* Action Buttons */}
               <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end', marginTop: '8px' }}>
@@ -490,7 +260,7 @@ export default function ChangePasswordModal({
                 </button>
                 <button
                   type="submit"
-                  disabled={loading || !currentPassword || !newPassword || !confirmPassword}
+                  disabled={isSubmitDisabled}
                   style={{
                     display: 'flex',
                     alignItems: 'center',
@@ -502,8 +272,8 @@ export default function ChangePasswordModal({
                     color: '#ffffff',
                     fontWeight: '700',
                     fontSize: '0.88rem',
-                    cursor: loading || !currentPassword || !newPassword || !confirmPassword ? 'not-allowed' : 'pointer',
-                    opacity: loading || !currentPassword || !newPassword || !confirmPassword ? 0.65 : 1,
+                    cursor: isSubmitDisabled ? 'not-allowed' : 'pointer',
+                    opacity: isSubmitDisabled ? 0.65 : 1,
                     boxShadow: '0 4px 14px rgba(16, 185, 129, 0.25)'
                   }}
                 >

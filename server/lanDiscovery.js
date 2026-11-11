@@ -16,9 +16,9 @@ function getValidNetworkInterfaces() {
     for (const name of Object.keys(interfaces)) {
         for (const iface of interfaces[name]) {
             if (
-                iface.family === 'IPv4' && 
-                !iface.internal && 
-                iface.address && 
+                iface.family === 'IPv4' &&
+                !iface.internal &&
+                iface.address &&
                 !iface.address.startsWith('127.') &&
                 !iface.address.startsWith('169.254.') && // exclude Windows APIPA
                 !iface.address.startsWith('192.168.56.') // exclude VirtualBox host-only
@@ -30,7 +30,7 @@ function getValidNetworkInterfaces() {
                         const maskParts = iface.netmask.split('.').map(Number);
                         const bcastParts = ipParts.map((part, i) => (part | (~maskParts[i] & 255)) >>> 0);
                         broadcast = bcastParts.join('.');
-                    } catch (_) {}
+                    } catch (_) { }
                 }
                 results.push({
                     name,
@@ -110,16 +110,16 @@ function startLanDiscovery(httpPort = 3001, isHost = true) {
                         }
                     });
                 }
-            } catch (_) {}
+            } catch (_) { }
         });
 
         beaconSocket.bind(DISCOVERY_PORT, '0.0.0.0', () => {
             try {
                 beaconSocket.setBroadcast(true);
-            } catch (_) {}
+            } catch (_) { }
 
             isRunning = true;
-            console.log(`📡 [LAN Discovery] Host Beacon active on UDP port ${DISCOVERY_PORT} (HTTP port: ${httpPort})`);
+            console.log(`[LAN Discovery] Host Beacon active on UDP port ${DISCOVERY_PORT} (HTTP port: ${httpPort})`);
 
             const sendBeacon = () => {
                 if (!isRunning || !beaconSocket) return;
@@ -147,7 +147,7 @@ function startLanDiscovery(httpPort = 3001, isHost = true) {
                             }));
 
                             beaconSocket.send(payload, 0, payload.length, DISCOVERY_PORT, iface.broadcast);
-                        } catch (_) {}
+                        } catch (_) { }
                     }
 
                     // Also broadcast to global 255.255.255.255
@@ -165,7 +165,7 @@ function startLanDiscovery(httpPort = 3001, isHost = true) {
                             timestamp: Date.now()
                         }));
                         beaconSocket.send(globalPayload, 0, globalPayload.length, DISCOVERY_PORT, '255.255.255.255');
-                    } catch (_) {}
+                    } catch (_) { }
 
                     // Also send direct unicast beacons to every active device in the ARP table
                     // Unicast UDP bypasses router broadcast suppression and client isolation!
@@ -173,11 +173,11 @@ function startLanDiscovery(httpPort = 3001, isHost = true) {
                         const { execSync } = require('child_process');
                         const arpOut = execSync('arp -a', { timeout: 1000, windowsHide: true }).toString();
                         const matches = Array.from(new Set(arpOut.match(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g) || []));
-                        const targetIps = matches.filter(ip => 
-                            !ip.startsWith('224.') && 
-                            !ip.startsWith('239.') && 
-                            !ip.startsWith('255.') && 
-                            !ip.endsWith('.255') && 
+                        const targetIps = matches.filter(ip =>
+                            !ip.startsWith('224.') &&
+                            !ip.startsWith('239.') &&
+                            !ip.startsWith('255.') &&
+                            !ip.endsWith('.255') &&
                             !ip.startsWith('127.') &&
                             !allIps.includes(ip)
                         );
@@ -197,11 +197,11 @@ function startLanDiscovery(httpPort = 3001, isHost = true) {
                                     timestamp: Date.now()
                                 }));
                                 beaconSocket.send(unicastPayload, 0, unicastPayload.length, DISCOVERY_PORT, targetIp);
-                            } catch (_) {}
+                            } catch (_) { }
                         }
-                    } catch (_) {}
+                    } catch (_) { }
 
-                } catch (_) {}
+                } catch (_) { }
             };
 
             sendBeacon();
@@ -222,7 +222,7 @@ function stopLanDiscovery() {
     if (beaconSocket) {
         try {
             beaconSocket.close();
-        } catch (_) {}
+        } catch (_) { }
         beaconSocket = null;
     }
 }

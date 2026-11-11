@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import Editor from '@monaco-editor/react';
-import { ArrowLeft, Save, Play, Square, Send, Settings, TerminalSquare } from 'lucide-react';
+import { ArrowLeft, Save, Play, Square, Send, Settings, TerminalSquare, Check, Link2 } from 'lucide-react';
 
 // Strip whitespace so editor auto-indent on paste doesn't cause false mismatches.
 const normalize = (text) => (text || "").replace(/\s+/g, '');
@@ -195,7 +195,9 @@ export default function StudentView({ socket, username, assignment, onBack }) {
                   return <video key={i} src={att.url} controls style={styles.attachVideo} />;
                 }
                 return (
-                  <a key={i} href={att.url} target="_blank" rel="noreferrer" style={styles.attachLink}>🔗 {att.name}</a>
+                  <a key={i} href={att.url} target="_blank" rel="noreferrer" style={{ ...styles.attachLink, display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                    <Link2 size={13} /> {att.name}
+                  </a>
                 );
               })}
             </div>
@@ -237,7 +239,11 @@ export default function StudentView({ socket, username, assignment, onBack }) {
               disabled={submitted}
               style={{ ...styles.submitButton, ...(submitted ? styles.submitButtonDone : {}) }}
             >
-              {submitted ? 'Submitted ✓' : <>Submit <Send size={16} style={{ marginLeft: '5px' }} /></>}
+              {submitted ? (
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                  Submitted <Check size={16} />
+                </span>
+              ) : <>Submit <Send size={16} style={{ marginLeft: '5px' }} /></>}
             </button>
             <div style={styles.recordingDot}></div>
             <button style={styles.gearIcon}><Settings size={22} /></button>

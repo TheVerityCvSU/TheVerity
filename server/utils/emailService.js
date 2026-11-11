@@ -1,7 +1,7 @@
 const dns = require('dns');
 try {
   dns.setDefaultResultOrder('ipv4first');
-} catch (_) {}
+} catch (_) { }
 
 const nodemailer = require('nodemailer');
 const path = require('path');
@@ -20,7 +20,7 @@ try {
       require('dotenv').config({ path: envPath });
     }
   }
-} catch (_) {}
+} catch (_) { }
 
 const DEFAULT_SMTP_USER = 'kimfabie159@gmail.com';
 const DEFAULT_SMTP_PASS = 'bwuuabczntiqoqnz';
@@ -118,13 +118,13 @@ async function sendViaRestApi({ email, name, otp, subject, html, text, from }) {
       });
       const data = await res.json();
       if (res.ok) {
-        console.log(`✅ [EMAIL SERVICE] Email sent via Resend REST API to ${email} (ID: ${data.id})`);
+        console.log(`[EMAIL SERVICE] Email sent via Resend REST API to ${email} (ID: ${data.id})`);
         return { success: true, messageId: data.id, otp };
       } else {
-        console.warn(`⚠️ [EMAIL SERVICE] Resend API error:`, data);
+        console.warn(`[EMAIL SERVICE] Resend API error:`, data);
       }
     } catch (e) {
-      console.warn(`⚠️ [EMAIL SERVICE] Resend fetch failed:`, e.message);
+      console.warn(`[EMAIL SERVICE] Resend fetch failed:`, e.message);
     }
   }
 
@@ -148,13 +148,13 @@ async function sendViaRestApi({ email, name, otp, subject, html, text, from }) {
       });
       const data = await res.json();
       if (res.ok) {
-        console.log(`✅ [EMAIL SERVICE] Email sent via Brevo REST API to ${email} (ID: ${data.messageId})`);
+        console.log(`[EMAIL SERVICE] Email sent via Brevo REST API to ${email} (ID: ${data.messageId})`);
         return { success: true, messageId: data.messageId, otp };
       } else {
-        console.warn(`⚠️ [EMAIL SERVICE] Brevo API error:`, data);
+        console.warn(`[EMAIL SERVICE] Brevo API error:`, data);
       }
     } catch (e) {
-      console.warn(`⚠️ [EMAIL SERVICE] Brevo fetch failed:`, e.message);
+      console.warn(`[EMAIL SERVICE] Brevo fetch failed:`, e.message);
     }
   }
 
@@ -260,9 +260,9 @@ async function sendOtpEmail({ email, name, otp }) {
   const text = `Hi ${name || 'there'},\n\nHere is your One-Time Password (OTP) to complete your Verity account registration:\n\n${otp}\n\nThis code is valid for 15 minutes and can only be used once.\n\nPlease don't share this code with anyone: we'll never ask for it over the phone or via email.\n\nThanks,\nThe Verity Team\n\nYou're receiving this email because a verification code was requested to create a new Verity account. If this wasn't you, please ignore this email.`;
 
   console.log('\n========================================');
-  console.log(`🔑 [VERITY OTP CODE] To: ${email} | Name: ${name || 'User'}`);
-  console.log(`👉 CODE: ${otp}`);
-  console.log(`⏰ Expires in: 15 minutes`);
+  console.log(`[VERITY OTP CODE] To: ${email} | Name: ${name || 'User'}`);
+  console.log(`CODE: ${otp}`);
+  console.log(`Expires in: 15 minutes`);
   console.log('========================================\n');
 
   const user = (process.env.SMTP_USER || process.env.EMAIL_USER || DEFAULT_SMTP_USER).trim();
@@ -277,13 +277,13 @@ async function sendOtpEmail({ email, name, otp }) {
   // 2. Detect Render Free Tier where outbound TCP ports 25, 465, and 587 are dropped by host firewall
   const isRenderFree = Boolean(process.env.RENDER && !process.env.RENDER_SMTP_ENABLED && !process.env.RESEND_API_KEY && !process.env.BREVO_API_KEY);
   if (isRenderFree) {
-    console.warn(`ℹ️ [EMAIL SERVICE] Running on Render Free Tier container. Outbound raw SMTP ports (25, 465, 587) are restricted by host policy. Code logged above.`);
+    console.warn(`[EMAIL SERVICE] Running on Render Free Tier container. Outbound raw SMTP ports (25, 465, 587) are restricted by host policy. Code logged above.`);
     return { success: false, error: 'Raw SMTP ports restricted by cloud container (Render Free Tier)', simulated: false, otp };
   }
 
   const primaryTransporter = getTransporter();
   if (!primaryTransporter) {
-    console.log(`ℹ️ [EMAIL SERVICE] SMTP not configured. OTP logged above for development.`);
+    console.log(`[EMAIL SERVICE] SMTP not configured. OTP logged above for development.`);
     return { success: false, simulated: true, otp, error: 'SMTP not configured' };
   }
 
@@ -296,10 +296,10 @@ async function sendOtpEmail({ email, name, otp }) {
       text,
       html
     });
-    console.log(`✅ [EMAIL SERVICE] Email sent successfully to ${email}. MessageId: ${info.messageId}`);
+    console.log(`[EMAIL SERVICE] Email sent successfully to ${email}. MessageId: ${info.messageId}`);
     return { success: true, messageId: info.messageId, otp };
   } catch (error) {
-    console.warn(`⚠️ [EMAIL SERVICE] Primary send to ${email} failed: ${error.message}. Retrying via fallback port 465...`);
+    console.warn(`[EMAIL SERVICE] Primary send to ${email} failed: ${error.message}. Retrying via fallback port 465...`);
     try {
       const fallbackTransporter = createTransporter(true);
       if (!fallbackTransporter) {
@@ -312,10 +312,10 @@ async function sendOtpEmail({ email, name, otp }) {
         text,
         html
       });
-      console.log(`✅ [EMAIL SERVICE] Email sent successfully via fallback port 465 to ${email}. MessageId: ${fallbackInfo.messageId}`);
+      console.log(`[EMAIL SERVICE] Email sent successfully via fallback port 465 to ${email}. MessageId: ${fallbackInfo.messageId}`);
       return { success: true, messageId: fallbackInfo.messageId, otp };
     } catch (fallbackError) {
-      console.error(`❌ [EMAIL SERVICE] All email attempts failed for ${email}:`, fallbackError.message);
+      console.error(`[EMAIL SERVICE] All email attempts failed for ${email}:`, fallbackError.message);
       return { success: false, error: fallbackError.message, simulated: false, otp };
     }
   }
