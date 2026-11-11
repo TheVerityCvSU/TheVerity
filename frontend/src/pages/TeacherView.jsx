@@ -34,6 +34,16 @@ export default function TeacherView({
 
   const isCompact = useMediaQuery('(max-width: 1023px)');
   const isMobile = useMediaQuery('(max-width: 767px)');
+  const [windowWidth, setWindowWidth] = useState(() =>
+    typeof window !== 'undefined' ? window.innerWidth : 1200
+  );
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const handleResize = () => setWindowWidth(window.innerWidth);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
   const [sidebarOpen, setSidebarOpen] = useState(() =>
     typeof window !== 'undefined' ? window.innerWidth >= 1024 : true
@@ -225,7 +235,7 @@ export default function TeacherView({
                 value={displayCode}
                 options={{
                   fontSize: editorFontSize,
-                  minimap: { enabled: windowWidth >= 1200 },
+                  minimap: { enabled: (windowWidth || 1200) >= 1200 },
                   readOnly: true,
                   automaticLayout: true,
                   wordWrap: 'on',

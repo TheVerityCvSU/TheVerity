@@ -22,9 +22,9 @@ export default function StudentViewTerminalHeader({
   handleDividerMouseDown,
   toggleTerminalCollapse,
   toggleTerminalMaximize,
-  testCases,
-  passedTestsCount,
-  hasTested,
+  testCases = [],
+  passedTestsCount = 0,
+  hasTested = false,
   handleClearTerminal,
   handleAddTestCase,
   handleRunTestCase,
@@ -32,6 +32,7 @@ export default function StudentViewTerminalHeader({
   isRunningTests,
   isRunning
 }) {
+  const safeCases = Array.isArray(testCases) ? testCases : [];
   return (
     <div
       onMouseDown={(e) => {
@@ -85,19 +86,19 @@ export default function StudentViewTerminalHeader({
               padding: '1px 6px',
               borderRadius: '10px',
               backgroundColor:
-                hasTested && passedTestsCount === testCases.length && testCases.length > 0
+                hasTested && passedTestsCount === safeCases.length && safeCases.length > 0
                   ? '#10b981'
-                  : testCases.some((t) => t.status === 'failed')
+                  : safeCases.some((t) => t.status === 'failed')
                   ? '#ef4444'
                   : isDark
                   ? '#374151'
                   : '#e5e7eb',
-              color: hasTested || testCases.some((t) => t.status === 'failed') ? '#ffffff' : isDark ? '#d1d5db' : '#4b5563',
+              color: hasTested || safeCases.some((t) => t.status === 'failed') ? '#ffffff' : isDark ? '#d1d5db' : '#4b5563',
               fontWeight: 'bold',
               marginLeft: '4px'
             }}
           >
-            {hasTested ? `${passedTestsCount}/${testCases.length}` : testCases.length}
+            {hasTested ? `${passedTestsCount}/${safeCases.length}` : safeCases.length}
           </span>
         </button>
       </div>

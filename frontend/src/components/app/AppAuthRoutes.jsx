@@ -91,18 +91,7 @@ export default function AppAuthRoutes({
           <AdminLogin onLogin={handleAdminLoginSuccess} />
         ) : (
           <Login
-            onLogin={(user, token) => {
-              setCurrentUser(user);
-              if (token) localStorage.setItem('verity_token', token);
-              if (user.role === 'Admin') {
-                setCurrentScreen('admin_login');
-              } else if (user.role === 'Teacher') {
-                setCurrentScreen('teacher_dashboard');
-              } else {
-                lockDown();
-                setCurrentScreen('student_dashboard');
-              }
-            }}
+            onLogin={handleUserLogin}
             onGoToRegister={() => setCurrentScreen('register')}
           />
         )

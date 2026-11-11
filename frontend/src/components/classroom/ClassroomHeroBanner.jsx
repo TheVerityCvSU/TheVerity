@@ -10,6 +10,8 @@ export default function ClassroomHeroBanner({
   onNavigateBack,
   isDark
 }) {
+  const theme = bannerTheme || {};
+
   return (
     <div style={{
       position: 'relative',
@@ -25,9 +27,9 @@ export default function ClassroomHeroBanner({
     }}>
       <div style={{
         position: 'absolute', inset: 0,
-        background: bannerTheme.customImageUrl
-          ? `linear-gradient(to right, rgba(15, 23, 42, 1) 0%, rgba(15, 23, 42, 0.85) 30%, rgba(15, 23, 42, 0.3) 60%, transparent 100%), url(${bannerTheme.customImageUrl}) center/cover no-repeat`
-          : `linear-gradient(150deg, ${bannerTheme.primary || '#137333'}, ${bannerTheme.secondary || '#1e8e3e'})`,
+        background: theme.customImageUrl
+          ? `linear-gradient(to right, rgba(15, 23, 42, 1) 0%, rgba(15, 23, 42, 0.85) 30%, rgba(15, 23, 42, 0.3) 60%, transparent 100%), url(${theme.customImageUrl}) center/cover no-repeat`
+          : `linear-gradient(150deg, ${theme.primary || '#137333'}, ${theme.secondary || '#1e8e3e'})`,
         zIndex: 0
       }} />
 
@@ -35,10 +37,10 @@ export default function ClassroomHeroBanner({
       <div style={{ position: 'absolute', top: '-70px', right: '-70px', width: '220px', height: '220px', borderRadius: '50%', border: '1px solid rgba(255,255,255,0.14)', pointerEvents: 'none', zIndex: 0 }} />
       <div style={{ position: 'absolute', top: '-20px', right: '-20px', width: '130px', height: '130px', borderRadius: '50%', border: '1px solid rgba(255,255,255,0.12)', pointerEvents: 'none', zIndex: 0 }} />
 
-      {!bannerTheme.customImageUrl && (
+      {!theme.customImageUrl && (
         <div style={{ position: 'absolute', right: 0, top: 0, height: '100%', pointerEvents: 'none', zIndex: 0 }}>
           <ClassroomBannerIllustration
-            themeId={bannerTheme.id}
+            themeId={theme.id || 'emerald_books'}
             style={{ position: 'absolute', right: 0, top: 0, height: '100%', width: '100%', pointerEvents: 'none' }}
           />
         </div>

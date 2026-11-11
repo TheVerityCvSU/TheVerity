@@ -2,6 +2,16 @@ import { useState, useEffect, useRef } from 'react';
 import { getInitialAppScreen, getDefaultFallbackScreen } from '../utils/appNavigationUtils';
 
 export function useAppNavigation({ isAdminApp, currentUser }) {
+  const resolveUser = () => {
+    if (currentUser) return currentUser;
+    try {
+      const saved = localStorage.getItem('currentUser') || localStorage.getItem('verity_user');
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      return null;
+    }
+  };
+
   const [currentScreen, setCurrentScreen] = useState(() => getInitialAppScreen(isAdminApp));
 
   const [activeClassroom, setActiveClassroom] = useState(() => {
@@ -92,8 +102,10 @@ export function useAppNavigation({ isAdminApp, currentUser }) {
   }, [currentScreen]);
 
   useEffect(() => {
+    const activeUser = currentUser || resolveUser();
+    const roleLower = String(activeUser?.role || '').toLowerCase();
     if (isAdminApp) {
-      if (currentUser?.role === 'Admin') {
+      if (roleLower === 'admin') {
         if (currentScreen !== 'admin_dashboard') {
           setCurrentScreen('admin_dashboard');
         }
@@ -153,7 +165,9 @@ export function useAppNavigation({ isAdminApp, currentUser }) {
     if (context.workspaceReturnScreen !== undefined) setWorkspaceReturnScreen(context.workspaceReturnScreen);
     if (context.tab && (context.classroom?.id || activeClassroom?.id)) {
       const cid = context.classroom?.id || activeClassroom?.id;
-      if (currentUser?.role === 'Teacher') {
+      const activeUser = currentUser || resolveUser();
+      const roleLower = String(activeUser?.role || '').toLowerCase();
+      if (roleLower === 'teacher' || roleLower === 'instructor') {
         try {
           sessionStorage.setItem(`verity_teacher_classwork_tab_${cid}`, context.tab);
           sessionStorage.setItem('verity_teacher_classwork_tab_active', context.tab);
@@ -210,7 +224,8 @@ export function useAppNavigation({ isAdminApp, currentUser }) {
         return nextStack;
       }
 
-      const defaultFallback = fallbackScreen || getDefaultFallbackScreen(currentScreen, currentUser?.role, proctoringReturnScreen, workspaceReturnScreen);
+      const activeUser = currentUser || resolveUser();
+      const defaultFallback = fallbackScreen || getDefaultFallbackScreen(currentScreen, activeUser?.role, proctoringReturnScreen, workspaceReturnScreen);
       setCurrentScreen(defaultFallback);
       try {
         localStorage.setItem('currentScreen', defaultFallback);
@@ -236,13 +251,14 @@ export function useAppNavigation({ isAdminApp, currentUser }) {
     }
 
     const handlePopState = () => {
+      const activeUser = currentUser || resolveUser();
       if (currentScreen === 'student_workspace' && (activeAssignment?.disableBack || activeAssignment?.disable_back)) {
         const cId = activeClassroom?.id != null ? String(activeClassroom.id) : (activeAssignment?.classroom_id || 'none');
         const aId = activeAssignment?.id != null ? String(activeAssignment.id) : 'none';
-        const sId = currentUser?.id != null ? String(currentUser.id) : (currentUser?.email || currentUser?.name || 'none');
+        const sId = activeUser?.id != null ? String(activeUser.id) : (activeUser?.email || activeUser?.name || 'none');
         const sKeys = [
           `verity_sub_${cId}_${aId}_${sId}`,
-          `verity_sub_${cId}_${aId}_${currentUser?.name}`,
+          `verity_sub_${cId}_${aId}_${activeUser?.name}`,
           `verity_sub_${cId}_${aId}`
         ];
         const isSub = sKeys.some(k => {

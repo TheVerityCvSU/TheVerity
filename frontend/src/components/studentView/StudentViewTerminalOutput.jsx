@@ -87,12 +87,12 @@ export default function StudentViewTerminalOutput({
             onPaste={(e) => {
               const pasted = e.clipboardData?.getData('text/plain') || '';
               const key = normalize(pasted);
-              if (key && !copiedInternallyRef.current.has(key)) {
+              if (key && copiedInternallyRef?.current && !copiedInternallyRef.current.has(key)) {
                 e.preventDefault();
                 e.stopPropagation();
                 addProctorLog('Strict Clipboard: External Paste in Terminal Blocked', '#ef4444');
                 if (window.electronAPI?.clearClipboard) {
-                  window.electronAPI.clearClipboard().catch(() => {});
+                  window.electronAPI.clearClipboard().catch(() => { });
                 }
               }
             }}

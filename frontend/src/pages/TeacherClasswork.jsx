@@ -1386,7 +1386,7 @@ export default function TeacherClasswork({
   // SVG Illustration for Google Classroom Banner
   const renderBannerIllustration = () => (
     <ClassroomBannerIllustration
-      themeId={bannerTheme.id}
+      themeId={bannerTheme?.id || 'emerald_books'}
       style={{ position: 'absolute', right: 0, top: 0, height: '100%', width: '100%', pointerEvents: 'none' }}
     />
   );
@@ -1735,9 +1735,9 @@ export default function TeacherClasswork({
                       padding: isMobile ? '20px' : '24px 20px',
                       minHeight: isMobile ? '200px' : '260px',
                       display: 'flex', flexDirection: 'column', boxSizing: 'border-box',
-                      background: bannerTheme.customImageUrl
+                      background: bannerTheme?.customImageUrl
                         ? `url(${bannerTheme.customImageUrl}) center/cover no-repeat`
-                        : `linear-gradient(150deg, ${bannerTheme.primary}, ${bannerTheme.secondary})`,
+                        : `linear-gradient(150deg, ${bannerTheme?.primary || '#137333'}, ${bannerTheme?.secondary || '#1e8e3e'})`,
                       boxShadow: isDark ? '0 18px 40px -18px rgba(0,0,0,0.7)' : '0 14px 30px -16px rgba(15,23,42,0.35)'
                     }}>
                       {/* Decorative rings */}
@@ -1748,7 +1748,7 @@ export default function TeacherClasswork({
                         Your classroom
                       </div>
 
-                      {!bannerTheme.customImageUrl && (
+                      {!bannerTheme?.customImageUrl && (
                         <div style={{
                           position: 'absolute',
                           right: '-10px',
@@ -1760,7 +1760,7 @@ export default function TeacherClasswork({
                           overflow: 'hidden'
                         }}>
                           <ClassroomBannerIllustration
-                            themeId={bannerTheme.id}
+                            themeId={bannerTheme?.id || 'emerald_books'}
                             style={{ width: '100%', height: '100%' }}
                           />
                         </div>

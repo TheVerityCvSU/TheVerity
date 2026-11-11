@@ -9,7 +9,7 @@ export default function StudentViewInstructionSidebar({
   layout = {},
   isMobile,
   isDark,
-  proctorLogs,
+  proctorLogs = [],
   instruction,
   handleInstructionClick,
   assignment,
@@ -40,7 +40,7 @@ export default function StudentViewInstructionSidebar({
       <StudentViewInstructionRail
         isMobile={isMobile}
         isDark={isDark}
-        proctorLogsLength={proctorLogs.length}
+        proctorLogsLength={(proctorLogs || []).length}
         onExpand={toggleInstructionCollapse}
       />
     );

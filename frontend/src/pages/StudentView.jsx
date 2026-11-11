@@ -1,9 +1,10 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { motion } from 'framer-motion';
+import { apiFetch } from '../data/api';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { useMediaQuery } from '../hooks/useMediaQuery';
 import { isDesktopWebBrowser } from '../utils/deviceUtils';
-import { getStudentIdentity } from '../utils/studentViewUtils';
+import { getStudentIdentity, checkLocalSubmitted } from '../utils/studentViewUtils';
 import { studentViewStyles as styles } from '../utils/studentViewStyles';
 import { useStudentViewFiles } from '../hooks/useStudentViewFiles';
 import { useStudentViewTestCases } from '../hooks/useStudentViewTestCases';
@@ -37,15 +38,117 @@ export default function StudentView({
   const diagnosticsRef = useRef([]);
   const copiedInternallyRef = useRef(new Set());
 
+  const [currentAssignment, setCurrentAssignment] = useState(() => {
+    if (assignment) return assignment;
+    try {
+      const saved = localStorage.getItem('activeAssignment');
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      return null;
+    }
+  });
+
+  useEffect(() => {
+    if (assignment) {
+      setCurrentAssignment(assignment);
+    }
+  }, [assignment]);
+
   const { safeUsername, studentActualId, assignmentId, classroomId, studentDisplayName } =
-    getStudentIdentity(currentUser, username, assignment, classroom);
+    getStudentIdentity(currentUser, username, currentAssignment || assignment, classroom);
+
+  // If assignment is missing instructions/details, look up in cache or fetch
+  useEffect(() => {
+    const hasDetails = Boolean(
+      currentAssignment?.details ||
+      currentAssignment?.instruction ||
+      currentAssignment?.instructions ||
+      currentAssignment?.description
+    );
+    if (hasDetails) return;
+
+    const cId = classroomId !== 'none' ? classroomId : (classroom?.id != null ? String(classroom.id) : null);
+    if (cId) {
+      try {
+        const raw = localStorage.getItem(`verity_classwork_${cId}`);
+        if (raw) {
+          const list = JSON.parse(raw);
+          if (Array.isArray(list)) {
+            const found = list.find((item) => String(item.id) === String(assignmentId));
+            if (found && (found.details || found.instruction || found.instructions || found.description)) {
+              setCurrentAssignment((prev) => ({ ...(prev || {}), ...found }));
+              return;
+            }
+          }
+        }
+      } catch (_) {}
+
+      try {
+        const globalRaw =
+          localStorage.getItem('verity_cached_classwork') ||
+          localStorage.getItem(`verity_cached_classwork_${currentUser?.id || currentUser?.email}`);
+        if (globalRaw) {
+          const list = JSON.parse(globalRaw);
+          if (Array.isArray(list)) {
+            const found = list.find((item) => String(item.id) === String(assignmentId));
+            if (found && (found.details || found.instruction || found.instructions || found.description)) {
+              setCurrentAssignment((prev) => ({ ...(prev || {}), ...found }));
+              return;
+            }
+          }
+        }
+      } catch (_) {}
+
+      apiFetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/classwork/${cId}`)
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          const list = data?.classwork || data?.assignments || (Array.isArray(data) ? data : []);
+          const found = list.find((item) => String(item.id) === String(assignmentId));
+          if (found && (found.details || found.instruction || found.instructions || found.description)) {
+            setCurrentAssignment((prev) => ({ ...(prev || {}), ...found }));
+          }
+        })
+        .catch(() => {});
+    }
+  }, [currentAssignment, classroomId, classroom?.id, assignmentId, currentUser]);
+
+  const resolvedInstruction =
+    currentAssignment?.details ||
+    currentAssignment?.instruction ||
+    currentAssignment?.instructions ||
+    currentAssignment?.description ||
+    '';
+
+  const [strictCompiler, setStrictCompiler] = useState(false);
 
   // Layout hook (sidebar, terminal, drawer resizing)
   const layout = useStudentViewLayout({ isMobile, editorRef });
 
-  const studentCtx = { assignment, classroom, assignmentId, classroomId, studentActualId, safeUsername, currentUser };
+  // Terminal vs Test cases bottom tab state
+  const [bottomTab, setBottomTab] = useState('terminal');
+
+  const studentCtx = {
+    assignment: currentAssignment || assignment,
+    classroom,
+    assignmentId,
+    classroomId,
+    studentId: studentActualId,
+    studentActualId,
+    safeUsername,
+    currentUser
+  };
   const filesHook = useStudentViewFiles(studentCtx);
-  const testCasesHook = useStudentViewTestCases(studentCtx);
+
+  const compilerHookRef = useRef(null);
+
+  // Test cases hook
+  const testCasesHook = useStudentViewTestCases({
+    ...studentCtx,
+    code: filesHook.code,
+    codeRef: filesHook.codeRef,
+    setBottomTab,
+    getCompilerSocket: () => compilerHookRef.current?.getCompilerSocket?.()
+  });
 
   // Settings & Previews
   const [editorFontSize, setEditorFontSize] = useState(() => {
@@ -61,50 +164,55 @@ export default function StudentView({
   const [previewIframe, setPreviewIframe] = useState(null);
   const [saveStatus, setSaveStatus] = useState(false);
 
+  const [submitted, setSubmitted] = useState(() =>
+    checkLocalSubmitted(classroomId, assignmentId, studentActualId, safeUsername, currentUser)
+  );
+
   // Kiosk anti-cheat & proctor logs hook
   const kioskHook = useStudentViewKiosk({
     socket,
     currentUser,
-    assignment,
+    assignment: currentAssignment || assignment,
     classroom,
     assignmentId,
     classroomId,
     studentActualId,
     safeUsername,
-    submitted: false,
+    submitted,
     codeRef: filesHook.codeRef,
     codeHistoryRef: filesHook.codeHistoryRef,
     persistHistoryFn: filesHook.persistHistory,
-    emitToSockets: () => {},
-    setStrictCompiler: () => {}
+    emitToSockets: (...args) => compilerHookRef.current?.emitToSockets?.(...args),
+    setStrictCompiler
   });
 
   // Compiler socket & code runner hook
   const compilerHook = useStudentViewCompiler({
     socket,
     currentUser,
-    assignment,
+    assignment: currentAssignment || assignment,
     classroom,
     assignmentId,
     classroomId,
     studentActualId,
     safeUsername,
-    submitted: false,
+    submitted,
     isDesktopWeb,
     vmDetected: kioskHook.vmDetected,
     kioskRules: kioskHook.kioskRules,
     code: filesHook.code,
     extraFiles: filesHook.extraFiles,
-    setBottomTab: testCasesHook.setBottomTab,
+    setBottomTab,
     onTestResults: testCasesHook.handleTestResults,
     onSingleTestResult: testCasesHook.handleSingleTestResult
   });
+  compilerHookRef.current = compilerHook;
 
   // Submission hook
   const submissionHook = useStudentViewSubmission({
     socket,
     currentUser,
-    assignment,
+    assignment: currentAssignment || assignment,
     classroom,
     assignmentId,
     classroomId,
@@ -122,6 +230,12 @@ export default function StudentView({
     handleStopCode: compilerHook.handleStopCode,
     isRunning: compilerHook.isRunning
   });
+
+  useEffect(() => {
+    if (submissionHook.submitted !== submitted) {
+      setSubmitted(submissionHook.submitted);
+    }
+  }, [submissionHook.submitted, submitted]);
 
   // Keep submission state synced with editor
   useEffect(() => {
@@ -173,10 +287,10 @@ export default function StudentView({
         layout={layout}
         isMobile={isMobile}
         isDark={isDark}
-        proctorLogs={kioskHook.proctorLogs}
-        instruction={assignment?.instructions || assignment?.description || ''}
+        proctorLogs={kioskHook.proctorLogs || []}
+        instruction={resolvedInstruction}
         handleInstructionClick={handleInstructionClick}
-        assignment={assignment}
+        assignment={currentAssignment || assignment}
         setPreviewImage={setPreviewImage}
         setPreviewVideo={setPreviewVideo}
       />
@@ -189,8 +303,8 @@ export default function StudentView({
           submitted={submissionHook.submitted}
           saveStatus={saveStatus}
           isRunning={compilerHook.isRunning}
-          isRunningTests={compilerHook.isRunningTests}
-          strictCompiler={kioskHook.strictCompiler}
+          isRunningTests={testCasesHook.isRunningTests}
+          strictCompiler={strictCompiler}
           handleBackClick={handleBackClick}
           handleSaveCode={handleSaveCode}
           handleRunCode={compilerHook.handleRunCode}
@@ -218,14 +332,14 @@ export default function StudentView({
           currentUser={currentUser}
           classroom={classroom}
           classroomId={classroomId}
-          assignment={assignment}
+          assignment={currentAssignment || assignment}
           copiedInternallyRef={copiedInternallyRef}
           layout={layout}
         />
 
         <StudentViewTerminalPanel
-          bottomTab={testCasesHook.bottomTab}
-          setBottomTab={testCasesHook.setBottomTab}
+          bottomTab={bottomTab}
+          setBottomTab={setBottomTab}
           isDark={isDark}
           submitted={submissionHook.submitted}
           isTerminalCollapsed={layout.isTerminalCollapsed}
@@ -240,9 +354,9 @@ export default function StudentView({
           hasTested={testCasesHook.hasTested}
           handleClearTerminal={compilerHook.handleClearTerminal}
           handleAddTestCase={testCasesHook.handleAddTestCase}
-          handleRunTestCase={compilerHook.handleRunTestCase}
-          handleRunAllTestCases={compilerHook.handleRunAllTestCases}
-          isRunningTests={compilerHook.isRunningTests}
+          handleRunTestCase={testCasesHook.handleRunTestCase}
+          handleRunAllTestCases={testCasesHook.handleRunAllTestCases}
+          isRunningTests={testCasesHook.isRunningTests}
           isRunning={compilerHook.isRunning}
           programStarted={compilerHook.programStarted}
           inputValue={compilerHook.inputValue}
@@ -275,7 +389,7 @@ export default function StudentView({
         setPreviewIframe={setPreviewIframe}
         showSubmitModal={submissionHook.showSubmitModal}
         setShowSubmitModal={submissionHook.setShowSubmitModal}
-        strictCompiler={kioskHook.strictCompiler}
+        strictCompiler={strictCompiler}
         diagnosticsCount={diagnosticsRef.current?.length || 0}
         handleConfirmSubmit={submissionHook.handleConfirmSubmit}
         showUnsubmitModal={submissionHook.showUnsubmitModal}

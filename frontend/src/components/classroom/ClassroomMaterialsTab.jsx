@@ -153,7 +153,7 @@ export default function ClassroomMaterialsTab({
                                 >
                                   <div dangerouslySetInnerHTML={{ __html: item.details }} />
                                 </div>
-                                {expandedInstructionId !== item.id && item.details.replace(/<[^>]*>?/gm, '').length > 100 && (
+                                {expandedInstructionId !== item.id && typeof item?.details === 'string' && item.details.replace(/<[^>]*>?/gm, '').length > 100 && (
                                   <div
                                     style={{ color: '#10b981', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 'bold', marginTop: '6px' }}
                                     onClick={(e) => { e.stopPropagation(); setExpandedInstructionId(item.id); }}

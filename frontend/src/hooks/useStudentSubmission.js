@@ -1,31 +1,31 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { apiFetch } from '../data/api';
 import { localStore } from '../data/localStore';
 import { getStudentGrade } from '../utils/gradeUtils';
+import { getStudentIdentity } from '../utils/studentViewUtils';
 import {
   getSubmissionStorageKeys,
   getHistoryStorageKeys,
   getInitialSavedSubmission,
   getInitialSavedGrade,
   resolveSubmissionHistory,
+  clearAllSubmissionStorage,
   submitStudentAssignment,
   unsubmitStudentAssignment
 } from '../data/studentSubmissionService';
 
 export function useStudentSubmission({ classroom, assignment, currentUser, socket }) {
-  const safeUsername = currentUser?.name || currentUser?.email || 'Student';
-  const studentId = currentUser?.email || currentUser?.name || 'student';
-  const assignmentId = assignment?.id ?? 'default';
-  const classroomId = classroom?.id ?? 'default';
+  const identity = getStudentIdentity(currentUser, null, assignment, classroom);
+  const safeUsername = identity.safeUsername;
+  const studentId = identity.studentId;
+  const assignmentId = identity.assignmentId;
+  const classroomId = identity.classroomId;
 
   const submissionKey = `verity_sub_${classroomId}_${assignmentId}_${studentId}`;
   const gradesKey = `verity_grades_${assignmentId}`;
   const draftCodeKey = `verity_code_${assignmentId}_${studentId}`;
 
-  const allKeys = [
-    submissionKey,
-    ...getSubmissionStorageKeys(classroomId, assignmentId, currentUser, studentId, safeUsername)
-  ];
+  const allKeys = getSubmissionStorageKeys(classroomId, assignmentId, currentUser, studentId, safeUsername);
   const hKeys = getHistoryStorageKeys(classroomId, assignmentId, currentUser, studentId, safeUsername);
 
   const [submission, setSubmission] = useState(() =>
@@ -40,42 +40,53 @@ export function useStudentSubmission({ classroom, assignment, currentUser, socke
   const [showSubmitModal, setShowSubmitModal] = useState(false);
   const [showUnsubmitModal, setShowUnsubmitModal] = useState(false);
 
-  useEffect(() => {
-    let cancelled = false;
+  const fetchAssignmentData = useCallback(() => {
+    if (!assignmentId || assignmentId === 'none' || assignmentId === 'default') return;
 
     // Fetch submissions for this assignment
-    apiFetch(`${import.meta.env.VITE_API_URL}/submissions/${assignmentId}`)
-      .then(res => res.json())
+    apiFetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/submissions/${assignmentId}`)
+      .then(res => (res.ok ? res.json() : { submissions: [] }))
       .then(data => {
-        if (cancelled) return;
         if (Array.isArray(data?.submissions)) {
+          const targetName = String(safeUsername || '').toLowerCase().trim();
+          const targetId = String(studentId || '').toLowerCase().trim();
+          const targetEmail = String(currentUser?.email || '').toLowerCase().trim();
+          const targetUserName = String(currentUser?.name || '').toLowerCase().trim();
+          const kimAliases = ['kim fabie', 'kimfabie', 'mikooooo', 'kimfabie123@gmail.com', 'kimfabie159@gmail.com'];
+
           const mySub = data.submissions.find(s => {
-            const sName = String(s.student_name || s.studentName || '').toLowerCase();
-            const sId = String(s.student_id || s.studentId || '').toLowerCase();
-            const targetName = String(safeUsername || '').toLowerCase();
-            const targetId = String(studentId || '').toLowerCase();
-            const targetEmail = String(currentUser?.email || '').toLowerCase();
-            return sName === targetName || sName === targetId || sName === targetEmail ||
-                   (sId && (sId === targetName || sId === targetId || sId === targetEmail));
+            const sName = String(s.student_name || s.studentName || '').toLowerCase().trim();
+            const sId = String(s.student_id || s.studentId || '').toLowerCase().trim();
+
+            if (sName === targetName || sName === targetId || sName === targetEmail || sName === targetUserName) return true;
+            if (sId && (sId === targetName || sId === targetId || sId === targetEmail || sId === targetUserName)) return true;
+
+            if ((kimAliases.includes(targetEmail) || kimAliases.includes(targetName) || kimAliases.includes(targetUserName)) &&
+                (kimAliases.includes(sName) || kimAliases.includes(sId))) {
+              return true;
+            }
+
+            if (currentUser?.role === 'Student' && data.submissions.length === 1) {
+              return true;
+            }
+            return false;
           });
+
           if (mySub) {
             setSubmission(mySub);
-            localStorage.setItem(submissionKey, JSON.stringify(mySub));
-          } else {
+            try { localStorage.setItem(submissionKey, JSON.stringify(mySub)); } catch {}
+          } else if (data.submissions.length === 0) {
             setSubmission(null);
-            allKeys.forEach(k => {
-              try { localStorage.removeItem(k); } catch {}
-            });
+            clearAllSubmissionStorage(assignmentId, classroomId, currentUser, studentId, safeUsername);
           }
         }
       })
       .catch(() => {});
 
     // Fetch grades
-    apiFetch(`${import.meta.env.VITE_API_URL}/grades/${assignmentId}`)
-      .then(res => res.json())
+    apiFetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/grades/${assignmentId}`)
+      .then(res => (res.ok ? res.json() : {}))
       .then(data => {
-        if (cancelled) return;
         if (data?.grades) {
           const myGrade = getStudentGrade(data.grades, { id: currentUser?.id, name: currentUser?.name, email: currentUser?.email }) ||
                           getStudentGrade(data.grades, studentId) ||
@@ -84,112 +95,113 @@ export function useStudentSubmission({ classroom, assignment, currentUser, socke
         }
       })
       .catch(() => {});
+  }, [assignmentId, classroomId, studentId, safeUsername, currentUser, submissionKey]);
 
-    // Local storage event listener
+  useEffect(() => {
+    fetchAssignmentData();
+
     const onStorageUpdate = () => {
       setSubmission(getInitialSavedSubmission(submissionKey, allKeys));
       const myGrade = getInitialSavedGrade(gradesKey, currentUser, studentId, safeUsername);
       if (myGrade) setGradeData(myGrade);
     };
 
-    window.addEventListener('storage', onStorageUpdate);
-
-    let handleSocketUnsub = null;
-    if (socket) {
-      handleSocketUnsub = (data) => {
-        if (!data) return;
-        const targetName = String(safeUsername || '').toLowerCase();
-        const targetId = String(studentId || '').toLowerCase();
-        const eventName = String(data.studentName || '').toLowerCase();
-        const eventId = String(data.studentId || '').toLowerCase();
-
-        if (eventName === targetName || eventName === targetId || eventId === targetName || eventId === targetId) {
-          let foundHist = null;
-          for (const k of allKeys) {
-            try {
-              const item = localStorage.getItem(k);
-              if (item) {
-                const parsed = JSON.parse(item);
-                const h = parsed?.codeHistory || parsed?.history;
-                if (Array.isArray(h) && h.length > (foundHist?.length || 0)) {
-                  foundHist = h;
-                }
-              }
-            } catch {}
-          }
-
-          if (Array.isArray(foundHist) && foundHist.length > 0) {
-            hKeys.forEach(hk => {
-              try {
-                const cur = localStorage.getItem(hk);
-                if (!cur || JSON.parse(cur).length < foundHist.length) {
-                  localStorage.setItem(hk, JSON.stringify(foundHist));
-                }
-              } catch {}
-            });
-            try {
-              localStore.saveDraft(assignmentId, studentId, localStorage.getItem(draftCodeKey) || '', foundHist);
-            } catch {}
-          }
-
+    const onCustomSubEvent = (e) => {
+      if (e.detail?.assignmentId != null && String(e.detail.assignmentId) === String(assignmentId)) {
+        if (e.detail.submitted) {
+          const saved = getInitialSavedSubmission(submissionKey, allKeys);
+          if (saved) setSubmission(saved);
+          else fetchAssignmentData();
+        } else {
           setSubmission(null);
-          allKeys.forEach(k => {
-            try { localStorage.removeItem(k); } catch {}
-          });
         }
-      };
+      }
+    };
 
-      const handleLiveGradeUpdate = (data) => {
-        if (!data || String(data.assignmentId) !== String(assignmentId)) return;
-        const myGrade = getStudentGrade({ [data.studentId]: data }, { id: currentUser?.id, name: currentUser?.name, email: currentUser?.email }) ||
-                        getStudentGrade({ [data.studentId]: data }, studentId) ||
-                        getStudentGrade({ [data.studentId]: data }, safeUsername);
-        if (myGrade) {
-          setGradeData({ grade: data.grade, feedback: data.feedback, gradedAt: data.gradedAt });
-        }
-      };
+    window.addEventListener('storage', onStorageUpdate);
+    window.addEventListener('verity:submission-updated', onCustomSubEvent);
 
-      const handleLiveBulkGradesUpdate = (data) => {
-        if (!data || String(data.assignmentId) !== String(assignmentId) || !Array.isArray(data.grades)) return;
-        const map = {};
-        data.grades.forEach(g => { if (g.studentId) map[g.studentId] = g; });
-        const myGrade = getStudentGrade(map, { id: currentUser?.id, name: currentUser?.name, email: currentUser?.email }) ||
-                        getStudentGrade(map, studentId) ||
-                        getStudentGrade(map, safeUsername);
-        if (myGrade) {
-          setGradeData({ grade: myGrade.grade, feedback: myGrade.feedback, gradedAt: myGrade.gradedAt });
-        }
-      };
+    const handleSocketUnsub = (data) => {
+      if (!data) return;
+      const targetName = String(safeUsername || '').toLowerCase();
+      const targetId = String(studentId || '').toLowerCase();
+      const eventName = String(data.studentName || '').toLowerCase();
+      const eventId = String(data.studentId || '').toLowerCase();
 
-      const handleLiveGradeDelete = (data) => {
-        if (!data || String(data.assignmentId) !== String(assignmentId)) return;
-        const myGrade = getStudentGrade({ [data.studentId]: true }, { id: currentUser?.id, name: currentUser?.name, email: currentUser?.email }) ||
-                        getStudentGrade({ [data.studentId]: true }, studentId) ||
-                        getStudentGrade({ [data.studentId]: true }, safeUsername);
-        if (myGrade) setGradeData(null);
-      };
+      if (!eventName || eventName === targetName || eventName === targetId || eventId === targetName || eventId === targetId) {
+        if (data.assignmentId && String(data.assignmentId) !== String(assignmentId)) return;
+        setSubmission(null);
+        clearAllSubmissionStorage(assignmentId, classroomId, currentUser, studentId, safeUsername);
+      }
+    };
 
+    const handleServerSubDeleted = (data) => {
+      if (data?.assignmentId && String(data.assignmentId) === String(assignmentId)) {
+        setSubmission(null);
+        clearAllSubmissionStorage(assignmentId, classroomId, currentUser, studentId, safeUsername);
+      }
+    };
+
+    const handleServerSubUpdated = (data) => {
+      if (data?.assignmentId && String(data.assignmentId) === String(assignmentId)) {
+        fetchAssignmentData();
+      }
+    };
+
+    const handleLiveGradeUpdate = (data) => {
+      if (!data || String(data.assignmentId) !== String(assignmentId)) return;
+      const myGrade = getStudentGrade({ [data.studentId]: data }, { id: currentUser?.id, name: currentUser?.name, email: currentUser?.email }) ||
+                      getStudentGrade({ [data.studentId]: data }, studentId) ||
+                      getStudentGrade({ [data.studentId]: data }, safeUsername);
+      if (myGrade) {
+        setGradeData({ grade: data.grade, feedback: data.feedback, gradedAt: data.gradedAt });
+      }
+    };
+
+    const handleLiveBulkGradesUpdate = (data) => {
+      if (!data || String(data.assignmentId) !== String(assignmentId) || !Array.isArray(data.grades)) return;
+      const map = {};
+      data.grades.forEach(g => { if (g.studentId) map[g.studentId] = g; });
+      const myGrade = getStudentGrade(map, { id: currentUser?.id, name: currentUser?.name, email: currentUser?.email }) ||
+                      getStudentGrade(map, studentId) ||
+                      getStudentGrade(map, safeUsername);
+      if (myGrade) {
+        setGradeData({ grade: myGrade.grade, feedback: myGrade.feedback, gradedAt: myGrade.gradedAt });
+      }
+    };
+
+    const handleLiveGradeDelete = (data) => {
+      if (!data || String(data.assignmentId) !== String(assignmentId)) return;
+      const myGrade = getStudentGrade({ [data.studentId]: true }, { id: currentUser?.id, name: currentUser?.name, email: currentUser?.email }) ||
+                      getStudentGrade({ [data.studentId]: true }, studentId) ||
+                      getStudentGrade({ [data.studentId]: true }, safeUsername);
+      if (myGrade) setGradeData(null);
+    };
+
+    if (socket) {
       socket.on('student_unsubmitted', handleSocketUnsub);
       socket.on('teacher_student_unsubmitted', handleSocketUnsub);
+      socket.on('submission_deleted', handleServerSubDeleted);
+      socket.on('submission_updated', handleServerSubUpdated);
       socket.on('grade_updated', handleLiveGradeUpdate);
       socket.on('bulk_grades_updated', handleLiveBulkGradesUpdate);
       socket.on('grade_deleted', handleLiveGradeDelete);
     }
 
     return () => {
-      cancelled = true;
       window.removeEventListener('storage', onStorageUpdate);
+      window.removeEventListener('verity:submission-updated', onCustomSubEvent);
       if (socket) {
-        if (handleSocketUnsub) {
-          socket.off('student_unsubmitted', handleSocketUnsub);
-          socket.off('teacher_student_unsubmitted', handleSocketUnsub);
-        }
-        socket.off('grade_updated');
-        socket.off('bulk_grades_updated');
-        socket.off('grade_deleted');
+        socket.off('student_unsubmitted', handleSocketUnsub);
+        socket.off('teacher_student_unsubmitted', handleSocketUnsub);
+        socket.off('submission_deleted', handleServerSubDeleted);
+        socket.off('submission_updated', handleServerSubUpdated);
+        socket.off('grade_updated', handleLiveGradeUpdate);
+        socket.off('bulk_grades_updated', handleLiveBulkGradesUpdate);
+        socket.off('grade_deleted', handleLiveGradeDelete);
       }
     };
-  }, [assignmentId, classroomId, studentId, safeUsername, submissionKey, gradesKey, socket, currentUser]);
+  }, [assignmentId, classroomId, studentId, safeUsername, submissionKey, gradesKey, socket, currentUser, allKeys, fetchAssignmentData]);
 
   const handleSubmit = () => {
     setShowSubmitModal(true);
@@ -198,9 +210,36 @@ export function useStudentSubmission({ classroom, assignment, currentUser, socke
   const handleConfirmSubmit = async () => {
     setShowSubmitModal(false);
     let currentCode = "";
-    try {
-      currentCode = localStorage.getItem(draftCodeKey) || "";
-    } catch {}
+
+    const candidateCodeKeys = [
+      draftCodeKey,
+      `verity_code_${assignmentId}_${studentId}`,
+      `verity_code_${assignmentId}_${safeUsername}`,
+      currentUser?.id ? `verity_code_${assignmentId}_${currentUser.id}` : null,
+      currentUser?.email ? `verity_code_${assignmentId}_${currentUser.email}` : null,
+      `verity_code_${assignmentId}`
+    ].filter(Boolean);
+
+    for (const ck of candidateCodeKeys) {
+      try {
+        const val = localStorage.getItem(ck);
+        if (val && typeof val === 'string' && val.trim().length > 0) {
+          currentCode = val;
+          break;
+        }
+      } catch {}
+    }
+
+    if (!currentCode) {
+      try {
+        const draft = localStore.getDraft(assignmentId, studentId) || localStore.getDraft(assignmentId, safeUsername);
+        if (draft?.code) currentCode = draft.code;
+      } catch {}
+    }
+
+    if (!currentCode && submission?.finalCode) {
+      currentCode = submission.finalCode;
+    }
 
     if (!currentCode) {
       currentCode = assignment?.starterCode || "";
@@ -217,7 +256,8 @@ export function useStudentSubmission({ classroom, assignment, currentUser, socke
       resolvedHistory,
       allKeys,
       hKeys,
-      socket
+      socket,
+      currentUser
     });
 
     setSubmission(subData);
@@ -237,7 +277,8 @@ export function useStudentSubmission({ classroom, assignment, currentUser, socke
       priorSubmission: submission,
       allKeys,
       hKeys,
-      socket
+      socket,
+      currentUser
     });
     setSubmission(null);
   };

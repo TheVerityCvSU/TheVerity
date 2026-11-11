@@ -28,6 +28,12 @@ export default function AppStudentRoutes({
             currentUser={currentUser}
             onLogout={handleLogout}
             onEnterClassroom={(classroom) => {
+              if (classroom?.id) {
+                try {
+                  sessionStorage.setItem(`verity_student_classroom_tab_${classroom.id}`, 'stream');
+                  sessionStorage.setItem('verity_student_classroom_tab_active', 'stream');
+                } catch (_) {}
+              }
               navigateTo('classroom_view', { classroom });
             }}
             onOpenAssignment={(classroom, task) => {
@@ -53,6 +59,9 @@ export default function AppStudentRoutes({
             onBack={() => handleBack('student_dashboard')}
             onNavigateView={(view) => {
               localStorage.setItem('verity_student_view', view);
+              if (typeof window !== 'undefined') {
+                window.dispatchEvent(new CustomEvent('verity:student-view-sync', { detail: view }));
+              }
               navigateTo('student_dashboard');
             }}
             onOpenAssignment={(task) => {
@@ -77,6 +86,9 @@ export default function AppStudentRoutes({
             onBack={() => handleBack(workspaceReturnScreen === 'student_dashboard' ? 'student_dashboard' : 'classroom_view')}
             onNavigateView={(view) => {
               localStorage.setItem('verity_student_view', view);
+              if (typeof window !== 'undefined') {
+                window.dispatchEvent(new CustomEvent('verity:student-view-sync', { detail: view }));
+              }
               navigateTo('student_dashboard');
             }}
             onStartCoding={async () => {
@@ -89,6 +101,12 @@ export default function AppStudentRoutes({
               });
             }}
             onEnterClassroom={(classroom) => {
+              if (classroom?.id) {
+                try {
+                  sessionStorage.setItem(`verity_student_classroom_tab_${classroom.id}`, 'stream');
+                  sessionStorage.setItem('verity_student_classroom_tab_active', 'stream');
+                } catch (_) {}
+              }
               navigateTo('classroom_view', { classroom });
             }}
             onLogout={handleLogout}

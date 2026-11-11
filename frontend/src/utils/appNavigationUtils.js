@@ -23,7 +23,8 @@ export const getInitialAppScreen = (isAdminApp) => {
 };
 
 export const getDefaultFallbackScreen = (screen, role, proctoringReturnScreen, workspaceReturnScreen) => {
-  const isTeacher = role === 'Teacher';
+  const roleLower = String(role || '').toLowerCase();
+  const isTeacher = roleLower === 'teacher' || roleLower === 'instructor';
   switch (screen) {
     case 'teacher_proctoring':
     case 'teacher_live_monitoring':

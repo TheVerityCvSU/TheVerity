@@ -33,6 +33,14 @@ export function useClassroomTabs(classroom) {
     if (classroom?.id && prevClassroomIdRef.current !== classroom?.id) {
       prevClassroomIdRef.current = classroom?.id;
       setTransitionMode('classroom');
+      try {
+        const saved = sessionStorage.getItem(`verity_student_classroom_tab_${classroom.id}`);
+        if (saved && ['stream', 'classwork', 'materials'].includes(saved)) {
+          setActiveTab(saved);
+        } else {
+          setActiveTab('stream');
+        }
+      } catch (_) {}
     }
   }, [classroom?.id]);
 

@@ -15,14 +15,18 @@ export default function ProtectedRoute({ children, currentUser, setCurrentScreen
       setCurrentScreen(isAdminApp ? 'admin_login' : 'login');
       return;
     }
-    if (isAdminApp && currentUser.role !== 'Admin') {
+    const userRoleLower = String(currentUser?.role || '').toLowerCase();
+    if (isAdminApp && userRoleLower !== 'admin') {
       setCurrentScreen('admin_login');
       return;
     }
-    if (requiredRole && currentUser.role !== requiredRole) {
-      if (currentUser.role === 'Admin') setCurrentScreen('admin_dashboard');
-      else if (currentUser.role === 'Teacher') setCurrentScreen('teacher_dashboard');
-      else setCurrentScreen('student_dashboard');
+    if (requiredRole) {
+      const reqRoleLower = String(requiredRole).toLowerCase();
+      if (userRoleLower !== reqRoleLower) {
+        if (userRoleLower === 'admin') setCurrentScreen('admin_dashboard');
+        else if (userRoleLower === 'teacher' || userRoleLower === 'instructor') setCurrentScreen('teacher_dashboard');
+        else setCurrentScreen('student_dashboard');
+      }
     }
   }, [currentUser, setCurrentScreen, isAdminApp, requiredRole]);
 
@@ -30,7 +34,7 @@ export default function ProtectedRoute({ children, currentUser, setCurrentScreen
     return null;
   }
 
-  if (isAdminApp && currentUser.role !== 'Admin') {
+  if (isAdminApp && String(currentUser.role || '').toLowerCase() !== 'admin') {
     return null;
   }
 

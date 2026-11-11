@@ -71,7 +71,7 @@ export default function ClassroomView({
     markSingleMaterialAsSeen
   } = useClassroomClasswork({ classroom, currentUser, socket, activeTab });
 
-  const { submittedTasks } = useClassroomSubmissions({
+  const { submittedTasks, handleUnsubmitAssignment } = useClassroomSubmissions({
     assignments,
     classroom,
     currentUser,
@@ -171,12 +171,16 @@ export default function ClassroomView({
                 submittedTasks={submittedTasks}
                 onOpenAssignment={onOpenAssignment}
                 onStartAssignment={onStartAssignment}
+                onUnsubmitAssignment={handleUnsubmitAssignment}
                 setPreviewImage={setPreviewImage}
                 setPreviewVideo={setPreviewVideo}
                 setPreviewIframe={setPreviewIframe}
                 isDark={isDark}
                 isMobile={isMobile}
                 styles={styles}
+                classroom={classroom}
+                currentUser={currentUser}
+                socket={socket}
               />
             )}
 

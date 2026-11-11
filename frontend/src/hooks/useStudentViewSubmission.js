@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { apiFetch } from '../data/api';
 import { getSubKeys, checkLocalSubmitted } from '../utils/studentViewUtils';
+import { clearAllSubmissionStorage } from '../data/studentSubmissionService';
 
 export function useStudentViewSubmission({
   socket,
@@ -101,11 +102,7 @@ export function useStudentViewSubmission({
           persistHistoryFn(codeHistoryRef.current, codeRef.current);
         }
         setSubmitted(false);
-        getSubKeys(classroomId, assignmentId, studentId, safeUsername, currentUser).forEach((k) => {
-          try {
-            localStorage.removeItem(k);
-          } catch {}
-        });
+        clearAllSubmissionStorage(assignmentId, classroomId, currentUser, studentId, safeUsername);
       }
     };
 
@@ -222,11 +219,7 @@ export function useStudentViewSubmission({
       editorRef.current.updateOptions({ readOnly: false, domReadOnly: false });
     }
 
-    getSubKeys(classroomId, assignmentId, studentId, safeUsername, currentUser).forEach((k) => {
-      try {
-        localStorage.removeItem(k);
-      } catch {}
-    });
+    clearAllSubmissionStorage(aId, classroomId, currentUser, studentId, safeUsername);
 
     const aId = assignment?.id ?? 'default';
     apiFetch(

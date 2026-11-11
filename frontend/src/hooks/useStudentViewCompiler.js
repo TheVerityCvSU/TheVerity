@@ -15,7 +15,7 @@ export function useStudentViewCompiler({
   vmDetected,
   kioskRules,
   code,
-  extraFiles,
+  extraFiles = [],
   setBottomTab,
   onTestResults,
   onSingleTestResult
@@ -126,17 +126,17 @@ export function useStudentViewCompiler({
 
   const handleRunCode = () => {
     if (submitted) return;
-    if (isDesktopWeb) {
+    if (typeof setBottomTab === 'function') {
       setBottomTab('terminal');
+    }
+    if (isDesktopWeb) {
       setOutput('[ACCESS DENIED] Running exams in a desktop web browser is prohibited in the Computer Laboratory.\nPlease launch The Verity using The Verity.exe desktop application.\n');
       return;
     }
     if (vmDetected && kioskRules?.blockVirtualMachine !== false) {
-      setBottomTab('terminal');
       setOutput('[ACCESS DENIED] Exam code execution is prohibited inside a Virtual Machine.\nPlease exit and run The Verity on a physical host computer.\n');
       return;
     }
-    setBottomTab('terminal');
     updateEditorMarkers([]);
     setIsRunning(true);
     setProgramStarted(false);
@@ -170,7 +170,7 @@ export function useStudentViewCompiler({
     const token = localStorage.getItem('verity_token') || localStorage.getItem('token');
     targetSocket.emit('compile_code', {
       code,
-      extraFiles: extraFiles.map((f) => ({ name: f.name + '.cs', code: f.code })),
+      extraFiles: (extraFiles || []).map((f) => ({ name: f.name + '.cs', code: f.code })),
       token,
       user: currentUser
     });

@@ -1,5 +1,6 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import localStore from '../data/localStore';
+import { loadInitialHistory, persistHistory } from '../utils/studentViewUtils';
 
 export function useStudentViewFiles({
   assignment,
@@ -7,9 +8,9 @@ export function useStudentViewFiles({
   studentId,
   safeUsername,
   submitted,
-  codeHistoryRef,
-  codeHistory,
-  persistHistoryFn,
+  codeHistoryRef: propCodeHistoryRef,
+  codeHistory: propCodeHistory,
+  persistHistoryFn: propPersistHistoryFn,
   emitToSockets,
   studentActualId,
   studentDisplayName,
@@ -32,6 +33,21 @@ export function useStudentViewFiles({
 
   const codeRef = useRef(code);
   codeRef.current = code;
+
+  const [codeHistory, setCodeHistory] = useState(() =>
+    propCodeHistory || loadInitialHistory(classroomId, assignmentId, studentId, safeUsername, currentUser, code)
+  );
+  const internalCodeHistoryRef = useRef(codeHistory);
+  internalCodeHistoryRef.current = codeHistory;
+  const activeCodeHistoryRef = propCodeHistoryRef || internalCodeHistoryRef;
+
+  const persistHistoryFn = useCallback((hist, currentCodeVal) => {
+    if (propPersistHistoryFn) {
+      propPersistHistoryFn(hist, currentCodeVal);
+    } else {
+      persistHistory(hist, currentCodeVal, classroomId, assignmentId, studentId, safeUsername, currentUser);
+    }
+  }, [propPersistHistoryFn, classroomId, assignmentId, studentId, safeUsername, currentUser]);
 
   const extraFilesKey = `verity_extrafiles_${assignmentId}_${studentId}`;
   const [extraFiles, setExtraFiles] = useState(() => {
@@ -121,7 +137,7 @@ export function useStudentViewFiles({
   const handleSaveCode = () => {
     if (submitted) return;
     const currentCode = codeRef.current;
-    const curHist = codeHistoryRef.current?.length > 0 ? codeHistoryRef.current : codeHistory;
+    const curHist = activeCodeHistoryRef.current?.length > 0 ? activeCodeHistoryRef.current : codeHistory;
     try {
       localStorage.setItem(draftKey, currentCode);
       if (studentId !== safeUsername) {
@@ -130,21 +146,23 @@ export function useStudentViewFiles({
       persistHistoryFn(curHist, currentCode);
     } catch {}
 
-    emitToSockets('student_typing', {
-      studentId: studentActualId,
-      id: studentActualId,
-      name: studentDisplayName,
-      studentName: studentDisplayName,
-      email: currentUser?.email || '',
-      avatar: currentUser?.avatar || '',
-      code: currentCode,
-      classroomId:
-        (classroom?.id != null ? String(classroom.id) : null) ||
-        (classroomId !== 'none' ? classroomId : null) ||
-        'none',
-      assignmentId: assignment?.id || assignmentId,
-      logs: proctorLogsRef.current || proctorLogs
-    });
+    if (emitToSockets) {
+      emitToSockets('student_typing', {
+        studentId: studentActualId,
+        id: studentActualId,
+        name: studentDisplayName,
+        studentName: studentDisplayName,
+        email: currentUser?.email || '',
+        avatar: currentUser?.avatar || '',
+        code: currentCode,
+        classroomId:
+          (classroom?.id != null ? String(classroom.id) : null) ||
+          (classroomId !== 'none' ? classroomId : null) ||
+          'none',
+        assignmentId: assignment?.id || assignmentId,
+        logs: proctorLogsRef?.current || proctorLogs || []
+      });
+    }
 
     setSaveStatus(true);
     if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
@@ -173,6 +191,10 @@ export function useStudentViewFiles({
     handleRenameFile,
     handleExtraFileCodeChange,
     handleSaveCode,
-    saveStatus
+    saveStatus,
+    codeHistory,
+    setCodeHistory,
+    codeHistoryRef: activeCodeHistoryRef,
+    persistHistory: persistHistoryFn
   };
 }

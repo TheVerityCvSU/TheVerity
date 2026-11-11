@@ -3148,16 +3148,27 @@ app.delete('/submissions/:assignmentId/:studentName', authenticateToken, require
             studentName
         );
         const aliasSet = new Set(aliases);
+        const namesToDelete = new Set([sLower, ...aliases]);
 
         if (req.user.role === 'Student') {
             const uId = String(req.user.id || '');
-            const isSelf = aliasSet.has(sLower) || studentName === uId || sLower === uId;
+            let isSelf = aliasSet.has(sLower) || studentName === uId || sLower === uId;
             if (!isSelf) {
-                return res.status(403).json({ message: 'Access denied: You can only delete your own submission.' });
+                const userAliases = await resolveCanonicalStudent(req.user);
+                (userAliases?.aliases || []).forEach(a => aliasSet.add(a));
+                if (req.user.name) aliasSet.add(req.user.name.toLowerCase().trim());
+                if (req.user.email) aliasSet.add(req.user.email.toLowerCase().trim());
+                if (req.user.id != null) aliasSet.add(String(req.user.id).toLowerCase().trim());
+                isSelf = aliasSet.has(sLower) || studentName === uId || sLower === uId;
+                if (!isSelf) {
+                    return res.status(403).json({ message: 'Access denied: You can only delete your own submission.' });
+                }
             }
+            if (req.user.name) namesToDelete.add(req.user.name.trim().toLowerCase());
+            if (req.user.email) namesToDelete.add(req.user.email.trim().toLowerCase());
+            if (req.user.id != null) namesToDelete.add(String(req.user.id).trim().toLowerCase());
         }
 
-        const namesToDelete = new Set([sLower, ...aliases]);
         for (const alias of namesToDelete) {
             if (!alias) continue;
             await db.run(
@@ -3168,7 +3179,10 @@ app.delete('/submissions/:assignmentId/:studentName', authenticateToken, require
             ).catch(() => {});
         }
         try { db.triggerSync(); } catch (_) {}
-        io.emit('submission_deleted', { assignmentId: req.params.assignmentId, studentName: canonicalName || studentName });
+        const deletedStudentName = canonicalName || studentName;
+        io.emit('submission_deleted', { assignmentId: req.params.assignmentId, studentName: deletedStudentName });
+        io.emit('student_unsubmitted', { assignmentId: req.params.assignmentId, studentName: deletedStudentName, studentId: String(req.user?.id || '') });
+        io.emit('teacher_student_unsubmitted', { assignmentId: req.params.assignmentId, studentName: deletedStudentName, studentId: String(req.user?.id || '') });
         res.status(200).json({ message: 'Submission deleted' });
     } catch (e) {
         res.status(500).json({ message: e.message });

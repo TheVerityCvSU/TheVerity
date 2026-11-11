@@ -2,9 +2,11 @@ import React from 'react';
 import { motion } from 'framer-motion';
 import { MonitorX, ShieldAlert, LogOut, Smartphone, Terminal, ExternalLink, HelpCircle, Code2, AlertOctagon } from 'lucide-react';
 import { useDarkMode } from '../hooks/useDarkMode';
-import { isDevToolsOrEmulation } from '../utils/deviceUtils';
+import { isDevToolsOrEmulation, DISABLE_DESKTOP_WEB_BLOCKER } from '../utils/deviceUtils';
 
 export default function ComLabWebBlocker({ currentUser, onLogout }) {
+  if (DISABLE_DESKTOP_WEB_BLOCKER) return null;
+
   const { isDark } = useDarkMode();
   const isDevTools = isDevToolsOrEmulation();
 

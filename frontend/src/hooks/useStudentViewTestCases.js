@@ -23,6 +23,7 @@ export function useStudentViewTestCases({
   getCompilerSocket,
   currentUser,
   code,
+  codeRef,
   setBottomTab
 }) {
   const [testCases, setTestCases] = useState(() => {
@@ -78,7 +79,7 @@ export function useStudentViewTestCases({
     };
     setTestCases((prev) => [...prev, newCase]);
     setActiveTestCaseId(newId);
-    setBottomTab('testcases');
+    if (typeof setBottomTab === 'function') setBottomTab('testcases');
   };
 
   const handleDeleteTestCase = (id, e) => {
@@ -101,7 +102,7 @@ export function useStudentViewTestCases({
     const caseToRun = targetCase || testCases.find((tc) => tc.id === activeTestCaseId) || testCases[0];
     if (!caseToRun) return;
 
-    setBottomTab('testcases');
+    if (typeof setBottomTab === 'function') setBottomTab('testcases');
     setIsRunningTests(true);
     setTestCases((prev) =>
       prev.map((tc) => (tc.id === caseToRun.id ? { ...tc, status: 'running', errorMessage: '', actualOutput: '' } : tc))
@@ -119,10 +120,19 @@ export function useStudentViewTestCases({
       });
     }, 15000);
 
-    const targetSocket = getCompilerSocket();
+    const targetSocket = typeof getCompilerSocket === 'function' ? getCompilerSocket() : null;
+    if (!targetSocket || !targetSocket.connected) {
+      setTestCases((prev) =>
+        prev.map((tc) => (tc.id === caseToRun.id ? { ...tc, status: 'error', errorMessage: 'Compiler socket not connected' } : tc))
+      );
+      setIsRunningTests(false);
+      return;
+    }
+
     const token = localStorage.getItem('verity_token') || localStorage.getItem('token');
+    const runCode = (codeRef && codeRef.current !== undefined) ? codeRef.current : code;
     targetSocket.emit('run_test_cases', {
-      code,
+      code: runCode,
       testCases: [caseToRun],
       token,
       user: currentUser
@@ -140,7 +150,7 @@ export function useStudentViewTestCases({
       return;
     }
 
-    setBottomTab('testcases');
+    if (typeof setBottomTab === 'function') setBottomTab('testcases');
     setIsRunningTests(true);
     setTestCases((prev) => prev.map((tc) => ({ ...tc, status: 'running', errorMessage: '', actualOutput: '' })));
 
@@ -156,10 +166,19 @@ export function useStudentViewTestCases({
       });
     }, 15000);
 
-    const targetSocket = getCompilerSocket();
+    const targetSocket = typeof getCompilerSocket === 'function' ? getCompilerSocket() : null;
+    if (!targetSocket || !targetSocket.connected) {
+      setTestCases((prev) =>
+        prev.map((tc) => ({ ...tc, status: 'error', errorMessage: 'Compiler socket not connected' }))
+      );
+      setIsRunningTests(false);
+      return;
+    }
+
     const token = localStorage.getItem('verity_token') || localStorage.getItem('token');
+    const runCode = (codeRef && codeRef.current !== undefined) ? codeRef.current : code;
     targetSocket.emit('run_test_cases', {
-      code,
+      code: runCode,
       testCases,
       token,
       user: currentUser
@@ -200,12 +219,17 @@ export function useStudentViewTestCases({
     );
   };
 
+  const passedTestsCount = testCases.filter((t) => t.status === 'passed').length;
+  const hasTested = testCases.some((t) => t.status === 'passed' || t.status === 'failed');
+
   return {
     testCases,
     setTestCases,
     activeTestCaseId,
     setActiveTestCaseId,
     isRunningTests,
+    passedTestsCount,
+    hasTested,
     handleAddTestCase,
     handleDeleteTestCase,
     handleUpdateTestCase,

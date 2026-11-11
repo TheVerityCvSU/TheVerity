@@ -2,7 +2,7 @@ import { CheckCircle2, XCircle, AlertTriangle, Loader2 } from 'lucide-react';
 import StudentViewTestCaseTabs from './StudentViewTestCaseTabs';
 
 export default function StudentViewTestCaseDetail({
-  testCases,
+  testCases = [],
   activeTestCaseId,
   setActiveTestCaseId,
   handleAddTestCase,
@@ -11,7 +11,8 @@ export default function StudentViewTestCaseDetail({
   submitted,
   isDark
 }) {
-  const activeCase = testCases.find((tc) => tc.id === activeTestCaseId) || testCases[0];
+  const safeCases = Array.isArray(testCases) ? testCases : [];
+  const activeCase = safeCases.find((tc) => tc.id === activeTestCaseId) || safeCases[0];
 
   return (
     <div
@@ -25,7 +26,7 @@ export default function StudentViewTestCaseDetail({
       }}
     >
       <StudentViewTestCaseTabs
-        testCases={testCases}
+        testCases={safeCases}
         activeTestCaseId={activeTestCaseId}
         setActiveTestCaseId={setActiveTestCaseId}
         handleAddTestCase={handleAddTestCase}

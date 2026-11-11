@@ -1,8 +1,8 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import syncService from './data/syncService';
 import { useDarkMode } from './hooks/useDarkMode';
-import { useAppSecurity, isRunningInAdminMode } from './hooks/useAppSecurity';
+import { useAppSecurity, isRunningInAdminMode, lockDown, releaseLockdown } from './hooks/useAppSecurity';
 import { useAppAuth, normalizeSavedUser } from './hooks/useAppAuth';
 import { useAppNavigation } from './hooks/useAppNavigation';
 import { useAppSocket } from './hooks/useAppSocket';
@@ -13,6 +13,7 @@ import AppVmBlocker from './components/app/AppVmBlocker';
 import AppStudentRoutes from './components/app/AppStudentRoutes';
 import AppTeacherRoutes from './components/app/AppTeacherRoutes';
 import AppAuthRoutes from './components/app/AppAuthRoutes';
+import ErrorBoundary from './components/ErrorBoundary';
 
 export { createVeritySocket } from './hooks/useAppSocket';
 export { isRunningInAdminMode } from './hooks/useAppSecurity';
@@ -21,24 +22,27 @@ export default function App() {
   const { isDark } = useDarkMode();
   const isAdminApp = isRunningInAdminMode();
 
-  const nav = useAppNavigation({ isAdminApp, currentUser: null });
+  const navRef = useRef(null);
+  const socketRef = useRef(null);
+
+  const auth = useAppAuth({
+    isAdminApp,
+    getSocket: () => socketRef.current,
+    lockDown,
+    releaseLockdown,
+    setCurrentScreen: (screen) => navRef.current?.setCurrentScreen(screen),
+    setActiveClassroom: (classroom) => navRef.current?.setActiveClassroom(classroom),
+  });
+  const { currentUser, setCurrentUser, handleLogout, handleUserLogin } = auth;
+
+  const nav = useAppNavigation({ isAdminApp, currentUser });
+  navRef.current = nav;
   const {
     currentScreen, setCurrentScreen, activeClassroom, setActiveClassroom,
     activeAssignment, setActiveAssignment, selectedStudentForPlayback,
     setSelectedStudentForPlayback, proctoringReturnScreen, proctoringMode,
     setProctoringMode, workspaceReturnScreen, navigateTo, handleBack
   } = nav;
-
-  const auth = useAppAuth({
-    isAdminApp,
-    socket: null,
-    lockDown: () => window.electronAPI?.enableLockdown?.(),
-    releaseLockdown: () => window.electronAPI?.disableLockdown?.(),
-    setCurrentScreen,
-    currentScreen,
-    setActiveClassroom,
-  });
-  const { currentUser, setCurrentUser, handleLogout, handleUserLogin } = auth;
 
   const { socket } = useAppSocket({
     currentUser,
@@ -47,9 +51,10 @@ export default function App() {
     setActiveAssignment,
     setActiveClassroom,
   });
+  socketRef.current = socket;
 
   const security = useAppSecurity({ currentUser, currentScreen, socket });
-  const { isDesktopWeb, vmDetected, vmReasons, lockDown, verifyEnvironmentBeforeExam } = security;
+  const { isDesktopWeb, vmDetected, vmReasons, verifyEnvironmentBeforeExam } = security;
 
   useEffect(() => {
     syncService.initAutoSync(() => localStorage.getItem('verity_token') || localStorage.getItem('token'));
@@ -67,7 +72,7 @@ export default function App() {
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          transition={{ duration: 0.4 }}
+          transition={{ duration: 0.2 }}
           style={{ flex: 1, display: 'flex', flexDirection: 'column', width: '100%' }}
         >
           {isAdminApp ? (
@@ -82,66 +87,72 @@ export default function App() {
               handleUserLogin={handleUserLogin}
               lockDown={lockDown}
             />
-          ) : (
-            <>
-              {currentUser?.role === 'Student' && isDesktopWeb ? (
-                <ComLabWebBlocker currentUser={currentUser} onLogout={handleLogout} />
-              ) : currentUser?.role === 'Student' && vmDetected ? (
-                <AppVmBlocker isDark={isDark} vmReasons={vmReasons} handleLogout={handleLogout} />
-              ) : (
-                <>
-                  <AppAuthRoutes
-                    isAdminApp={false}
-                    currentScreen={currentScreen}
-                    currentUser={currentUser}
-                    setCurrentScreen={setCurrentScreen}
-                    setCurrentUser={setCurrentUser}
-                    socket={socket}
-                    handleLogout={handleLogout}
-                    handleUserLogin={handleUserLogin}
-                    lockDown={lockDown}
-                  />
+          ) : (() => {
+            const userRoleLower = String(currentUser?.role || '').toLowerCase();
+            const isStudent = userRoleLower === 'student';
+            const isTeacher = userRoleLower === 'teacher' || userRoleLower === 'instructor';
 
-                  {currentUser?.role === 'Student' && (
-                    <AppStudentRoutes
+            return (
+              <>
+                {isStudent && isDesktopWeb ? (
+                  <ComLabWebBlocker currentUser={currentUser} onLogout={handleLogout} />
+                ) : isStudent && vmDetected ? (
+                  <AppVmBlocker isDark={isDark} vmReasons={vmReasons} handleLogout={handleLogout} />
+                ) : (
+                  <ErrorBoundary onNavigateFallback={(screen) => navigateTo(screen)}>
+                    <AppAuthRoutes
+                      isAdminApp={false}
                       currentScreen={currentScreen}
                       currentUser={currentUser}
                       setCurrentScreen={setCurrentScreen}
+                      setCurrentUser={setCurrentUser}
                       socket={socket}
-                      activeClassroom={activeClassroom}
-                      setActiveClassroom={setActiveClassroom}
-                      activeAssignment={activeAssignment}
-                      workspaceReturnScreen={workspaceReturnScreen}
                       handleLogout={handleLogout}
-                      handleBack={handleBack}
-                      navigateTo={navigateTo}
-                      verifyEnvironmentBeforeExam={verifyEnvironmentBeforeExam}
+                      handleUserLogin={handleUserLogin}
+                      lockDown={lockDown}
                     />
-                  )}
 
-                  {currentUser?.role === 'Teacher' && (
-                    <AppTeacherRoutes
-                      currentScreen={currentScreen}
-                      currentUser={currentUser}
-                      setCurrentScreen={setCurrentScreen}
-                      socket={socket}
-                      activeClassroom={activeClassroom}
-                      setActiveClassroom={setActiveClassroom}
-                      activeAssignment={activeAssignment}
-                      selectedStudentForPlayback={selectedStudentForPlayback}
-                      setSelectedStudentForPlayback={setSelectedStudentForPlayback}
-                      proctoringMode={proctoringMode}
-                      setProctoringMode={setProctoringMode}
-                      proctoringReturnScreen={proctoringReturnScreen}
-                      handleLogout={handleLogout}
-                      handleBack={handleBack}
-                      navigateTo={navigateTo}
-                    />
-                  )}
-                </>
-              )}
-            </>
-          )}
+                    {isStudent && (
+                      <AppStudentRoutes
+                        currentScreen={currentScreen}
+                        currentUser={currentUser}
+                        setCurrentScreen={setCurrentScreen}
+                        socket={socket}
+                        activeClassroom={activeClassroom}
+                        setActiveClassroom={setActiveClassroom}
+                        activeAssignment={activeAssignment}
+                        workspaceReturnScreen={workspaceReturnScreen}
+                        handleLogout={handleLogout}
+                        handleBack={handleBack}
+                        navigateTo={navigateTo}
+                        verifyEnvironmentBeforeExam={verifyEnvironmentBeforeExam}
+                      />
+                    )}
+
+                    {isTeacher && (
+                      <AppTeacherRoutes
+                        currentScreen={currentScreen}
+                        currentUser={currentUser}
+                        setCurrentScreen={setCurrentScreen}
+                        socket={socket}
+                        activeClassroom={activeClassroom}
+                        setActiveClassroom={setActiveClassroom}
+                        activeAssignment={activeAssignment}
+                        selectedStudentForPlayback={selectedStudentForPlayback}
+                        setSelectedStudentForPlayback={setSelectedStudentForPlayback}
+                        proctoringMode={proctoringMode}
+                        setProctoringMode={setProctoringMode}
+                        proctoringReturnScreen={proctoringReturnScreen}
+                        handleLogout={handleLogout}
+                        handleBack={handleBack}
+                        navigateTo={navigateTo}
+                      />
+                    )}
+                  </ErrorBoundary>
+                )}
+              </>
+            );
+          })()}
         </motion.div>
       </AnimatePresence>
 

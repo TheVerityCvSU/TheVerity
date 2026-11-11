@@ -31,6 +31,18 @@ export default function StudentDashboard({
   const [slideDirection, setSlideDirection] = useState(1);
   const [isFadingOut, setIsFadingOut] = useState(false);
 
+  useEffect(() => {
+    const handleSync = (e) => {
+      const target = e.detail || localStorage.getItem('verity_student_view') || 'classrooms';
+      const currentIdx = VIEW_ORDER[activeView] ?? 0;
+      const nextIdx = VIEW_ORDER[target] ?? 0;
+      setSlideDirection(nextIdx >= currentIdx ? -1 : 1);
+      setActiveView(target);
+    };
+    window.addEventListener('verity:student-view-sync', handleSync);
+    return () => window.removeEventListener('verity:student-view-sync', handleSync);
+  }, [activeView]);
+
   const {
     classrooms,
     loadingClassrooms,
@@ -47,6 +59,15 @@ export default function StudentDashboard({
     isJoining,
     handleJoinClass,
   } = useStudentClassrooms({ currentUser, socket });
+
+  useEffect(() => {
+    if (sessionStorage.getItem('verity_open_join_modal') === 'true') {
+      sessionStorage.removeItem('verity_open_join_modal');
+      setJoinError('');
+      setClassCode('');
+      setIsModalOpen(true);
+    }
+  }, [setIsModalOpen, setJoinError, setClassCode]);
 
   const {
     dashboardStats,

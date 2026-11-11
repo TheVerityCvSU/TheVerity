@@ -3,11 +3,12 @@ import { Monitor, ShieldAlert, MonitorX } from 'lucide-react';
 export default function StudentViewSecurityModals({
   multiMonitorDetected,
   vmDetected,
-  vmReasons,
+  vmReasons = [],
   kioskRules,
   isDesktopWeb,
   onBack
 }) {
+  const safeReasons = Array.isArray(vmReasons) ? vmReasons : [];
   return (
     <>
       {/* Multiple Monitors Modal */}
@@ -93,7 +94,7 @@ export default function StudentViewSecurityModals({
             The Verity Exam Integrity System has detected that this session is running inside a{' '}
             <strong>Virtual Machine (VM)</strong>. Taking exams or executing code within virtualized environments is strictly prohibited.
           </p>
-          {vmReasons.length > 0 && (
+          {safeReasons.length > 0 && (
             <div
               style={{
                 maxWidth: '580px',
@@ -119,7 +120,7 @@ export default function StudentViewSecurityModals({
                 Hardware & Driver Indicators:
               </div>
               <ul style={{ margin: 0, paddingLeft: '20px', fontSize: '0.85rem', color: '#cbd5e1', lineHeight: 1.5 }}>
-                {vmReasons.slice(0, 4).map((r, i) => (
+                {safeReasons.slice(0, 4).map((r, i) => (
                   <li key={i}>{r}</li>
                 ))}
               </ul>

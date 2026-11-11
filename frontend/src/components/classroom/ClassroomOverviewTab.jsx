@@ -10,15 +10,20 @@ export default function ClassroomOverviewTab({
   isDark,
   cardBg,
   textMuted,
-  upcomingItems,
-  visibleClasswork,
-  visibleMaterials,
-  unseenMaterials,
+  upcomingItems = [],
+  visibleClasswork = [],
+  visibleMaterials = [],
+  unseenMaterials = [],
   classroom,
   onSelectTodo,
   onOpenMaterials,
   onSelectMaterial
 }) {
+  const safeUpcoming = Array.isArray(upcomingItems) ? upcomingItems : [];
+  const safeClasswork = Array.isArray(visibleClasswork) ? visibleClasswork : [];
+  const safeMaterials = Array.isArray(visibleMaterials) ? visibleMaterials : [];
+  const safeUnseen = Array.isArray(unseenMaterials) ? unseenMaterials : [];
+
   const todoScrollRef = useRef(null);
   const isDraggingTodoRef = useRef(false);
   const startXRef = useRef(0);
@@ -72,7 +77,7 @@ export default function ClassroomOverviewTab({
             <div style={{ display: 'flex', alignItems: 'baseline', gap: '12px' }}>
               <h2 style={{ fontSize: '1.25rem', fontWeight: 'bold', margin: 0 }}>To Do</h2>
               <span style={{ fontSize: '0.85rem', color: textMuted }}>
-                {upcomingItems.length} item{upcomingItems.length !== 1 && 's'}
+                {safeUpcoming.length} item{safeUpcoming.length !== 1 && 's'}
               </span>
             </div>
             <button
@@ -100,15 +105,15 @@ export default function ClassroomOverviewTab({
             }}
           >
             <style dangerouslySetInnerHTML={{__html: `.hide-scroll::-webkit-scrollbar { display: none; }`}} />
-            {upcomingItems.length === 0 ? (
+            {safeUpcoming.length === 0 ? (
               <div style={{ width: '100%', display: 'flex', alignItems: 'center', gap: '10px', color: isDark ? '#34d399' : '#059669', padding: '4px 0' }}>
                 <CheckCircle2 size={20} color={isDark ? '#34d399' : '#10b981'} />
                 <span style={{ fontWeight: '600', color: isDark ? '#f5f5f5' : '#1e293b', fontSize: '0.95rem' }}>
-                  {visibleClasswork.length > 0 ? "You're all caught up!" : "No pending work"}
+                  {safeClasswork.length > 0 ? "You're all caught up!" : "No pending work"}
                 </span>
               </div>
             ) : (
-              upcomingItems.map(item => (
+              safeUpcoming.map(item => (
                 <div
                   key={item.id}
                   onClick={() => {
@@ -148,7 +153,11 @@ export default function ClassroomOverviewTab({
                     <div style={{ fontSize: '0.98rem', fontWeight: 'bold', marginBottom: '5px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.title}</div>
                   </div>
                   <div style={{ fontSize: '0.78rem', color: textMuted, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', lineHeight: '1.45', marginTop: '4px' }}>
-                    {item.details ? item.details.replace(/<[^>]*>?/gm, '').replace(/&nbsp;/g, ' ') : 'No instructions provided.'}
+                    {(() => {
+                      const raw = typeof item?.details === 'string' ? item.details : (typeof item?.instruction === 'string' ? item.instruction : '');
+                      const clean = raw ? raw.replace(/<[^>]*>?/gm, '').replace(/&nbsp;/g, ' ') : '';
+                      return clean || 'No instructions provided.';
+                    })()}
                   </div>
                 </div>
               ))
@@ -161,8 +170,8 @@ export default function ClassroomOverviewTab({
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '16px' }}>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: '12px' }}>
               <h2 style={{ fontSize: '1.25rem', fontWeight: 'bold', margin: 0 }}>Learning materials</h2>
-              <span style={{ fontSize: '0.85rem', color: unseenMaterials.length > 0 ? textMuted : '#10b981', fontWeight: unseenMaterials.length > 0 ? 'normal' : '600' }}>
-                {unseenMaterials.length > 0 ? `${unseenMaterials.length} new` : (visibleMaterials.length > 0 ? 'All viewed' : '0 items')}
+              <span style={{ fontSize: '0.85rem', color: safeUnseen.length > 0 ? textMuted : '#10b981', fontWeight: safeUnseen.length > 0 ? 'normal' : '600' }}>
+                {safeUnseen.length > 0 ? `${safeUnseen.length} new` : (safeMaterials.length > 0 ? 'All viewed' : '0 items')}
               </span>
             </div>
             <button
@@ -174,12 +183,12 @@ export default function ClassroomOverviewTab({
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fill, minmax(220px, 1fr))', gap: '14px' }}>
-            {visibleMaterials.length === 0 ? (
+            {safeMaterials.length === 0 ? (
               <div style={{ gridColumn: '1 / -1', backgroundColor: 'transparent', borderRadius: '12px', padding: '12px 6px', display: 'flex', alignItems: 'center', gap: '12px', color: textMuted, fontSize: '0.88rem', fontStyle: 'italic' }}>
                 <FileText size={20} color={textMuted} />
                 <span>No learning materials uploaded yet for this class.</span>
               </div>
-            ) : unseenMaterials.length === 0 ? (
+            ) : safeUnseen.length === 0 ? (
               <div style={{ gridColumn: '1 / -1', display: 'flex', alignItems: 'center', gap: '10px', color: isDark ? '#34d399' : '#059669', padding: '4px 0' }}>
                 <CheckCircle2 size={20} color={isDark ? '#34d399' : '#10b981'} />
                 <span style={{ fontWeight: '600', color: isDark ? '#f5f5f5' : '#1e293b', fontSize: '0.95rem' }}>
@@ -187,7 +196,7 @@ export default function ClassroomOverviewTab({
                 </span>
               </div>
             ) : (
-              unseenMaterials.slice(0, 6).map((item) => {
+              safeUnseen.slice(0, 6).map((item) => {
                 const lessonType = getLessonType(item);
                 let iconNode = <FileText size={20} />;
                 let iconBg = isDark ? 'rgba(16, 185, 129, 0.15)' : '#dcfce7';

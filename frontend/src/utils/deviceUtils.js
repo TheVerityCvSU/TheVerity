@@ -109,13 +109,22 @@ export const isMobileDevice = () => {
   if (mobileRegex.test(ua)) return true;
 
   // Real iPadOS (Safari reports MacIntel but maxTouchPoints > 1 and screen <= 1024)
-  const isIPadOS = (platform === 'macintel' || ua.includes('macintosh')) && 
-                   navigator.maxTouchPoints > 1 &&
-                   window.screen.width <= 1024;
+  const isIPadOS = (platform === 'macintel' || ua.includes('macintosh')) &&
+    navigator.maxTouchPoints > 1 &&
+    window.screen.width <= 1024;
   if (isIPadOS) return true;
 
   return false;
 };
+
+/**
+ * Global toggle to disable the desktop web browser blocker for testing and inspection.
+ * Set to true so developers and evaluators can test and view the system in standard web browsers
+ * without needing to install or run the official The Verity (.exe) desktop application.
+ *
+ * When set to false, ComLab & PC web browser access is strictly blocked for students.
+ */
+export const DISABLE_DESKTOP_WEB_BLOCKER = true;
 
 /**
  * Checks if the user is running in a desktop or laptop web browser
@@ -127,6 +136,11 @@ export const isMobileDevice = () => {
 export const isDesktopWebBrowser = () => {
   // If running inside the official .exe (Electron), it is NOT a web browser
   if (isElectronApp()) return false;
+
+  // If disabled for browser testing, bypass the blocker
+  if (DISABLE_DESKTOP_WEB_BLOCKER) {
+    return false;
+  }
 
   // If DevTools or device emulation is detected, block it immediately
   if (isDevToolsOrEmulation()) return true;

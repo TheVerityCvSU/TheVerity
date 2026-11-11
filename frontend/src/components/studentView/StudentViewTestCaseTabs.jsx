@@ -1,13 +1,15 @@
 import { CheckCircle2, XCircle, AlertTriangle, Loader2, Plus, X } from 'lucide-react';
 
 export default function StudentViewTestCaseTabs({
-  testCases,
+  testCases = [],
   activeTestCaseId,
   setActiveTestCaseId,
   handleAddTestCase,
   handleDeleteTestCase,
   isDark
 }) {
+  const safeCases = Array.isArray(testCases) ? testCases : [];
+
   return (
     <div
       style={{
@@ -21,7 +23,7 @@ export default function StudentViewTestCaseTabs({
         flexShrink: 0
       }}
     >
-      {testCases.map((tc, idx) => {
+      {safeCases.map((tc, idx) => {
         const isActive = tc.id === activeTestCaseId;
         return (
           <button
@@ -72,7 +74,7 @@ export default function StudentViewTestCaseTabs({
             )}
             <span>{tc.name || `Case ${idx + 1}`}</span>
 
-            {testCases.length > 1 && (
+            {safeCases.length > 1 && (
               <span
                 onClick={(e) => handleDeleteTestCase(tc.id, e)}
                 title="Delete this test case"

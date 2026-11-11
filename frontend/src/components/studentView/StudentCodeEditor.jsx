@@ -158,11 +158,13 @@ export default function StudentCodeEditor({
       } catch {}
 
       const newEntry = { time: Date.now(), code: newCode };
-      setCodeHistory(prev => {
-        const nextHist = [...prev, newEntry];
-        if (persistHistory) persistHistory(nextHist, newCode);
-        return nextHist;
-      });
+      if (typeof setCodeHistory === 'function') {
+        setCodeHistory((prev) => {
+          const nextHist = [...(prev || []), newEntry];
+          if (typeof persistHistory === 'function') persistHistory(nextHist, newCode);
+          return nextHist;
+        });
+      }
 
       if (emitToSockets) {
         emitToSockets('student_typing', {
@@ -175,7 +177,7 @@ export default function StudentCodeEditor({
           code: newCode,
           classroomId: (classroom?.id != null ? String(classroom.id) : null) || (classroomId !== 'none' ? classroomId : null) || 'none',
           assignmentId: assignment?.id || assignmentId,
-          logs: proctorLogsRef?.current || proctorLogs
+          logs: proctorLogsRef?.current || proctorLogs || []
         });
       }
     } else if (handleExtraFileCodeChange) {

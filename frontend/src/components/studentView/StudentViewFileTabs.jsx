@@ -5,7 +5,7 @@ export default function StudentViewFileTabs({
   submitted,
   activeFileId,
   setActiveFileId,
-  extraFiles,
+  extraFiles = [],
   renamingFileId,
   setRenamingFileId,
   renameValue,
@@ -14,6 +14,7 @@ export default function StudentViewFileTabs({
   handleDeleteFile,
   handleRenameFile
 }) {
+  const safeExtraFiles = Array.isArray(extraFiles) ? extraFiles : [];
   return (
     <div
       style={{
@@ -52,7 +53,7 @@ export default function StudentViewFileTabs({
       </div>
 
       {/* Extra file tabs */}
-      {extraFiles.map((f) => (
+      {safeExtraFiles.map((f) => (
         <div
           key={f.id}
           onDoubleClick={() => {

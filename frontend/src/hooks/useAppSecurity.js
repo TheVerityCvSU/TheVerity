@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { isDesktopWebBrowser, isMobileDevice } from '../utils/deviceUtils';
+import { isDesktopWebBrowser, isMobileDevice, DISABLE_DESKTOP_WEB_BLOCKER } from '../utils/deviceUtils';
 import { apiFetch } from '../data/api';
 
 export const isRunningInAdminMode = () => {
@@ -14,14 +14,19 @@ export const isRunningInAdminMode = () => {
   );
 };
 
+export const lockDown = () => {
+  try { window.electronAPI?.enableLockdown?.(); } catch (_) {}
+};
+
+export const releaseLockdown = () => {
+  try { window.electronAPI?.disableLockdown?.(); } catch (_) {}
+};
+
 export function useAppSecurity({ currentUser, currentScreen, socket }) {
   const isAdminApp = isRunningInAdminMode();
   const [isDesktopWeb, setIsDesktopWeb] = useState(() => isDesktopWebBrowser());
   const [vmDetected, setVmDetected] = useState(false);
   const [vmReasons, setVmReasons] = useState([]);
-
-  const lockDown = () => window.electronAPI?.enableLockdown?.();
-  const releaseLockdown = () => window.electronAPI?.disableLockdown?.();
 
   useEffect(() => {
     if (!window.electronAPI || typeof window.electronAPI.checkVmStatus !== 'function') return;
@@ -68,7 +73,7 @@ export function useAppSecurity({ currentUser, currentScreen, socket }) {
   }, []);
 
   useEffect(() => {
-    if (window.electronAPI) return;
+    if (window.electronAPI || DISABLE_DESKTOP_WEB_BLOCKER) return;
 
     const handleKeyDown = (e) => {
       if (e.key === 'F12' || e.keyCode === 123) {
@@ -110,7 +115,7 @@ export function useAppSecurity({ currentUser, currentScreen, socket }) {
   }, [currentUser, currentScreen]);
 
   useEffect(() => {
-    if (currentUser?.role !== 'Student') return;
+    if (currentUser?.role !== 'Student' || DISABLE_DESKTOP_WEB_BLOCKER) return;
 
     let lastExitTabTime = 0;
     const handleWindowExit = () => {
@@ -218,7 +223,7 @@ export function useAppSecurity({ currentUser, currentScreen, socket }) {
   }, [currentUser, currentScreen, socket]);
 
   const verifyEnvironmentBeforeExam = async () => {
-    if (isDesktopWebBrowser()) {
+    if (!DISABLE_DESKTOP_WEB_BLOCKER && isDesktopWebBrowser()) {
       alert('[ACCESS DENIED] Desktop Web Browser Blocked\n\nIn the Computer Laboratory or on desktop/laptop computers, all exams and coding activities must be conducted using the official "The Verity.exe" desktop application for kiosk lockdown and exam integrity.\n\nWeb access is strictly reserved for mobile phones.\n\nPlease close this browser and launch The Verity (.exe).');
       return false;
     }

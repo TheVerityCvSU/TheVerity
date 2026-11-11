@@ -236,7 +236,13 @@ export default function ProfileMenu({ onLogout, currentUser: propUser }) {
 
           <div style={{ ...styles.divider, backgroundColor: isDark ? '#3f3f46' : '#e5e7eb' }} />
 
-          <button onClick={onLogout} style={styles.logoutBtn}>
+          <button
+            onClick={() => {
+              setOpen(false);
+              if (typeof onLogout === 'function') onLogout();
+            }}
+            style={styles.logoutBtn}
+          >
             <LogOut size={17} /> <span>Logout</span>
           </button>
         </div>

@@ -141,7 +141,7 @@ export default function AppTeacherRoutes({
             }}
             onLogout={() => {
               setSelectedStudentForPlayback(null);
-              handleBack(proctoringReturnScreen || 'teacher_classwork');
+              handleLogout();
             }}
           />
         </ProtectedRoute>

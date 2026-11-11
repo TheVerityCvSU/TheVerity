@@ -31,7 +31,9 @@ export const getThemeStorageKeys = (classroom) => {
  */
 export const getClassroomTheme = (classroom) => {
   if (classroom?.theme) {
-    if (typeof classroom.theme === 'object') return classroom.theme;
+    if (typeof classroom.theme === 'object' && classroom.theme !== null && (classroom.theme.primary || classroom.theme.customImageUrl || classroom.theme.id)) {
+      return classroom.theme;
+    }
     if (typeof classroom.theme === 'string') {
       try {
         const parsed = JSON.parse(classroom.theme);

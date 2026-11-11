@@ -143,7 +143,13 @@ export default function ClassroomViewHeader({
 
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', flex: 1, gap: '16px', marginRight: '24px' }}>
         <button
-          onClick={() => { if (onNavigateView) onNavigateView('classrooms'); else onBack(); }}
+          onClick={() => {
+            try {
+              sessionStorage.setItem('verity_open_join_modal', 'true');
+            } catch (_) {}
+            if (onNavigateView) onNavigateView('classrooms');
+            else if (onBack) onBack();
+          }}
           style={{
             display: 'flex',
             alignItems: 'center',

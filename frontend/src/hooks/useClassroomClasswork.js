@@ -133,7 +133,7 @@ export function useClassroomClasswork({ classroom, currentUser, socket, activeTa
     loadFromLocal();
 
     let cancelled = false;
-    apiFetch(`${import.meta.env.VITE_API_URL}/classwork/${classroomId}`)
+    apiFetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/classwork/${classroomId}`)
       .then(res => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return res.json();

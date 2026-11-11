@@ -12,7 +12,7 @@ export default function TeacherViewSidebar({
   setStudentSearch,
   isMobile,
   isCompact,
-  windowWidth,
+  windowWidth = typeof window !== 'undefined' ? window.innerWidth : 1200,
   isDark,
   theme,
   mode,
@@ -43,8 +43,8 @@ export default function TeacherViewSidebar({
         bottom: isCompact ? 0 : 'auto',
         height: isCompact ? `calc(100vh - ${isMobile ? 56 : 62}px)` : '100%',
         width: isCompact
-          ? Math.min(360, windowWidth * 0.88)
-          : windowWidth >= 1600
+          ? Math.min(360, (windowWidth || 1200) * 0.88)
+          : (windowWidth || 1200) >= 1600
           ? '340px'
           : '300px',
         maxWidth: '100vw',

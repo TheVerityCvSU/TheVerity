@@ -3,7 +3,7 @@ import { studentViewStyles as styles } from '../../utils/studentViewStyles';
 
 export default function StudentViewWarningDrawer({
   isDark,
-  proctorLogs,
+  proctorLogs = [],
   warningHeight,
   isWarningCollapsed,
   setIsWarningCollapsed,
@@ -11,6 +11,8 @@ export default function StudentViewWarningDrawer({
   toggleWarningMaximize,
   isResizingWarning
 }) {
+  const safeLogs = Array.isArray(proctorLogs) ? proctorLogs : [];
+
   return (
     <div
       style={{
@@ -39,7 +41,7 @@ export default function StudentViewWarningDrawer({
           <span style={{ fontSize: '0.95rem', color: isDark ? '#E8EAED' : '#1f2937', fontWeight: 'bold' }}>
             Warnings
           </span>
-          {proctorLogs.length > 0 && (
+          {safeLogs.length > 0 && (
             <span
               style={{
                 fontSize: '0.72rem',
@@ -50,7 +52,7 @@ export default function StudentViewWarningDrawer({
                 fontWeight: 'bold'
               }}
             >
-              {proctorLogs.length}
+              {safeLogs.length}
             </span>
           )}
           {isWarningCollapsed ? (
@@ -85,12 +87,12 @@ export default function StudentViewWarningDrawer({
       </div>
       {!isWarningCollapsed && (
         <div style={styles.logContainer}>
-          {proctorLogs.length === 0 ? (
+          {safeLogs.length === 0 ? (
             <span style={{ color: isDark ? '#888888' : '#9ca3af', fontStyle: 'italic', fontSize: '0.85rem' }}>
               Monitoring active...
             </span>
           ) : (
-            proctorLogs.map((log) => {
+            safeLogs.map((log) => {
               const isCrash = Boolean(
                 log.isCrash ||
                   (log.action && log.action.toLowerCase().includes('crash')) ||

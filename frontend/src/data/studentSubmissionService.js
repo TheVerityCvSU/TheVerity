@@ -3,24 +3,101 @@ import { localStore } from './localStore';
 import { getStudentGrade } from '../utils/gradeUtils';
 
 export function getSubmissionStorageKeys(classroomId, assignmentId, currentUser, studentId, safeUsername) {
+  const cId = classroomId ?? 'default';
+  const aId = assignmentId ?? 'default';
+  const uid = currentUser?.id != null ? String(currentUser.id) : null;
+  const email = currentUser?.email || null;
+  const name = currentUser?.name || null;
+
   return [
-    `verity_sub_${classroomId}_${assignmentId}_${studentId}`,
-    `verity_sub_${classroomId}_${assignmentId}_${safeUsername}`,
-    currentUser?.name ? `verity_sub_${classroomId}_${assignmentId}_${currentUser.name}` : null,
-    currentUser?.email ? `verity_sub_${classroomId}_${assignmentId}_${currentUser.email}` : null,
-    currentUser?.id ? `verity_sub_${classroomId}_${assignmentId}_id_${currentUser.id}` : null
+    `verity_sub_${cId}_${aId}_${studentId}`,
+    `verity_sub_${cId}_${aId}_${safeUsername}`,
+    `verity_sub_${cId}_${aId}`,
+    `verity_sub_default_${aId}`,
+    `verity_sub_${aId}`,
+    `verity_sub_none_${aId}`,
+    `verity_sub_default_${aId}_${studentId}`,
+    `verity_sub_default_${aId}_${safeUsername}`,
+    `verity_sub_${aId}_${studentId}`,
+    `verity_sub_${aId}_${safeUsername}`,
+    name ? `verity_sub_${cId}_${aId}_${name}` : null,
+    email ? `verity_sub_${cId}_${aId}_${email}` : null,
+    uid ? `verity_sub_${cId}_${aId}_id_${uid}` : null,
+    name ? `verity_sub_default_${aId}_${name}` : null,
+    email ? `verity_sub_default_${aId}_${email}` : null,
+    uid ? `verity_sub_default_${aId}_id_${uid}` : null,
+    name ? `verity_sub_${aId}_${name}` : null,
+    email ? `verity_sub_${aId}_${email}` : null,
+    uid ? `verity_sub_${aId}_id_${uid}` : null
   ].filter(Boolean);
 }
 
 export function getHistoryStorageKeys(classroomId, assignmentId, currentUser, studentId, safeUsername) {
+  const cId = classroomId ?? 'default';
+  const aId = assignmentId ?? 'default';
+  const uid = currentUser?.id != null ? String(currentUser.id) : null;
+  const email = currentUser?.email || null;
+  const name = currentUser?.name || null;
+
   return [
-    `verity_history_${classroomId}_${assignmentId}_${studentId}`,
-    `verity_history_${classroomId}_${assignmentId}_${safeUsername}`,
-    currentUser?.name ? `verity_history_${classroomId}_${assignmentId}_${currentUser.name}` : null,
-    currentUser?.email ? `verity_history_${classroomId}_${assignmentId}_${currentUser.email}` : null,
-    `verity_history_${assignmentId}_${studentId}`,
-    `verity_history_${assignmentId}_${safeUsername}`
+    `verity_history_${cId}_${aId}_${studentId}`,
+    `verity_history_${cId}_${aId}_${safeUsername}`,
+    `verity_history_${aId}_${studentId}`,
+    `verity_history_${aId}_${safeUsername}`,
+    name ? `verity_history_${cId}_${aId}_${name}` : null,
+    email ? `verity_history_${cId}_${aId}_${email}` : null,
+    uid ? `verity_history_${cId}_${aId}_id_${uid}` : null,
+    name ? `verity_history_${aId}_${name}` : null,
+    email ? `verity_history_${aId}_${email}` : null,
+    uid ? `verity_history_${aId}_id_${uid}` : null
   ].filter(Boolean);
+}
+
+export function clearAllSubmissionStorage(assignmentId, classroomId, currentUser, studentId, safeUsername) {
+  const cId = classroomId ?? 'default';
+  const aId = assignmentId ?? 'default';
+  const keys = getSubmissionStorageKeys(cId, aId, currentUser, studentId, safeUsername);
+  keys.forEach(k => {
+    try { localStorage.removeItem(k); } catch {}
+  });
+
+  const aIdStr = String(aId);
+  const targetId = String(studentId || '').toLowerCase();
+  const targetName = String(safeUsername || '').toLowerCase();
+  const targetEmail = String(currentUser?.email || '').toLowerCase();
+  const targetUid = currentUser?.id != null ? String(currentUser.id).toLowerCase() : '';
+
+  try {
+    const toRemove = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (!key || !key.startsWith('verity_sub_')) continue;
+      if (
+        key.includes(`_${aIdStr}_`) ||
+        key.endsWith(`_${aIdStr}`) ||
+        key === `verity_sub_${aIdStr}` ||
+        key.startsWith(`verity_sub_${cId}_${aIdStr}`) ||
+        key.startsWith(`verity_sub_default_${aIdStr}`)
+      ) {
+        const kLower = key.toLowerCase();
+        if (
+          (!targetId && !targetEmail && !targetName) ||
+          (targetId && kLower.includes(targetId)) ||
+          (targetUid && kLower.includes(targetUid)) ||
+          (targetEmail && kLower.includes(targetEmail)) ||
+          (targetName && kLower.includes(targetName)) ||
+          key === `verity_sub_${cId}_${aIdStr}` ||
+          key === `verity_sub_default_${aIdStr}` ||
+          key === `verity_sub_${aIdStr}`
+        ) {
+          toRemove.push(key);
+        }
+      }
+    }
+    toRemove.forEach(k => {
+      try { localStorage.removeItem(k); } catch {}
+    });
+  } catch {}
 }
 
 export function getInitialSavedSubmission(primaryKey, fallbackKeys) {
@@ -90,51 +167,59 @@ export async function submitStudentAssignment({
   resolvedHistory,
   allKeys,
   hKeys,
-  socket
+  socket,
+  currentUser
 }) {
-  hKeys.forEach(hk => {
+  const cId = classroomId ?? 'default';
+  const aId = assignmentId ?? 'default';
+  const storageKeys = allKeys || getSubmissionStorageKeys(cId, aId, currentUser, studentId, safeUsername);
+  const historyKeys = hKeys || getHistoryStorageKeys(cId, aId, currentUser, studentId, safeUsername);
+
+  historyKeys.forEach(hk => {
     try { localStorage.setItem(hk, JSON.stringify(resolvedHistory)); } catch {}
   });
   try {
-    localStore.saveDraft(assignmentId, studentId, currentCode, resolvedHistory);
+    localStore.saveDraft(aId, studentId, currentCode, resolvedHistory);
   } catch {}
 
   const subData = {
     studentName: safeUsername,
     studentId,
-    assignmentId,
-    classroomId,
+    assignmentId: aId,
+    classroomId: cId,
     finalCode: currentCode,
     codeHistory: resolvedHistory,
     submittedAt: new Date().toISOString()
   };
 
-  allKeys.forEach(k => {
+  storageKeys.forEach(k => {
     try { localStorage.setItem(k, JSON.stringify(subData)); } catch {}
   });
 
   const subPayload = {
     studentName: safeUsername,
     studentId,
+    studentEmail: currentUser?.email || '',
     finalCode: currentCode,
     codeHistory: resolvedHistory,
-    classroomId
+    classroomId: cId
   };
 
-  apiFetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/submissions/${assignmentId}`, {
+  const submitEndpoint = `/submissions/${aId}`;
+  apiFetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}${submitEndpoint}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(subPayload)
   }).catch(async () => {
     try {
-      await localStore.addToSyncQueue('submit_assignment', `/submissions/${assignmentId}`, 'POST', subPayload);
+      await localStore.addToSyncQueue('submit_assignment', submitEndpoint, 'POST', subPayload);
     } catch (_) {}
   });
 
   if (socket) {
     socket.emit('student_leave_workspace', {
-      assignmentId,
-      classroomId,
+      assignmentId: aId,
+      classroomId: cId,
       studentId,
       name: safeUsername,
       reason: 'submitted'
@@ -142,9 +227,10 @@ export async function submitStudentAssignment({
     socket.emit('submit_exam', {
       studentName: safeUsername,
       studentId,
-      assignmentId,
+      studentEmail: currentUser?.email || '',
+      assignmentId: aId,
       finalCode: currentCode,
-      classroomId,
+      classroomId: cId,
       codeHistory: resolvedHistory,
       submitted: true
     });
@@ -152,7 +238,7 @@ export async function submitStudentAssignment({
 
   try {
     window.dispatchEvent(new CustomEvent('verity:submission-updated', {
-      detail: { assignmentId, classroomId, submitted: true }
+      detail: { assignmentId: aId, classroomId: cId, submitted: true }
     }));
   } catch {}
 
@@ -167,11 +253,16 @@ export function unsubmitStudentAssignment({
   priorSubmission,
   allKeys,
   hKeys,
-  socket
+  socket,
+  currentUser
 }) {
+  const cId = classroomId ?? 'default';
+  const aId = assignmentId ?? 'default';
+  const historyKeys = hKeys || getHistoryStorageKeys(cId, aId, currentUser, studentId, safeUsername);
+
   const existingHist = priorSubmission?.codeHistory || priorSubmission?.history;
   if (Array.isArray(existingHist) && existingHist.length > 0) {
-    hKeys.forEach(hk => {
+    historyKeys.forEach(hk => {
       try {
         const cur = localStorage.getItem(hk);
         if (!cur || JSON.parse(cur).length < existingHist.length) {
@@ -180,47 +271,44 @@ export function unsubmitStudentAssignment({
       } catch {}
     });
     try {
-      localStore.saveDraft(assignmentId, studentId, priorSubmission?.finalCode || '', existingHist);
+      localStore.saveDraft(aId, studentId, priorSubmission?.finalCode || '', existingHist);
     } catch {}
   }
 
-  allKeys.forEach(k => {
-    try { localStorage.removeItem(k); } catch {}
-  });
+  clearAllSubmissionStorage(aId, cId, currentUser, studentId, safeUsername);
 
-  const deleteUrl = `/submissions/${assignmentId}/${encodeURIComponent(safeUsername)}`;
-  apiFetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}${deleteUrl}`, {
-    method: 'DELETE'
-  }).catch(async () => {
-    try {
-      await localStore.addToSyncQueue('unsubmit_assignment', deleteUrl, 'DELETE', null);
-    } catch (_) {}
-  });
+  const deleteTargets = Array.from(new Set([
+    safeUsername,
+    studentId,
+    currentUser?.email,
+    currentUser?.name,
+    currentUser?.id != null ? String(currentUser.id) : null
+  ].filter(Boolean)));
 
-  if (studentId && studentId !== safeUsername) {
-    const deleteIdUrl = `/submissions/${assignmentId}/${encodeURIComponent(studentId)}`;
-    apiFetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}${deleteIdUrl}`, {
+  deleteTargets.forEach(tgt => {
+    const deleteUrl = `/submissions/${aId}/${encodeURIComponent(tgt)}`;
+    apiFetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}${deleteUrl}`, {
       method: 'DELETE'
     }).catch(async () => {
       try {
-        await localStore.addToSyncQueue('unsubmit_assignment', deleteIdUrl, 'DELETE', null);
+        await localStore.addToSyncQueue('unsubmit_assignment', deleteUrl, 'DELETE', null);
       } catch (_) {}
     });
-  }
+  });
 
   if (socket) {
     socket.emit('unsubmit_exam', {
       studentName: safeUsername,
       studentId,
-      assignmentId,
-      classroomId
+      studentEmail: currentUser?.email || '',
+      assignmentId: aId,
+      classroomId: cId
     });
   }
 
   try {
     window.dispatchEvent(new CustomEvent('verity:submission-updated', {
-      detail: { assignmentId, classroomId, submitted: false }
+      detail: { assignmentId: aId, classroomId: cId, submitted: false }
     }));
   } catch {}
 }
-
