@@ -1,5 +1,5 @@
 import React from 'react';
-import { CheckCircle2, Check, X } from 'lucide-react';
+import { X } from 'lucide-react';
 
 export default function SubmitConfirmModal({ isOpen, onClose, onConfirm, isDark }) {
   if (!isOpen) return null;
@@ -34,28 +34,10 @@ export default function SubmitConfirmModal({ isOpen, onClose, onConfirm, isDark 
         }}
         onClick={(e) => e.stopPropagation()}
       >
-        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '12px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-            <div
-              style={{
-                width: '42px',
-                height: '42px',
-                borderRadius: '12px',
-                backgroundColor: 'rgba(16, 185, 129, 0.15)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                flexShrink: 0,
-              }}
-            >
-              <CheckCircle2 size={22} color="#10b981" />
-            </div>
-            <div>
-              <h3 style={{ margin: 0, fontSize: '1.15rem', fontWeight: '700', color: isDark ? '#f3f4f6' : '#0f172a' }}>
-                Submit Activity
-              </h3>
-            </div>
-          </div>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
+          <h3 style={{ margin: 0, fontSize: '1.15rem', fontWeight: '700', color: isDark ? '#f3f4f6' : '#0f172a' }}>
+            Submit Activity
+          </h3>
           <button
             type="button"
             onClick={onClose}
@@ -111,12 +93,10 @@ export default function SubmitConfirmModal({ isOpen, onClose, onConfirm, isDark 
               cursor: 'pointer',
               display: 'flex',
               alignItems: 'center',
-              gap: '6px',
               boxShadow: '0 4px 12px rgba(16, 185, 129, 0.25)',
               transition: 'all 0.15s ease',
             }}
           >
-            <Check size={16} />
             Submit Activity
           </button>
         </div>

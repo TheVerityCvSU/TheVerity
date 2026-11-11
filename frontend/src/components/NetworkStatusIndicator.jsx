@@ -37,12 +37,12 @@ export default function NetworkStatusIndicator({ hidden = false, position = 'rig
   // Pre-fill input with discovered or cached LAN server
   useEffect(() => {
     let currentLan = getLocalApiUrl();
-    if (!currentLan || currentLan.includes('localhost') || currentLan.includes('127.0.0.1')) {
+    if (!currentLan) {
       try {
         currentLan = localStorage.getItem('verity_lan_server') || '';
       } catch (_) {}
     }
-    if (currentLan && !currentLan.includes('localhost') && !currentLan.includes('127.0.0.1')) {
+    if (currentLan) {
       setCustomIp(currentLan);
     }
   }, [status.localUrl, isOpen]);

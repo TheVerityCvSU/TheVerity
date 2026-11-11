@@ -1,20 +1,34 @@
 import React from 'react';
 import { motion } from 'framer-motion';
 import Skeleton from '../Skeleton';
+import { formatUserDate } from '../../data/adminUsers';
 
 export default function UsersTable({
-  loading,
+  loading = false,
   filtered,
-  selected,
+  users,
+  selected = [],
   toggleAll,
+  onToggleAll,
   toggleSel,
+  onToggleSel,
   onOpenEdit,
+  onEditUser,
   onViewUser,
-  getUserStatus,
-  fmt,
+  getUserStatus = (u) => u?.status || 'Active',
+  fmt = formatUserDate,
   isDark,
-  styles
+  styles = {}
 }) {
+  const userList = Array.isArray(filtered) ? filtered : (Array.isArray(users) ? users : []);
+  const safeSelected = Array.isArray(selected) ? selected : [];
+  const handleToggleAll = toggleAll || onToggleAll;
+  const handleToggleSel = toggleSel || onToggleSel;
+  const handleEdit = onOpenEdit || onEditUser;
+  const formatDate = typeof fmt === 'function' ? fmt : (val) => (val ? new Date(val).toLocaleDateString() : 'Never');
+
+  const isAllChecked = safeSelected.length === userList.length && userList.length > 0;
+
   return (
     <div style={styles.tableWrap}>
       <div style={{
@@ -32,8 +46,8 @@ export default function UsersTable({
         <div>
           <input
             type="checkbox"
-            checked={selected.length === filtered.length && filtered.length > 0}
-            onChange={toggleAll}
+            checked={isAllChecked}
+            onChange={handleToggleAll}
           />
         </div>
         <div>Name</div>
@@ -47,12 +61,12 @@ export default function UsersTable({
       <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
         {loading ? (
           Array.from({ length: 5 }).map((_, i) => <Skeleton.Row key={i} />)
-        ) : filtered.length === 0 ? (
+        ) : userList.length === 0 ? (
           <div style={{ textAlign: 'center', padding: '24px', color: isDark ? '#64748b' : '#94a3b8' }}>
             No users found
           </div>
         ) : (
-          filtered.map(u => (
+          userList.map(u => (
             <div
               key={u.email}
               className="table-row-pill"
@@ -67,8 +81,8 @@ export default function UsersTable({
               <div>
                 <input
                   type="checkbox"
-                  checked={selected.includes(u.email)}
-                  onChange={() => toggleSel(u.email)}
+                  checked={safeSelected.includes(u.email)}
+                  onChange={() => handleToggleSel && handleToggleSel(u.email)}
                 />
               </div>
               <div style={{ fontWeight: '600', color: isDark ? '#f1f5f9' : '#1e293b' }}>{u.name}</div>
@@ -81,12 +95,12 @@ export default function UsersTable({
                   {getUserStatus(u)}
                 </span>
               </div>
-              <div style={{ fontSize: '0.78rem', color: isDark ? '#94a3b8' : '#64748b' }}>{fmt(u.lastLogin)}</div>
+              <div style={{ fontSize: '0.78rem', color: isDark ? '#94a3b8' : '#64748b' }}>{formatDate(u.lastLogin)}</div>
               <div style={{ textAlign: 'right', display: 'flex', gap: '8px', justifyContent: 'flex-end', alignItems: 'center' }}>
                 <motion.button
                   whileHover={{ opacity: 0.7, scale: 1.05 }}
                   whileTap={{ scale: 0.95 }}
-                  onClick={() => onOpenEdit(u)}
+                  onClick={() => handleEdit && handleEdit(u)}
                   style={styles.actionTextLink}
                 >
                   Edit
@@ -94,7 +108,7 @@ export default function UsersTable({
                 <motion.button
                   whileHover={{ opacity: 0.7, scale: 1.05 }}
                   whileTap={{ scale: 0.95 }}
-                  onClick={() => onViewUser(u)}
+                  onClick={() => onViewUser && onViewUser(u)}
                   style={{ ...styles.actionTextLink, color: isDark ? '#a78bfa' : '#6366f1' }}
                 >
                   View
@@ -107,4 +121,3 @@ export default function UsersTable({
     </div>
   );
 }
-

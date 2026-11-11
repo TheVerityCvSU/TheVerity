@@ -30,7 +30,7 @@ export default function StudentView({
   onBack,
   isSandbox = false
 }) {
-  const { isDark, toggleDarkMode } = useDarkMode();
+  const { isDark, toggle: toggleDarkMode } = useDarkMode();
   const isMobile = useMediaQuery('(max-width: 768px)');
   const isDesktopWeb = !isSandbox && isDesktopWebBrowser();
 
@@ -305,13 +305,32 @@ export default function StudentView({
     } catch {}
   }, [submissionHook.submitted, filesHook.draftKey, filesHook.code]);
 
+  const effectiveAssignment = currentAssignment || assignment;
+  const isBackStrictLock = Boolean(effectiveAssignment?.disableBack || effectiveAssignment?.disable_back);
+  const isBackBlocked = !submissionHook.submitted && (Boolean(kioskHook.kioskRules?.lockdownActive) || isBackStrictLock);
+
   const handleBackClick = useCallback(() => {
-    if (!submissionHook.submitted && kioskHook.kioskRules?.lockdownActive) {
-      alert('Workspace is currently locked for this assessment. Please submit your work before exiting.');
+    if (isBackBlocked) {
+      if (isBackStrictLock) {
+        alert('Strict lockdown is enabled for this activity. You cannot exit until your work is submitted.');
+      } else {
+        alert('Workspace is currently locked for this assessment. Please submit your work before exiting.');
+      }
       return;
     }
     if (typeof onBack === 'function') onBack();
-  }, [submissionHook.submitted, kioskHook.kioskRules?.lockdownActive, onBack]);
+  }, [isBackBlocked, isBackStrictLock, onBack]);
+
+  useEffect(() => {
+    if (!isBackStrictLock || submissionHook.submitted) return;
+    const handleBeforeUnload = (e) => {
+      e.preventDefault();
+      e.returnValue = 'This activity has strict lockdown enabled. Are you sure you want to exit?';
+      return e.returnValue;
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [isBackStrictLock, submissionHook.submitted]);
 
   const handleInstructionClick = useCallback((e) => {
     const target = e.target.closest('a');
@@ -320,8 +339,6 @@ export default function StudentView({
       setPreviewIframe({ url: target.href, name: target.innerText || 'Reference Document', type: 'doc' });
     }
   }, []);
-
-  const isBackBlocked = !submissionHook.submitted && Boolean(kioskHook.kioskRules?.lockdownActive);
 
   return (
     <ErrorBoundary onNavigateFallback={() => { if (typeof onBack === 'function') onBack(); }}>
@@ -352,7 +369,9 @@ export default function StudentView({
           <StudentViewToolbar
             isSandbox={isSandbox}
             isDark={isDark}
+            toggleDarkMode={toggleDarkMode}
             isBackBlocked={isBackBlocked}
+            isBackStrictLock={isBackStrictLock}
             submitted={submissionHook.submitted}
             saveStatus={saveStatus}
             isRunning={compilerHook.isRunning}

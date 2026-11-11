@@ -64,7 +64,7 @@ export default function ActivityContentCard({
       {/* Top Navigation Row */}
       <div style={{ display: 'flex', justifyContent: 'flex-start', alignItems: 'center', marginBottom: '24px' }}>
         <button onClick={handleBackToClassroom} style={styles.backBtn}>
-          <ArrowLeft size={16} style={{ marginRight: '6px' }} /> {isMaterial ? 'Back to Materials' : 'Back to Activities'}
+          <ArrowLeft size={16} style={{ marginRight: '6px' }} /> {isMaterial ? 'Back to Materials' : 'Back to Classwork'}
         </button>
       </div>
 

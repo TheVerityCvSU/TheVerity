@@ -65,6 +65,7 @@ export default function StudentViewSettingsModal({
 
         {/* Dark Mode Toggle */}
         <div
+          onClick={toggleDarkMode}
           style={{
             display: 'flex',
             justifyContent: 'space-between',
@@ -72,7 +73,9 @@ export default function StudentViewSettingsModal({
             padding: '16px',
             borderRadius: '14px',
             backgroundColor: isDark ? '#222222' : '#f8fafc',
-            border: isDark ? '1px solid #3c3c3c' : '1px solid #e2e8f0'
+            border: isDark ? '1px solid #3c3c3c' : '1px solid #e2e8f0',
+            cursor: 'pointer',
+            userSelect: 'none'
           }}
         >
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>

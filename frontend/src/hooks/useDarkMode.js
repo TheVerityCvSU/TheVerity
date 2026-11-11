@@ -31,7 +31,7 @@ export function useDarkMode() {
     setStoredDarkMode(val);
   };
 
-  return { isDark, toggle, setDark };
+  return { isDark, toggle, toggleDarkMode: toggle, setDark };
 }
 
 export default useDarkMode;

@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
-import { BarChart3, Users, Home, Shield, Settings } from 'lucide-react';
+import { BarChart3, Users, Home, Shield, Settings, ShieldAlert, X } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
 import AdminLayout from './admin/AdminLayout';
 import DashboardOverview from './admin/DashboardOverview';
 import UserManagement from './admin/UserManagement';
@@ -44,6 +45,7 @@ export default function AdminDashboard({ currentUser, onLogout, socket }) {
   const [query, setQuery] = useState('');
   const [dashboardSearchFocused, setDashboardSearchFocused] = useState(false);
   const [msg, setMsg] = useState(null);
+  const [maliciousAlert, setMaliciousAlert] = useState(null);
   const [loading, setLoading] = useState(false);
   const [stats, setStats] = useState({ activeUsers: 0, activeClassrooms: 0, securityFlagsToday: 0, altTabCopyPasteFlags: 0 });
 
@@ -129,16 +131,35 @@ export default function AdminDashboard({ currentUser, onLogout, socket }) {
       loadNotifications();
       loadUsers(false);
     }, 10000);
-    return () => clearInterval(iv);
+
+    const handleServerOrDataChange = () => {
+      loadUsers(false);
+      loadStats();
+      loadNotifications();
+    };
+    window.addEventListener('verity:server-changed', handleServerOrDataChange);
+    window.addEventListener('verity:users-changed', handleServerOrDataChange);
+    window.addEventListener('verity:sync-completed', handleServerOrDataChange);
+
+    return () => {
+      clearInterval(iv);
+      window.removeEventListener('verity:server-changed', handleServerOrDataChange);
+      window.removeEventListener('verity:users-changed', handleServerOrDataChange);
+      window.removeEventListener('verity:sync-completed', handleServerOrDataChange);
+    };
   }, []);
 
   // Real-time socket event listener for live alerts & Alt-Tab violations
   useEffect(() => {
     if (!socket) return;
-    const handleLiveSecurityAlert = () => {
+    const handleLiveSecurityAlert = (data) => {
       loadStats();
       loadUsers(false);
       loadNotifications();
+      if (data && (data.isMaliciousScript || (data.type || '').toLowerCase().includes('malicious'))) {
+        setMaliciousAlert(data);
+        setTimeout(() => setMaliciousAlert(null), 8000);
+      }
     };
     socket.on('admin_security_alert', handleLiveSecurityAlert);
     socket.on('admin_stats_update', handleLiveSecurityAlert);
@@ -256,6 +277,80 @@ export default function AdminDashboard({ currentUser, onLogout, socket }) {
       <div style={{ display: activeTab === 'settings' ? 'flex' : 'none', flexDirection: 'column', flex: 1, minHeight: 0 }}>
         <AdminSettings currentUser={currentUser} />
       </div>
+
+      <AnimatePresence>
+        {maliciousAlert && (
+          <motion.div
+            initial={{ opacity: 0, y: -24, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -24, scale: 0.95 }}
+            transition={{ type: 'spring', stiffness: 400, damping: 25 }}
+            style={{
+              position: 'fixed',
+              top: '20px',
+              right: '24px',
+              zIndex: 9999999,
+              backgroundColor: '#fee2e2',
+              color: '#991b1b',
+              border: '2px solid #ef4444',
+              borderRadius: '16px',
+              padding: '14px 18px',
+              boxShadow: '0 12px 32px rgba(220, 38, 38, 0.35)',
+              display: 'flex',
+              alignItems: 'flex-start',
+              gap: '12px',
+              maxWidth: '440px'
+            }}
+          >
+            <ShieldAlert size={22} color="#dc2626" style={{ flexShrink: 0, marginTop: '2px' }} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontWeight: '800', fontSize: '0.88rem', color: '#991b1b' }}>
+                Malicious Script Blocked!
+              </div>
+              <div style={{ fontSize: '0.8rem', color: '#b91c1c', marginTop: '3px', lineHeight: 1.35, wordBreak: 'break-word' }}>
+                <strong>{maliciousAlert.user || 'Student'}</strong>: {maliciousAlert.desc || 'Attempted to run restricted script'}
+              </div>
+              <div style={{ marginTop: '8px' }}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveTab('security');
+                    setMaliciousAlert(null);
+                  }}
+                  style={{
+                    backgroundColor: '#dc2626',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '6px',
+                    padding: '4px 12px',
+                    fontSize: '0.75rem',
+                    fontWeight: '700',
+                    cursor: 'pointer',
+                    boxShadow: '0 2px 6px rgba(220, 38, 38, 0.3)'
+                  }}
+                >
+                  View in Security Logs
+                </button>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setMaliciousAlert(null)}
+              style={{
+                background: 'transparent',
+                border: 'none',
+                cursor: 'pointer',
+                color: '#991b1b',
+                padding: '2px',
+                display: 'flex',
+                alignItems: 'center'
+              }}
+            >
+              <X size={16} />
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </AdminLayout>
   );
 }

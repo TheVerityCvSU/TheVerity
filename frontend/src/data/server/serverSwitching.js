@@ -121,10 +121,8 @@ export const switchToCloudMode = () => {
   state.userPreferredMode = 'cloud';
   try {
     localStorage.setItem('verity_preferred_mode', 'cloud');
-    localStorage.removeItem('verity_lan_server');
     if (window.electronAPI?.localDB?.setLocal) {
       window.electronAPI.localDB.setLocal('verity_preferred_mode', 'cloud').catch(() => {});
-      window.electronAPI.localDB.setLocal('verity_lan_server', null).catch(() => {});
     }
     if (window.electronAPI?.setLanServer) {
       window.electronAPI.setLanServer(null).catch(() => {});
@@ -132,13 +130,25 @@ export const switchToCloudMode = () => {
   } catch (_) {}
   state.autoDiscoveredLanServer = null;
   state.isCloudDown = false;
-  announceServerChange(getCloudUrl());
+  const cloudUrl = getCloudUrl();
+  announceServerChange(cloudUrl);
   checkCloudHealth();
   notifyListeners();
+  return { success: true, url: cloudUrl };
 };
 
-export const switchToLanMode = async () => {
+export const switchToLanMode = async (customUrl) => {
   state.userPreferredMode = 'lan';
+  if (customUrl) {
+    const clean = customUrl.trim().replace(/\/$/, '');
+    state.autoDiscoveredLanServer = clean;
+    try {
+      localStorage.setItem('verity_lan_server', clean);
+      if (window.electronAPI?.localDB?.setLocal) {
+        window.electronAPI.localDB.setLocal('verity_lan_server', clean).catch(() => {});
+      }
+    } catch (_) {}
+  }
   try {
     localStorage.setItem('verity_preferred_mode', 'lan');
     if (window.electronAPI?.localDB?.setLocal) {

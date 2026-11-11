@@ -56,20 +56,26 @@ if (typeof window !== 'undefined') {
 if (typeof window !== 'undefined') {
   const hostedWeb = isHostedWebEnv();
 
-  // Immediate initial health probe on app load (Cloud prioritized first)
-  checkCloudHealth().then((cloudOk) => {
-    if (!hostedWeb) {
-      checkLocalHealth().then((localOk) => {
-        if (!cloudOk && !localOk) {
-          attemptAutoLanReconnect();
-        }
-      });
-    }
-  });
+  // Immediate initial health probe on app load
+  if (state.userPreferredMode === 'lan') {
+    checkLocalHealth().then(() => {
+      if (!hostedWeb) checkCloudHealth();
+    });
+  } else {
+    checkCloudHealth().then((cloudOk) => {
+      if (!hostedWeb) {
+        checkLocalHealth().then((localOk) => {
+          if (!cloudOk && !localOk) {
+            attemptAutoLanReconnect();
+          }
+        });
+      }
+    });
+  }
 
   // Background auto-recovery check:
   // - Prioritize checking cloud health so we stay on or recover to Online Cloud Server when internet is available
-  // - Only auto-probe LAN if not on hosted web and cloud is down or user explicitly selected LAN mode
+  // - Auto-probe LAN if not on hosted web and cloud is down or user explicitly selected LAN mode
   setInterval(() => {
     if (state.isCloudDown || Date.now() - state.lastCloudCheckTime > 15000) {
       checkCloudHealth();
@@ -89,12 +95,7 @@ if (typeof window !== 'undefined') {
   }, 2500);
 
   window.addEventListener('online', () => {
-    console.log('[Network] Internet connectivity restored. Prioritizing Online Cloud Server...');
-    // Automatically prioritize Online Cloud Server when internet is restored
-    if (state.userPreferredMode === 'lan') {
-      state.userPreferredMode = null;
-      try { localStorage.removeItem('verity_preferred_mode'); } catch (_) {}
-    }
+    console.log('[Network] Internet connectivity restored.');
     checkCloudHealth();
     if (!hostedWeb) {
       checkLocalHealth();

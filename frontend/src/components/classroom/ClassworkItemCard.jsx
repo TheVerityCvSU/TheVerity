@@ -1,6 +1,6 @@
 import React from 'react';
 import { 
-  ClipboardList, CheckCircle2, Calendar, Award, Clock, ArrowUpRight, ArrowRight 
+  ClipboardList, CheckCircle2, Calendar, Award, Clock, ArrowUpRight, ArrowRight, Lock 
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import AttachmentCard from '../AttachmentCard';
@@ -186,29 +186,7 @@ export default function ClassworkItemCard({
 
                 <div style={{ marginTop: '36px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
                   {isSubmitted ? (
-                    <>
-                      <button
-                        onClick={() => onOpenAssignment(item)}
-                        style={{
-                          width: '100%',
-                          display: 'flex',
-                          justifyContent: 'center',
-                          alignItems: 'center',
-                          gap: '8px',
-                          padding: '11px 16px',
-                          backgroundColor: isDark ? '#2a3233' : '#f1f5f9',
-                          border: isDark ? '1px solid #444c4f' : '1px solid #cbd5e1',
-                          borderRadius: '10px',
-                          color: isDark ? '#f5f5f5' : '#1e293b',
-                          fontWeight: '600',
-                          fontSize: '0.88rem',
-                          cursor: 'pointer',
-                          transition: 'all 0.2s'
-                        }}
-                      >
-                        View Activity Details
-                      </button>
-
+                    !(item?.disableBack || item?.disable_back) && (
                       <button
                         onClick={() => onRequestUnsubmit(item)}
                         style={{
@@ -236,7 +214,7 @@ export default function ClassworkItemCard({
                       >
                         Unsubmit
                       </button>
-                    </>
+                    )
                   ) : (
                     <>
                       <button
@@ -264,28 +242,6 @@ export default function ClassworkItemCard({
                         onMouseOut={(e) => e.currentTarget.style.backgroundColor = '#34d399'}
                       >
                         Start <ArrowRight size={18} />
-                      </button>
-
-                      <button
-                        onClick={() => onOpenAssignment(item)}
-                        style={{
-                          width: '100%',
-                          display: 'flex',
-                          justifyContent: 'center',
-                          alignItems: 'center',
-                          gap: '8px',
-                          padding: '11px 16px',
-                          backgroundColor: 'transparent',
-                          border: isDark ? '1px solid #444c4f' : '1px solid #cbd5e1',
-                          borderRadius: '10px',
-                          color: isDark ? '#d4d4d4' : '#475569',
-                          fontWeight: '600',
-                          fontSize: '0.88rem',
-                          cursor: 'pointer',
-                          transition: 'all 0.2s'
-                        }}
-                      >
-                        Submit / View Details
                       </button>
                     </>
                   )}

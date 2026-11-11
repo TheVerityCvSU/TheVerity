@@ -215,6 +215,10 @@ export function useClassroomSubmissions({ assignments, classroom, currentUser, s
 
   const handleUnsubmitAssignment = useCallback((task) => {
     if (!task) return;
+    if (task.disableBack || task.disable_back) {
+      alert('Unsubmitting is disabled for this activity.');
+      return;
+    }
     const aId = String(task.id);
     const cId = classroom?.id ?? classroomId ?? 'default';
 

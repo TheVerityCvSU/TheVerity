@@ -97,6 +97,9 @@ export default function UserAuditModal({
                       displayColor = '#ef4444';
                     } else if (displayType === 'Exit Tab Violation') {
                       displayColor = '#f59e0b';
+                    } else if (displayType.toLowerCase().includes('malicious') || (log.desc || '').toLowerCase().includes('malicious')) {
+                      displayType = 'Malicious Script Attempt';
+                      displayColor = '#dc2626';
                     }
 
                     return (

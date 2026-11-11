@@ -123,8 +123,10 @@ export const apiFetch = async (url, options = {}) => {
     }
   }
 
-  // 2. Desktop / Electron / Local dev: Prioritize Online Cloud Server when internet is available!
-  // Only route to LAN server first if user explicitly switched to LAN mode, or if Online Cloud is unavailable.
+  // 2. Desktop / Electron / Local dev:
+  // If user explicitly switched to LAN mode, route to LAN server directly.
+  // If user explicitly switched to Cloud mode, route to Cloud server.
+  // If automatic (null), prioritize Online Cloud Server when internet is available.
   const isOnlineCloudAvailable = Boolean(
     cloudUrl &&
     cloudUrl !== localUrl &&
@@ -132,8 +134,8 @@ export const apiFetch = async (url, options = {}) => {
     (typeof navigator === 'undefined' || navigator.onLine)
   );
   const isLanMode = state.userPreferredMode === 'lan'
-    ? getIsLanConnected()
-    : (state.userPreferredMode === 'cloud' ? false : (!isOnlineCloudAvailable && getIsLanConnected()));
+    ? true
+    : (state.userPreferredMode === 'cloud' ? false : (!isOnlineCloudAvailable && (getIsLanConnected() || state.isLocalServerUp)));
   if (isLanMode) {
     try {
       const currentLocalUrl = getLocalApiUrl();
@@ -142,6 +144,9 @@ export const apiFetch = async (url, options = {}) => {
       return localRes;
     } catch (lanErr) {
       console.warn(`[apiFetch] Direct request to LAN server failed (${localFallbackUrl}):`, lanErr.message);
+      if (state.userPreferredMode === 'lan') {
+        throw new Error(`Could not connect to Local/LAN server at ${getLocalApiUrl()}. Please check that the server is running.`);
+      }
       // Fall through to try cloud if available
     }
   }

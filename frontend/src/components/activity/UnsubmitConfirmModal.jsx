@@ -1,5 +1,5 @@
 import React from 'react';
-import { ArrowLeft, X } from 'lucide-react';
+import { X } from 'lucide-react';
 
 export default function UnsubmitConfirmModal({ isOpen, onClose, onConfirm, isDark }) {
   if (!isOpen) return null;
@@ -35,25 +35,9 @@ export default function UnsubmitConfirmModal({ isOpen, onClose, onConfirm, isDar
         onClick={(e) => e.stopPropagation()}
       >
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-            <div
-              style={{
-                width: '42px',
-                height: '42px',
-                borderRadius: '12px',
-                backgroundColor: 'rgba(59, 130, 246, 0.15)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                flexShrink: 0,
-              }}
-            >
-              <ArrowLeft size={20} color="#3b82f6" />
-            </div>
-            <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: '600', color: isDark ? '#f3f4f6' : '#0f172a' }}>
-              Are you sure you want to unsubmit?
-            </h3>
-          </div>
+          <h3 style={{ margin: 0, fontSize: '1.15rem', fontWeight: '700', color: isDark ? '#f3f4f6' : '#0f172a' }}>
+            Unsubmit Activity
+          </h3>
           <button
             type="button"
             onClick={onClose}
@@ -72,6 +56,10 @@ export default function UnsubmitConfirmModal({ isOpen, onClose, onConfirm, isDar
             <X size={18} />
           </button>
         </div>
+
+        <p style={{ margin: 0, fontSize: '0.9rem', lineHeight: 1.55, color: isDark ? '#d1d5db' : '#334155' }}>
+          Are you sure you want to unsubmit? You will be able to edit and re-submit your code.
+        </p>
 
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '6px' }}>
           <button
@@ -105,7 +93,6 @@ export default function UnsubmitConfirmModal({ isOpen, onClose, onConfirm, isDar
               cursor: 'pointer',
               display: 'flex',
               alignItems: 'center',
-              gap: '6px',
               boxShadow: '0 4px 12px rgba(59, 130, 246, 0.25)',
               transition: 'all 0.15s ease',
             }}

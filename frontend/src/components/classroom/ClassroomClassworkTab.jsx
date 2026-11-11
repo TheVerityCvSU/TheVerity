@@ -3,6 +3,7 @@ import { BookOpen } from 'lucide-react';
 import Skeleton from '../Skeleton';
 import ClassworkItemCard from './ClassworkItemCard';
 import ClassworkUnsubmitModal from './ClassworkUnsubmitModal';
+import StrictLockStartModal from '../studentActivity/StrictLockStartModal';
 
 export default function ClassroomClassworkTab({
   visibleClasswork,
@@ -21,6 +22,19 @@ export default function ClassroomClassworkTab({
   styles
 }) {
   const [unsubmittingItem, setUnsubmittingItem] = useState(null);
+  const [strictLockStartItem, setStrictLockStartItem] = useState(null);
+
+  const handleStartWithCheck = (item) => {
+    const isStrict = Boolean(item?.disableBack || item?.disable_back);
+    const isSub = submittedTasks[item?.id];
+    if (isStrict && !isSub) {
+      setStrictLockStartItem(item);
+      return;
+    }
+    if (typeof onStartAssignment === 'function') {
+      onStartAssignment(item);
+    }
+  };
 
   const handleConfirmUnsubmit = () => {
     if (unsubmittingItem && onUnsubmitAssignment) {
@@ -60,7 +74,7 @@ export default function ClassroomClassworkTab({
               onToggle={() => setExpandedId(prev => (prev === item.id ? null : item.id))}
               isSubmitted={submittedTasks[item.id]}
               onOpenAssignment={onOpenAssignment}
-              onStartAssignment={onStartAssignment}
+              onStartAssignment={handleStartWithCheck}
               onRequestUnsubmit={setUnsubmittingItem}
               setPreviewImage={setPreviewImage}
               setPreviewVideo={setPreviewVideo}
@@ -78,6 +92,20 @@ export default function ClassroomClassworkTab({
         isDark={isDark}
         onClose={() => setUnsubmittingItem(null)}
         onConfirm={handleConfirmUnsubmit}
+      />
+
+      <StrictLockStartModal
+        isOpen={Boolean(strictLockStartItem)}
+        isDark={isDark}
+        assignmentTitle={strictLockStartItem?.title || 'This Activity'}
+        onClose={() => setStrictLockStartItem(null)}
+        onConfirm={() => {
+          const target = strictLockStartItem;
+          setStrictLockStartItem(null);
+          if (typeof onStartAssignment === 'function' && target) {
+            onStartAssignment(target);
+          }
+        }}
       />
     </div>
   );

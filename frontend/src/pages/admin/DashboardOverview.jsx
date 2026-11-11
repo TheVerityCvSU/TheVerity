@@ -25,6 +25,15 @@ export default function DashboardOverview({ stats, users, query, setQuery, onDel
 
   useEffect(() => {
     fetchClassroomsMap().then(setClassroomsMap);
+    const handleServerChanged = () => {
+      fetchClassroomsMap().then(setClassroomsMap);
+    };
+    window.addEventListener('verity:server-changed', handleServerChanged);
+    window.addEventListener('verity:classrooms-changed', handleServerChanged);
+    return () => {
+      window.removeEventListener('verity:server-changed', handleServerChanged);
+      window.removeEventListener('verity:classrooms-changed', handleServerChanged);
+    };
   }, []);
 
   useEffect(() => {
@@ -36,12 +45,15 @@ export default function DashboardOverview({ stats, users, query, setQuery, onDel
     const interval = setInterval(checkHealth, 30000);
     const goOnline = () => checkHealth();
     const goOffline = () => setServerOnline(false);
+    const onServerChanged = () => checkHealth();
     window.addEventListener('online', goOnline);
     window.addEventListener('offline', goOffline);
+    window.addEventListener('verity:server-changed', onServerChanged);
     return () => {
       clearInterval(interval);
       window.removeEventListener('online', goOnline);
       window.removeEventListener('offline', goOffline);
+      window.removeEventListener('verity:server-changed', onServerChanged);
     };
   }, []);
 

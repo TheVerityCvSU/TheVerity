@@ -205,10 +205,20 @@ export function useStudentViewSubmission({
     } catch {}
   };
 
-  const handleUnsubmit = () => setShowUnsubmitModal(true);
+  const handleUnsubmit = () => {
+    if (assignment?.disableBack || assignment?.disable_back) {
+      alert('Unsubmitting is disabled for this activity.');
+      return;
+    }
+    setShowUnsubmitModal(true);
+  };
 
   const handleConfirmUnsubmit = () => {
     setShowUnsubmitModal(false);
+    if (assignment?.disableBack || assignment?.disable_back) {
+      return;
+    }
+    const aId = assignment?.id ?? 'default';
     const curCode = codeRef.current;
     if (codeHistoryRef.current?.length > 0) {
       persistHistoryFn(codeHistoryRef.current, curCode);
@@ -220,8 +230,6 @@ export function useStudentViewSubmission({
     }
 
     clearAllSubmissionStorage(aId, classroomId, currentUser, studentId, safeUsername);
-
-    const aId = assignment?.id ?? 'default';
     apiFetch(
       `${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/submissions/${aId}/${encodeURIComponent(safeUsername)}`,
       { method: 'DELETE' }

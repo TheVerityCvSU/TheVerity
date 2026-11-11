@@ -1,5 +1,5 @@
 import React from 'react';
-import { BookOpen, ArrowLeft, ArrowRight, CheckCircle2, TerminalSquare, Code2 } from 'lucide-react';
+import { BookOpen, ArrowLeft, ArrowRight, CheckCircle2, TerminalSquare, Code2, Lock } from 'lucide-react';
 import { formatFullDate } from '../../utils/dateUtils';
 
 export default function ActivitySubmissionSection({
@@ -90,14 +90,20 @@ export default function ActivitySubmissionSection({
           onClick={onSubmit}
           style={{
             backgroundColor: 'transparent',
-            color: isDark ? 'white' : '#1e293b',
-            border: isDark ? '1px solid #475569' : '1px solid #cbd5e1',
-            borderRadius: '50px',
-            padding: '9px 28px',
+            color: isDark ? '#f87171' : '#dc2626',
+            border: isDark ? '1px solid rgba(239, 68, 68, 0.4)' : '1px solid #fca5a5',
+            borderRadius: '8px',
+            padding: '10px 24px',
             fontSize: '0.9rem',
-            fontWeight: 'bold',
+            fontWeight: '600',
             cursor: 'pointer',
-            transition: 'all 0.2s'
+            transition: 'all 0.2s ease'
+          }}
+          onMouseOver={(e) => {
+            e.currentTarget.style.backgroundColor = isDark ? 'rgba(239, 68, 68, 0.12)' : '#fef2f2';
+          }}
+          onMouseOut={(e) => {
+            e.currentTarget.style.backgroundColor = 'transparent';
           }}
         >
           Submit
@@ -183,23 +189,32 @@ export default function ActivitySubmissionSection({
       )}
       
       {/* Unsubmit Option */}
-      <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '32px' }}>
-        <button
-          onClick={onUnsubmit}
-          style={{
-            backgroundColor: 'transparent',
-            color: isDark ? 'white' : '#1e293b',
-            border: isDark ? '1px solid #475569' : '1px solid #cbd5e1',
-            borderRadius: '8px',
-            padding: '10px 24px',
-            fontSize: '0.9rem',
-            fontWeight: '600',
-            cursor: 'pointer'
-          }}
-        >
-          Unsubmit
-        </button>
-      </div>
+      {!(assignment?.disableBack || assignment?.disable_back) && (
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '32px' }}>
+          <button
+            onClick={onUnsubmit}
+            style={{
+              backgroundColor: 'transparent',
+              color: isDark ? '#f87171' : '#dc2626',
+              border: isDark ? '1px solid rgba(239, 68, 68, 0.4)' : '1px solid #fca5a5',
+              borderRadius: '8px',
+              padding: '10px 24px',
+              fontSize: '0.9rem',
+              fontWeight: '600',
+              cursor: 'pointer',
+              transition: 'all 0.2s ease'
+            }}
+            onMouseOver={(e) => {
+              e.currentTarget.style.backgroundColor = isDark ? 'rgba(239, 68, 68, 0.12)' : '#fef2f2';
+            }}
+            onMouseOut={(e) => {
+              e.currentTarget.style.backgroundColor = 'transparent';
+            }}
+          >
+            Unsubmit
+          </button>
+        </div>
+      )}
     </div>
   );
 }

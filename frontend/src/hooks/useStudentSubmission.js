@@ -264,11 +264,18 @@ export function useStudentSubmission({ classroom, assignment, currentUser, socke
   };
 
   const handleUnsubmit = () => {
+    if (assignment?.disableBack || assignment?.disable_back) {
+      alert('Unsubmitting is disabled for this activity.');
+      return;
+    }
     setShowUnsubmitModal(true);
   };
 
   const handleConfirmUnsubmit = () => {
     setShowUnsubmitModal(false);
+    if (assignment?.disableBack || assignment?.disable_back) {
+      return;
+    }
     unsubmitStudentAssignment({
       assignmentId,
       classroomId,

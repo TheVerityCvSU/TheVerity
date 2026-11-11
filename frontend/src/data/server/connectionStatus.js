@@ -8,10 +8,10 @@ import { DEFAULT_CLOUD_API_URL, isPrivateHost, getCloudUrl, getLocalApiUrl } fro
 const statusListeners = new Set();
 
 export const getHasExplicitLanServer = () => {
-  const lan = state.autoDiscoveredLanServer;
+  const lan = state.autoDiscoveredLanServer || (typeof window !== 'undefined' ? (localStorage.getItem('verity_lan_server') || localStorage.getItem('verity_custom_server')) : null);
   return Boolean(
-    (lan && !lan.includes('localhost') && !lan.includes('127.0.0.1')) ||
-    (typeof window !== 'undefined' && window.location && isPrivateHost(window.location.hostname) && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1')
+    lan ||
+    (typeof window !== 'undefined' && window.location && isPrivateHost(window.location.hostname))
   );
 };
 
@@ -19,6 +19,8 @@ export const getIsLanConnected = () => {
   if (state.userPreferredMode === 'cloud') return false;
   // If local server or LAN endpoint is down, we are NOT connected to LAN!
   if (!state.isLocalServerUp) return false;
+  // If the user explicitly chose LAN mode, and local server is reachable, we are connected!
+  if (state.userPreferredMode === 'lan') return true;
   const hasExplicitLanServer = getHasExplicitLanServer();
   const isHost = Boolean(state.localHealthData && state.localHealthData.isHost === true);
   return hasExplicitLanServer || isHost;
@@ -40,7 +42,7 @@ export const getConnectionStatus = () => {
 
   let activeMode = 'offline';
   if (userPreferredMode === 'lan') {
-    if (isLanConnected) {
+    if (isLanConnected || state.isLocalServerUp) {
       activeMode = 'lan';
     } else if (hasCloud && !isCloudDown && isNavOnline) {
       activeMode = 'cloud';
@@ -50,7 +52,7 @@ export const getConnectionStatus = () => {
   } else if (userPreferredMode === 'cloud') {
     if (hasCloud && !isCloudDown && isNavOnline) {
       activeMode = 'cloud';
-    } else if (isLanConnected) {
+    } else if (isLanConnected || state.isLocalServerUp) {
       activeMode = 'lan';
     } else {
       activeMode = 'offline';
@@ -60,7 +62,7 @@ export const getConnectionStatus = () => {
     if (isWebHosted) {
       if (!isCloudDown && isNavOnline) {
         activeMode = 'cloud';
-      } else if (isLanConnected) {
+      } else if (isLanConnected || state.isLocalServerUp) {
         activeMode = 'lan';
       } else {
         activeMode = 'offline';
@@ -68,7 +70,7 @@ export const getConnectionStatus = () => {
     } else {
       if (hasCloud && !isCloudDown && isNavOnline) {
         activeMode = 'cloud';
-      } else if (isLanConnected) {
+      } else if (isLanConnected || state.isLocalServerUp) {
         activeMode = 'lan';
       } else {
         activeMode = 'offline';
@@ -77,7 +79,7 @@ export const getConnectionStatus = () => {
   }
 
   let lanHostDisplay = '';
-  if (isLanConnected) {
+  if (activeMode === 'lan' || isLanConnected) {
     try {
       lanHostDisplay = new URL(localUrl).host;
     } catch (_) {
@@ -86,12 +88,13 @@ export const getConnectionStatus = () => {
   }
 
   return {
-    isOnline: (!isCloudDown && isNavOnline) || isLanConnected,
+    isOnline: (!isCloudDown && isNavOnline) || isLanConnected || state.isLocalServerUp,
     isCloudDown,
     isNavOnline,
     activeMode, // 'cloud' | 'lan' | 'offline'
     userPreferredMode,
-    isLanConnected,
+    isLanConnected: isLanConnected || (activeMode === 'lan'),
+    isLocalServerUp: state.isLocalServerUp,
     lanHostDisplay,
     cloudUrl,
     localUrl,

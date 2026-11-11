@@ -147,7 +147,7 @@ function maskCommentsAndStrings(code) {
 
 const BANNED_CODE_PATTERNS = [
   { pattern: /\bSystem\s*\.\s*Diagnostics\s*\.\s*Process\b/i, rule: 'PROCESS_SPAWN', message: 'Restricted API: System.Diagnostics.Process is prohibited.' },
-  { pattern: /\bProcess\s*\.\s*Start\b/i, rule: 'PROCESS_SPAWN', message: 'Restricted API: Process.Start is prohibited.' },
+  { pattern: /\bProcess\s*\.\s*(Start|Kill|GetProcesses)\b/i, rule: 'PROCESS_SPAWN', message: 'Restricted API: Process spawning or manipulation is prohibited.' },
   { pattern: /\bProcessStartInfo\b/i, rule: 'PROCESS_SPAWN', message: 'Restricted API: ProcessStartInfo is prohibited.' },
   { pattern: /\[\s*DllImport\b/i, rule: 'NATIVE_INTEROP', message: 'Restricted API: Native DllImport interop is prohibited.' },
   { pattern: /\bSystem\s*\.\s*Runtime\s*\.\s*InteropServices\b/i, rule: 'NATIVE_INTEROP', message: 'Restricted API: Native InteropServices are prohibited.' },
@@ -161,6 +161,7 @@ const BANNED_CODE_PATTERNS = [
   { pattern: /\bTcpClient\b/i, rule: 'NETWORK_ACCESS', message: 'Restricted API: TcpClient network calls are prohibited.' },
   { pattern: /\bUdpClient\b/i, rule: 'NETWORK_ACCESS', message: 'Restricted API: UdpClient network calls are prohibited.' },
   { pattern: /\bWebClient\b/i, rule: 'NETWORK_ACCESS', message: 'Restricted API: WebClient network calls are prohibited.' },
+  { pattern: /\b(File|Directory)\s*\.\s*Delete\b/i, rule: 'DESTRUCTIVE_IO', message: 'Restricted API: File or directory deletion is prohibited.' },
   { pattern: /\bMicrosoft\s*\.\s*Win32\s*\.\s*Registry\b/i, rule: 'SYSTEM_TAMPER', message: 'Restricted API: Registry access is prohibited.' },
   { pattern: /\bRegistryKey\b/i, rule: 'SYSTEM_TAMPER', message: 'Restricted API: RegistryKey access is prohibited.' },
   { pattern: /\bEnvironment\s*\.\s*Exit\b/i, rule: 'PROCESS_KILL', message: 'Restricted API: Environment.Exit is prohibited in classroom IDE.' },
@@ -171,6 +172,7 @@ const BANNED_CODE_PATTERNS = [
 const BANNED_STRING_PATTERNS = [
   { pattern: /\bcmd(\.exe)?\b/i, rule: 'DANGEROUS_COMMAND', message: 'Forbidden command reference: "cmd.exe" is blocked.' },
   { pattern: /\bpowershell(\.exe)?\b/i, rule: 'DANGEROUS_COMMAND', message: 'Forbidden command reference: "powershell" is blocked.' },
+  { pattern: /\b(bash|sh|certutil|curl|wget|cscript|wscript|mshta|rundll32)(\.exe)?\b/i, rule: 'DANGEROUS_COMMAND', message: 'Forbidden shell or execution utility reference is blocked.' },
   { pattern: /\b(shutdown|format|regedit)\b/i, rule: 'DANGEROUS_COMMAND', message: 'Forbidden system command is blocked in string literal.' },
   { pattern: /^[a-zA-Z]:[\\/]/, rule: 'PATH_TRAVERSAL', message: 'Absolute file paths (e.g. C:\\...) are prohibited.' },
   { pattern: /\.\.[\\/]/, rule: 'PATH_TRAVERSAL', message: 'Directory traversal (..) is prohibited.' }

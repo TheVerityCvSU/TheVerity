@@ -1,10 +1,12 @@
-import { ArrowLeft, Save, Play, Square, Check, AlertTriangle, Settings, Lock } from 'lucide-react';
+import { ArrowLeft, Save, Play, Square, Check, AlertTriangle, Settings, Lock, Moon, Sun } from 'lucide-react';
 import { studentViewStyles as styles } from '../../utils/studentViewStyles';
 
 export default function StudentViewToolbar({
   isSandbox,
   isDark,
+  toggleDarkMode,
   isBackBlocked,
+  isBackStrictLock,
   submitted,
   saveStatus,
   isRunning,
@@ -113,12 +115,14 @@ export default function StudentViewToolbar({
         {!isSandbox &&
           (submitted ? (
             <button
-              onClick={handleUnsubmit}
+              onClick={isBackStrictLock ? undefined : handleUnsubmit}
+              disabled={isBackStrictLock}
               style={{
                 ...styles.unsubmitBtn,
-                ...(isDark ? { backgroundColor: '#333333', borderColor: '#484848', color: '#E8EAED' } : {})
+                ...(isDark ? { backgroundColor: '#333333', borderColor: '#484848', color: '#E8EAED' } : {}),
+                ...(isBackStrictLock ? { opacity: 0.35, cursor: 'not-allowed', filter: 'grayscale(1)' } : {})
               }}
-              title="Unsubmit to edit and re-submit your code"
+              title={isBackStrictLock ? 'Unsubmitting is disabled for this activity' : 'Unsubmit to edit and re-submit your code'}
             >
               Unsubmit
             </button>
@@ -141,6 +145,16 @@ export default function StudentViewToolbar({
             style={styles.recordingDot}
             title="Recording active: Your workspace activity is being recorded and proctored"
           />
+        )}
+        {typeof toggleDarkMode === 'function' && (
+          <button
+            onClick={toggleDarkMode}
+            style={styles.gearIcon}
+            title={isDark ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
+            aria-label="Toggle Dark Mode"
+          >
+            {isDark ? <Sun size={20} color="#f59e0b" /> : <Moon size={20} color="#6b7280" />}
+          </button>
         )}
         <button onClick={() => setShowSettingsModal(true)} style={styles.gearIcon} title="Settings">
           <Settings size={22} color={isDark ? '#d4d4d4' : '#6b7280'} />

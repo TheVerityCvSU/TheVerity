@@ -1,4 +1,4 @@
-import { X, CheckCircle2, AlertTriangle, Check, ArrowLeft } from 'lucide-react';
+import { X } from 'lucide-react';
 
 export default function StudentViewSubmissionModals({
   showSubmitModal,
@@ -44,28 +44,10 @@ export default function StudentViewSubmissionModals({
             }}
             onClick={(e) => e.stopPropagation()}
           >
-            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '12px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                <div
-                  style={{
-                    width: '42px',
-                    height: '42px',
-                    borderRadius: '12px',
-                    backgroundColor: strictCompiler && diagnosticsCount > 0 ? 'rgba(245, 158, 11, 0.15)' : 'rgba(16, 185, 129, 0.15)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    flexShrink: 0
-                  }}
-                >
-                  {strictCompiler && diagnosticsCount > 0 ? <AlertTriangle size={22} color="#f59e0b" /> : <CheckCircle2 size={22} color="#10b981" />}
-                </div>
-                <div>
-                  <h3 style={{ margin: 0, fontSize: '1.15rem', fontWeight: '700', color: isDark ? '#f3f4f6' : '#0f172a' }}>
-                    Submit Activity
-                  </h3>
-                </div>
-              </div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
+              <h3 style={{ margin: 0, fontSize: '1.15rem', fontWeight: '700', color: isDark ? '#f3f4f6' : '#0f172a' }}>
+                Submit Activity
+              </h3>
               <button
                 type="button"
                 onClick={() => setShowSubmitModal(false)}
@@ -134,11 +116,9 @@ export default function StudentViewSubmissionModals({
                   cursor: 'pointer',
                   display: 'flex',
                   alignItems: 'center',
-                  gap: '6px',
                   boxShadow: '0 4px 12px rgba(16, 185, 129, 0.25)'
                 }}
               >
-                <Check size={16} />
                 Submit Activity
               </button>
             </div>
@@ -178,25 +158,9 @@ export default function StudentViewSubmissionModals({
             onClick={(e) => e.stopPropagation()}
           >
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                <div
-                  style={{
-                    width: '42px',
-                    height: '42px',
-                    borderRadius: '12px',
-                    backgroundColor: 'rgba(59, 130, 246, 0.15)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    flexShrink: 0
-                  }}
-                >
-                  <ArrowLeft size={20} color="#3b82f6" />
-                </div>
-                <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: '600', color: isDark ? '#f3f4f6' : '#0f172a' }}>
-                  Are you sure you want to unsubmit?
-                </h3>
-              </div>
+              <h3 style={{ margin: 0, fontSize: '1.15rem', fontWeight: '700', color: isDark ? '#f3f4f6' : '#0f172a' }}>
+                Unsubmit Activity
+              </h3>
               <button
                 type="button"
                 onClick={() => setShowUnsubmitModal(false)}

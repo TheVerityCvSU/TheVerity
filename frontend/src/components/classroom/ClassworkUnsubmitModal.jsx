@@ -1,5 +1,5 @@
 import React from 'react';
-import { ArrowLeft, X } from 'lucide-react';
+import { X } from 'lucide-react';
 
 export default function ClassworkUnsubmitModal({
   item,
@@ -40,25 +40,9 @@ export default function ClassworkUnsubmitModal({
         onClick={(e) => e.stopPropagation()}
       >
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-            <div
-              style={{
-                width: '42px',
-                height: '42px',
-                borderRadius: '12px',
-                backgroundColor: 'rgba(59, 130, 246, 0.15)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                flexShrink: 0
-              }}
-            >
-              <ArrowLeft size={20} color="#3b82f6" />
-            </div>
-            <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: '600', color: isDark ? '#f3f4f6' : '#0f172a' }}>
-              Are you sure you want to unsubmit?
-            </h3>
-          </div>
+          <h3 style={{ margin: 0, fontSize: '1.15rem', fontWeight: '700', color: isDark ? '#f3f4f6' : '#0f172a' }}>
+            Unsubmit Activity
+          </h3>
           <button
             type="button"
             onClick={onClose}
@@ -111,7 +95,6 @@ export default function ClassworkUnsubmitModal({
               cursor: 'pointer',
               display: 'flex',
               alignItems: 'center',
-              gap: '6px',
               boxShadow: '0 4px 12px rgba(59, 130, 246, 0.25)'
             }}
           >
@@ -122,4 +105,3 @@ export default function ClassworkUnsubmitModal({
     </div>
   );
 }
-

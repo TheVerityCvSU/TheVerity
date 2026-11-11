@@ -11,6 +11,7 @@ import ActivityDetailHeader from '../components/studentActivity/ActivityDetailHe
 import ActivityContentCard from '../components/studentActivity/ActivityContentCard';
 import ActivityCodeModal from '../components/studentActivity/ActivityCodeModal';
 import ActivityConfirmModals from '../components/studentActivity/ActivityConfirmModals';
+import StrictLockStartModal from '../components/studentActivity/StrictLockStartModal';
 import ActivityMobileNav from '../components/studentActivity/ActivityMobileNav';
 import { useStudentSubmission } from '../hooks/useStudentSubmission';
 
@@ -32,6 +33,7 @@ export default function StudentActivityDetail({
   const [previewImage, setPreviewImage] = useState(null);
   const [previewVideo, setPreviewVideo] = useState(null);
   const [previewIframe, setPreviewIframe] = useState(null);
+  const [showStrictLockModal, setShowStrictLockModal] = useState(false);
 
   useEffect(() => {
     setLoading(!assignment);
@@ -52,6 +54,17 @@ export default function StudentActivityDetail({
     handleUnsubmit,
     handleConfirmUnsubmit
   } = useStudentSubmission({ classroom, assignment, currentUser, socket });
+
+  const handleStartWithCheck = () => {
+    const isStrictLocked = Boolean(assignment?.disableBack || assignment?.disable_back);
+    if (isStrictLocked && !isSubmitted) {
+      setShowStrictLockModal(true);
+      return;
+    }
+    if (typeof onStartCoding === 'function') {
+      onStartCoding();
+    }
+  };
 
   const handlePreviewAttachment = (clickedAtt) => {
     if (clickedAtt.type === 'image') {
@@ -97,7 +110,7 @@ export default function StudentActivityDetail({
               isSubmitted={isSubmitted}
               onSubmit={handleSubmit}
               onUnsubmit={handleUnsubmit}
-              onStartCoding={onStartCoding}
+              onStartCoding={handleStartWithCheck}
               onViewCode={() => setShowCodePreview(true)}
               onPreviewAttachment={handlePreviewAttachment}
               onPreviewLink={setPreviewIframe}
@@ -125,6 +138,18 @@ export default function StudentActivityDetail({
         onCloseUnsubmit={() => setShowUnsubmitModal(false)}
         onConfirmSubmit={handleConfirmSubmit}
         onConfirmUnsubmit={handleConfirmUnsubmit}
+      />
+
+      {/* ═══ STRICT LOCKDOWN WARNING MODAL ═══ */}
+      <StrictLockStartModal
+        isOpen={showStrictLockModal}
+        isDark={isDark}
+        assignmentTitle={assignment?.title || 'This Activity'}
+        onClose={() => setShowStrictLockModal(false)}
+        onConfirm={() => {
+          setShowStrictLockModal(false);
+          if (typeof onStartCoding === 'function') onStartCoding();
+        }}
       />
 
       {/* ═══ MEDIA PREVIEWS ═══ */}

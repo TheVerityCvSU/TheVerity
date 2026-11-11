@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { Search, AlertCircle } from 'lucide-react';
+import { Search, AlertCircle, ShieldAlert } from 'lucide-react';
 import { getSecurityLogs, logSecurityEvent } from '../../data/securityLogger';
 import { useDarkMode } from '../../hooks/useDarkMode';
 import { apiFetch } from '../../data/api';
@@ -73,9 +73,19 @@ export default function SecurityAuditLogsTab() {
   const high = logs.filter(l => l.severity === 'High').length;
   const warnings = logs.filter(l => l.severity === 'Warning').length;
   const adminActions = logs.filter(l => (l.user || '').toLowerCase().includes('admin')).length;
+  const maliciousCount = logs.filter(l => 
+    (l.type || '').toLowerCase().includes('malicious') || 
+    (l.desc || '').toLowerCase().includes('malicious')
+  ).length;
+
+  const isMaliciousLog = (l) =>
+    (l.type || '').toLowerCase().includes('malicious') ||
+    (l.desc || '').toLowerCase().includes('malicious');
 
   const filteredLogs = logs.filter(l => {
-    const matchesSeverity = filter === 'All' || l.severity === filter;
+    const matchesSeverity = filter === 'All'
+      ? true
+      : (filter === 'Malicious Scripts' ? isMaliciousLog(l) : l.severity === filter);
     const q = query.toLowerCase();
     const matchesQuery = !q
       || (l.user || '').toLowerCase().includes(q)
@@ -94,6 +104,16 @@ export default function SecurityAuditLogsTab() {
     setTimeout(fetchLogs, 200);
   };
 
+  const simulateMaliciousScript = () => {
+    logSecurityEvent({
+      user: 'Student Demo / Workspace',
+      type: 'Malicious Script Attempt',
+      severity: 'High',
+      desc: 'Blocked malicious script execution attempt: [Rule: PROCESS_SPAWN] Restricted API: Process.Start is prohibited in Program.cs (Line 14:12)'
+    });
+    setTimeout(fetchLogs, 200);
+  };
+
   const rowBg = isDark ? '#333' : '#f1f5f9';
   const headerBg = isDark ? '#374151' : '#a3aeb9';
   const headerColor = isDark ? '#f1f5f9' : '#0f172a';
@@ -104,6 +124,7 @@ export default function SecurityAuditLogsTab() {
       <div style={sh.statsGrid}>
         {[
           ['Total Events', isDark ? '#f1f5f9' : '#0f172a', total],
+          ['Malicious Scripts', '#dc2626', maliciousCount],
           ['High Severity', '#ef4444', high],
           ['Warnings', '#f59e0b', warnings],
           ['Admin Actions', '#007bff', adminActions]
@@ -120,10 +141,10 @@ export default function SecurityAuditLogsTab() {
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: '16px' }}>
           <div>
             <h2 style={sh.cardTitle}>Live Security Audit Log</h2>
-            <p style={{ margin: '2px 0 0', fontSize: '0.8rem', color: muted }}>Real-time record of system events — auto-refreshes every 3 seconds</p>
+            <p style={{ margin: '2px 0 0', fontSize: '0.8rem', color: muted }}>Real-time record of system events & sandbox violations — auto-refreshes every 3 seconds</p>
           </div>
           <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
-            <div style={{ ...sh.searchPill, maxWidth: '220px' }}>
+            <div style={{ ...sh.searchPill, maxWidth: '200px' }}>
               <Search size={15} color={muted} />
               <input
                 className="search-clean-input"
@@ -136,8 +157,18 @@ export default function SecurityAuditLogsTab() {
             <motion.button
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}
+              onClick={simulateMaliciousScript}
+              style={{ ...sh.addBlueBtn, backgroundColor: '#dc2626', boxShadow: '0 4px 12px rgba(220,38,38,0.3)' }}
+              title="Simulate blocked malicious code execution"
+            >
+              <ShieldAlert size={15} />
+              <span>Simulate Malicious Script</span>
+            </motion.button>
+            <motion.button
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
               onClick={simulateTamper}
-              style={{ ...sh.addBlueBtn, backgroundColor: '#ef4444', boxShadow: '0 4px 12px rgba(239,68,68,0.3)' }}
+              style={{ ...sh.addBlueBtn, backgroundColor: '#ea580c', boxShadow: '0 4px 12px rgba(234,88,12,0.3)' }}
             >
               <AlertCircle size={15} />
               <span>Simulate Tamper</span>
@@ -145,10 +176,54 @@ export default function SecurityAuditLogsTab() {
           </div>
         </div>
 
+        {/* Malicious Script Warning Banner */}
+        {maliciousCount > 0 && (
+          <div style={{
+            padding: '12px 18px',
+            borderRadius: '14px',
+            backgroundColor: isDark ? 'rgba(239, 68, 68, 0.16)' : '#fee2e2',
+            border: '1px solid #f87171',
+            color: isDark ? '#fca5a5' : '#b91c1c',
+            fontSize: '0.84rem',
+            fontWeight: '600',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: '12px',
+            marginBottom: '16px'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <ShieldAlert size={20} color="#dc2626" style={{ flexShrink: 0 }} />
+              <span>
+                <strong>Security Warning:</strong> {maliciousCount} malicious script execution attempt(s) detected and blocked by the sandbox.
+              </span>
+            </div>
+            {filter !== 'Malicious Scripts' && (
+              <button
+                onClick={() => setFilter('Malicious Scripts')}
+                style={{
+                  padding: '5px 14px',
+                  borderRadius: '9999px',
+                  border: 'none',
+                  backgroundColor: '#dc2626',
+                  color: 'white',
+                  fontSize: '0.76rem',
+                  fontWeight: '700',
+                  cursor: 'pointer',
+                  flexShrink: 0,
+                  boxShadow: '0 2px 8px rgba(220,38,38,0.3)'
+                }}
+              >
+                View Malicious Logs
+              </button>
+            )}
+          </div>
+        )}
+
         {/* Filter + Count Row */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px', marginBottom: '14px' }}>
           <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-            {['All', 'Normal', 'Warning', 'High'].map(f => (
+            {['All', 'High', 'Warning', 'Malicious Scripts', 'Normal'].map(f => (
               <motion.button
                 key={f}
                 whileHover={{ scale: 1.05 }}
@@ -158,8 +233,12 @@ export default function SecurityAuditLogsTab() {
                   padding: '6px 16px', borderRadius: '9999px',
                   border: isDark ? '1px solid #4a5568' : '1px solid #cbd5e1',
                   cursor: 'pointer', fontSize: '0.78rem', fontWeight: '700',
-                  backgroundColor: filter === f ? (isDark ? '#f1f5f9' : '#0f172a') : (isDark ? '#2a2a2a' : 'white'),
-                  color: filter === f ? (isDark ? '#0f172a' : 'white') : (isDark ? '#cbd5e1' : '#334155')
+                  backgroundColor: filter === f 
+                    ? (f === 'Malicious Scripts' ? '#dc2626' : (isDark ? '#f1f5f9' : '#0f172a')) 
+                    : (isDark ? '#2a2a2a' : 'white'),
+                  color: filter === f 
+                    ? (f === 'Malicious Scripts' ? 'white' : (isDark ? '#0f172a' : 'white')) 
+                    : (f === 'Malicious Scripts' ? '#ef4444' : (isDark ? '#cbd5e1' : '#334155'))
                 }}
               >
                 {f}
@@ -182,25 +261,63 @@ export default function SecurityAuditLogsTab() {
             </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: density === 'Compact' ? '4px' : '8px' }}>
-              {filteredLogs.map((log, i) => (
-                <div key={log.id || i} style={{ backgroundColor: rowBg, borderRadius: '9999px', padding: density === 'Compact' ? '6px 24px' : '10px 24px', display: 'grid', gridTemplateColumns: '1.2fr 1.2fr 1fr 1fr 2fr', alignItems: 'center', fontSize: density === 'Compact' ? '0.75rem' : '0.85rem' }}>
-                  <div style={{ color: isDark ? '#94a3b8' : '#475569' }}>{log.timestamp ? new Date(log.timestamp).toLocaleString() : '—'}</div>
-                  <div style={{ fontWeight: '600', color: isDark ? '#f1f5f9' : '#1e293b' }}>{log.user || 'System'}</div>
-                  <div style={{ color: isDark ? '#cbd5e1' : '#334155' }}>{log.type || 'Event'}</div>
-                  <div>
-                    <span style={{
-                      padding: '4px 10px', borderRadius: '9999px', fontSize: '0.75rem', fontWeight: '700',
-                      backgroundColor: log.severity === 'High' ? '#fee2e2' : log.severity === 'Warning' ? '#fef3c7' : (isDark ? '#374151' : '#e2e8f0'),
-                      color: log.severity === 'High' ? '#ef4444' : log.severity === 'Warning' ? '#d97706' : (isDark ? '#cbd5e1' : '#475569')
-                    }}>
-                      {log.severity || 'Normal'}
-                    </span>
+              {filteredLogs.map((log, i) => {
+                const isMalicious = isMaliciousLog(log);
+                return (
+                  <div key={log.id || i} style={{
+                    backgroundColor: isMalicious 
+                      ? (isDark ? 'rgba(239, 68, 68, 0.12)' : '#fef2f2') 
+                      : rowBg,
+                    border: isMalicious ? '1px solid rgba(239, 68, 68, 0.3)' : 'none',
+                    borderRadius: '9999px',
+                    padding: density === 'Compact' ? '6px 24px' : '10px 24px',
+                    display: 'grid',
+                    gridTemplateColumns: '1.2fr 1.2fr 1fr 1fr 2fr',
+                    alignItems: 'center',
+                    fontSize: density === 'Compact' ? '0.75rem' : '0.85rem'
+                  }}>
+                    <div style={{ color: isDark ? '#94a3b8' : '#475569' }}>
+                      {log.timestamp ? new Date(log.timestamp).toLocaleString() : '—'}
+                    </div>
+                    <div style={{ fontWeight: '600', color: isMalicious ? (isDark ? '#f87171' : '#b91c1c') : (isDark ? '#f1f5f9' : '#1e293b') }}>
+                      {log.user || 'System'}
+                    </div>
+                    <div>
+                      {isMalicious ? (
+                        <span style={{
+                          padding: '3px 10px',
+                          borderRadius: '9999px',
+                          fontSize: '0.75rem',
+                          fontWeight: '800',
+                          backgroundColor: isDark ? 'rgba(239, 68, 68, 0.25)' : '#fee2e2',
+                          color: '#dc2626',
+                          border: '1px solid #f87171',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '4px'
+                        }}>
+                          <ShieldAlert size={12} />
+                          {log.type}
+                        </span>
+                      ) : (
+                        <span style={{ color: isDark ? '#cbd5e1' : '#334155' }}>{log.type || 'Event'}</span>
+                      )}
+                    </div>
+                    <div>
+                      <span style={{
+                        padding: '4px 10px', borderRadius: '9999px', fontSize: '0.75rem', fontWeight: '700',
+                        backgroundColor: log.severity === 'High' ? '#fee2e2' : log.severity === 'Warning' ? '#fef3c7' : (isDark ? '#374151' : '#e2e8f0'),
+                        color: log.severity === 'High' ? '#ef4444' : log.severity === 'Warning' ? '#d97706' : (isDark ? '#cbd5e1' : '#475569')
+                      }}>
+                        {log.severity || 'Normal'}
+                      </span>
+                    </div>
+                    <div style={{ color: isMalicious ? (isDark ? '#fca5a5' : '#991b1b') : (isDark ? '#94a3b8' : '#64748b'), fontWeight: isMalicious ? '600' : 'normal', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={log.desc}>
+                      {log.desc || '—'}
+                    </div>
                   </div>
-                  <div style={{ color: isDark ? '#94a3b8' : '#64748b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={log.desc}>
-                    {log.desc || '—'}
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>

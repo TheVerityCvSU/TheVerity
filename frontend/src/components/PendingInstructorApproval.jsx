@@ -6,7 +6,7 @@ import InstructorPillRow from './pendingApprovals/InstructorPillRow';
 import SeeAllInstructorsModal from './pendingApprovals/SeeAllInstructorsModal';
 import InstructorActionPopup from './pendingApprovals/InstructorActionPopup';
 
-export default function PendingInstructorApproval({ users, onActionLogged }) {
+export default function PendingInstructorApproval({ users = [], onActionLogged, onUpdateUser }) {
   const { isDark } = useDarkMode();
   const styles = getStyles(isDark);
 
@@ -19,16 +19,18 @@ export default function PendingInstructorApproval({ users, onActionLogged }) {
   useEffect(() => {
     const filterPendingInstructors = () => {
       try {
-        const filtered = users.filter(
+        const safeUsers = Array.isArray(users) ? users : [];
+        const filtered = safeUsers.filter(
           user =>
-            user.role === 'Teacher' &&
-            user.status === 'Pending'
+            user &&
+            (user.role === 'Teacher' || user.role === 'Instructor') &&
+            (user.status === 'Pending' || (user.status || '').toLowerCase() === 'pending')
         );
         setPendingInstructors(filtered);
         setError(null);
       } catch (err) {
         console.error('Error filtering pending instructors:', err);
-        setError('Could process pending approvals data.');
+        setError('Could not process pending approvals data.');
         setPendingInstructors([]);
       } finally {
         setLoading(false);
@@ -47,6 +49,10 @@ export default function PendingInstructorApproval({ users, onActionLogged }) {
       const name = instructor?.name || instructor?.fullName || email.split('@')[0];
       setActionPopup({ name, type: 'approve' });
       setTimeout(() => setActionPopup(null), 2500);
+
+      if (onUpdateUser) {
+        onUpdateUser(email, { status: 'Active' });
+      }
 
       if (onActionLogged) {
         onActionLogged({

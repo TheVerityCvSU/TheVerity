@@ -3,7 +3,7 @@ import { motion } from 'framer-motion';
 import PendingInstructorApproval from '../PendingInstructorApproval';
 
 export default function SecurityControlPanel({
-  users,
+  users = [],
   onUpdateUser,
   onBulkActionClick,
   styles

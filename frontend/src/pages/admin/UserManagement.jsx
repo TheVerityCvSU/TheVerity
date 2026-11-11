@@ -210,12 +210,14 @@ export default function UserManagementTab({ users = [], loading = false, onDelet
 
             <UsersTable
               users={filtered}
+              filtered={filtered}
               loading={loading}
               selected={selected}
               onToggleAll={toggleAll}
               onToggleSel={toggleSel}
               onViewUser={setViewingUser}
               onEditUser={handleOpenEdit}
+              fmt={formatUserDate}
               isDark={isDark}
               getUserStatus={getUserStatus}
               styles={sh}
@@ -223,7 +225,14 @@ export default function UserManagementTab({ users = [], loading = false, onDelet
           </div>
         </div>
 
-        <SecurityControlPanel isDark={isDark} styles={sh} onShowSelectUsersPopup={onShowSelectUsersPopup} />
+        <SecurityControlPanel
+          users={users}
+          onUpdateUser={onUpdateUser}
+          onBulkActionClick={handleBulkActionClick}
+          isDark={isDark}
+          styles={sh}
+          onShowSelectUsersPopup={onShowSelectUsersPopup}
+        />
       </div>
 
       <BulkActionModal

@@ -44,29 +44,24 @@ export const attemptAutoLanReconnect = async () => {
 
   let saved = null;
   if (typeof window !== 'undefined') {
-    try { saved = localStorage.getItem('verity_lan_server'); } catch (_) {}
+    try { saved = localStorage.getItem('verity_lan_server') || localStorage.getItem('verity_custom_server'); } catch (_) {}
   }
+
+  const currentHost = (typeof window !== 'undefined' && window.location) ? window.location.hostname : '';
+  const isLanWebClient = isPrivateHost(currentHost) && currentHost !== 'localhost' && currentHost !== '127.0.0.1';
 
   const candidates = [
     saved,
-    'http://192.168.254.100:3001',
-    'http://192.168.254.101:3001',
-    'http://192.168.1.10:3001',
-    'http://192.168.1.100:3001'
+    isLanWebClient ? `http://${currentHost}:3001` : null,
+    'http://localhost:3001'
   ].filter(Boolean);
 
-  const myHostnames = new Set(['localhost', '127.0.0.1', '::1']);
+  const uniqueCandidates = [...new Set(candidates)];
 
-  for (const cand of candidates) {
+  for (const cand of uniqueCandidates) {
     let clean = cand.trim().replace(/\/$/, '');
     if (!clean.startsWith('http://') && !clean.startsWith('https://')) {
       clean = `http://${clean}`;
-    }
-    try {
-      const u = new URL(clean);
-      if (myHostnames.has(u.hostname)) continue;
-    } catch (_) {
-      continue;
     }
 
     try {

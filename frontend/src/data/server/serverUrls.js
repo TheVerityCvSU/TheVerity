@@ -60,12 +60,22 @@ export const getLocalApiUrl = () => {
     return state.autoDiscoveredLanServer;
   }
 
-  // 2. Web client accessed via LAN IP (phones, tablets, browser)
+  // 2. Saved custom LAN/local server in localStorage
+  if (typeof window !== 'undefined') {
+    try {
+      const savedLan = localStorage.getItem('verity_lan_server') || localStorage.getItem('verity_custom_server');
+      if (savedLan) {
+        return savedLan.trim().replace(/\/$/, '');
+      }
+    } catch (_) {}
+  }
+
+  // 3. Web client accessed via LAN IP (phones, tablets, browser)
   if (typeof window !== 'undefined' && window.location && isPrivateHost(window.location.hostname) && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
     return `http://${window.location.hostname}:3001`;
   }
 
-  // 3. Default to local embedded server
+  // 4. Default to local embedded server
   return LOCAL_DEV_API_URL;
 };
 

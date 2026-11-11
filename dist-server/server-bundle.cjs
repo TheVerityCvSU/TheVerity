@@ -97810,7 +97810,7 @@ var require_csharpSecurityScanner = __commonJS({
     }
     var BANNED_CODE_PATTERNS = [
       { pattern: /\bSystem\s*\.\s*Diagnostics\s*\.\s*Process\b/i, rule: "PROCESS_SPAWN", message: "Restricted API: System.Diagnostics.Process is prohibited." },
-      { pattern: /\bProcess\s*\.\s*Start\b/i, rule: "PROCESS_SPAWN", message: "Restricted API: Process.Start is prohibited." },
+      { pattern: /\bProcess\s*\.\s*(Start|Kill|GetProcesses)\b/i, rule: "PROCESS_SPAWN", message: "Restricted API: Process spawning or manipulation is prohibited." },
       { pattern: /\bProcessStartInfo\b/i, rule: "PROCESS_SPAWN", message: "Restricted API: ProcessStartInfo is prohibited." },
       { pattern: /\[\s*DllImport\b/i, rule: "NATIVE_INTEROP", message: "Restricted API: Native DllImport interop is prohibited." },
       { pattern: /\bSystem\s*\.\s*Runtime\s*\.\s*InteropServices\b/i, rule: "NATIVE_INTEROP", message: "Restricted API: Native InteropServices are prohibited." },
@@ -97824,6 +97824,7 @@ var require_csharpSecurityScanner = __commonJS({
       { pattern: /\bTcpClient\b/i, rule: "NETWORK_ACCESS", message: "Restricted API: TcpClient network calls are prohibited." },
       { pattern: /\bUdpClient\b/i, rule: "NETWORK_ACCESS", message: "Restricted API: UdpClient network calls are prohibited." },
       { pattern: /\bWebClient\b/i, rule: "NETWORK_ACCESS", message: "Restricted API: WebClient network calls are prohibited." },
+      { pattern: /\b(File|Directory)\s*\.\s*Delete\b/i, rule: "DESTRUCTIVE_IO", message: "Restricted API: File or directory deletion is prohibited." },
       { pattern: /\bMicrosoft\s*\.\s*Win32\s*\.\s*Registry\b/i, rule: "SYSTEM_TAMPER", message: "Restricted API: Registry access is prohibited." },
       { pattern: /\bRegistryKey\b/i, rule: "SYSTEM_TAMPER", message: "Restricted API: RegistryKey access is prohibited." },
       { pattern: /\bEnvironment\s*\.\s*Exit\b/i, rule: "PROCESS_KILL", message: "Restricted API: Environment.Exit is prohibited in classroom IDE." },
@@ -97833,6 +97834,7 @@ var require_csharpSecurityScanner = __commonJS({
     var BANNED_STRING_PATTERNS = [
       { pattern: /\bcmd(\.exe)?\b/i, rule: "DANGEROUS_COMMAND", message: 'Forbidden command reference: "cmd.exe" is blocked.' },
       { pattern: /\bpowershell(\.exe)?\b/i, rule: "DANGEROUS_COMMAND", message: 'Forbidden command reference: "powershell" is blocked.' },
+      { pattern: /\b(bash|sh|certutil|curl|wget|cscript|wscript|mshta|rundll32)(\.exe)?\b/i, rule: "DANGEROUS_COMMAND", message: "Forbidden shell or execution utility reference is blocked." },
       { pattern: /\b(shutdown|format|regedit)\b/i, rule: "DANGEROUS_COMMAND", message: "Forbidden system command is blocked in string literal." },
       { pattern: /^[a-zA-Z]:[\\/]/, rule: "PATH_TRAVERSAL", message: "Absolute file paths (e.g. C:\\...) are prohibited." },
       { pattern: /\.\.[\\/]/, rule: "PATH_TRAVERSAL", message: "Directory traversal (..) is prohibited." }
@@ -110060,6 +110062,39 @@ app.post("/submissions/:assignmentId", authenticateToken, requireRole("Student")
     const { finalCode, codeHistory } = req.body || {};
     const assignmentId = req.params.assignmentId;
     const { canonicalName: name, aliases } = await resolveCanonicalStudent(req.user);
+    if (finalCode) {
+      const secCheck = scanCSharpCode(finalCode);
+      if (!secCheck.isSafe) {
+        const nowIso = (/* @__PURE__ */ new Date()).toISOString();
+        const desc = `Blocked malicious script in submitted assignment #${assignmentId}: [${secCheck.rule}] ${secCheck.message}`;
+        await db.run(
+          'INSERT INTO audit_logs (timestamp, "user", type, severity, "desc") VALUES (?, ?, ?, ?, ?)',
+          nowIso,
+          name,
+          "Malicious Script Attempt",
+          "High",
+          desc
+        ).catch(() => {
+        });
+        await db.run(
+          `INSERT INTO security_flags (date_string, count, alt_tab_copy_paste_count) VALUES (?, 1, 0) ON CONFLICT(date_string) DO UPDATE SET count = COALESCE(security_flags.count, 0) + 1`,
+          todayKey()
+        ).catch(() => {
+        });
+        io.emit("admin_security_alert", {
+          user: name,
+          name,
+          studentId: name,
+          type: "Malicious Script Attempt",
+          severity: "High",
+          desc,
+          isMaliciousScript: true,
+          timestamp: nowIso
+        });
+        io.emit("admin_stats_update");
+        return res.status(400).json({ message: `Submission rejected: Malicious code detected [${secCheck.rule}]. This incident has been logged in Security Audit Logs.` });
+      }
+    }
     const historyStr = JSON.stringify(Array.isArray(codeHistory) && codeHistory.length > 0 ? codeHistory : [{ time: Date.now(), code: finalCode || "" }]);
     for (const alias of aliases) {
       await db.run(
@@ -110099,14 +110134,39 @@ app.delete("/submissions/:assignmentId/:studentName", authenticateToken, require
       studentName
     );
     const aliasSet = new Set(aliases);
-    if (req.user.role === "Student") {
-      const uId = String(req.user.id || "");
-      const isSelf = aliasSet.has(sLower) || studentName === uId || sLower === uId;
-      if (!isSelf) {
-        return res.status(403).json({ message: "Access denied: You can only delete your own submission." });
-      }
-    }
     const namesToDelete = /* @__PURE__ */ new Set([sLower, ...aliases]);
+    if (req.user.role === "Student") {
+      const cwRow = await db.get(
+        "SELECT description FROM classwork WHERE id = ? OR CAST(id AS TEXT) = ?",
+        req.params.assignmentId,
+        String(req.params.assignmentId)
+      ).catch(() => null);
+      if (cwRow && cwRow.description) {
+        try {
+          const meta = JSON.parse(cwRow.description);
+          if (meta.disableBack || meta.disable_back) {
+            return res.status(403).json({ message: "Unsubmitting is not permitted for this activity." });
+          }
+        } catch (_) {
+        }
+      }
+      const uId = String(req.user.id || "");
+      let isSelf = aliasSet.has(sLower) || studentName === uId || sLower === uId;
+      if (!isSelf) {
+        const userAliases = await resolveCanonicalStudent(req.user);
+        (userAliases?.aliases || []).forEach((a) => aliasSet.add(a));
+        if (req.user.name) aliasSet.add(req.user.name.toLowerCase().trim());
+        if (req.user.email) aliasSet.add(req.user.email.toLowerCase().trim());
+        if (req.user.id != null) aliasSet.add(String(req.user.id).toLowerCase().trim());
+        isSelf = aliasSet.has(sLower) || studentName === uId || sLower === uId;
+        if (!isSelf) {
+          return res.status(403).json({ message: "Access denied: You can only delete your own submission." });
+        }
+      }
+      if (req.user.name) namesToDelete.add(req.user.name.trim().toLowerCase());
+      if (req.user.email) namesToDelete.add(req.user.email.trim().toLowerCase());
+      if (req.user.id != null) namesToDelete.add(String(req.user.id).trim().toLowerCase());
+    }
     for (const alias of namesToDelete) {
       if (!alias) continue;
       await db.run(
@@ -110123,7 +110183,10 @@ app.delete("/submissions/:assignmentId/:studentName", authenticateToken, require
       db.triggerSync();
     } catch (_) {
     }
-    io.emit("submission_deleted", { assignmentId: req.params.assignmentId, studentName: canonicalName || studentName });
+    const deletedStudentName = canonicalName || studentName;
+    io.emit("submission_deleted", { assignmentId: req.params.assignmentId, studentName: deletedStudentName });
+    io.emit("student_unsubmitted", { assignmentId: req.params.assignmentId, studentName: deletedStudentName, studentId: String(req.user?.id || "") });
+    io.emit("teacher_student_unsubmitted", { assignmentId: req.params.assignmentId, studentName: deletedStudentName, studentId: String(req.user?.id || "") });
     res.status(200).json({ message: "Submission deleted" });
   } catch (e2) {
     res.status(500).json({ message: e2.message });
@@ -110571,6 +110634,19 @@ app.get("/notifications", authenticateToken, async (req, res) => {
         id: "security-flags-today",
         title: "Kiosk Security Activity Today",
         text: `${altTabFlags} Alt-Tab/Copy-Paste flag(s) & ${secFlags} security alert(s) recorded today.`
+      });
+    }
+    const startOfDay = `${todayKey()}T00:00:00.000Z`;
+    const maliciousRow = await db.get(
+      `SELECT COUNT(id) as c FROM audit_logs WHERE type LIKE '%Malicious%' AND timestamp >= ?`,
+      startOfDay
+    ).catch(() => null);
+    const maliciousCount = maliciousRow ? Number(maliciousRow.c || 0) : 0;
+    if (maliciousCount > 0) {
+      notifs.push({
+        id: "malicious-scripts-today",
+        title: "\u{1F6A8} Malicious Script Warning",
+        text: `${maliciousCount} malicious code execution attempt(s) detected and blocked by sandbox today.`
       });
     }
     const maintenance = await getMaintenanceStatus();
@@ -111078,6 +111154,88 @@ app.get("/active-activities", (req, res) => {
     res.status(500).json({ message: e2.message });
   }
 });
+async function recordMaliciousScriptAttempt({ socket, data, securityCheck }) {
+  try {
+    const userName = socket?.user?.name || socket?.user?.email || data?.username || data?.user?.name || "Unknown User";
+    const studentId = socket?.user?.id || data?.user?.id || userName;
+    const nowIso = (/* @__PURE__ */ new Date()).toISOString();
+    const tKey = todayKey();
+    const foundActive = Object.values(activeStudents).find((s2) => s2 && (s2.studentId === userName || s2.name === userName || s2.studentId === studentId));
+    const classroomId = data?.classroomId || foundActive?.classroomId || null;
+    const assignmentId = data?.assignmentId || foundActive?.assignmentId || null;
+    const logType = "Malicious Script Attempt";
+    const logSeverity = "High";
+    const desc = `Blocked malicious script execution attempt: [Rule: ${securityCheck.rule}] ${securityCheck.message} in ${securityCheck.fileName || "Program.cs"} (Line ${securityCheck.line || 1}:${securityCheck.column || 1})`;
+    console.warn(`[Security Alert] Malicious script attempt by "${userName}": ${desc}`);
+    await db.run(
+      'INSERT INTO audit_logs (timestamp, "user", type, severity, "desc") VALUES (?, ?, ?, ?, ?)',
+      nowIso,
+      userName,
+      logType,
+      logSeverity,
+      desc
+    );
+    await db.run(
+      `INSERT INTO security_flags (date_string, count, alt_tab_copy_paste_count) VALUES (?, 1, 0) ON CONFLICT(date_string) DO UPDATE SET count = COALESCE(security_flags.count, 0) + 1`,
+      tKey
+    );
+    if (classroomId && assignmentId && assignmentId !== "none" && assignmentId !== "default") {
+      const timeText = (/* @__PURE__ */ new Date()).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true }).toLowerCase();
+      try {
+        await db.run(
+          "INSERT INTO proctor_session_logs (classroom_id, assignment_id, student_id, student_name, action, message, time, color) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+          classroomId,
+          assignmentId,
+          String(userName),
+          String(userName),
+          "Malicious Script",
+          `Blocked malicious script: ${securityCheck.rule}`,
+          timeText,
+          "#dc2626"
+        ).catch(() => {
+        });
+      } catch (_) {
+      }
+      const targetRoom = `classroom:${classroomId}:assignment:${assignmentId}`;
+      io.to(targetRoom).emit("teacher_receive_alert", {
+        id: Date.now(),
+        studentId: userName,
+        studentName: userName,
+        name: userName,
+        action: "Malicious Script",
+        message: `Security violation: ${securityCheck.rule} - ${securityCheck.message}`,
+        time: timeText,
+        color: "#dc2626",
+        isCrash: false,
+        classroomId,
+        assignmentId
+      });
+    }
+    io.emit("admin_security_alert", {
+      user: userName,
+      name: userName,
+      studentId,
+      type: logType,
+      severity: logSeverity,
+      desc,
+      action: desc,
+      rule: securityCheck.rule,
+      fileName: securityCheck.fileName || "Program.cs",
+      line: securityCheck.line || 1,
+      column: securityCheck.column || 1,
+      classroomId,
+      assignmentId,
+      isAltTabCopyPaste: false,
+      isSystemExit: false,
+      isMaliciousScript: true,
+      timestamp: nowIso
+    });
+    io.emit("admin_stats_update");
+    io.emit("users_updated");
+  } catch (err) {
+    console.error("Error recording malicious script attempt:", err);
+  }
+}
 io.on("connection", (socket) => {
   console.log("[Workspace] Student Connected: " + socket.id);
   socket.on("get_active_activities", (data) => {
@@ -111377,6 +111535,7 @@ io.on("connection", (socket) => {
       }
       const securityCheck = scanCSharpCode(code, extraFiles);
       if (!securityCheck.isSafe) {
+        await recordMaliciousScriptAttempt({ socket, data, securityCheck });
         socket.emit("compiler_diagnostics", [{
           severity: "error",
           message: `[Security Violation] ${securityCheck.message}`,
@@ -111653,6 +111812,7 @@ io.on("connection", (socket) => {
       }
       const securityCheck = scanCSharpCode(code, extraFiles);
       if (!securityCheck.isSafe) {
+        await recordMaliciousScriptAttempt({ socket, data, securityCheck });
         socket.emit("compiler_diagnostics", [{
           severity: "error",
           message: `[Security Violation] ${securityCheck.message}`,

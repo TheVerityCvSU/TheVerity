@@ -7,7 +7,7 @@ import {
   Image, Video, Monitor, Menu, Home, Archive, Edit3, Maximize2, Copy, Check, 
   Info, Users, BookOpen, Sparkles, Plus, Send, ChevronRight, ChevronDown, CheckCircle2, 
   MessageSquare, PlayCircle, Eye, RefreshCw, Palette, ExternalLink, FileText,
-  Paperclip, MoreHorizontal, Code2, Trash2, AlertTriangle, Lock
+  Paperclip, MoreHorizontal, Code2, Trash2, AlertTriangle, Lock, Unlock, ShieldAlert
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { apiFetch } from '../data/api';
@@ -3429,16 +3429,91 @@ export default function TeacherClasswork({
                       Treat compiler warnings as errors
                     </label>
                   </div>
-                  <div style={{ ...styles.labelRow, marginTop: '2px', marginBottom: '12px' }}>
-                    <label style={styles.checkboxLabel}>
-                      <input
-                        type="checkbox"
-                        checked={!!form.disableBack}
-                        onChange={(e) => setForm({ ...form, disableBack: e.target.checked })}
+                  <div
+                    onClick={() => setForm({ ...form, disableBack: !form.disableBack })}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      padding: '12px 14px',
+                      borderRadius: '10px',
+                      cursor: 'pointer',
+                      backgroundColor: form.disableBack
+                        ? (isDark ? 'rgba(16, 185, 129, 0.12)' : '#ecfdf5')
+                        : (isDark ? '#232323' : '#f8fafc'),
+                      border: form.disableBack
+                        ? '1px solid #10b981'
+                        : (isDark ? '1px solid #383838' : '1px solid #e2e8f0'),
+                      transition: 'all 0.2s ease',
+                      marginTop: '6px',
+                      marginBottom: '14px'
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                      <div style={{
+                        width: '32px',
+                        height: '32px',
+                        borderRadius: '8px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        backgroundColor: form.disableBack ? '#10b981' : (isDark ? '#333' : '#e2e8f0'),
+                        color: form.disableBack ? '#ffffff' : (isDark ? '#9ca3af' : '#64748b'),
+                        transition: 'all 0.2s',
+                        flexShrink: 0
+                      }}>
+                        {form.disableBack ? <Lock size={16} /> : <Unlock size={16} />}
+                      </div>
+                      <div>
+                        <div style={{
+                          fontSize: '0.85rem',
+                          fontWeight: '700',
+                          color: form.disableBack
+                            ? (isDark ? '#a7f3d0' : '#065f46')
+                            : (isDark ? '#E8EAED' : '#1e293b')
+                        }}>
+                          Strict Lockdown: Disable Student Back Navigation
+                        </div>
+                        <div style={{ fontSize: '0.74rem', color: isDark ? '#9ca3af' : '#64748b', marginTop: '2px' }}>
+                          Students cannot leave workspace until they submit; unsubmitting is locked.
+                        </div>
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      aria-pressed={!!form.disableBack}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setForm({ ...form, disableBack: !form.disableBack });
+                      }}
+                      style={{
+                        width: '44px',
+                        height: '24px',
+                        borderRadius: '12px',
+                        backgroundColor: form.disableBack ? '#10b981' : (isDark ? '#404040' : '#cbd5e1'),
+                        position: 'relative',
+                        border: 'none',
+                        cursor: 'pointer',
+                        padding: '2px',
+                        transition: 'background-color 0.2s ease',
+                        outline: 'none',
+                        flexShrink: 0
+                      }}
+                    >
+                      <span
+                        style={{
+                          display: 'block',
+                          width: '20px',
+                          height: '20px',
+                          borderRadius: '50%',
+                          backgroundColor: '#ffffff',
+                          transform: form.disableBack ? 'translateX(20px)' : 'translateX(0)',
+                          transition: 'transform 0.2s ease',
+                          boxShadow: '0 1px 3px rgba(0,0,0,0.2)'
+                        }}
                       />
-                      <Lock size={14} style={{ marginRight: '5px', color: form.disableBack ? '#10b981' : (isDark ? '#a3a3a3' : '#6b7280'), verticalAlign: '-2px' }} />
-                      Disable back button in student workspace
-                    </label>
+                    </button>
                   </div>
                 {/* Automated Test Cases */}
                   <div style={{ marginTop: '12px', marginBottom: '14px', padding: '12px', backgroundColor: isDark ? '#262626' : '#f8fafc', borderRadius: '8px', border: isDark ? '1px solid #3c3c3c' : '1px solid #e2e8f0' }}>
