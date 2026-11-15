@@ -112369,6 +112369,26 @@ io.on("connection", (socket) => {
     if (!data) return;
     const assignmentId = data.assignmentId != null ? String(data.assignmentId) : "unassigned";
     const isTeacherOrAdmin = socket.user && ["Teacher", "Admin"].includes(socket.user.role);
+    if (!isTeacherOrAdmin && assignmentId !== "unassigned") {
+      try {
+        const cwRow = await db.get(
+          "SELECT description FROM classwork WHERE id = ? OR CAST(id AS TEXT) = ?",
+          assignmentId,
+          assignmentId
+        );
+        if (cwRow && cwRow.description) {
+          const meta = JSON.parse(cwRow.description);
+          if (meta.disableBack || meta.disable_back) {
+            socket.emit("unsubmit_error", {
+              message: "Unsubmitting is not permitted for this activity.",
+              assignmentId
+            });
+            return;
+          }
+        }
+      } catch (_) {
+      }
+    }
     const { canonicalName: studentName, canonicalId: studentId, aliases } = await resolveCanonicalStudent(
       isTeacherOrAdmin ? null : socket.user,
       data.studentName || data.studentId || "Unknown",

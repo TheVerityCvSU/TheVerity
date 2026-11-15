@@ -5,9 +5,10 @@ export default function CreateClassModal({
   isOpen,
   onClose,
   onSubmit,
-  isDark,
-  newClass,
-  setNewClass
+  isDark = false,
+  isSubmitting = false,
+  newClass = { name: '', section: '', subject: '' },
+  setNewClass = () => {}
 }) {
   const [nameFocused, setNameFocused] = useState(false);
   const [sectionFocused, setSectionFocused] = useState(false);
@@ -146,6 +147,7 @@ export default function CreateClassModal({
                 <button
                   type="button"
                   onClick={onClose}
+                  disabled={isSubmitting}
                   style={{
                     padding: '10px 20px',
                     borderRadius: '10px',
@@ -153,13 +155,15 @@ export default function CreateClassModal({
                     backgroundColor: 'transparent',
                     color: isDark ? '#a3a3a3' : '#6b7280',
                     fontWeight: '600',
-                    cursor: 'pointer'
+                    cursor: isSubmitting ? 'not-allowed' : 'pointer',
+                    opacity: isSubmitting ? 0.5 : 1
                   }}
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
+                  disabled={isSubmitting}
                   style={{
                     padding: '10px 20px',
                     borderRadius: '10px',
@@ -167,11 +171,13 @@ export default function CreateClassModal({
                     backgroundColor: '#10b981',
                     color: '#fff',
                     fontWeight: '600',
-                    cursor: 'pointer',
-                    boxShadow: '0 4px 12px rgba(16,185,129,0.2)'
+                    cursor: isSubmitting ? 'not-allowed' : 'pointer',
+                    boxShadow: '0 4px 12px rgba(16,185,129,0.2)',
+                    opacity: isSubmitting ? 0.7 : 1,
+                    pointerEvents: isSubmitting ? 'none' : 'auto'
                   }}
                 >
-                  Create
+                  {isSubmitting ? 'Creating...' : 'Create'}
                 </button>
               </div>
             </form>

@@ -2,7 +2,7 @@
  * LAN discovery: finds a Verity Host server on the local network (ComLab).
  */
 import { state } from './connectionState';
-import { isElectronApp, isHostedWebEnv } from './serverUrls';
+import { isElectronApp, isHostedWebEnv, isPrivateHost } from './serverUrls';
 import { notifyListeners } from './connectionStatus';
 import { checkLocalHealth } from './healthChecks';
 

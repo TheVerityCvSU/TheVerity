@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import SettingsPanel from './SettingsPanel';
 import TeacherCalendar from './TeacherCalendar';
@@ -28,6 +28,8 @@ export default function TeacherDashboard({ currentUser, onLogout, onEnterClassro
   const [slideDirection, setSlideDirection] = useState(1);
   const isMobile = useMediaQuery('(max-width: 768px)');
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const isCreatingClassRef = useRef(false);
+  const [isCreatingClass, setIsCreatingClass] = useState(false);
   const [newClass, setNewClass] = useState({ name: '', section: '', subject: '', code: '' });
   const [settingsClassroom, setSettingsClassroom] = useState(null);
 
@@ -63,9 +65,25 @@ export default function TeacherDashboard({ currentUser, onLogout, onEnterClassro
 
   const handleSubmitCreateClass = (e) => {
     e.preventDefault();
-    handleCreateClass(newClass);
+    if (isCreatingClassRef.current) return;
+    const nameTrim = (newClass.name || '').trim();
+    if (!nameTrim) return;
+
+    isCreatingClassRef.current = true;
+    setIsCreatingClass(true);
+
+    // Close immediately to prevent spam creation
     setIsModalOpen(false);
     setNewClass({ name: '', section: '', subject: '', code: '' });
+
+    try {
+      handleCreateClass({ ...newClass, name: nameTrim });
+    } finally {
+      setTimeout(() => {
+        isCreatingClassRef.current = false;
+        setIsCreatingClass(false);
+      }, 400);
+    }
   };
 
   return (
@@ -184,6 +202,7 @@ export default function TeacherDashboard({ currentUser, onLogout, onEnterClassro
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
         onSubmit={handleSubmitCreateClass}
+        isSubmitting={isCreatingClass}
         isDark={isDark}
         newClass={newClass}
         setNewClass={setNewClass}

@@ -4,18 +4,19 @@ import { X, Search, Check } from 'lucide-react';
 
 export default function CreateClassModal({
   isOpen,
-  isDark,
+  isDark = false,
   onClose,
   onSubmit,
-  newClass,
-  setNewClass,
-  teacherOptions,
-  selectedCreateStudentIds,
-  setSelectedCreateStudentIds,
-  createStudentQuery,
-  setCreateStudentQuery,
-  availableStudents,
-  styles,
+  isSubmitting = false,
+  newClass = { name: '', section: '', subject: '', instructor: '', code: '' },
+  setNewClass = () => {},
+  teacherOptions = [],
+  selectedCreateStudentIds = new Set(),
+  setSelectedCreateStudentIds = () => {},
+  createStudentQuery = '',
+  setCreateStudentQuery = () => {},
+  availableStudents = [],
+  styles = {},
   muted
 }) {
   return (
@@ -31,7 +32,13 @@ export default function CreateClassModal({
           >
             <div style={styles.modalHeader}>
               <h2 style={{ margin: 0, fontSize: '1.25rem', color: isDark ? '#f1f5f9' : '#1e293b' }}>Create New Class</h2>
-              <motion.button whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }} onClick={onClose} style={styles.closeBtn}>
+              <motion.button
+                whileHover={isSubmitting ? {} : { scale: 1.05 }}
+                whileTap={isSubmitting ? {} : { scale: 0.95 }}
+                onClick={onClose}
+                disabled={isSubmitting}
+                style={{ ...styles.closeBtn, opacity: isSubmitting ? 0.5 : 1, cursor: isSubmitting ? 'not-allowed' : 'pointer' }}
+              >
                 <X size={20} />
               </motion.button>
             </div>
@@ -142,8 +149,19 @@ export default function CreateClassModal({
                 </div>
               </div>
 
-              <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }} type="submit" style={{ ...styles.submitBlueBtn, marginTop: '8px' }}>
-                Create Classroom
+              <motion.button
+                whileHover={isSubmitting ? {} : { scale: 1.02 }}
+                whileTap={isSubmitting ? {} : { scale: 0.98 }}
+                type="submit"
+                disabled={isSubmitting}
+                style={{
+                  ...styles.submitBlueBtn,
+                  marginTop: '8px',
+                  opacity: isSubmitting ? 0.7 : 1,
+                  cursor: isSubmitting ? 'not-allowed' : 'pointer'
+                }}
+              >
+                {isSubmitting ? 'Creating Classroom...' : 'Create Classroom'}
               </motion.button>
             </form>
           </motion.div>

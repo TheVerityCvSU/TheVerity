@@ -88,7 +88,12 @@ export default function StudentViewSettingsModal({
             </div>
           </div>
           <button
-            onClick={toggleDarkMode}
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              toggleDarkMode();
+            }}
+            aria-label="Toggle dark mode"
             style={{
               width: '52px',
               height: '28px',

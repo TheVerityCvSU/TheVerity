@@ -85,29 +85,6 @@ export default function ActivityActionCard({
     return (
       <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '16px', marginTop: '32px' }}>
         <button
-          onClick={onSubmit}
-          style={{
-            backgroundColor: 'transparent',
-            color: isDark ? '#f87171' : '#dc2626',
-            border: isDark ? '1px solid rgba(239, 68, 68, 0.4)' : '1px solid #fca5a5',
-            borderRadius: '8px',
-            padding: '10px 24px',
-            fontSize: '0.9rem',
-            fontWeight: '600',
-            cursor: 'pointer',
-            transition: 'all 0.2s ease'
-          }}
-          onMouseOver={(e) => {
-            e.currentTarget.style.backgroundColor = isDark ? 'rgba(239, 68, 68, 0.12)' : '#fef2f2';
-          }}
-          onMouseOut={(e) => {
-            e.currentTarget.style.backgroundColor = 'transparent';
-          }}
-        >
-          Submit
-        </button>
-
-        <button
           onClick={onStartCoding}
           style={{
             display: 'flex',

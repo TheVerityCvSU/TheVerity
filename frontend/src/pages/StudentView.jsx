@@ -36,7 +36,6 @@ export default function StudentView({
 
   const editorRef = useRef(null);
   const monacoRef = useRef(null);
-  const diagnosticsRef = useRef([]);
   const copiedInternallyRef = useRef(new Set());
 
   const [currentAssignment, setCurrentAssignment] = useState(() => {
@@ -256,7 +255,9 @@ export default function StudentView({
     extraFiles: filesHook.extraFiles,
     setBottomTab,
     onTestResults: testCasesHook.handleTestResults,
-    onSingleTestResult: testCasesHook.handleSingleTestResult
+    onSingleTestResult: testCasesHook.handleSingleTestResult,
+    editorRef,
+    monacoRef
   });
   compilerHookRef.current = compilerHook;
 
@@ -393,7 +394,7 @@ export default function StudentView({
             editorFontSize={editorFontSize}
             editorRef={editorRef}
             monacoRef={monacoRef}
-            diagnosticsRef={diagnosticsRef}
+            diagnosticsRef={compilerHook.diagnosticsRef}
             compilerHook={compilerHook}
             handleSaveCode={handleSaveCode}
             kioskHook={kioskHook}
@@ -462,7 +463,7 @@ export default function StudentView({
           showSubmitModal={submissionHook.showSubmitModal}
           setShowSubmitModal={submissionHook.setShowSubmitModal}
           strictCompiler={strictCompiler}
-          diagnosticsCount={diagnosticsRef.current?.length || 0}
+          diagnosticsCount={compilerHook.diagnosticsCount}
           handleConfirmSubmit={submissionHook.handleConfirmSubmit}
           showUnsubmitModal={submissionHook.showUnsubmitModal}
           setShowUnsubmitModal={submissionHook.setShowUnsubmitModal}

@@ -4,15 +4,15 @@ import { User, X, Mail, Check, Copy, Clock, Shield, Edit3 } from 'lucide-react';
 
 export default function ViewUserModal({
   viewingUser,
-  getUserStatus,
-  fmt,
-  copiedEmail,
-  onCopyEmail,
-  onOpenEdit,
-  onToggleStatus,
-  onClose,
-  isDark,
-  styles
+  getUserStatus = (u) => u?.status || 'Active',
+  fmt = (v) => (v ? new Date(v).toLocaleDateString() : 'Never'),
+  copiedEmail = false,
+  onCopyEmail = () => {},
+  onOpenEdit = () => {},
+  onToggleStatus = () => {},
+  onClose = () => {},
+  isDark = false,
+  styles = {}
 }) {
   return (
     <AnimatePresence>

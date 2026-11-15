@@ -4,21 +4,26 @@ import { Edit3, X, AlertCircle, Eye, EyeOff } from 'lucide-react';
 import PasswordRequirements from '../PasswordRequirements';
 
 export default function EditUserModal({
+  isOpen,
   editingUser,
-  setEditingUser,
-  editLoading,
-  editError,
-  showEditPassword,
-  setShowEditPassword,
-  policies,
-  onClose,
+  setEditingUser = () => {},
+  editLoading = false,
+  editError = null,
+  showEditPassword = false,
+  setShowEditPassword = () => {},
+  policies = null,
+  onClose = () => {},
   onSave,
-  isDark,
-  styles
+  onSubmit,
+  isDark = false,
+  styles = {}
 }) {
+  const visible = isOpen !== undefined ? Boolean(isOpen && editingUser) : Boolean(editingUser);
+  const handleSave = onSave || onSubmit;
+
   return (
     <AnimatePresence>
-      {editingUser && (
+      {visible && (
         <motion.div style={styles.modalOverlay} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose}>
           <motion.div
             style={{ ...styles.modalCard, maxWidth: '460px' }}
@@ -55,7 +60,7 @@ export default function EditUserModal({
               </div>
             )}
 
-            <form onSubmit={onSave} style={styles.form}>
+            <form onSubmit={handleSave} style={styles.form}>
               <div>
                 <label style={{ display: 'block', marginBottom: '6px', fontSize: '0.8rem', fontWeight: '600', color: isDark ? '#cbd5e1' : '#475569' }}>
                   Full Name

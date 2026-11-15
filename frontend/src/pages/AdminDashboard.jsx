@@ -195,13 +195,20 @@ export default function AdminDashboard({ currentUser, onLogout, socket }) {
   const handleDeleteUser = async (email) => {
     try {
       const r = await apiFetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/users/${encodeURIComponent(email)}`, { method: 'DELETE' });
-      if (r.ok) {
-        loadUsers();
-        loadStats();
-        loadNotifications();
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        const message = data.message || 'Failed to delete user';
+        setMsg({ type: 'error', text: message });
+        return { success: false, message };
       }
+      loadUsers();
+      loadStats();
+      loadNotifications();
+      return { success: true };
     } catch {
-      setMsg({ type: 'error', text: 'Could not connect to server.' });
+      const message = 'Could not connect to server.';
+      setMsg({ type: 'error', text: message });
+      return { success: false, message };
     }
   };
 

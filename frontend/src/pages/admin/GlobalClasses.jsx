@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { generateClassCode } from '../../utils/classroomList';
 import { useDarkMode } from '../../hooks/useDarkMode';
 import {
@@ -38,6 +38,8 @@ export default function GlobalClassesTab() {
   const [addStudentQuery, setAddStudentQuery] = useState('');
 
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const isCreatingClassRef = useRef(false);
+  const [isCreatingClass, setIsCreatingClass] = useState(false);
   const [deleteConfirmClass, setDeleteConfirmClass] = useState(null);
   const [newClass, setNewClass] = useState({ name: '', section: '', subject: '', instructor: '', code: '' });
   const [selectedCreateStudentIds, setSelectedCreateStudentIds] = useState(new Set());
@@ -124,8 +126,12 @@ export default function GlobalClassesTab() {
 
   const handleCreateClass = async (e) => {
     e.preventDefault();
-    const nameTrim = newClass.name.trim();
+    if (isCreatingClassRef.current) return;
+    const nameTrim = (newClass.name || '').trim();
     if (!nameTrim) return;
+
+    isCreatingClassRef.current = true;
+    setIsCreatingClass(true);
 
     const selectedInstructor = newClass.instructor || teacherOptions[0] || 'Unassigned';
     const termLabel = newClass.subject ? `${newClass.subject}${newClass.section ? ' (' + newClass.section + ')' : ''}` : 'Fall 2026';
@@ -148,17 +154,27 @@ export default function GlobalClassesTab() {
       students: selectedStudentsList
     };
 
-    const updatedClasses = [created, ...classes];
-    setClasses(updatedClasses);
-    await persistClassrooms(updatedClasses);
-
-    if (selectedStudentsList.length > 0) {
-      await enrollStudentsApi(classroomId, selectedStudentsList).catch(() => {});
-    }
-
+    // Close the popup and reset state immediately to prevent spam creation
+    setShowCreateModal(false);
     setNewClass({ name: '', section: '', subject: '', instructor: '', code: '' });
     setSelectedCreateStudentIds(new Set());
-    setShowCreateModal(false);
+    setCreateStudentQuery('');
+
+    // Optimistically update classroom list in UI
+    const updatedClasses = [created, ...classes];
+    setClasses(updatedClasses);
+
+    try {
+      await persistClassrooms(updatedClasses);
+      if (selectedStudentsList.length > 0) {
+        await enrollStudentsApi(classroomId, selectedStudentsList).catch(() => {});
+      }
+    } catch (err) {
+      console.error('Failed to save classroom:', err);
+    } finally {
+      isCreatingClassRef.current = false;
+      setIsCreatingClass(false);
+    }
   };
 
   const handleEnrollStudentsInView = async () => {
@@ -248,6 +264,7 @@ export default function GlobalClassesTab() {
         isDark={isDark}
         onClose={() => setShowCreateModal(false)}
         onSubmit={handleCreateClass}
+        isSubmitting={isCreatingClass}
         newClass={newClass}
         setNewClass={setNewClass}
         teacherOptions={teacherOptions}

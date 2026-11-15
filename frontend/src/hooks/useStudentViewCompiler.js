@@ -18,40 +18,47 @@ export function useStudentViewCompiler({
   extraFiles = [],
   setBottomTab,
   onTestResults,
-  onSingleTestResult
+  onSingleTestResult,
+  editorRef: externalEditorRef,
+  monacoRef: externalMonacoRef
 }) {
   const [output, setOutput] = useState('');
   const [inputValue, setInputValue] = useState('');
   const [isRunning, setIsRunning] = useState(false);
   const [programStarted, setProgramStarted] = useState(false);
+  const [diagnosticsCount, setDiagnosticsCount] = useState(0);
 
   const terminalEndRef = useRef(null);
   const terminalBodyRef = useRef(null);
-  const editorRef = useRef(null);
-  const monacoRef = useRef(null);
+  const internalEditorRef = useRef(null);
+  const internalMonacoRef = useRef(null);
   const diagnosticsRef = useRef([]);
+  const editorRef = externalEditorRef || internalEditorRef;
+  const monacoRef = externalMonacoRef || internalMonacoRef;
 
   const { localSocket, emitToSockets, getCompilerSocket } = useStudentViewCompilerSocket({
     socket,
     currentUser
   });
 
-  const updateEditorMarkers = (diagnostics = []) => {
-    diagnosticsRef.current = diagnostics;
+  const updateEditorMarkers = useCallback((diagnostics = []) => {
+    const list = Array.isArray(diagnostics) ? diagnostics : [];
+    diagnosticsRef.current = list;
+    setDiagnosticsCount(list.length);
     const editor = editorRef.current;
     const monaco = monacoRef.current;
     if (!editor || !monaco) return;
     const model = editor.getModel();
     if (!model) return;
 
-    if (!Array.isArray(diagnostics) || diagnostics.length === 0) {
+    if (list.length === 0) {
       if (monaco?.editor && typeof monaco.editor.setModelMarkers === 'function') {
         monaco.editor.setModelMarkers(model, 'csharp-compiler', []);
       }
       return;
     }
 
-    const markers = diagnostics.map((d) => {
+    const markers = list.map((d) => {
       const lineCount = typeof model.getLineCount === 'function' ? model.getLineCount() : 1;
       const startLine = Math.max(1, Math.min(d.startLineNumber || 1, lineCount));
       const lineContent = typeof model.getLineContent === 'function' ? (model.getLineContent(startLine) || '') : '';
@@ -76,7 +83,7 @@ export function useStudentViewCompiler({
     if (monaco?.editor && typeof monaco.editor.setModelMarkers === 'function') {
       monaco.editor.setModelMarkers(model, 'csharp-compiler', markers);
     }
-  };
+  }, [editorRef, monacoRef]);
 
   // Compiler output streaming listeners
   useEffect(() => {
@@ -127,7 +134,7 @@ export function useStudentViewCompiler({
       unbindPrimary();
       unbindLocal();
     };
-  }, [socket, localSocket, safeUsername, studentActualId, classroom, assignment, classroomId, assignmentId, emitToSockets, onTestResults, onSingleTestResult]);
+  }, [socket, localSocket, safeUsername, studentActualId, classroom, assignment, classroomId, assignmentId, emitToSockets, onTestResults, onSingleTestResult, updateEditorMarkers]);
 
   const handleRunCode = () => {
     if (submitted) return;
@@ -233,6 +240,7 @@ export function useStudentViewCompiler({
     editorRef,
     monacoRef,
     diagnosticsRef,
+    diagnosticsCount,
     updateEditorMarkers,
     emitToSockets,
     getCompilerSocket,

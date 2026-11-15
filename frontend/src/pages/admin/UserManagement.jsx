@@ -40,6 +40,10 @@ export default function UserManagementTab({ users = [], loading = false, onDelet
   const [editingUser, setEditingUser] = useState(null);
   const [editLoading, setEditLoading] = useState(false);
   const [editError, setEditError] = useState(null);
+  const [addLoading, setAddLoading] = useState(false);
+  const [addError, setAddError] = useState(null);
+  const [bulkLoading, setBulkLoading] = useState(false);
+  const [bulkError, setBulkError] = useState(null);
   const [copiedEmail, setCopiedEmail] = useState(false);
 
   const [now, setNow] = useState(() => Date.now());
@@ -125,6 +129,8 @@ export default function UserManagementTab({ users = [], loading = false, onDelet
 
   const handleAdd = async (e) => {
     e.preventDefault();
+    setAddError(null);
+    setAddLoading(true);
     try {
       await registerNewUser({
         name: `${newUser.firstName} ${newUser.lastName}`.trim(),
@@ -136,8 +142,11 @@ export default function UserManagementTab({ users = [], loading = false, onDelet
       setNewUser({ firstName: '', lastName: '', email: '', password: '', role: 'Student' });
       setLocalMsg({ type: 'success', text: 'User added successfully.' });
       setTimeout(() => setLocalMsg(null), 3000);
+      window.dispatchEvent(new CustomEvent('verity:users-changed'));
     } catch (err) {
-      setLocalMsg({ type: 'error', text: err.message || 'Could not add user' });
+      setAddError(err.message || 'Could not add user');
+    } finally {
+      setAddLoading(false);
     }
   };
 
@@ -147,22 +156,84 @@ export default function UserManagementTab({ users = [], loading = false, onDelet
       setTimeout(() => setToastVisible(false), 3000);
       return;
     }
+    setBulkError(null);
     setModalAction(action);
   };
 
-  const confirmBulkAction = () => {
-    if (modalAction === 'suspend') {
-      selected.forEach((email) => onUpdateUser && onUpdateUser(email, { status: 'Inactive' }));
-      setLocalMsg({ type: 'success', text: `Suspended ${selected.length} accounts.` });
-    } else if (modalAction === 'delete') {
-      selected.forEach((email) => onDeleteUser && onDeleteUser(email));
-      setSelected([]);
-      setLocalMsg({ type: 'success', text: `Deleted ${selected.length} accounts.` });
-    } else if (modalAction === 'reset') {
-      setLocalMsg({ type: 'success', text: `Password reset for ${selected.length} users.` });
-      setNewPassword('');
+  const confirmBulkAction = async () => {
+    if (bulkLoading) return;
+    if (modalAction === 'reset' && !newPassword.trim()) {
+      setBulkError('Please enter a new password.');
+      return;
     }
-    setModalAction(null);
+
+    setBulkError(null);
+    setBulkLoading(true);
+
+    try {
+      if (modalAction === 'suspend') {
+        const results = await Promise.all(
+          selected.map(async (email) => ({
+            email,
+            res: onUpdateUser ? await onUpdateUser(email, { status: 'Inactive' }) : { success: true },
+          }))
+        );
+        const failures = results.filter((r) => r.res && r.res.success === false);
+        if (failures.length > 0) {
+          setBulkError(failures[0].res.message || `Failed to suspend ${failures.length} account(s).`);
+          return;
+        }
+        setLocalMsg({ type: 'success', text: `Suspended ${selected.length} accounts.` });
+      } else if (modalAction === 'delete') {
+        const results = await Promise.all(
+          selected.map(async (email) => ({
+            email,
+            res: onDeleteUser ? await onDeleteUser(email) : { success: true },
+          }))
+        );
+        const failures = results.filter((r) => r.res && r.res.success === false);
+        const failedSet = new Set(failures.map((f) => f.email));
+        setSelected((prev) => prev.filter((email) => failedSet.has(email)));
+        if (failures.length > 0) {
+          setBulkError(failures[0].res.message || `Failed to delete ${failures.length} account(s).`);
+          return;
+        }
+        setLocalMsg({ type: 'success', text: `Deleted ${selected.length} accounts.` });
+      } else if (modalAction === 'reset') {
+        const trimmedPassword = newPassword.trim();
+        const results = await Promise.all(
+          selected.map(async (email) => ({
+            email,
+            res: onUpdateUser ? await onUpdateUser(email, { password: trimmedPassword }) : { success: true },
+          }))
+        );
+        const failures = results.filter((r) => r.res && r.res.success === false);
+        if (failures.length > 0) {
+          setBulkError(failures[0].res.message || `Failed to reset password for ${failures.length} user(s).`);
+          return;
+        }
+        setLocalMsg({ type: 'success', text: `Password reset for ${selected.length} users.` });
+        setNewPassword('');
+      }
+      setModalAction(null);
+      setTimeout(() => setLocalMsg(null), 3000);
+    } finally {
+      setBulkLoading(false);
+    }
+  };
+
+  const handleToggleUserStatus = async () => {
+    if (!viewingUser) return;
+    const currentStatus = viewingUser.status || 'Active';
+    const nextStatus = currentStatus.toLowerCase() === 'active' ? 'Inactive' : 'Active';
+    const res = onUpdateUser ? await onUpdateUser(viewingUser.email, { status: nextStatus }) : { success: true };
+    if (res && res.success === false) {
+      setLocalMsg({ type: 'error', text: res.message || 'Failed to update user status.' });
+      setTimeout(() => setLocalMsg(null), 3500);
+      return;
+    }
+    setViewingUser((prev) => (prev ? { ...prev, status: nextStatus } : null));
+    setLocalMsg({ type: 'success', text: `Status changed to ${nextStatus}` });
     setTimeout(() => setLocalMsg(null), 3000);
   };
 
@@ -203,6 +274,7 @@ export default function UserManagementTab({ users = [], loading = false, onDelet
               onOpenAdd={(e) => {
                 const rect = e.currentTarget.getBoundingClientRect();
                 setAddOrigin({ x: `${rect.left + rect.width / 2}px`, y: `${rect.top + rect.height / 2}px` });
+                setAddError(null);
                 setIsAddOpen(true);
               }}
               onBulkAction={handleBulkActionClick}
@@ -238,12 +310,19 @@ export default function UserManagementTab({ users = [], loading = false, onDelet
       <BulkActionModal
         isOpen={Boolean(modalAction)}
         modalAction={modalAction}
-        selectedCount={selected.length}
+        selected={selected}
+        users={users}
+        policies={policies}
         newPassword={newPassword}
         setNewPassword={setNewPassword}
         showBulkPassword={showBulkPassword}
         setShowBulkPassword={setShowBulkPassword}
-        onClose={() => setModalAction(null)}
+        bulkError={bulkError}
+        bulkLoading={bulkLoading}
+        onClose={() => {
+          setBulkError(null);
+          setModalAction(null);
+        }}
         onConfirm={confirmBulkAction}
         isDark={isDark}
         styles={sh}
@@ -251,11 +330,18 @@ export default function UserManagementTab({ users = [], loading = false, onDelet
 
       <AddUserModal
         isOpen={isAddOpen}
+        isAddOpen={isAddOpen}
         newUser={newUser}
         setNewUser={setNewUser}
         showAddPassword={showAddPassword}
         setShowAddPassword={setShowAddPassword}
-        onClose={() => setIsAddOpen(false)}
+        addError={addError}
+        addLoading={addLoading}
+        policies={policies}
+        onClose={() => {
+          setAddError(null);
+          setIsAddOpen(false);
+        }}
         onSubmit={handleAdd}
         addOrigin={addOrigin}
         isDark={isDark}
@@ -269,10 +355,7 @@ export default function UserManagementTab({ users = [], loading = false, onDelet
           handleOpenEdit(viewingUser);
           setViewingUser(null);
         }}
-        onDeleteUser={(email) => {
-          onDeleteUser && onDeleteUser(email);
-          setViewingUser(null);
-        }}
+        onToggleStatus={handleToggleUserStatus}
         copiedEmail={copiedEmail}
         onCopyEmail={handleCopyEmail}
         fmt={formatUserDate}
@@ -290,6 +373,7 @@ export default function UserManagementTab({ users = [], loading = false, onDelet
         editError={editError}
         policies={policies}
         onClose={() => setEditingUser(null)}
+        onSave={handleSaveEdit}
         onSubmit={handleSaveEdit}
         isDark={isDark}
         styles={sh}
