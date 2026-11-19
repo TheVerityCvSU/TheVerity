@@ -109,17 +109,18 @@ export function useAppSecurity({ currentUser, currentScreen, socket }) {
   }, []);
 
   useEffect(() => {
-    if (currentUser?.role === 'Student' && currentScreen !== 'login') {
+    // Only engage lockdown during active student workspace exam
+    if (currentUser?.role === 'Student' && currentScreen === 'student_workspace') {
       lockDown();
     }
   }, [currentUser, currentScreen]);
 
   useEffect(() => {
-    if (currentUser?.role !== 'Student' || DISABLE_DESKTOP_WEB_BLOCKER) return;
+    // Proctor violations and tab-exit alerts apply strictly during workspace activity
+    if (currentUser?.role !== 'Student' || currentScreen !== 'student_workspace' || DISABLE_DESKTOP_WEB_BLOCKER) return;
 
     let lastExitTabTime = 0;
     const handleWindowExit = () => {
-      if (currentScreen === 'student_workspace') return;
       const now = Date.now();
       if (now - lastExitTabTime < 1500) return;
       lastExitTabTime = now;

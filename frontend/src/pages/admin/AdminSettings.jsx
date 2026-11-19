@@ -16,6 +16,7 @@ import ExamDefaultsTab from '../../components/admin/settings/ExamDefaultsTab';
 import NotificationsUITab from '../../components/admin/settings/NotificationsUITab';
 import RolesPermissionsTab from '../../components/admin/settings/RolesPermissionsTab';
 import SystemDataTab from '../../components/admin/settings/SystemDataTab';
+import Skeleton from '../../components/Skeleton';
 
 export default function SystemSettingsTab({ currentUser: propCurrentUser }) {
   const [activeTab, setActiveTab] = useState('general');
@@ -93,18 +94,8 @@ export default function SystemSettingsTab({ currentUser: propCurrentUser }) {
 
       {/* TAB PANELS */}
       {loading ? (
-        <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '80px 0' }}>
-          <div
-            style={{
-              width: '36px',
-              height: '36px',
-              border: `3px solid ${T.border}`,
-              borderTop: `3px solid ${T.blue}`,
-              borderRadius: '50%',
-              animation: 'spin 0.8s linear infinite',
-            }}
-          />
-          <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+        <div style={{ padding: '24px 0' }}>
+          <Skeleton.Settings />
         </div>
       ) : (
         <AnimatePresence mode="wait" custom={direction}>

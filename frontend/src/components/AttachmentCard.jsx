@@ -26,38 +26,59 @@ function AttachmentCard({
   const name = att.name || (type === 'link' ? att.url : 'Attachment');
   const rawUrl = att.url || '';
   const resolvedUrl = useMemo(() => resolveMediaUrl(rawUrl), [rawUrl]);
+
+  // Infer media type from extension if not strictly defined
+  const fileExtension = useMemo(() => {
+    const target = (rawUrl || att.name || '').split('?')[0].split('#')[0];
+    const match = target.match(/\.([0-9a-z]+)$/i);
+    return match ? match[1].toLowerCase() : '';
+  }, [rawUrl, att.name]);
+
+  const isImage = useMemo(() => {
+    return type === 'image' || ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'avif'].includes(fileExtension);
+  }, [type, fileExtension]);
+
+  const isVideo = useMemo(() => {
+    return type === 'video' || ['mp4', 'webm', 'ogg', 'mov', 'm4v', 'avi', 'mkv'].includes(fileExtension);
+  }, [type, fileExtension]);
+
+  const isDoc = useMemo(() => {
+    return type === 'document' || ['pdf', 'doc', 'docx', 'ppt', 'pptx', 'xls', 'xlsx', 'txt', 'csv'].includes(fileExtension);
+  }, [type, fileExtension]);
+
+  const isLink = type === 'link' && !isImage && !isVideo;
+
   const posterUrl = useMemo(() => {
-    if (type !== 'video') return null;
+    if (!isVideo) return null;
     if (att.thumbnailUrl) return resolveMediaUrl(att.thumbnailUrl);
     return getVideoThumbnailUrl(resolvedUrl);
-  }, [type, att.thumbnailUrl, resolvedUrl]);
+  }, [isVideo, att.thumbnailUrl, resolvedUrl]);
 
   // Ensure link URLs always have http:// or https:// so they open external sites
   const targetUrl = useMemo(() => {
     if (!resolvedUrl) return '#';
-    if (type === 'link') {
+    if (isLink) {
       return (resolvedUrl.startsWith('http://') || resolvedUrl.startsWith('https://'))
         ? resolvedUrl
         : `https://${resolvedUrl}`;
     }
     return resolvedUrl;
-  }, [type, resolvedUrl]);
+  }, [isLink, resolvedUrl]);
 
   let typeLabel = 'File';
-  if (type === 'image') typeLabel = 'Image';
-  else if (type === 'video') typeLabel = 'Video';
-  else if (type === 'link') typeLabel = rawUrl || 'Link';
-  else if (att.name?.includes('.')) {
-    const ext = att.name.split('.').pop()?.toUpperCase();
-    typeLabel = ext ? `${ext} File` : 'File';
+  if (isImage) typeLabel = 'Image';
+  else if (isVideo) typeLabel = 'Video';
+  else if (isLink) typeLabel = rawUrl || 'Link';
+  else if (fileExtension) {
+    typeLabel = `${fileExtension.toUpperCase()} File`;
   }
 
   const handleClick = (e) => {
-    if (type === 'link') {
+    if (isLink) {
       if (onClick) {
         if (e && e.preventDefault) e.preventDefault();
         if (e && e.stopPropagation) e.stopPropagation();
-        onClick(att);
+        onClick({ ...att, type: 'link' });
         return;
       }
       if (targetUrl !== '#') {
@@ -66,7 +87,11 @@ function AttachmentCard({
       return;
     }
     if (onClick) {
-      onClick(att);
+      const normalizedAtt = {
+        ...att,
+        type: isImage ? 'image' : isVideo ? 'video' : isDoc ? 'document' : type
+      };
+      onClick(normalizedAtt);
     }
   };
 
@@ -193,14 +218,14 @@ function AttachmentCard({
 
       {/* Right side: Thumbnail preview */}
       <div style={rightThumbBoxStyle}>
-        {type === 'image' && resolvedUrl && !mediaError ? (
+        {isImage && resolvedUrl && !mediaError ? (
           <img
             src={resolvedUrl}
             alt=""
             onError={() => setMediaError(true)}
             style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
           />
-        ) : type === 'video' && resolvedUrl && !mediaError ? (
+        ) : isVideo && resolvedUrl && !mediaError ? (
           <div style={{ width: '100%', height: '100%', position: 'relative', backgroundColor: '#000000', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             {posterUrl && !posterError ? (
               <img
@@ -233,7 +258,7 @@ function AttachmentCard({
               <Play size={13} fill="#FFFFFF" color="#FFFFFF" style={{ marginLeft: '1px' }} />
             </div>
           </div>
-        ) : type === 'link' ? (
+        ) : isLink ? (
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%', height: '100%', color: '#10b981' }}>
             <Globe size={26} />
           </div>
@@ -247,7 +272,7 @@ function AttachmentCard({
   );
 
   // If link, render as card; intercept if onClick provided to open in-app preview
-  if (type === 'link') {
+  if (isLink) {
     return (
       <a
         href={targetUrl}

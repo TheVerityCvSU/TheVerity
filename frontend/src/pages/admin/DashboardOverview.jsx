@@ -9,9 +9,10 @@ import {
 } from '../../data/adminDashboard';
 import DiagnosticModal from '../../components/admin/DiagnosticModal';
 import UserAuditModal from '../../components/admin/UserAuditModal';
+import Skeleton from '../../components/Skeleton';
 import { getStyles } from './dashboardOverviewStyles';
 
-export default function DashboardOverview({ stats, users, query, setQuery, onDeleteUser, msg }) {
+export default function DashboardOverview({ stats, users, loading = false, query, setQuery, onDeleteUser, msg }) {
   const { isDark } = useDarkMode();
   const sh = getStyles(isDark);
   const [showDiagnostic, setShowDiagnostic] = useState(false);
@@ -220,7 +221,9 @@ export default function DashboardOverview({ stats, users, query, setQuery, onDel
 
           {/* Table Rows */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-            {filtered.length === 0 ? (
+            {loading ? (
+              Array.from({ length: 5 }).map((_, i) => <Skeleton.Row key={i} />)
+            ) : filtered.length === 0 ? (
               <div style={{ textAlign: 'center', padding: '36px', color: isDark ? '#64748b' : '#94a3b8', fontSize: '0.9rem' }}>
                 No users found
               </div>

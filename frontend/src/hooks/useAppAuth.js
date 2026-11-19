@@ -85,8 +85,8 @@ export function useAppAuth({
         }
       }
 
-      if (savedUser.role === 'Student' && destScreen !== 'login') {
-        if (typeof lockDown === 'function') lockDown();
+      if (savedUser.role === 'Student' && destScreen !== 'student_workspace') {
+        if (typeof releaseLockdown === 'function') releaseLockdown();
       }
 
       if (typeof setCurrentScreen === 'function') {
@@ -303,7 +303,7 @@ export function useAppAuth({
     } else if (normalized?.role === 'Teacher') {
       if (typeof setCurrentScreen === 'function') setCurrentScreen('teacher_dashboard');
     } else {
-      if (typeof lockDown === 'function') lockDown();
+      if (typeof releaseLockdown === 'function') releaseLockdown();
       if (typeof setCurrentScreen === 'function') setCurrentScreen('student_dashboard');
     }
   };

@@ -890,3 +890,157 @@ select:focus-visible,
   margin: 10px 0;
   background-color: #000;
 }
+
+/* Word Document (.docx) In-App Previewer */
+.docx-preview-content {
+  background: transparent !important;
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+  width: 100% !important;
+}
+.docx-preview-content > .docx-wrapper {
+  background: transparent !important;
+  padding: 0 !important;
+  width: 100% !important;
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+}
+.docx-preview-content article.docx,
+.docx-preview-content section.docx {
+  background: #ffffff !important;
+  color: #1e293b !important;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.12) !important;
+  margin-bottom: 24px !important;
+  border-radius: 4px !important;
+  min-height: 500px !important;
+}
+
+/* ═══ Modern Jodit Paste & Confirm Dialog Styling ═══ */
+.jodit-dialog__overlay {
+  background-color: rgba(0, 0, 0, 0.72) !important;
+  backdrop-filter: blur(8px) !important;
+  -webkit-backdrop-filter: blur(8px) !important;
+  z-index: 100005 !important;
+}
+
+.jodit-dialog__panel {
+  border-radius: 16px !important;
+  overflow: hidden !important;
+  border: 1px solid #e2e8f0 !important;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25) !important;
+  max-width: 480px !important;
+  width: 90% !important;
+  background-color: #ffffff !important;
+  color: #1e293b !important;
+  font-family: inherit !important;
+}
+
+body.dark .jodit-dialog__panel,
+.dark .jodit-dialog__panel {
+  background-color: #1a1f1e !important;
+  color: #f3f4f6 !important;
+  border: 1px solid #2e3d38 !important;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(16, 185, 129, 0.15) !important;
+}
+
+.jodit-dialog__header {
+  padding: 18px 24px 14px 24px !important;
+  border-bottom: 1px solid #f1f5f9 !important;
+  background-color: transparent !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  min-height: auto !important;
+}
+
+body.dark .jodit-dialog__header,
+.dark .jodit-dialog__header {
+  border-bottom: 1px solid #26332f !important;
+}
+
+.jodit-dialog__header-title {
+  font-size: 1.12rem !important;
+  font-weight: 700 !important;
+  line-height: 1.3 !important;
+  color: #10b981 !important;
+  padding: 0 !important;
+}
+
+.jodit-dialog__header-button {
+  width: 32px !important;
+  height: 32px !important;
+  line-height: 32px !important;
+  border-radius: 8px !important;
+  color: #64748b !important;
+  font-size: 20px !important;
+  flex-basis: 32px !important;
+  transition: all 0.15s ease !important;
+}
+
+body.dark .jodit-dialog__header-button,
+.dark .jodit-dialog__header-button {
+  color: #9ca3af !important;
+}
+
+.jodit-dialog__header-button:hover {
+  background-color: rgba(16, 185, 129, 0.15) !important;
+  color: #10b981 !important;
+}
+
+.jodit-dialog__content {
+  padding: 20px 24px !important;
+  font-size: 0.92rem !important;
+  line-height: 1.55 !important;
+  color: #334155 !important;
+}
+
+body.dark .jodit-dialog__content,
+.dark .jodit-dialog__content {
+  color: #d1d5db !important;
+}
+
+.jodit-dialog__footer {
+  padding: 14px 24px 20px 24px !important;
+  border-top: 1px solid #f1f5f9 !important;
+  display: flex !important;
+  justify-content: flex-end !important;
+  gap: 10px !important;
+  background-color: transparent !important;
+}
+
+body.dark .jodit-dialog__footer,
+.dark .jodit-dialog__footer {
+  border-top: 1px solid #26332f !important;
+}
+
+.jodit-dialog__footer button,
+.jodit-ui-button {
+  border-radius: 8px !important;
+  padding: 9px 18px !important;
+  font-weight: 600 !important;
+  font-size: 0.88rem !important;
+  cursor: pointer !important;
+  transition: all 0.15s ease !important;
+  border: 1px solid #cbd5e1 !important;
+  background-color: #f8fafc !important;
+  color: #1e293b !important;
+}
+
+body.dark .jodit-dialog__footer button,
+body.dark .jodit-ui-button,
+.dark .jodit-dialog__footer button,
+.dark .jodit-ui-button {
+  border: 1px solid #33403c !important;
+  background-color: #222826 !important;
+  color: #e5e7eb !important;
+}
+
+.jodit-dialog__footer button:hover,
+.jodit-ui-button:hover {
+  background-color: #10b981 !important;
+  border-color: #10b981 !important;
+  color: #ffffff !important;
+}
+

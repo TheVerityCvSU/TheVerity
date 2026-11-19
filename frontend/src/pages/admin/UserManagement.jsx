@@ -488,6 +488,7 @@ export default function UserManagementTab({ users = [], loading = false, onDelet
         <AnimatePresence>
           {showSidePanel && (
             <motion.div
+              ref={sidePanelRef}
               initial={{ opacity: 0, x: 20, scale: 0.98 }}
               animate={{ opacity: 1, x: 0, scale: 1 }}
               exit={{ opacity: 0, x: 20, scale: 0.98 }}
@@ -499,7 +500,8 @@ export default function UserManagementTab({ users = [], loading = false, onDelet
                 flexShrink: 0,
                 display: 'flex',
                 flexDirection: 'column',
-                transition: isDragging ? 'none' : 'width 0.15s ease'
+                transition: isDragging ? 'none' : 'width 0.15s ease',
+                willChange: isDragging ? 'width' : 'auto'
               }}
             >
               <SecurityControlPanel

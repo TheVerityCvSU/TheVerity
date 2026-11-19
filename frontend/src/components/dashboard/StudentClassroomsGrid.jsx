@@ -2,6 +2,7 @@ import React from 'react';
 import { motion } from 'framer-motion';
 import StudentCourseCard from './StudentCourseCard';
 import { cardThemes } from '../../data/studentDashboardConstants';
+import Skeleton from '../Skeleton';
 
 export default function StudentClassroomsGrid({
   isMobile,
@@ -31,12 +32,10 @@ export default function StudentClassroomsGrid({
               key={i}
               style={{
                 gridColumn: `span ${isMobile ? 12 : cardThemes[i % cardThemes.length].colSpan}`,
-                height: '260px',
-                backgroundColor: cardBg,
-                borderRadius: '20px',
-                animation: 'pulse 1.5s infinite'
               }}
-            />
+            >
+              <Skeleton.Card />
+            </div>
           ))
         ) : (
           activeClassrooms.map((cls, idx) => (

@@ -21,7 +21,7 @@ export function useTeacherViewSocket({
   const [toast, setToast] = useState(null);
 
   const [notifSettings, setNotifSettings] = useState({
-    soundAlerts: true,
+    soundAlerts: false,
     notifyOnSubmission: true,
     showToastWarnings: false
   });

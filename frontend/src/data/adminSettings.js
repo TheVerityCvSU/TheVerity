@@ -32,7 +32,7 @@ export const DEFAULT_SETTINGS = {
     defaultExamTimer: 60,
   },
   notifications: {
-    soundAlerts: true,
+    soundAlerts: false,
     notifyOnSubmission: true,
     showToastWarnings: false,
     highSeverityBehavior: 'blinking',

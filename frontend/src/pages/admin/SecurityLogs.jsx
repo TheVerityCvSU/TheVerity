@@ -4,6 +4,7 @@ import { Search, AlertCircle, ShieldAlert, Shield, X, Copy, Check } from 'lucide
 import { getSecurityLogs, logSecurityEvent } from '../../data/securityLogger';
 import { useDarkMode } from '../../hooks/useDarkMode';
 import { apiFetch } from '../../data/api';
+import Skeleton from '../../components/Skeleton';
 
 const getStyles = (isDark) => ({
   pageWrap: {
@@ -245,9 +246,13 @@ export default function SecurityAuditLogsTab() {
             <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>Severity</div>
             <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '14px' }}>Description</div>
           </div>
-          {filteredLogs.length === 0 ? (
+          {loading ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              {Array.from({ length: 5 }).map((_, i) => <Skeleton.Row key={i} />)}
+            </div>
+          ) : filteredLogs.length === 0 ? (
             <div style={{ textAlign: 'center', padding: '36px', color: muted }}>
-              {loading ? 'Loading security events...' : 'No events match the current filter.'}
+              No events match the current filter.
             </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: density === 'Compact' ? '4px' : '8px' }}>

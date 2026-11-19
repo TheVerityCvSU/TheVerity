@@ -156,6 +156,7 @@ export default function ClassroomView({
                 visibleMaterials={visibleMaterials}
                 unseenMaterials={unseenMaterials}
                 classroom={classroom}
+                loadingAssignments={loadingAssignments}
                 onSelectTodo={(id) => {
                   if (id) setExpandedId(id);
                   handleTabChange('classwork');

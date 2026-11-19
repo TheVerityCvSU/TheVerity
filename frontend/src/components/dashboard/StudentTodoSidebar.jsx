@@ -1,6 +1,7 @@
 import React from 'react';
 import { Calendar as CalendarIcon, MoreHorizontal } from 'lucide-react';
 import VideoLessonCard from './VideoLessonCard';
+import Skeleton from '../Skeleton';
 
 export default function StudentTodoSidebar({
   isDark,
@@ -62,7 +63,11 @@ export default function StudentTodoSidebar({
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
         {loadingActivities ? (
-          <div style={{ color: textMuted, fontSize: '0.9rem', textAlign: 'center', padding: '20px' }}>Loading tasks...</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            <Skeleton.AssignmentRow />
+            <Skeleton.AssignmentRow />
+            <Skeleton.AssignmentRow />
+          </div>
         ) : displayedUpcomingActivities.length === 0 ? (
           <div style={{ color: textMuted, fontSize: '0.9rem', textAlign: 'center', padding: '20px' }}>No upcoming tasks!</div>
         ) : (

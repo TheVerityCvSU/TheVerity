@@ -147,10 +147,13 @@ export default function ClassworkItemCard({
                           att={att}
                           isDark={isDark}
                           onClick={(clickedAtt) => {
-                            if (clickedAtt.type === 'image') setPreviewImage(clickedAtt);
-                            else if (clickedAtt.type === 'video') setPreviewVideo(clickedAtt);
-                            else if (clickedAtt.type === 'document') setPreviewIframe(clickedAtt);
-                            else if (clickedAtt.type === 'link' && clickedAtt.url) setPreviewIframe(clickedAtt);
+                            if (!clickedAtt) return;
+                            const ext = (clickedAtt.url || clickedAtt.name || '').split('?')[0].split('.').pop().toLowerCase();
+                            const isImg = clickedAtt.type === 'image' || ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'avif'].includes(ext);
+                            const isVid = clickedAtt.type === 'video' || ['mp4', 'webm', 'ogg', 'mov', 'm4v'].includes(ext);
+                            if (isImg && setPreviewImage) setPreviewImage(clickedAtt);
+                            else if (isVid && setPreviewVideo) setPreviewVideo(clickedAtt);
+                            else if (setPreviewIframe) setPreviewIframe(clickedAtt);
                           }}
                         />
                       ))}

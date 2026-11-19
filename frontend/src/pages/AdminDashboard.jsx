@@ -260,6 +260,7 @@ export default function AdminDashboard({ currentUser, onLogout, socket }) {
         <DashboardOverview
           stats={stats}
           users={users}
+          loading={loading}
           query={query}
           setQuery={setQuery}
           onDeleteUser={handleDeleteUser}

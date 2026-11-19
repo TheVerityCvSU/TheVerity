@@ -201,4 +201,362 @@ Skeleton.Grading = function SkeletonGrading() {
   );
 };
 
+// Full student activity detail wrapper
+Skeleton.StudentActivityDetail = function SkeletonStudentActivityDetail() {
+  return (
+    <div style={{ minHeight: '100vh', padding: '32px clamp(20px, 3vw, 48px)', maxWidth: '1200px', margin: '0 auto', width: '100%' }}>
+      <Skeleton.ActivityDetail />
+    </div>
+  );
+};
+
+// Full teacher grading wrapper
+Skeleton.GradingContainer = function SkeletonGradingContainer() {
+  return (
+    <div style={{ minHeight: '100vh', padding: '24px clamp(16px, 2.5vw, 36px)', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+          <div className="skeleton-shimmer" style={{ width: 36, height: 36, borderRadius: '50%' }} />
+          <div className="skeleton-shimmer" style={{ width: 220, height: 26, borderRadius: 8 }} />
+        </div>
+        <div className="skeleton-shimmer" style={{ width: 100, height: 36, borderRadius: 18 }} />
+      </div>
+      <div style={{ flex: 1, minHeight: 460 }}>
+        <Skeleton.Grading />
+      </div>
+    </div>
+  );
+};
+
+// Auth / Login form skeleton
+Skeleton.AuthForm = function SkeletonAuthForm() {
+  return (
+    <div style={{
+      minHeight: '100vh',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: '24px'
+    }}>
+      <div style={{
+        width: '100%',
+        maxWidth: '420px',
+        padding: '36px',
+        borderRadius: '24px',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '20px'
+      }}>
+        <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '8px' }}>
+          <div className="skeleton-shimmer" style={{ width: 64, height: 64, borderRadius: '50%' }} />
+        </div>
+        <div className="skeleton-shimmer" style={{ width: '60%', height: 24, margin: '0 auto', borderRadius: 6 }} />
+        <div className="skeleton-shimmer" style={{ width: '80%', height: 14, margin: '0 auto', borderRadius: 4 }} />
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', marginTop: '12px' }}>
+          <div className="skeleton-shimmer" style={{ width: '100%', height: 48, borderRadius: 14 }} />
+          <div className="skeleton-shimmer" style={{ width: '100%', height: 48, borderRadius: 14 }} />
+          <div className="skeleton-shimmer" style={{ width: '100%', height: 48, borderRadius: 14, marginTop: '8px' }} />
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// Full Student Dashboard Route Skeleton
+Skeleton.StudentDashboard = function SkeletonStudentDashboard() {
+  return (
+    <div style={{ minHeight: '100vh', padding: '32px clamp(20px, 3vw, 48px)', display: 'flex', flexDirection: 'column', gap: '28px', width: '100%', boxSizing: 'border-box' }}>
+      {/* Top Bar */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+          <div className="skeleton-shimmer" style={{ width: 44, height: 44, borderRadius: 12 }} />
+          <div className="skeleton-shimmer" style={{ width: 140, height: 26, borderRadius: 8 }} />
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <div className="skeleton-shimmer" style={{ width: 90, height: 36, borderRadius: 20 }} />
+          <div className="skeleton-shimmer" style={{ width: 40, height: 40, borderRadius: '50%' }} />
+        </div>
+      </div>
+
+      {/* Main content grid: Courses on left + ToDo on right */}
+      <div style={{ display: 'flex', gap: '32px', flexWrap: 'wrap', width: '100%' }}>
+        {/* Enrolled Courses */}
+        <div style={{ flex: '1 1 0%', minWidth: 280, display: 'flex', flexDirection: 'column', gap: '20px' }}>
+          <div className="skeleton-shimmer" style={{ width: 180, height: 28, borderRadius: 8 }} />
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '20px' }}>
+            <Skeleton.Card />
+            <Skeleton.Card />
+            <Skeleton.Card />
+            <Skeleton.Card />
+          </div>
+        </div>
+
+        {/* Sidebar */}
+        <div style={{ width: 340, maxWidth: '100%', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+          <div className="skeleton-shimmer" style={{ width: 150, height: 28, borderRadius: 8 }} />
+          <div className="skeleton-shimmer" style={{ width: '100%', height: 140, borderRadius: 18 }} />
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            <Skeleton.AssignmentRow />
+            <Skeleton.AssignmentRow />
+            <Skeleton.AssignmentRow />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// Full Student Classroom View Route Skeleton
+Skeleton.ClassroomView = function SkeletonClassroomView() {
+  return (
+    <div style={{ minHeight: '100vh', padding: '24px clamp(16px, 2.5vw, 36px)', display: 'flex', flexDirection: 'column', gap: '20px', width: '100%', boxSizing: 'border-box' }}>
+      {/* Header bar */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+          <div className="skeleton-shimmer" style={{ width: 36, height: 36, borderRadius: '50%' }} />
+          <div className="skeleton-shimmer" style={{ width: 220, height: 28, borderRadius: 8 }} />
+        </div>
+        <div className="skeleton-shimmer" style={{ width: 40, height: 40, borderRadius: '50%' }} />
+      </div>
+
+      {/* Hero Banner */}
+      <div className="skeleton-shimmer" style={{ width: '100%', height: 160, borderRadius: 24 }} />
+
+      {/* Tabs */}
+      <div style={{ display: 'flex', gap: '12px', borderBottom: '1px solid rgba(125, 125, 125, 0.15)', paddingBottom: '12px' }}>
+        <div className="skeleton-shimmer" style={{ width: 90, height: 36, borderRadius: 20 }} />
+        <div className="skeleton-shimmer" style={{ width: 100, height: 36, borderRadius: 20 }} />
+        <div className="skeleton-shimmer" style={{ width: 95, height: 36, borderRadius: 20 }} />
+      </div>
+
+      {/* Content items */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', marginTop: '8px' }}>
+        <Skeleton.AssignmentRow />
+        <Skeleton.AssignmentRow />
+        <Skeleton.AssignmentRow />
+        <Skeleton.AssignmentRow />
+      </div>
+    </div>
+  );
+};
+
+// Full Student / Sandbox Workspace Route Skeleton
+Skeleton.Workspace = function SkeletonWorkspace() {
+  return (
+    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', width: '100%' }}>
+      {/* Workspace Header */}
+      <div style={{
+        height: 56,
+        padding: '0 20px',
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        borderBottom: '1px solid rgba(125, 125, 125, 0.2)',
+        boxSizing: 'border-box'
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+          <div className="skeleton-shimmer" style={{ width: 32, height: 32, borderRadius: 8 }} />
+          <div className="skeleton-shimmer" style={{ width: 180, height: 20, borderRadius: 6 }} />
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <div className="skeleton-shimmer" style={{ width: 90, height: 34, borderRadius: 18 }} />
+          <div className="skeleton-shimmer" style={{ width: 110, height: 34, borderRadius: 18 }} />
+        </div>
+      </div>
+
+      {/* Workspace Split Body */}
+      <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+        {/* Editor Pane (Left) */}
+        <div style={{ flex: 1.2, padding: '20px', display: 'flex', gap: '16px', borderRight: '1px solid rgba(125, 125, 125, 0.2)', boxSizing: 'border-box' }}>
+          {/* Line Numbers Gutter */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', width: 28 }}>
+            {Array.from({ length: 16 }).map((_, i) => (
+              <div key={i} className="skeleton-shimmer" style={{ width: 20, height: 14, borderRadius: 4 }} />
+            ))}
+          </div>
+          {/* Code Lines */}
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            <div className="skeleton-shimmer" style={{ width: '45%', height: 14, borderRadius: 4 }} />
+            <div className="skeleton-shimmer" style={{ width: '70%', height: 14, borderRadius: 4 }} />
+            <div className="skeleton-shimmer" style={{ width: '30%', height: 14, borderRadius: 4 }} />
+            <div className="skeleton-shimmer" style={{ width: '85%', height: 14, borderRadius: 4 }} />
+            <div className="skeleton-shimmer" style={{ width: '60%', height: 14, borderRadius: 4 }} />
+            <div className="skeleton-shimmer" style={{ width: '50%', height: 14, borderRadius: 4 }} />
+            <div className="skeleton-shimmer" style={{ width: '75%', height: 14, borderRadius: 4 }} />
+            <div className="skeleton-shimmer" style={{ width: '40%', height: 14, borderRadius: 4 }} />
+            <div className="skeleton-shimmer" style={{ width: '65%', height: 14, borderRadius: 4 }} />
+          </div>
+        </div>
+
+        {/* Panel Pane (Right) */}
+        <div style={{ flex: 1, padding: '20px', display: 'flex', flexDirection: 'column', gap: '16px', boxSizing: 'border-box' }}>
+          <div style={{ display: 'flex', gap: '10px' }}>
+            <div className="skeleton-shimmer" style={{ width: 100, height: 32, borderRadius: 16 }} />
+            <div className="skeleton-shimmer" style={{ width: 80, height: 32, borderRadius: 16 }} />
+          </div>
+          <div className="skeleton-shimmer" style={{ width: '100%', flex: 1, borderRadius: 16 }} />
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// Full Teacher Dashboard Route Skeleton
+Skeleton.TeacherDashboard = function SkeletonTeacherDashboard() {
+  return (
+    <div style={{ minHeight: '100vh', padding: '32px clamp(20px, 3vw, 48px)', maxWidth: '1600px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '28px', width: '100%', boxSizing: 'border-box' }}>
+      {/* Header bar */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+          <div className="skeleton-shimmer" style={{ width: 44, height: 44, borderRadius: 12 }} />
+          <div className="skeleton-shimmer" style={{ width: 160, height: 26, borderRadius: 8 }} />
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+          <div className="skeleton-shimmer" style={{ width: 130, height: 40, borderRadius: 20 }} />
+          <div className="skeleton-shimmer" style={{ width: 40, height: 40, borderRadius: '50%' }} />
+        </div>
+      </div>
+
+      {/* Section Header */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div className="skeleton-shimmer" style={{ width: 160, height: 28, borderRadius: 8 }} />
+        <div className="skeleton-shimmer" style={{ width: 220, height: 36, borderRadius: 20 }} />
+      </div>
+
+      {/* Classrooms Grid */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '24px' }}>
+        <Skeleton.Card />
+        <Skeleton.Card />
+        <Skeleton.Card />
+        <Skeleton.Card />
+      </div>
+    </div>
+  );
+};
+
+// Full Teacher Classwork Route Skeleton
+Skeleton.TeacherClasswork = function SkeletonTeacherClasswork() {
+  return (
+    <div style={{ minHeight: '100vh', padding: '24px clamp(16px, 2.5vw, 36px)', display: 'flex', flexDirection: 'column', gap: '24px', width: '100%', boxSizing: 'border-box' }}>
+      {/* Top Bar */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+          <div className="skeleton-shimmer" style={{ width: 36, height: 36, borderRadius: '50%' }} />
+          <div className="skeleton-shimmer" style={{ width: 240, height: 28, borderRadius: 8 }} />
+        </div>
+        <div style={{ display: 'flex', gap: '12px' }}>
+          <div className="skeleton-shimmer" style={{ width: 120, height: 38, borderRadius: 20 }} />
+          <div className="skeleton-shimmer" style={{ width: 38, height: 38, borderRadius: '50%' }} />
+        </div>
+      </div>
+
+      {/* Tabs Row */}
+      <div style={{ display: 'flex', gap: '10px', borderBottom: '1px solid rgba(125, 125, 125, 0.15)', paddingBottom: '12px' }}>
+        <div className="skeleton-shimmer" style={{ width: 80, height: 34, borderRadius: 20 }} />
+        <div className="skeleton-shimmer" style={{ width: 95, height: 34, borderRadius: 20 }} />
+        <div className="skeleton-shimmer" style={{ width: 90, height: 34, borderRadius: 20 }} />
+        <div className="skeleton-shimmer" style={{ width: 75, height: 34, borderRadius: 20 }} />
+        <div className="skeleton-shimmer" style={{ width: 85, height: 34, borderRadius: 20 }} />
+      </div>
+
+      {/* Feed / Items */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+        <Skeleton.AssignmentRow />
+        <Skeleton.AssignmentRow />
+        <Skeleton.AssignmentRow />
+        <Skeleton.AssignmentRow />
+      </div>
+    </div>
+  );
+};
+
+// Full Teacher Monitoring / Proctoring / Playback Route Skeleton
+Skeleton.TeacherMonitoring = function SkeletonTeacherMonitoring() {
+  return (
+    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', width: '100%' }}>
+      {/* Top Header */}
+      <div style={{ height: 60, padding: '0 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid rgba(125, 125, 125, 0.2)', boxSizing: 'border-box' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+          <div className="skeleton-shimmer" style={{ width: 32, height: 32, borderRadius: 8 }} />
+          <div className="skeleton-shimmer" style={{ width: 200, height: 22, borderRadius: 6 }} />
+        </div>
+        <div style={{ display: 'flex', gap: '12px' }}>
+          <div className="skeleton-shimmer" style={{ width: 110, height: 36, borderRadius: 18 }} />
+          <div className="skeleton-shimmer" style={{ width: 90, height: 36, borderRadius: 18 }} />
+        </div>
+      </div>
+
+      {/* Streams Grid */}
+      <div style={{ flex: 1, padding: '24px', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: '20px', boxSizing: 'border-box' }}>
+        {Array.from({ length: 4 }).map((_, i) => (
+          <div key={i} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            <div className="skeleton-shimmer" style={{ width: '100%', height: 220, borderRadius: 16 }} />
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div className="skeleton-shimmer" style={{ width: 120, height: 16, borderRadius: 6 }} />
+              <div className="skeleton-shimmer" style={{ width: 60, height: 20, borderRadius: 10 }} />
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
+
+// Full Admin Dashboard Route Skeleton
+Skeleton.AdminDashboard = function SkeletonAdminDashboard() {
+  return (
+    <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', width: '100%' }}>
+      {/* Admin Top Header */}
+      <div style={{ height: 64, padding: '0 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid rgba(125, 125, 125, 0.2)', boxSizing: 'border-box' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+          <div className="skeleton-shimmer" style={{ width: 36, height: 36, borderRadius: 10 }} />
+          <div className="skeleton-shimmer" style={{ width: 130, height: 22, borderRadius: 6 }} />
+        </div>
+        <div className="skeleton-shimmer" style={{ width: 320, height: 38, borderRadius: 20 }} />
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <div className="skeleton-shimmer" style={{ width: 36, height: 36, borderRadius: '50%' }} />
+          <div className="skeleton-shimmer" style={{ width: 110, height: 36, borderRadius: 18 }} />
+        </div>
+      </div>
+
+      <div style={{ flex: 1, display: 'flex' }}>
+        {/* Left Sidebar */}
+        <div style={{ width: 220, padding: '24px 16px', display: 'flex', flexDirection: 'column', gap: '12px', borderRight: '1px solid rgba(125, 125, 125, 0.2)', boxSizing: 'border-box' }}>
+          <div className="skeleton-shimmer" style={{ width: '100%', height: 42, borderRadius: 12 }} />
+          <div className="skeleton-shimmer" style={{ width: '100%', height: 42, borderRadius: 12 }} />
+          <div className="skeleton-shimmer" style={{ width: '100%', height: 42, borderRadius: 12 }} />
+          <div className="skeleton-shimmer" style={{ width: '100%', height: 42, borderRadius: 12 }} />
+          <div className="skeleton-shimmer" style={{ width: '100%', height: 42, borderRadius: 12 }} />
+        </div>
+
+        {/* Main Content Pane */}
+        <div style={{ flex: 1, padding: '28px 36px', display: 'flex', flexDirection: 'column', gap: '24px', overflowY: 'auto', boxSizing: 'border-box' }}>
+          {/* Stats 4-Card Grid */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '20px' }}>
+            {Array.from({ length: 4 }).map((_, i) => (
+              <div key={i} className="skeleton-shimmer" style={{ height: 100, borderRadius: 16 }} />
+            ))}
+          </div>
+
+          {/* Table Controls */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '8px' }}>
+            <div className="skeleton-shimmer" style={{ width: 280, height: 40, borderRadius: 20 }} />
+            <div style={{ display: 'flex', gap: '12px' }}>
+              <div className="skeleton-shimmer" style={{ width: 110, height: 40, borderRadius: 20 }} />
+              <div className="skeleton-shimmer" style={{ width: 110, height: 40, borderRadius: 20 }} />
+            </div>
+          </div>
+
+          {/* Table Rows */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            {Array.from({ length: 5 }).map((_, i) => (
+              <Skeleton.Row key={i} />
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 export default Skeleton;

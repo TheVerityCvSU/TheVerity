@@ -17,6 +17,7 @@ export default function StudentViewInstructionSidebar({
   assignment,
   setPreviewImage,
   setPreviewVideo,
+  setPreviewIframe,
   ...props
 }) {
   const isInstructionCollapsed = props.isInstructionCollapsed ?? layout.isInstructionCollapsed;
@@ -178,21 +179,24 @@ export default function StudentViewInstructionSidebar({
             </p>
           )}
 
-          {assignment?.attachments?.filter((att) => att.type !== 'link').length > 0 && (
+          {assignment?.attachments?.length > 0 && (
             <div style={styles.attachmentList}>
-              {assignment.attachments
-                .filter((att) => att.type !== 'link')
-                .map((att, i) => (
-                  <AttachmentCard
-                    key={i}
-                    att={att}
-                    isDark={isDark}
-                    onClick={(clickedAtt) => {
-                      if (clickedAtt.type === 'image') setPreviewImage(clickedAtt);
-                      else if (clickedAtt.type === 'video') setPreviewVideo(clickedAtt);
-                    }}
-                  />
-                ))}
+              {assignment.attachments.map((att, i) => (
+                <AttachmentCard
+                  key={i}
+                  att={att}
+                  isDark={isDark}
+                  onClick={(clickedAtt) => {
+                    if (!clickedAtt) return;
+                    const ext = (clickedAtt.url || clickedAtt.name || '').split('?')[0].split('.').pop().toLowerCase();
+                    const isImg = clickedAtt.type === 'image' || ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'avif'].includes(ext);
+                    const isVid = clickedAtt.type === 'video' || ['mp4', 'webm', 'ogg', 'mov', 'm4v'].includes(ext);
+                    if (isImg && setPreviewImage) setPreviewImage(clickedAtt);
+                    else if (isVid && setPreviewVideo) setPreviewVideo(clickedAtt);
+                    else if (setPreviewIframe) setPreviewIframe(clickedAtt);
+                  }}
+                />
+              ))}
             </div>
           )}
         </div>

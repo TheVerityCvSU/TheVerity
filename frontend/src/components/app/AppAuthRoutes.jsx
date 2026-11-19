@@ -1,11 +1,13 @@
-import React from 'react';
+import React, { Suspense, lazy } from 'react';
 import ProtectedRoute from '../ProtectedRoute';
-import AdminDashboard from '../../pages/AdminDashboard';
-import AdminLogin from '../../pages/admin/AdminLogin';
-import Login from '../../pages/Login';
-import Register from '../../pages/Register';
-import NotFound from '../../pages/NotFound';
+import Skeleton from '../Skeleton';
 import { notifyUserListeners } from '../../hooks/useCurrentUser';
+
+const AdminDashboard = lazy(() => import('../../pages/AdminDashboard'));
+const AdminLogin = lazy(() => import('../../pages/admin/AdminLogin'));
+const Login = lazy(() => import('../../pages/Login'));
+const Register = lazy(() => import('../../pages/Register'));
+const NotFound = lazy(() => import('../../pages/NotFound'));
 
 export default function AppAuthRoutes({
   isAdminApp,
@@ -47,53 +49,73 @@ export default function AppAuthRoutes({
     if (currentScreen === 'admin_dashboard' && currentUser?.role === 'Admin') {
       return (
         <ProtectedRoute currentUser={currentUser} setCurrentScreen={setCurrentScreen} requiredRole="Admin">
-          <AdminDashboard currentUser={currentUser} onLogout={handleLogout} socket={socket} />
+          <Suspense fallback={<Skeleton.AdminDashboard />}>
+            <AdminDashboard currentUser={currentUser} onLogout={handleLogout} socket={socket} />
+          </Suspense>
         </ProtectedRoute>
       );
     }
-    return <AdminLogin onLogin={handleAdminLoginSuccess} />;
+    return (
+      <Suspense fallback={<Skeleton.AuthForm />}>
+        <AdminLogin onLogin={handleAdminLoginSuccess} />
+      </Suspense>
+    );
   }
 
   return (
     <>
       {currentScreen === 'admin_login' && (
-        <AdminLogin onLogin={handleAdminLoginSuccess} />
+        <Suspense fallback={<Skeleton.AuthForm />}>
+          <AdminLogin onLogin={handleAdminLoginSuccess} />
+        </Suspense>
       )}
 
       {currentScreen === 'login' && (
-        <Login
-          onLogin={handleUserLogin}
-          onGoToRegister={() => setCurrentScreen('register')}
-        />
+        <Suspense fallback={<Skeleton.AuthForm />}>
+          <Login
+            onLogin={handleUserLogin}
+            onGoToRegister={() => setCurrentScreen('register')}
+          />
+        </Suspense>
       )}
 
       {currentScreen === 'register' && (
-        <Register
-          onBackToLogin={() => setCurrentScreen('login')}
-          onLogin={handleUserLogin}
-        />
+        <Suspense fallback={<Skeleton.AuthForm />}>
+          <Register
+            onBackToLogin={() => setCurrentScreen('login')}
+            onLogin={handleUserLogin}
+          />
+        </Suspense>
       )}
 
       {currentScreen === 'admin_dashboard' && (
         <ProtectedRoute currentUser={currentUser} setCurrentScreen={setCurrentScreen}>
-          <AdminDashboard currentUser={currentUser} onLogout={handleLogout} socket={socket} />
+          <Suspense fallback={<Skeleton.AdminDashboard />}>
+            <AdminDashboard currentUser={currentUser} onLogout={handleLogout} socket={socket} />
+          </Suspense>
         </ProtectedRoute>
       )}
 
       {/* Fallback for unknown screen */}
       {currentUser && !['student_dashboard', 'classroom_view', 'student_activity_detail', 'student_workspace', 'sandbox_workspace', 'admin_dashboard', 'teacher_dashboard', 'teacher_classwork', 'teacher_grading', 'teacher_proctoring', 'teacher_live_monitoring', 'teacher_playback'].includes(currentScreen) && (
-        <NotFound />
+        <Suspense fallback={<Skeleton.AuthForm />}>
+          <NotFound />
+        </Suspense>
       )}
 
       {/* Login fallback to avoid white screen */}
       {!currentUser && !['login', 'register', 'admin_login'].includes(currentScreen) && (
         (typeof window !== 'undefined' && (window.location.pathname.startsWith('/admin') || Boolean(window.IS_ADMIN_APP))) ? (
-          <AdminLogin onLogin={handleAdminLoginSuccess} />
+          <Suspense fallback={<Skeleton.AuthForm />}>
+            <AdminLogin onLogin={handleAdminLoginSuccess} />
+          </Suspense>
         ) : (
-          <Login
-            onLogin={handleUserLogin}
-            onGoToRegister={() => setCurrentScreen('register')}
-          />
+          <Suspense fallback={<Skeleton.AuthForm />}>
+            <Login
+              onLogin={handleUserLogin}
+              onGoToRegister={() => setCurrentScreen('register')}
+            />
+          </Suspense>
         )
       )}
     </>
