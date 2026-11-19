@@ -1,8 +1,10 @@
-import { apiFetch } from './api';
+import { getActiveUploadBaseUrl, extractUploadPath } from '../utils/mediaUrl';
+import { getLocalApiUrl } from './server/serverUrls';
 
 export async function uploadClassworkFile(file, type) {
   const filename = file.name;
   const cleanFilename = encodeURIComponent(filename);
+  const uploadBase = getActiveUploadBaseUrl() || getLocalApiUrl();
 
   // 1. Direct binary streaming upload
   try {
@@ -11,13 +13,17 @@ export async function uploadClassworkFile(file, type) {
     if (token) headers['Authorization'] = `Bearer ${token}`;
 
     const res = await fetch(
-      `${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/upload-raw?filename=${cleanFilename}`,
+      `${uploadBase}/upload-raw?filename=${cleanFilename}`,
       { method: 'POST', headers, body: file }
     );
 
     if (res.ok) {
       const data = await res.json();
-      if (data.url) return { type, name: filename, url: data.url };
+      if (data.url || data.path) {
+        const canonicalPath = data.path || extractUploadPath(data.url) || data.url;
+        const canonicalThumb = data.thumbnailPath || (data.thumbnailUrl ? extractUploadPath(data.thumbnailUrl) : null) || data.thumbnailUrl;
+        return { type, name: filename, url: canonicalPath, thumbnailUrl: canonicalThumb };
+      }
     }
   } catch (_) {}
 
@@ -30,15 +36,23 @@ export async function uploadClassworkFile(file, type) {
       reader.readAsDataURL(file);
     });
 
-    const res = await apiFetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/upload`, {
+    const token = localStorage.getItem('verity_token') || localStorage.getItem('token');
+    const headers = { 'Content-Type': 'application/json' };
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+
+    const res = await fetch(`${uploadBase}/upload`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({ filename, dataUrl })
     });
 
     if (res.ok) {
       const data = await res.json();
-      if (data.url) return { type, name: filename, url: data.url };
+      if (data.url || data.path) {
+        const canonicalPath = data.path || extractUploadPath(data.url) || data.url;
+        const canonicalThumb = data.thumbnailPath || (data.thumbnailUrl ? extractUploadPath(data.thumbnailUrl) : null) || data.thumbnailUrl;
+        return { type, name: filename, url: canonicalPath, thumbnailUrl: canonicalThumb };
+      }
     }
   } catch (_) {}
 

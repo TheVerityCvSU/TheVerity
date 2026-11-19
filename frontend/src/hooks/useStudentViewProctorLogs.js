@@ -31,7 +31,11 @@ export function useStudentViewProctorLogs({
         if (saved) {
           const parsed = JSON.parse(saved);
           if (Array.isArray(parsed) && parsed.length > 0) {
-            return parsed.filter((l) => !l.assignmentId || String(l.assignmentId) === aId);
+            return parsed.filter((l) => {
+              const matchAssignment = !l.assignmentId || String(l.assignmentId) === aId;
+              const act = `${l?.action || ''} ${l?.message || ''}`.toLowerCase();
+              return matchAssignment && !act.includes('cognitive pause') && !act.includes('inactivity');
+            });
           }
         }
       }
@@ -44,9 +48,10 @@ export function useStudentViewProctorLogs({
   const addProctorLog = useCallback(
     (message, color = '#ef4444', customDesc = null, isCrash = false) => {
       if (submitted) return;
+      const actionStr = (message || '').toLowerCase();
+      if (actionStr.includes('cognitive pause') || actionStr.includes('inactivity')) return;
       const nowMs = Date.now();
       const timeString = new Date(nowMs).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true });
-      const actionStr = (message || '').toLowerCase();
       const detectedCrash = isCrash || actionStr.includes('crash');
       const logColor = detectedCrash ? '#dc2626' : color;
       const actionLabel = detectedCrash ? 'System Crash' : message;

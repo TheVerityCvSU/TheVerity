@@ -138,6 +138,7 @@ export default function StudentActivityDetail({
         onCloseUnsubmit={() => setShowUnsubmitModal(false)}
         onConfirmSubmit={handleConfirmSubmit}
         onConfirmUnsubmit={handleConfirmUnsubmit}
+        activityTitle={assignment?.title || 'this activity'}
       />
 
       {/* ═══ STRICT LOCKDOWN WARNING MODAL ═══ */}

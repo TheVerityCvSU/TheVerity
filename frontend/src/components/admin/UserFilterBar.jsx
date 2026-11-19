@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Search, Filter, Plus } from 'lucide-react';
+import { Search, Filter } from 'lucide-react';
 
 export default function UserFilterBar({
   query,
@@ -9,7 +9,6 @@ export default function UserFilterBar({
   setRoleFilter,
   statusFilter,
   setStatusFilter,
-  onOpenAdd,
   isDark,
   styles
 }) {
@@ -184,16 +183,6 @@ export default function UserFilterBar({
           )}
         </AnimatePresence>
       </div>
-
-      <motion.button
-        whileHover={{ scale: 1.05 }}
-        whileTap={{ scale: 0.95 }}
-        onClick={onOpenAdd}
-        style={styles.addBlueBtn}
-        className="btn-anim"
-      >
-        <Plus size={15} /><span>Add Single User</span>
-      </motion.button>
     </div>
   );
 }

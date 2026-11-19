@@ -880,3 +880,13 @@ select:focus-visible,
     box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
   }
 }
+
+/* Responsive video in rich instruction content */
+.rich-instruction-content video {
+  max-width: 100% !important;
+  height: auto !important;
+  border-radius: 8px;
+  display: block;
+  margin: 10px 0;
+  background-color: #000;
+}

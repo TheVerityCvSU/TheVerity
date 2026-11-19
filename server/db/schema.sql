@@ -19,7 +19,8 @@ CREATE TABLE IF NOT EXISTS classrooms (
     subject VARCHAR(255),
     instructor VARCHAR(255),
     instructor_email VARCHAR(255),
-    theme TEXT
+    theme TEXT,
+    archived INTEGER DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS enrollments (

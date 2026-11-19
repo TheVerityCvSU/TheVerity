@@ -9,7 +9,7 @@ export default function SecurityControlPanel({
   styles
 }) {
   return (
-    <div style={{ width: '340px', flexShrink: 0, display: 'flex', flexDirection: 'column', gap: '14px' }}>
+    <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: '14px' }}>
       <PendingInstructorApproval users={users} onUpdateUser={onUpdateUser} />
 
       <div style={styles.sidePanelCard}>

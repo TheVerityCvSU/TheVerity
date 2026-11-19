@@ -1,5 +1,6 @@
   import React, { useState, useRef, useMemo, useEffect } from 'react';
 import { Film } from 'lucide-react';
+import { getVideoThumbnailUrl, resolveMediaUrl } from '../utils/mediaUrl';
 
 /**
  * VideoThumbnailBackground
@@ -16,22 +17,19 @@ export default function VideoThumbnailBackground({
   const [mediaLoaded, setMediaLoaded] = useState(false);
   const [loadError, setLoadError] = useState(false);
   const videoRef = useRef(null);
+  const resolvedSrc = useMemo(() => resolveMediaUrl(src), [src]);
 
   // Check if src is YouTube
   const youtubeId = useMemo(() => {
-    if (!src || typeof src !== 'string') return null;
-    const match = src.match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=))([\w-]{11})/);
+    if (!resolvedSrc || typeof resolvedSrc !== 'string') return null;
+    const match = resolvedSrc.match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=))([\w-]{11})/);
     return match ? match[1] : null;
-  }, [src]);
+  }, [resolvedSrc]);
 
   // Derive companion static thumbnail URL (e.g. 28KB JPEG generated on server)
   const inferredThumbUrl = useMemo(() => {
-    if (!src || typeof src !== 'string') return null;
-    if (src.includes('/uploads/')) {
-      return src.replace(/\.[^/.]+$/, '') + '_thumb.jpg';
-    }
-    return null;
-  }, [src]);
+    return getVideoThumbnailUrl(resolvedSrc);
+  }, [resolvedSrc]);
 
   const [imageThumbError, setImageThumbError] = useState(false);
 
@@ -62,7 +60,7 @@ export default function VideoThumbnailBackground({
     setMediaLoaded(false);
     setLoadError(false);
     setImageThumbError(false);
-  }, [src]);
+  }, [resolvedSrc]);
 
   const activeThumbImage = youtubeId ? `https://img.youtube.com/vi/${youtubeId}/hqdefault.jpg` : (!imageThumbError ? inferredThumbUrl : null);
 
@@ -125,11 +123,11 @@ export default function VideoThumbnailBackground({
             transition: 'opacity 0.35s ease'
           }}
         />
-      ) : src && !loadError ? (
-        /* HTML5 Video Frame as Dynamic Fallback Thumbnail */
+      ) : resolvedSrc && !loadError ? (
+        /* HTML5 Video Frame as Dynamic Fallback Thumbnail (only when static _thumb.jpg is missing) */
         <video
           ref={videoRef}
-          src={`${src}#t=1`}
+          src={`${resolvedSrc}#t=1`}
           muted
           playsInline
           preload="metadata"
@@ -152,22 +150,6 @@ export default function VideoThumbnailBackground({
           }}
         />
       ) : null}
-
-      {/* Offscreen metadata probe to detect true video duration even when using lightweight static image thumbnail */}
-      {onDurationLoaded && src && activeThumbImage && (
-        <video
-          src={`${src}#t=1`}
-          muted
-          playsInline
-          preload="metadata"
-          onLoadedMetadata={(e) => {
-            if (e.target.duration && !isNaN(e.target.duration) && e.target.duration > 0) {
-              onDurationLoaded(e.target.duration);
-            }
-          }}
-          style={{ display: 'none' }}
-        />
-      )}
 
       {/* Modern gradient scrim / overlay to keep badges and play button ultra-readable */}
       <div

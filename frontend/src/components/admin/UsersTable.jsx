@@ -36,26 +36,28 @@ export default function UsersTable({
         borderRadius: '9999px',
         padding: '12px 20px',
         display: 'grid',
-        gridTemplateColumns: '40px 1.5fr 1.5fr 1fr 1fr 1.2fr 1fr',
+        gridTemplateColumns: '36px minmax(130px, 1.4fr) minmax(160px, 1.6fr) minmax(95px, 0.9fr) minmax(115px, 1fr) minmax(170px, 1.5fr) minmax(95px, 0.8fr)',
+        columnGap: '18px',
         alignItems: 'center',
         fontWeight: '700',
         color: isDark ? '#f1f5f9' : '#0f172a',
         fontSize: '0.85rem',
-        marginBottom: '8px'
+        marginBottom: '8px',
+        minWidth: '940px'
       }}>
-        <div>
+        <div style={{ display: 'flex', alignItems: 'center' }}>
           <input
             type="checkbox"
             checked={isAllChecked}
             onChange={handleToggleAll}
           />
         </div>
-        <div>Name</div>
-        <div>Email</div>
-        <div>Role</div>
-        <div>Status</div>
-        <div>Last Login</div>
-        <div style={{ textAlign: 'right' }}>Actions</div>
+        <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '6px' }}>Name</div>
+        <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '6px' }}>Email</div>
+        <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>Role</div>
+        <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>Status</div>
+        <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>Last Login</div>
+        <div style={{ textAlign: 'right', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>Actions</div>
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
@@ -73,30 +75,72 @@ export default function UsersTable({
               style={{
                 padding: '10px 20px',
                 display: 'grid',
-                gridTemplateColumns: '40px 1.5fr 1.5fr 1fr 1fr 1.2fr 1fr',
+                gridTemplateColumns: '36px minmax(130px, 1.4fr) minmax(160px, 1.6fr) minmax(95px, 0.9fr) minmax(115px, 1fr) minmax(170px, 1.5fr) minmax(95px, 0.8fr)',
+                columnGap: '18px',
                 alignItems: 'center',
-                fontSize: '0.85rem'
+                fontSize: '0.85rem',
+                minWidth: '940px'
               }}
             >
-              <div>
+              <div style={{ display: 'flex', alignItems: 'center' }}>
                 <input
                   type="checkbox"
                   checked={safeSelected.includes(u.email)}
                   onChange={() => handleToggleSel && handleToggleSel(u.email)}
                 />
               </div>
-              <div style={{ fontWeight: '600', color: isDark ? '#f1f5f9' : '#1e293b' }}>{u.name}</div>
-              <div style={{ color: isDark ? '#94a3b8' : '#64748b', fontSize: '0.8rem', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              <div 
+                style={{ 
+                  fontWeight: '600', 
+                  color: isDark ? '#f1f5f9' : '#1e293b', 
+                  overflow: 'hidden', 
+                  textOverflow: 'ellipsis', 
+                  whiteSpace: 'nowrap',
+                  minWidth: 0,
+                  paddingRight: '6px'
+                }}
+                title={u.name}
+              >
+                {u.name}
+              </div>
+              <div 
+                style={{ 
+                  color: isDark ? '#94a3b8' : '#64748b', 
+                  fontSize: '0.8rem', 
+                  overflow: 'hidden', 
+                  textOverflow: 'ellipsis', 
+                  whiteSpace: 'nowrap',
+                  minWidth: 0,
+                  paddingRight: '6px'
+                }}
+                title={u.email}
+              >
                 {u.email}
               </div>
-              <div><span style={styles.rolePill}>{u.role}</span></div>
-              <div>
+              <div style={{ minWidth: 0, display: 'flex', alignItems: 'center' }}>
+                <span style={styles.rolePill}>{u.role}</span>
+              </div>
+              <div style={{ minWidth: 0, display: 'flex', alignItems: 'center' }}>
                 <span style={getUserStatus(u) === 'Active' ? styles.statusGreenPill : styles.statusRedPill}>
                   {getUserStatus(u)}
                 </span>
               </div>
-              <div style={{ fontSize: '0.78rem', color: isDark ? '#94a3b8' : '#64748b' }}>{formatDate(u.lastLogin)}</div>
-              <div style={{ textAlign: 'right', display: 'flex', gap: '8px', justifyContent: 'flex-end', alignItems: 'center' }}>
+              <div 
+                style={{ 
+                  fontSize: '0.78rem', 
+                  color: isDark ? '#94a3b8' : '#64748b',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                  minWidth: 0,
+                  display: 'flex',
+                  alignItems: 'center'
+                }}
+                title={formatDate(u.lastLogin)}
+              >
+                {formatDate(u.lastLogin)}
+              </div>
+              <div style={{ textAlign: 'right', display: 'flex', gap: '8px', justifyContent: 'flex-end', alignItems: 'center', minWidth: 0 }}>
                 <motion.button
                   whileHover={{ opacity: 0.7, scale: 1.05 }}
                   whileTap={{ scale: 0.95 }}

@@ -129,6 +129,27 @@ export default function AdminLayout({
     finalSetShowNotifications(false);
   };
 
+  const handleNotificationClick = (n) => {
+    markNotificationsAsRead([n]);
+    finalSetNotifications(prev => prev.filter(item => item.id !== n.id));
+    finalSetShowNotifications(false);
+
+    const nid = (n.id || '').toLowerCase();
+    const ntext = `${n.title || ''} ${n.text || ''}`.toLowerCase();
+
+    if (nid.includes('instructor') || ntext.includes('instructor') || nid.includes('user') || ntext.includes('registration')) {
+      finalSetActiveTab('users');
+    } else if (nid.includes('security') || nid.includes('malicious') || ntext.includes('security') || ntext.includes('malicious') || ntext.includes('flag')) {
+      finalSetActiveTab('security');
+    } else if (nid.includes('maintenance') || ntext.includes('maintenance')) {
+      finalSetActiveTab('settings');
+    } else if (nid.includes('class') || ntext.includes('class')) {
+      finalSetActiveTab('classes');
+    } else {
+      finalSetActiveTab('dashboard');
+    }
+  };
+
   return (
     <div style={{
       display: 'flex',
@@ -150,6 +171,7 @@ export default function AdminLayout({
         onToggleNotifications={() => finalSetShowNotifications(!currentShowNotifications)}
         currentNotifications={currentNotifications}
         onMarkAllNotificationsRead={handleMarkAllRead}
+        onNotificationClick={handleNotificationClick}
         currentUser={currentUser}
         onLogout={onLogout}
         layoutStyles={layoutStyles}

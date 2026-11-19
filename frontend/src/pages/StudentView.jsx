@@ -578,6 +578,7 @@ export default function StudentView({
           showUnsubmitModal={submissionHook.showUnsubmitModal}
           setShowUnsubmitModal={submissionHook.setShowUnsubmitModal}
           handleConfirmUnsubmit={submissionHook.handleConfirmUnsubmit}
+          activityTitle={currentAssignment?.title || assignment?.title || 'this activity'}
         />
 
         <StudentViewSecurityModals

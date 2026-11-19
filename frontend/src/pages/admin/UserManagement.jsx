@@ -1,4 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { Plus, PanelRightClose, PanelRightOpen } from 'lucide-react';
 import { useDarkMode } from '../../hooks/useDarkMode';
 import {
   fetchPasswordPolicies,
@@ -35,6 +37,86 @@ export default function UserManagementTab({ users = [], loading = false, onDelet
   const [showBulkPassword, setShowBulkPassword] = useState(false);
   const [showAddPassword, setShowAddPassword] = useState(false);
   const [showEditPassword, setShowEditPassword] = useState(false);
+
+  const [showSidePanel, setShowSidePanel] = useState(() => {
+    const saved = localStorage.getItem('verity_admin_show_side_panel');
+    return saved !== null ? saved === 'true' : true;
+  });
+  const [sidePanelWidth, setSidePanelWidth] = useState(() => {
+    const saved = localStorage.getItem('verity_admin_side_panel_width');
+    if (saved) {
+      const parsed = parseInt(saved, 10);
+      if (!isNaN(parsed) && parsed >= 260 && parsed <= 550) return parsed;
+    }
+    return 340;
+  });
+  const [isDragging, setIsDragging] = useState(false);
+  const containerRef = useRef(null);
+  const sidePanelRef = useRef(null);
+  const startXRef = useRef(0);
+  const startSideWidthRef = useRef(340);
+  const currentWidthRef = useRef(340);
+  const containerWidthRef = useRef(1200);
+  const rafRef = useRef(null);
+
+  useEffect(() => {
+    localStorage.setItem('verity_admin_show_side_panel', String(showSidePanel));
+  }, [showSidePanel]);
+
+  const handleStartResize = (e) => {
+    e.preventDefault();
+    if (!containerRef.current) return;
+    startXRef.current = e.clientX;
+    startSideWidthRef.current = sidePanelWidth;
+    currentWidthRef.current = sidePanelWidth;
+    containerWidthRef.current = containerRef.current.getBoundingClientRect().width;
+    setIsDragging(true);
+  };
+
+  useEffect(() => {
+    if (!isDragging) return;
+
+    const handleMouseMove = (e) => {
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+
+      rafRef.current = requestAnimationFrame(() => {
+        const deltaX = e.clientX - startXRef.current;
+        const targetSideWidth = startSideWidthRef.current - deltaX;
+
+        const minSide = 260;
+        const maxSide = Math.max(minSide, Math.min(520, containerWidthRef.current - 450));
+        const clamped = Math.max(minSide, Math.min(targetSideWidth, maxSide));
+        currentWidthRef.current = clamped;
+
+        if (sidePanelRef.current) {
+          sidePanelRef.current.style.width = `${clamped}px`;
+        }
+      });
+    };
+
+    const handleMouseUp = () => {
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      setIsDragging(false);
+      const finalWidth = currentWidthRef.current;
+      setSidePanelWidth(finalWidth);
+      try {
+        localStorage.setItem('verity_admin_side_panel_width', String(Math.round(finalWidth)));
+      } catch (_) {}
+    };
+
+    document.body.style.userSelect = 'none';
+    document.body.style.cursor = 'col-resize';
+    window.addEventListener('mousemove', handleMouseMove, { passive: true });
+    window.addEventListener('mouseup', handleMouseUp);
+
+    return () => {
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      document.body.style.userSelect = '';
+      document.body.style.cursor = '';
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isDragging]);
 
   const [viewingUser, setViewingUser] = useState(null);
   const [editingUser, setEditingUser] = useState(null);
@@ -239,10 +321,88 @@ export default function UserManagementTab({ users = [], loading = false, onDelet
 
   return (
     <div style={sh.pageWrap}>
-      <div style={{ display: 'flex', gap: '16px', flex: 1, minHeight: 0, alignItems: 'flex-start', flexWrap: 'wrap' }}>
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '16px', minWidth: '320px' }}>
+      <div 
+        ref={containerRef}
+        style={{ 
+          display: 'flex', 
+          gap: showSidePanel ? '14px' : '0px', 
+          flex: 1, 
+          minHeight: 0, 
+          alignItems: 'flex-start',
+          position: 'relative',
+          width: '100%',
+          maxWidth: '100%',
+          overflowX: 'hidden'
+        }}
+      >
+        {/* User List Dashboard (Takes remaining space smoothly without ever cutting off) */}
+        <div 
+          style={{ 
+            flex: 1,
+            minWidth: 0,
+            maxWidth: '100%',
+            display: 'flex', 
+            flexDirection: 'column', 
+            gap: '16px',
+            position: 'relative'
+          }}
+        >
           <div style={sh.mainCard}>
-            <h2 style={{ ...sh.cardTitle, marginBottom: '14px' }}>User List Dashboard</h2>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', flexWrap: 'wrap', gap: '10px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                <h2 style={{ ...sh.cardTitle, margin: 0 }}>User List Dashboard</h2>
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                <motion.button
+                  whileHover={{ scale: 1.05 }}
+                  whileTap={{ scale: 0.95 }}
+                  onClick={(e) => {
+                    const rect = e.currentTarget.getBoundingClientRect();
+                    setAddOrigin({ x: `${rect.left + rect.width / 2}px`, y: `${rect.top + rect.height / 2}px` });
+                    setAddError(null);
+                    setIsAddOpen(true);
+                  }}
+                  style={sh.addBlueBtn}
+                  className="btn-anim"
+                >
+                  <Plus size={15} /><span>Add Single User</span>
+                </motion.button>
+
+                <motion.button
+                  whileHover={{ scale: 1.08 }}
+                  whileTap={{ scale: 0.92 }}
+                  onClick={() => setShowSidePanel((prev) => !prev)}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    width: '38px',
+                    height: '38px',
+                    backgroundColor: showSidePanel 
+                      ? (isDark ? '#2a2a2a' : '#f1f5f9') 
+                      : (isDark ? '#1e3a5f' : '#eff6ff'),
+                    color: showSidePanel 
+                      ? (isDark ? '#cbd5e1' : '#475569') 
+                      : '#2563eb',
+                    border: showSidePanel 
+                      ? `1px solid ${isDark ? '#404040' : '#cbd5e1'}` 
+                      : '1.5px solid #2563eb',
+                    borderRadius: '50%',
+                    cursor: 'pointer',
+                    boxShadow: '0 2px 6px rgba(0,0,0,0.04)',
+                    padding: 0
+                  }}
+                  className="btn-anim"
+                  title={showSidePanel 
+                    ? "Hide Pending Instructor Approval & Security Permission Control" 
+                    : "Show Pending Instructor Approval & Security Permission Control"
+                  }
+                >
+                  {showSidePanel ? <PanelRightClose size={17} /> : <PanelRightOpen size={17} />}
+                </motion.button>
+              </div>
+            </div>
             {localMsg && (
               <div
                 style={{
@@ -271,12 +431,6 @@ export default function UserManagementTab({ users = [], loading = false, onDelet
               setStatusFilter={setStatusFilter}
               isDark={isDark}
               styles={sh}
-              onOpenAdd={(e) => {
-                const rect = e.currentTarget.getBoundingClientRect();
-                setAddOrigin({ x: `${rect.left + rect.width / 2}px`, y: `${rect.top + rect.height / 2}px` });
-                setAddError(null);
-                setIsAddOpen(true);
-              }}
               onBulkAction={handleBulkActionClick}
             />
 
@@ -297,14 +451,68 @@ export default function UserManagementTab({ users = [], loading = false, onDelet
           </div>
         </div>
 
-        <SecurityControlPanel
-          users={users}
-          onUpdateUser={onUpdateUser}
-          onBulkActionClick={handleBulkActionClick}
-          isDark={isDark}
-          styles={sh}
-          onShowSelectUsersPopup={onShowSelectUsersPopup}
-        />
+        {/* Resizable Divider Splitter (when side panel is shown) */}
+        {showSidePanel && (
+          <div
+            onMouseDown={handleStartResize}
+            onDoubleClick={() => setSidePanelWidth(340)}
+            style={{
+              width: '14px',
+              cursor: 'col-resize',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              alignSelf: 'stretch',
+              position: 'relative',
+              zIndex: 20,
+              userSelect: 'none',
+              padding: '0 2px',
+              flexShrink: 0
+            }}
+            title="Drag to resize User List Dashboard (Double-click to reset)"
+          >
+            <div
+              style={{
+                width: '4px',
+                height: '56px',
+                borderRadius: '9999px',
+                backgroundColor: isDragging ? '#007bff' : (isDark ? '#4b5563' : '#cbd5e1'),
+                transition: 'background-color 0.15s, transform 0.15s',
+                transform: isDragging ? 'scaleX(1.75)' : 'scaleX(1)'
+              }}
+            />
+          </div>
+        )}
+
+        {/* Side Panel: Pending Instructor Approval & Security Permission Control */}
+        <AnimatePresence>
+          {showSidePanel && (
+            <motion.div
+              initial={{ opacity: 0, x: 20, scale: 0.98 }}
+              animate={{ opacity: 1, x: 0, scale: 1 }}
+              exit={{ opacity: 0, x: 20, scale: 0.98 }}
+              transition={{ duration: 0.2 }}
+              style={{
+                width: `${sidePanelWidth}px`,
+                minWidth: '260px',
+                maxWidth: '520px',
+                flexShrink: 0,
+                display: 'flex',
+                flexDirection: 'column',
+                transition: isDragging ? 'none' : 'width 0.15s ease'
+              }}
+            >
+              <SecurityControlPanel
+                users={users}
+                onUpdateUser={onUpdateUser}
+                onBulkActionClick={handleBulkActionClick}
+                isDark={isDark}
+                styles={sh}
+                onShowSelectUsersPopup={onShowSelectUsersPopup}
+              />
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
 
       <BulkActionModal

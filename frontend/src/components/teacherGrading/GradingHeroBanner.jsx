@@ -1,6 +1,7 @@
 import React from 'react';
 import { ClipboardList, Award, Clock, ChevronUp, ChevronDown } from 'lucide-react';
 import AttachmentCard from '../AttachmentCard';
+import RichInstruction from '../RichInstruction';
 import { formatShortDate } from '../../utils/dateUtils';
 
 export default function GradingHeroBanner({
@@ -80,11 +81,9 @@ export default function GradingHeroBanner({
           <h4 style={styles.instructionsHeading}>Activity Instructions & Resources</h4>
 
           {assignment?.details || assignment?.instruction ? (
-            <div
+            <RichInstruction
+              html={assignment.details || assignment.instruction}
               style={styles.instructionsContent}
-              dangerouslySetInnerHTML={{
-                __html: assignment.details || assignment.instruction
-              }}
               onClick={onInstructionClick}
             />
           ) : (

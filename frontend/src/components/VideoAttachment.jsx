@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Maximize2, AlertCircle, Download, Film } from 'lucide-react';
+import { getVideoThumbnailUrl, resolveMediaUrl } from '../utils/mediaUrl';
 
 /**
  * VideoAttachment
@@ -11,7 +12,8 @@ export default function VideoAttachment({ att, onExpand, style = {} }) {
 
   if (!att) return null;
 
-  const url = att.url || '';
+  const url = resolveMediaUrl(att.url || '');
+  const posterUrl = getVideoThumbnailUrl(url);
   const name = att.name || 'Video Attachment';
 
   if (!url) {
@@ -33,9 +35,10 @@ export default function VideoAttachment({ att, onExpand, style = {} }) {
       <div style={{ position: 'relative', display: 'inline-block' }}>
         <video
           src={url}
+          poster={posterUrl || undefined}
           controls
           playsInline
-          preload="metadata"
+          preload="none"
           onError={() => setLoadError(true)}
           style={{
             ...defaultStyles.video,
@@ -82,6 +85,7 @@ const defaultStyles = {
   video: {
     width: '260px',
     maxWidth: '100%',
+    aspectRatio: '16 / 9', // Principle 4: Layout Shift (CLS)
     maxHeight: '160px',
     borderRadius: '8px',
     backgroundColor: '#000000',
@@ -96,9 +100,11 @@ const defaultStyles = {
     border: '1px solid rgba(255, 255, 255, 0.3)',
     borderRadius: '6px',
     color: '#FFFFFF',
-    padding: '5px',
+    minWidth: '44px', // Principle 10: 44px Touch Target
+    minHeight: '44px',
+    padding: '10px',
     cursor: 'pointer',
-    display: 'flex',
+    display: 'inline-flex',
     alignItems: 'center',
     justifyContent: 'center',
     backdropFilter: 'blur(4px)',

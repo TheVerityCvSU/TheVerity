@@ -1,5 +1,6 @@
 import React from 'react';
 import { X, Clock, Award } from 'lucide-react';
+import RichInstruction from '../RichInstruction';
 
 export default function ActivityDetailModal({ activity, onClose, isDark, styles }) {
   if (!activity) return null;
@@ -64,9 +65,9 @@ export default function ActivityDetailModal({ activity, onClose, isDark, styles 
               >
                 Instructions
               </div>
-              <div
+              <RichInstruction
                 style={styles.modalInstructionsBody}
-                dangerouslySetInnerHTML={{ __html: activity.details }}
+                html={activity.details}
               />
             </div>
           ) : null}

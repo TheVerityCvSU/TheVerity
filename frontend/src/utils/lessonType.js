@@ -32,8 +32,11 @@ export const getLessonType = (item) => {
 
   const hasLink = attachments.some((a) => {
     const t = String(a?.type || '').toLowerCase();
+    if (['document', 'file', 'pdf', 'doc', 'image', 'video', 'youtube'].includes(t)) {
+      return false;
+    }
     const u = String(a?.url || '').toLowerCase();
-    return t === 'link' || t === 'url' || /^https?:\/\//i.test(u);
+    return t === 'link' || t === 'url' || (/^https?:\/\//i.test(u) && !u.includes('/uploads/'));
   });
 
   const hasDoc = attachments.some((a) => {
