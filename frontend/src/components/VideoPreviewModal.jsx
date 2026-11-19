@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Download, AlertCircle, Video } from 'lucide-react';
+import { resolveMediaUrl } from '../utils/mediaUrl';
 
 /**
  * Helper to determine the best MIME type for a video URL or name
@@ -19,10 +20,11 @@ export const getVideoType = (url = '', name = '') => {
  */
 export default function VideoPreviewModal({ src, name, onClose }) {
   const [hasError, setHasError] = useState(false);
+  const resolvedSrc = useMemo(() => resolveMediaUrl(src), [src]);
 
   useEffect(() => {
     setHasError(false);
-  }, [src]);
+  }, [resolvedSrc]);
 
   // Keyboard navigation (Escape to close)
   useEffect(() => {
@@ -47,14 +49,14 @@ export default function VideoPreviewModal({ src, name, onClose }) {
   const handleDownload = (e) => {
     e.stopPropagation();
     const a = document.createElement('a');
-    a.href = src;
+    a.href = resolvedSrc;
     a.download = name || 'video';
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
   };
 
-  if (!src) return null;
+  if (!resolvedSrc) return null;
 
   return (
     <AnimatePresence>
@@ -96,7 +98,7 @@ export default function VideoPreviewModal({ src, name, onClose }) {
         <div style={modalStyles.viewport} onClick={(e) => e.stopPropagation()}>
           {!hasError ? (
             <video
-              src={src}
+              src={resolvedSrc}
               controls
               autoPlay
               playsInline

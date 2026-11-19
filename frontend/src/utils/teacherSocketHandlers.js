@@ -134,12 +134,15 @@ export function createTeacherSocketHandlers({
     checkSelection(studentId || studentName);
 
     const isCrash = Boolean(data.isCrash || (actionText && actionText.toLowerCase().includes('crash')) || (data.message && data.message.toLowerCase().includes('crash')));
-    const cleanAction = isCrash ? 'System crash' : actionText.toLowerCase().includes('alt') || actionText.toLowerCase().includes('tab') || actionText.toLowerCase().includes('blur') ? 'Alt tab' : toSentenceCase(actionText);
+    const actionLower = actionText.toLowerCase();
+    const isExitTab = !isCrash && (actionLower.includes('alt') || actionLower.includes('tab') || actionLower.includes('blur') || actionLower.includes('exit'));
+    const cleanAction = isCrash ? 'System crash' : isExitTab ? 'Alt tab' : toSentenceCase(actionText);
 
     setToast({ message: `Alert: ${formatStudentName(studentName)} - ${cleanAction}`, type: isCrash ? 'error' : 'warning', isAlert: true });
     setTimeout(() => setToast(null), 5000);
 
-    if (notifSettingsRef.current?.soundAlerts) {
+    // Do not play pop sound when student is exiting tab
+    if (notifSettingsRef.current?.soundAlerts && !isExitTab) {
       try {
         const ctx = new (window.AudioContext || window.webkitAudioContext)();
         const osc = ctx.createOscillator();

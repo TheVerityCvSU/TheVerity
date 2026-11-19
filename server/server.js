@@ -1,7 +1,7 @@
 const dns = require('dns');
 try {
     dns.setDefaultResultOrder('ipv4first');
-} catch (_) {}
+} catch (_) { }
 
 const path = require('path');
 const fs = require('fs');
@@ -21,7 +21,7 @@ for (const p of envCandidates) {
     if (fs.existsSync(p)) {
         try {
             require('dotenv').config({ path: p, override: true });
-        } catch (_) {}
+        } catch (_) { }
     }
 }
 
@@ -43,12 +43,12 @@ function killProcessTree(proc) {
     if (!proc || !proc.pid) return;
     try {
         if (process.platform === 'win32') {
-            exec(`taskkill /F /T /PID ${proc.pid}`, { stdio: 'ignore' }, () => {});
+            exec(`taskkill /F /T /PID ${proc.pid}`, { stdio: 'ignore' }, () => { });
         } else {
             proc.kill('SIGKILL');
         }
     } catch (_) {
-        try { proc.kill(); } catch (__) {}
+        try { proc.kill(); } catch (__) { }
     }
 }
 
@@ -104,7 +104,7 @@ const isIpWhitelisted = (ip) => {
 const adminIpWhitelist = (req, res, next) => {
     // In Vercel/proxy environments, the real IP is in headers.
     let clientIp = req.headers['x-forwarded-for'] || req.headers['x-real-ip'] || req.ip || req.connection?.remoteAddress;
-    
+
     // x-forwarded-for can be a comma-separated list of IPs. The first one is the client.
     if (typeof clientIp === 'string' && clientIp.includes(',')) {
         clientIp = clientIp.split(',')[0].trim();
@@ -132,8 +132,8 @@ const adminLoginRateLimiter = (req, res, next) => {
 
     if (record.count >= maxAttempts) {
         const remainingMinutes = Math.ceil((record.resetTime - now) / 60000);
-        return res.status(429).json({ 
-            message: `Too many failed admin login attempts. Account locked for ${remainingMinutes} minute(s).` 
+        return res.status(429).json({
+            message: `Too many failed admin login attempts. Account locked for ${remainingMinutes} minute(s).`
         });
     }
 
@@ -171,31 +171,292 @@ const requireRole = (...allowedRoles) => {
     };
 };
 
-// --- FILE UPLOADS (images / videos for assignments) ---
+// --- FILE UPLOADS (images / videos / documents for assignments) ---
 const UPLOADS_DIR = path.join(DATA_DIR, 'uploads');
 if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+
+const IS_RENDER_CLOUD = Boolean(
+    process.env.RENDER ||
+    process.env.RENDER_SERVICE_ID ||
+    process.env.IS_RENDER_SERVICE
+);
+const CLOUD_MEDIA_BASE_URL = (
+    process.env.CLOUD_API_URL ||
+    process.env.CLOUD_SOCKET_URL ||
+    'https://verity-2z4v.onrender.com'
+).trim().replace(/\/$/, '');
+
+// Clean up stale temp artifacts left behind by interrupted uploads or transcodes
+try {
+    for (const entry of fs.readdirSync(UPLOADS_DIR)) {
+        if (entry.endsWith('.part') || entry.endsWith('_faststart.mp4') || entry.endsWith('_opt.mp4')) {
+            try { fs.unlinkSync(path.join(UPLOADS_DIR, entry)); } catch (_) { }
+        }
+    }
+} catch (_) { }
 
 // Whitelist of permitted file extensions to prevent Stored XSS and arbitrary file execution
 const ALLOWED_UPLOAD_EXTS = new Set([
     '.png', '.jpg', '.jpeg', '.gif', '.webp',
     '.mp4', '.webm', '.ogg', '.mov', '.quicktime', '.m4v',
-    '.pdf', '.zip', '.txt'
+    '.pdf', '.doc', '.docx', '.ppt', '.pptx',
+    '.zip', '.txt'
 ]);
 
-// Serve uploaded files statically at /uploads/<file> with security and media streaming headers
-app.use('/uploads', (req, res, next) => {
+const VIDEO_UPLOAD_EXTS = new Set(['.mp4', '.webm', '.mov', '.mkv', '.avi', '.m4v']);
+const FASTSTART_REMUX_EXTS = new Set(['.mp4', '.m4v', '.mov']);
+
+const UPLOAD_MIME_TYPES = {
+    '.mov': 'video/quicktime',
+    '.mp4': 'video/mp4',
+    '.m4v': 'video/mp4',
+    '.webm': 'video/webm',
+    '.ogg': 'video/ogg',
+    '.pdf': 'application/pdf',
+    '.doc': 'application/msword',
+    '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    '.ppt': 'application/vnd.ms-powerpoint',
+    '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    '.txt': 'text/plain; charset=utf-8'
+};
+
+const SUPPORTED_UPLOAD_MESSAGE =
+    'Supported formats: images (.png, .jpg, .gif, .webp), videos (.mp4, .webm, .mov, .m4v), documents (.pdf, .doc, .docx, .ppt, .pptx, .txt), zip.';
+
+// Track active /uploads readers so FFmpeg swaps never break active 40-student streams or hit Windows file locks
+const activeUploadStreams = new Map();
+const pendingVideoSwaps = new Map();
+const inFlightCloudPulls = new Map();
+
+function tryApplyPendingSwap(filename) {
+    const tempPath = pendingVideoSwaps.get(filename);
+    if (!tempPath || (activeUploadStreams.get(filename) || 0) > 0) return;
+    const targetPath = path.join(UPLOADS_DIR, filename);
+    try {
+        if (fs.existsSync(tempPath)) {
+            fs.renameSync(tempPath, targetPath);
+        }
+        pendingVideoSwaps.delete(filename);
+    } catch (err) {
+        console.warn(`[Video Swap] Deferred rename skipped for ${filename}:`, err.message);
+    }
+}
+
+function safeReplaceOrDeferSwap(targetPath, tempPath) {
+    const filename = path.basename(targetPath);
+    if ((activeUploadStreams.get(filename) || 0) > 0) {
+        const previousTemp = pendingVideoSwaps.get(filename);
+        if (previousTemp && previousTemp !== tempPath) {
+            try { if (fs.existsSync(previousTemp)) fs.unlinkSync(previousTemp); } catch (_) { }
+        }
+        pendingVideoSwaps.set(filename, tempPath);
+        return false;
+    }
+    try {
+        fs.renameSync(tempPath, targetPath);
+        pendingVideoSwaps.delete(filename);
+        return true;
+    } catch (err) {
+        pendingVideoSwaps.set(filename, tempPath);
+        console.warn(`[Video Swap] Deferred swap for ${filename} (${err.message})`);
+        return false;
+    }
+}
+
+function isSafeUploadBasename(rawName) {
+    if (!rawName || typeof rawName !== 'string') return false;
+    if (rawName.includes('/') || rawName.includes('\\') || rawName.includes('..') || rawName.startsWith('.')) {
+        return false;
+    }
+    if (rawName.endsWith('.part') || rawName.endsWith('_faststart.mp4') || rawName.endsWith('_opt.mp4')) {
+        return false;
+    }
+    return path.basename(rawName) === rawName;
+}
+
+/**
+ * Pulls a missing /uploads/<filename> once from the Cloud server into UPLOADS_DIR
+ * so 40 ComLab students stream from the local LAN host instead of external internet.
+ */
+async function pullUploadFromCloud(filename) {
+    if (IS_RENDER_CLOUD || !CLOUD_MEDIA_BASE_URL || !isSafeUploadBasename(filename)) {
+        return false;
+    }
+    const targetPath = path.join(UPLOADS_DIR, filename);
+    if (fs.existsSync(targetPath)) return true;
+
+    if (inFlightCloudPulls.has(filename)) {
+        return inFlightCloudPulls.get(filename);
+    }
+
+    const pullPromise = (async () => {
+        const partPath = path.join(UPLOADS_DIR, `${filename}.${Date.now()}.part`);
+        const connectController = new AbortController();
+        const connectTimer = setTimeout(() => connectController.abort(), 4000);
+        try {
+            const remoteUrl = `${CLOUD_MEDIA_BASE_URL}/uploads/${encodeURIComponent(filename)}`;
+            const res = await fetch(remoteUrl, { signal: connectController.signal });
+            clearTimeout(connectTimer);
+            if (!res.ok || !res.body) return false;
+
+            const { Readable } = require('stream');
+            const { pipeline } = require('stream/promises');
+            const ws = fs.createWriteStream(partPath);
+            await pipeline(Readable.fromWeb(res.body), ws);
+            fs.renameSync(partPath, targetPath);
+            console.log(`[LAN Media Cache] Cached ${filename} locally from Cloud`);
+            return true;
+        } catch (_) {
+            clearTimeout(connectTimer);
+            try { if (fs.existsSync(partPath)) fs.unlinkSync(partPath); } catch (__) { }
+            return false;
+        } finally {
+            inFlightCloudPulls.delete(filename);
+        }
+    })();
+
+    inFlightCloudPulls.set(filename, pullPromise);
+    return pullPromise;
+}
+
+// Background serial prefetcher when Cloud Sync pulls new classwork on a LAN host
+const mediaPrefetchQueue = [];
+const mediaPrefetchQueuedSet = new Set();
+let isPrefetchRunning = false;
+
+async function drainMediaPrefetchQueue() {
+    if (isPrefetchRunning) return;
+    isPrefetchRunning = true;
+    let consecutiveFailures = 0;
+    try {
+        while (mediaPrefetchQueue.length > 0) {
+            const filename = mediaPrefetchQueue.shift();
+            mediaPrefetchQueuedSet.delete(filename);
+            if (!filename) continue;
+            const ok = await pullUploadFromCloud(filename).catch(() => false);
+            if (ok) {
+                consecutiveFailures = 0;
+            } else {
+                consecutiveFailures++;
+                // Stop draining if Cloud appears unreachable/offline to avoid spamming failed fetches
+                if (consecutiveFailures >= 3) {
+                    mediaPrefetchQueue.length = 0;
+                    mediaPrefetchQueuedSet.clear();
+                    break;
+                }
+            }
+        }
+    } finally {
+        isPrefetchRunning = false;
+    }
+}
+
+function isHostServerInstance() {
+    const isExplicitClient = process.env.IS_LAN_HOST === 'false';
+    return !isExplicitClient && Boolean(
+        fs.existsSync(path.join(DATA_DIR, 'host.flag')) ||
+        fs.existsSync(path.join(__dirname, 'host.flag')) ||
+        process.env.IS_LAN_HOST === 'true' ||
+        process.env.IS_VERITY_ADMIN === 'true' ||
+        process.argv.includes('--host') ||
+        require.main === module
+    );
+}
+
+function prefetchUploadsFromClasswork(rows) {
+    if (IS_RENDER_CLOUD || !isHostServerInstance() || !Array.isArray(rows)) return;
+    const foundNames = new Set();
+    const uploadRegex = /\/uploads\/([^"'\s<>?#)]+)/g;
+
+    for (const row of rows) {
+        const rawDesc = typeof row?.description === 'string' ? row.description : '';
+        if (!rawDesc.includes('/uploads/')) continue;
+
+        let match;
+        uploadRegex.lastIndex = 0;
+        while ((match = uploadRegex.exec(rawDesc)) !== null) {
+            try {
+                const decoded = decodeURIComponent(match[1]);
+                if (isSafeUploadBasename(decoded)) {
+                    foundNames.add(decoded);
+                    const ext = path.extname(decoded).toLowerCase();
+                    if (VIDEO_UPLOAD_EXTS.has(ext)) {
+                        foundNames.add(`${decoded.slice(0, -ext.length)}_thumb.jpg`);
+                    }
+                }
+            } catch (_) { }
+        }
+    }
+
+    for (const fname of foundNames) {
+        if (!fs.existsSync(path.join(UPLOADS_DIR, fname)) && !mediaPrefetchQueuedSet.has(fname)) {
+            mediaPrefetchQueuedSet.add(fname);
+            mediaPrefetchQueue.push(fname);
+        }
+    }
+    if (mediaPrefetchQueue.length > 0) {
+        drainMediaPrefetchQueue().catch(() => { });
+    }
+}
+
+// Serve uploaded files statically at /uploads/<file> with pull-through cache, active stream tracking, and range headers
+app.use('/uploads', async (req, res, next) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Accept-Ranges', 'bytes');
+
+    let requestedName = '';
+    try {
+        requestedName = decodeURIComponent((req.path || '').replace(/^\/+/, ''));
+    } catch (_) {
+        return res.status(400).end();
+    }
+    if (!isSafeUploadBasename(requestedName)) {
+        return res.status(404).end();
+    }
+
+    const localTarget = path.join(UPLOADS_DIR, requestedName);
+    if (req.method === 'GET' && !fs.existsSync(localTarget) && !IS_RENDER_CLOUD) {
+        try {
+            const cloudHost = new URL(CLOUD_MEDIA_BASE_URL).host;
+            if (req.get('host') !== cloudHost) {
+                await pullUploadFromCloud(requestedName);
+            }
+        } catch (_) { }
+    }
+
+    if (req.method === 'GET' || req.method === 'HEAD') {
+        activeUploadStreams.set(requestedName, (activeUploadStreams.get(requestedName) || 0) + 1);
+        let released = false;
+        const releaseStream = () => {
+            if (released) return;
+            released = true;
+            const remaining = (activeUploadStreams.get(requestedName) || 1) - 1;
+            if (remaining <= 0) {
+                activeUploadStreams.delete(requestedName);
+                tryApplyPendingSwap(requestedName);
+            } else {
+                activeUploadStreams.set(requestedName, remaining);
+            }
+        };
+        res.on('close', releaseStream);
+        res.on('finish', releaseStream);
+    }
+
     next();
 }, express.static(UPLOADS_DIR, {
+    etag: true,
+    lastModified: true,
     setHeaders: (res, filePath) => {
         const ext = path.extname(filePath).toLowerCase();
-        if (ext === '.mov') {
-            res.setHeader('Content-Type', 'video/quicktime');
-        } else if (ext === '.mp4') {
-            res.setHeader('Content-Type', 'video/mp4');
-        } else if (ext === '.webm') {
-            res.setHeader('Content-Type', 'video/webm');
+        const mime = UPLOAD_MIME_TYPES[ext];
+        if (mime) {
+            res.setHeader('Content-Type', mime);
+        }
+        if (VIDEO_UPLOAD_EXTS.has(ext)) {
+            // Short cache max-age so byte-range seeks reuse chunks while allowing post-FFmpeg ETag updates
+            res.setHeader('Cache-Control', 'public, max-age=60');
+        } else {
+            res.setHeader('Cache-Control', 'public, max-age=604800, immutable');
         }
     }
 }));
@@ -203,7 +464,7 @@ app.use('/uploads', (req, res, next) => {
 let ffmpegStaticPath = null;
 try {
     ffmpegStaticPath = require('ffmpeg-static');
-} catch (_) {}
+} catch (_) { }
 
 // Fallback to system-installed ffmpeg binary (e.g. from apt-get install -y ffmpeg)
 if (!ffmpegStaticPath || typeof ffmpegStaticPath !== 'string') {
@@ -216,115 +477,195 @@ if (!ffmpegStaticPath || typeof ffmpegStaticPath !== 'string') {
     }
 }
 
-/**
- * Automatically extracts a lightweight thumbnail image (_thumb.jpg) and
- * compresses uploaded videos with faststart streaming headers so they are lightweight.
- */
+function runFfmpegAsync(args, label = 'FFmpeg') {
+    return new Promise((resolve) => {
+        try {
+            const proc = spawn(ffmpegStaticPath, args, { stdio: 'ignore' });
+            if (proc.pid) {
+                try {
+                    os.setPriority(proc.pid, os.constants.priority.PRIORITY_BELOW_NORMAL);
+                } catch (_) { }
+            }
+            proc.on('close', (code) => resolve(code ?? -1));
+            proc.on('error', (err) => {
+                console.warn(`[${label}] Error:`, err.message);
+                resolve(-1);
+            });
+        } catch (err) {
+            console.warn(`[${label}] Failed to spawn:`, err.message);
+            resolve(-1);
+        }
+    });
+}
+
+// Serial FFmpeg queue (1 job at a time) so large video uploads never starve HTTP/Socket.IO CPU
+const videoProcessingQueue = [];
+let isVideoQueueRunning = false;
+
+async function drainVideoProcessingQueue() {
+    if (isVideoQueueRunning) return;
+    isVideoQueueRunning = true;
+    try {
+        while (videoProcessingQueue.length > 0) {
+            const targetPath = videoProcessingQueue.shift();
+            await processVideoJob(targetPath);
+        }
+    } finally {
+        isVideoQueueRunning = false;
+    }
+}
+
 function processVideoUpload(targetPath) {
     if (!ffmpegStaticPath || !fs.existsSync(targetPath)) return;
     const ext = path.extname(targetPath).toLowerCase();
-    if (!['.mp4', '.webm', '.mov', '.mkv', '.avi'].includes(ext)) return;
+    if (!VIDEO_UPLOAD_EXTS.has(ext)) return;
+    if (!videoProcessingQueue.includes(targetPath)) {
+        videoProcessingQueue.push(targetPath);
+    }
+    drainVideoProcessingQueue().catch((err) => {
+        console.warn('[Video Queue] Error:', err?.message || err);
+    });
+}
+
+/**
+ * Extracts a lightweight thumbnail (_thumb.jpg), applies fast lossless +faststart
+ * remuxing for instant 40-student seeking, and queues bounded-CPU compression.
+ */
+async function processVideoJob(targetPath) {
+    if (!ffmpegStaticPath || !fs.existsSync(targetPath)) return;
+    const ext = path.extname(targetPath).toLowerCase();
+    if (!VIDEO_UPLOAD_EXTS.has(ext)) return;
 
     const baseNoExt = targetPath.slice(0, -ext.length);
     const thumbPath = `${baseNoExt}_thumb.jpg`;
+    const faststartTempPath = `${baseNoExt}_faststart.mp4`;
     const tempOptPath = `${baseNoExt}_opt.mp4`;
 
-    // 1. Generate lightweight thumbnail image (~30KB) at 3s
-    try {
-        const thumbArgs = [
+    // 1. Generate lightweight thumbnail image (~30KB) at 3s, or 0s for short clips
+    const thumbCode = await runFfmpegAsync([
+        '-y',
+        '-ss', '00:00:03',
+        '-i', targetPath,
+        '-vframes', '1',
+        '-vf', "scale='min(640,iw)':-2",
+        '-q:v', '3',
+        thumbPath
+    ], 'Video Thumb');
+    if (thumbCode !== 0 || !fs.existsSync(thumbPath)) {
+        await runFfmpegAsync([
             '-y',
-            '-ss', '00:00:03',
+            '-ss', '00:00:00',
             '-i', targetPath,
             '-vframes', '1',
             '-vf', "scale='min(640,iw)':-2",
             '-q:v', '3',
             thumbPath
-        ];
-        const thumbProc = spawn(ffmpegStaticPath, thumbArgs);
-        thumbProc.on('error', (err) => console.warn('[Video Thumb] Error:', err.message));
-    } catch (e) {
-        console.warn('[Video Thumb] Failed to spawn thumbnail generation:', e.message);
+        ], 'Video Thumb Fallback');
     }
 
-    // 2. Compress large video (> 15 MB) to make it lightweight
     try {
         const stats = fs.statSync(targetPath);
-        if (stats.size > 15 * 1024 * 1024) {
-            const compressArgs = [
+        if (stats.size <= 15 * 1024 * 1024) return;
+
+        // 2a. Fast lossless +faststart remux (seconds even on 2 GB MP4) so browsers seek immediately
+        if (FASTSTART_REMUX_EXTS.has(ext)) {
+            const remuxCode = await runFfmpegAsync([
+                '-y',
+                '-i', targetPath,
+                '-c', 'copy',
+                '-movflags', '+faststart',
+                faststartTempPath
+            ], 'Video Faststart');
+
+            if (remuxCode === 0 && fs.existsSync(faststartTempPath) && fs.statSync(faststartTempPath).size > 0) {
+                safeReplaceOrDeferSwap(targetPath, faststartTempPath);
+            } else {
+                try { if (fs.existsSync(faststartTempPath)) fs.unlinkSync(faststartTempPath); } catch (_) { }
+            }
+        }
+
+        // 2b. Compress large video with NVENC first, then bounded-thread libx264 CPU fallback
+        const nvencCode = await runFfmpegAsync([
+            '-y',
+            '-i', targetPath,
+            '-vf', "scale='min(1280,iw)':-2",
+            '-c:v', 'h264_nvenc',
+            '-preset', 'p4',
+            '-cq', '28',
+            '-b:v', '350k',
+            '-maxrate', '500k',
+            '-bufsize', '800k',
+            '-c:a', 'aac',
+            '-b:a', '64k',
+            '-movflags', '+faststart',
+            tempOptPath
+        ], 'Video Compression NVENC');
+
+        let compressedOk = nvencCode === 0 && fs.existsSync(tempOptPath);
+        if (!compressedOk) {
+            try { if (fs.existsSync(tempOptPath)) fs.unlinkSync(tempOptPath); } catch (_) { }
+            const cpuThreads = String(Math.max(1, Math.min(4, Math.floor((os.cpus()?.length || 2) / 2))));
+            const cpuCode = await runFfmpegAsync([
                 '-y',
                 '-i', targetPath,
                 '-vf', "scale='min(1280,iw)':-2",
-                '-c:v', 'h264_nvenc',
-                '-preset', 'p4',
-                '-cq', '28',
-                '-b:v', '350k',
-                '-maxrate', '500k',
-                '-bufsize', '800k',
+                '-c:v', 'libx264',
+                '-crf', '28',
+                '-preset', 'veryfast',
+                '-threads', cpuThreads,
                 '-c:a', 'aac',
                 '-b:a', '64k',
                 '-movflags', '+faststart',
                 tempOptPath
-            ];
+            ], 'Video Compression CPU');
+            compressedOk = cpuCode === 0 && fs.existsSync(tempOptPath);
+        }
 
-            const compProc = spawn(ffmpegStaticPath, compressArgs);
-            compProc.on('close', (code) => {
-                if (code === 0 && fs.existsSync(tempOptPath)) {
-                    const optStats = fs.statSync(tempOptPath);
-                    if (optStats.size > 0 && optStats.size < stats.size) {
-                        try {
-                            fs.renameSync(tempOptPath, targetPath);
-                            console.log(`[Video Compression] Compressed ${path.basename(targetPath)} from ${(stats.size / 1024 / 1024).toFixed(1)}MB to ${(optStats.size / 1024 / 1024).toFixed(1)}MB`);
-                        } catch (renErr) {
-                            console.warn('[Video Compression] Rename failed:', renErr.message);
-                        }
-                    } else {
-                        try { fs.unlinkSync(tempOptPath); } catch (_) {}
-                    }
-                } else {
-                    // Fallback to libx264 if nvenc is unavailable
-                    try {
-                        const fallbackArgs = [
-                            '-y',
-                            '-i', targetPath,
-                            '-vf', "scale='min(1280,iw)':-2",
-                            '-c:v', 'libx264',
-                            '-crf', '28',
-                            '-preset', 'veryfast',
-                            '-c:a', 'aac',
-                            '-b:a', '64k',
-                            '-movflags', '+faststart',
-                            tempOptPath
-                        ];
-                        const fallbackProc = spawn(ffmpegStaticPath, fallbackArgs);
-                        fallbackProc.on('close', (fCode) => {
-                            if (fCode === 0 && fs.existsSync(tempOptPath)) {
-                                try {
-                                    fs.renameSync(tempOptPath, targetPath);
-                                    console.log(`[Video Compression] Compressed ${path.basename(targetPath)} (CPU fallback)`);
-                                } catch (_) {}
-                            } else {
-                                try { fs.unlinkSync(tempOptPath); } catch (_) {}
-                            }
-                        });
-                    } catch (_) {}
+        if (compressedOk) {
+            const curStats = fs.statSync(targetPath);
+            const optStats = fs.statSync(tempOptPath);
+            if (optStats.size > 0 && optStats.size < curStats.size) {
+                const swapped = safeReplaceOrDeferSwap(targetPath, tempOptPath);
+                if (swapped) {
+                    console.log(`[Video Compression] Compressed ${path.basename(targetPath)} from ${(curStats.size / 1024 / 1024).toFixed(1)}MB to ${(optStats.size / 1024 / 1024).toFixed(1)}MB`);
                 }
-            });
-            compProc.on('error', () => {
-                try { if (fs.existsSync(tempOptPath)) fs.unlinkSync(tempOptPath); } catch (_) {}
-            });
+            } else {
+                try { fs.unlinkSync(tempOptPath); } catch (_) { }
+            }
+        } else {
+            try { if (fs.existsSync(tempOptPath)) fs.unlinkSync(tempOptPath); } catch (_) { }
         }
     } catch (e) {
+        try { if (fs.existsSync(faststartTempPath)) fs.unlinkSync(faststartTempPath); } catch (_) { }
+        try { if (fs.existsSync(tempOptPath)) fs.unlinkSync(tempOptPath); } catch (_) { }
         console.warn('[Video Compression] Failed:', e.message);
     }
 }
 
-// Raw binary upload endpoint (ideal for large videos like MP4, WebM, MOV without base64 overhead)
+function buildUploadResponse(req, unique, ext) {
+    const host = req.get('host');
+    const protocol = req.headers['x-forwarded-proto'] || req.protocol;
+    const isVideo = VIDEO_UPLOAD_EXTS.has(ext);
+    const baseNoExt = unique.slice(0, -ext.length);
+    return {
+        url: `${protocol}://${host}/uploads/${unique}`,
+        path: `/uploads/${unique}`,
+        filename: unique,
+        thumbnailUrl: isVideo ? `${protocol}://${host}/uploads/${baseNoExt}_thumb.jpg` : null,
+        thumbnailPath: isVideo ? `/uploads/${baseNoExt}_thumb.jpg` : null
+    };
+}
+
+// Raw binary upload endpoint (ideal for large 2 GB videos like MP4, WebM, MOV without base64 overhead)
 app.post('/upload-raw', (req, res) => {
+    req.setTimeout(0);
+    res.setTimeout(0);
+
     const rawFilename = req.query.filename || req.headers['x-filename'] || 'file.mp4';
     const ext = path.extname(rawFilename).toLowerCase();
     if (!ALLOWED_UPLOAD_EXTS.has(ext)) {
-        return res.status(400).json({ 
-            message: `File type "${ext || 'unknown'}" is not allowed. Supported formats: images (.png, .jpg, .gif, .webp), videos (.mp4, .webm, .mov), pdf, zip, txt.` 
+        return res.status(400).json({
+            message: `File type "${ext || 'unknown'}" is not allowed. ${SUPPORTED_UPLOAD_MESSAGE}`
         });
     }
 
@@ -332,24 +673,39 @@ app.post('/upload-raw', (req, res) => {
     const unique = `${Date.now()}_${safeName}`;
     const targetPath = path.join(UPLOADS_DIR, unique);
     const writeStream = fs.createWriteStream(targetPath);
+    let finished = false;
+
+    const cleanupPartial = () => {
+        if (finished) return;
+        finished = true;
+        try { writeStream.destroy(); } catch (_) { }
+        fs.unlink(targetPath, () => { });
+    };
+
+    req.on('aborted', cleanupPartial);
+    req.on('error', (err) => {
+        console.error('Upload request error:', err);
+        cleanupPartial();
+        if (!res.headersSent) {
+            res.status(499).json({ message: 'Upload aborted' });
+        }
+    });
 
     req.pipe(writeStream);
 
     writeStream.on('finish', () => {
-        const host = req.get('host');
-        const protocol = req.headers['x-forwarded-proto'] || req.protocol;
+        if (finished) return;
+        finished = true;
         processVideoUpload(targetPath);
-        const isVideo = ['.mp4', '.webm', '.mov', '.mkv', '.avi'].includes(ext);
-        const baseNoExt = unique.slice(0, -ext.length);
-        res.status(201).json({ 
-            url: `${protocol}://${host}/uploads/${unique}`,
-            thumbnailUrl: isVideo ? `${protocol}://${host}/uploads/${baseNoExt}_thumb.jpg` : null
-        });
+        res.status(201).json(buildUploadResponse(req, unique, ext));
     });
 
     writeStream.on('error', (err) => {
         console.error('Upload stream error:', err);
-        res.status(500).json({ message: 'Failed to write upload stream' });
+        cleanupPartial();
+        if (!res.headersSent) {
+            res.status(500).json({ message: 'Failed to write upload stream' });
+        }
     });
 });
 
@@ -374,26 +730,18 @@ app.post('/upload', (req, res, next) => {
 
     const ext = path.extname(filename || '').toLowerCase();
     if (!ALLOWED_UPLOAD_EXTS.has(ext)) {
-        return res.status(400).json({ 
-            message: `File type "${ext || 'unknown'}" is not allowed. Supported formats: images (.png, .jpg, .gif, .webp), videos (.mp4, .webm, .mov), pdf, zip, txt.` 
+        return res.status(400).json({
+            message: `File type "${ext || 'unknown'}" is not allowed. ${SUPPORTED_UPLOAD_MESSAGE}`
         });
     }
 
     const buffer = Buffer.from(match[2], 'base64');
-    // Build a safe, unique filename.
     const safeName = (filename || 'file').replace(/[^a-zA-Z0-9._-]/g, '_');
     const unique = `${Date.now()}_${safeName}`;
     const targetPath = path.join(UPLOADS_DIR, unique);
     fs.writeFileSync(targetPath, buffer);
     processVideoUpload(targetPath);
-    const host = req.get('host');
-    const protocol = req.headers['x-forwarded-proto'] || req.protocol;
-    const isVideo = ['.mp4', '.webm', '.mov', '.mkv', '.avi'].includes(ext);
-    const baseNoExt = unique.slice(0, -ext.length);
-    res.status(201).json({ 
-        url: `${protocol}://${host}/uploads/${unique}`,
-        thumbnailUrl: isVideo ? `${protocol}://${host}/uploads/${baseNoExt}_thumb.jpg` : null
-    });
+    res.status(201).json(buildUploadResponse(req, unique, ext));
 });
 
 app.get('/api/check-update', async (req, res) => {
@@ -427,7 +775,7 @@ app.get('/api/check-update', async (req, res) => {
             try {
                 const pkg = JSON.parse(fs.readFileSync(path.join(os.homedir(), 'The-Verity', 'package.json'), 'utf8'));
                 if (pkg.version) serverPkgVersion = pkg.version;
-            } catch (_) {}
+            } catch (_) { }
         }
     }
 
@@ -472,7 +820,7 @@ app.get('/api/check-update', async (req, res) => {
                             });
                         }
                     }
-                } catch (_) {}
+                } catch (_) { }
             }
         }
         found.sort((a, b) => {
@@ -508,7 +856,7 @@ app.get('/api/check-update', async (req, res) => {
                             latestVersion = ymlVer;
                         }
                     }
-                } catch (_) {}
+                } catch (_) { }
             }
         }
     }
@@ -527,7 +875,7 @@ app.get('/api/check-update', async (req, res) => {
             const tagName = (releaseData.tag_name || '').replace(/^v/i, '').trim();
             if (tagName && isNewer(tagName, latestVersion)) {
                 latestVersion = tagName;
-                const asset = (releaseData.assets || []).find(a => 
+                const asset = (releaseData.assets || []).find(a =>
                     isAdmin ? /admin.*\.exe$/i.test(a.name) : /\.exe$/i.test(a.name) && !/admin/i.test(a.name)
                 );
                 if (asset?.browser_download_url) {
@@ -622,7 +970,7 @@ app.get('/api/download-update', async (req, res) => {
                         });
                     }
                 }
-            } catch (_) {}
+            } catch (_) { }
         }
     }
 
@@ -663,7 +1011,7 @@ app.get('/api/download-update', async (req, res) => {
         clearTimeout(timeout);
         if (ghRes.ok) {
             const releaseData = await ghRes.json();
-            const asset = (releaseData.assets || []).find(a => 
+            const asset = (releaseData.assets || []).find(a =>
                 isAdmin ? /admin.*\.exe$/i.test(a.name) : /\.exe$/i.test(a.name) && !/admin/i.test(a.name)
             );
             if (asset?.browser_download_url) {
@@ -679,7 +1027,7 @@ app.get('/api/download-update', async (req, res) => {
                 }
             }
         }
-    } catch (_) {}
+    } catch (_) { }
 
     res.status(404).json({
         error: 'Installer package not found on local server.',
@@ -693,9 +1041,9 @@ function getValidLanIps() {
     for (const name of Object.keys(interfaces)) {
         for (const iface of interfaces[name]) {
             if (
-                iface.family === 'IPv4' && 
-                !iface.internal && 
-                iface.address && 
+                iface.family === 'IPv4' &&
+                !iface.internal &&
+                iface.address &&
                 !iface.address.startsWith('127.') &&
                 !iface.address.startsWith('169.254.') &&
                 !iface.address.startsWith('192.168.56.')
@@ -713,8 +1061,8 @@ app.get('/health', async (req, res) => {
         const lanIps = getValidLanIps();
         const isExplicitClient = process.env.IS_LAN_HOST === 'false';
         const isHost = !isExplicitClient && Boolean(
-            fs.existsSync(path.join(DATA_DIR, 'host.flag')) || 
-            fs.existsSync(path.join(__dirname, 'host.flag')) || 
+            fs.existsSync(path.join(DATA_DIR, 'host.flag')) ||
+            fs.existsSync(path.join(__dirname, 'host.flag')) ||
             process.env.IS_LAN_HOST === 'true' ||
             process.env.IS_VERITY_ADMIN === 'true' ||
             process.argv.includes('--host') ||
@@ -764,15 +1112,21 @@ app.get('/api/sync-status', (req, res) => {
 });
 
 const server = http.createServer(app);
+server.requestTimeout = 0; // Allow large 2 GB binary uploads without cutting off at 5 minutes
+server.keepAliveTimeout = 65000;
+server.headersTimeout = 66000;
 
 const io = new Server(server, {
-    cors: { origin: "*" }
+    cors: { origin: "*" },
+    pingTimeout: 60000,
+    pingInterval: 25000
 });
 
 try {
-    const { setSocketIo } = require('./db/cloudSync');
+    const { setSocketIo, setOnClassworkPulled } = require('./db/cloudSync');
     setSocketIo(io);
-} catch (_) {}
+    setOnClassworkPulled(prefetchUploadsFromClasswork);
+} catch (_) { }
 
 // Socket.IO Authentication Middleware
 io.use((socket, next) => {
@@ -806,7 +1160,7 @@ const validatePassword = async (password) => {
             if (policies.numbers && !/\d/.test(password)) return 'Password must contain at least one number.';
             if (policies.specialChars && !/[!@#$%^&*(),.?":{}|<>]/.test(password)) return 'Password must contain at least one special character.';
         }
-    } catch (_) {}
+    } catch (_) { }
     return null;
 };
 
@@ -823,7 +1177,7 @@ const getMaintenanceStatus = async () => {
                 };
             }
         }
-    } catch (_) {}
+    } catch (_) { }
     return { enabled: false, message: '' };
 };
 
@@ -988,7 +1342,7 @@ app.post('/auth/verify-otp', async (req, res) => {
                     requireApproval = false;
                 }
             }
-        } catch (e) {}
+        } catch (e) { }
 
         if (userRole === 'Teacher') {
             status = !requireApproval ? 'Active' : 'Pending';
@@ -1012,7 +1366,7 @@ app.post('/auth/verify-otp', async (req, res) => {
             io.emit('users_updated');
             io.emit('admin_security_alert');
             io.emit('admin_stats_update');
-        } catch (_) {}
+        } catch (_) { }
 
         // Log audit log event
         try {
@@ -1022,14 +1376,14 @@ app.post('/auth/verify-otp', async (req, res) => {
                     'INSERT INTO audit_logs (timestamp, "user", type, severity, "desc") VALUES (?, ?, ?, ?, ?)',
                     nowIso, name, 'Teacher Registration', status === 'Pending' ? 'Warning' : 'Normal',
                     status === 'Pending' ? `New instructor account registered and pending admin approval (${cleanEmail})` : `New instructor account registered (${cleanEmail})`
-                ).catch(() => {});
+                ).catch(() => { });
             } else {
                 await db.run(
                     'INSERT INTO audit_logs (timestamp, "user", type, severity, "desc") VALUES (?, ?, ?, ?, ?)',
                     nowIso, name, 'User Registration', 'Normal', `New student account registered (${cleanEmail})`
-                ).catch(() => {});
+                ).catch(() => { });
             }
-        } catch (_) {}
+        } catch (_) { }
 
         res.status(201).json({
             message: status === 'Pending' ? 'Account created and pending admin approval.' : 'Account registered and verified successfully.',
@@ -1103,7 +1457,7 @@ app.post('/register', async (req, res) => {
             const token = authHeader && authHeader.split(' ')[1];
             let isAdmin = false;
             if (token) {
-                try { const d = jwt.verify(token, JWT_SECRET); if (d && d.role === 'Admin') isAdmin = true; } catch (_) {}
+                try { const d = jwt.verify(token, JWT_SECRET); if (d && d.role === 'Admin') isAdmin = true; } catch (_) { }
             }
             if (!isAdmin) {
                 return res.status(503).json({ message: maintenance.message, maintenance: true });
@@ -1140,7 +1494,7 @@ app.post('/register', async (req, res) => {
                 if (decoded && decoded.role === 'Admin') {
                     requesterIsAdmin = true;
                 }
-            } catch (_) {}
+            } catch (_) { }
         }
 
         let userRole = 'Student';
@@ -1155,7 +1509,7 @@ app.post('/register', async (req, res) => {
                     requireApproval = false;
                 }
             }
-        } catch (e) {}
+        } catch (e) { }
 
         if (requesterIsAdmin && role === 'Admin') {
             userRole = 'Admin';
@@ -1181,7 +1535,7 @@ app.post('/register', async (req, res) => {
             io.emit('users_updated');
             io.emit('admin_security_alert');
             io.emit('admin_stats_update');
-        } catch (_) {}
+        } catch (_) { }
 
         // Log audit log event
         try {
@@ -1191,14 +1545,14 @@ app.post('/register', async (req, res) => {
                     'INSERT INTO audit_logs (timestamp, "user", type, severity, "desc") VALUES (?, ?, ?, ?, ?)',
                     nowIso, name, 'Teacher Registration', status === 'Pending' ? 'Warning' : 'Normal',
                     status === 'Pending' ? `New instructor account registered and pending admin approval (${email})` : `New instructor account registered (${email})`
-                ).catch(() => {});
+                ).catch(() => { });
             } else if (userRole === 'Student') {
                 await db.run(
                     'INSERT INTO audit_logs (timestamp, "user", type, severity, "desc") VALUES (?, ?, ?, ?, ?)',
                     nowIso, name, 'User Registration', 'Normal', `New student account registered (${email})`
-                ).catch(() => {});
+                ).catch(() => { });
             }
-        } catch (_) {}
+        } catch (_) { }
 
         res.status(201).json({ message: 'User registered successfully', user, token: userToken });
     } catch (e) {
@@ -1232,8 +1586,8 @@ app.post('/login', async (req, res) => {
             cleanIdentifier, cleanIdentifier, emailLike
         );
         if (isAdminAcc) {
-            return res.status(401).json({ 
-                message: 'Invalid credentials. No account found with this email or username.' 
+            return res.status(401).json({
+                message: 'Invalid credentials. No account found with this email or username.'
             });
         }
 
@@ -1251,8 +1605,8 @@ app.post('/login', async (req, res) => {
         );
 
         if (!userExists) {
-            return res.status(401).json({ 
-                message: 'Invalid credentials. No account found with this username or email address.' 
+            return res.status(401).json({
+                message: 'Invalid credentials. No account found with this username or email address.'
             });
         }
 
@@ -1277,23 +1631,23 @@ app.post('/login', async (req, res) => {
             if (userExists.password === rawPassword || userExists.password === cleanPassword) {
                 user = userExists;
             } else {
-                return res.status(401).json({ 
-                    message: 'Invalid credentials. Please verify your password.' 
+                return res.status(401).json({
+                    message: 'Invalid credentials. Please verify your password.'
                 });
             }
         }
 
         if (user.role === 'Admin' || user.role === 'admin') {
-            try { await db.run('DELETE FROM users WHERE id = ?', user.id); } catch (_) {}
-            return res.status(401).json({ 
-                message: 'Invalid credentials. No account found with this email address.' 
+            try { await db.run('DELETE FROM users WHERE id = ?', user.id); } catch (_) { }
+            return res.status(401).json({
+                message: 'Invalid credentials. No account found with this email address.'
             });
         }
         if (user.status === 'Pending') {
             return res.status(403).json({ message: 'Your account is pending admin approval' });
         }
         user.lastLogin = new Date().toISOString();
-        db.run('UPDATE users SET lastLogin = ? WHERE id = ?', user.lastLogin, user.id).catch(() => {});
+        db.run('UPDATE users SET lastLogin = ? WHERE id = ?', user.lastLogin, user.id).catch(() => { });
         const token = jwt.sign({ id: user.id, email: user.email, role: user.role, name: user.name }, JWT_SECRET);
         res.status(200).json({ message: 'Login successful', user, token });
     } catch (e) {
@@ -1512,7 +1866,7 @@ app.get('/auth/google/callback', async (req, res) => {
                     const config = JSON.parse(row.value);
                     if (config?.roles?.requireAdminApproval === false) requireApproval = false;
                 }
-            } catch (e) {}
+            } catch (e) { }
 
             const role = requestedRole;
             const status = (role === 'Teacher' && requireApproval) ? 'Pending' : 'Active';
@@ -1558,7 +1912,7 @@ app.get('/auth/google/callback', async (req, res) => {
         }
 
         const token = jwt.sign({ id: user.id, email: user.email, role: user.role, name: user.name }, JWT_SECRET);
-        
+
         io.emit(`google-login-success-${sessionId}`, { user, token });
         const safePayload = JSON.stringify({
             type: 'verity-google-auth-success',
@@ -1665,7 +2019,7 @@ app.post('/auth/google', async (req, res) => {
                         requireApproval = false;
                     }
                 }
-            } catch (e) {}
+            } catch (e) { }
 
             const role = (userRole === 'Teacher') ? 'Teacher' : 'Student';
             const status = (role === 'Teacher' && requireApproval) ? 'Pending' : 'Active';
@@ -1712,7 +2066,7 @@ app.get('/users', authenticateToken, requireRole('Admin'), async (req, res) => {
         let recentLogs = [];
         try {
             recentLogs = await db.all('SELECT id, "user", timestamp, "desc" FROM audit_logs ORDER BY id DESC LIMIT 500');
-        } catch (_) {}
+        } catch (_) { }
 
         const userFlagsMap = new Map();
         for (const log of recentLogs) {
@@ -1828,17 +2182,17 @@ app.put('/users/profile', authenticateToken, async (req, res) => {
                 await db.run(
                     'UPDATE classrooms SET instructor = ? WHERE LOWER(instructor_email) = LOWER(?) OR instructor = ?',
                     updatedName, current.email, current.name
-                ).catch(() => {});
+                ).catch(() => { });
             } else if (current.role === 'Student' && updatedName !== current.name) {
                 // Keep student enrollments and submissions unified under their updated name
                 await db.run(
                     'UPDATE enrollments SET student_name = ? WHERE LOWER(student_email) = LOWER(?) OR student_id = ?',
                     updatedName, current.email, targetUserId
-                ).catch(() => {});
+                ).catch(() => { });
                 await db.run(
                     'UPDATE submissions SET student_name = ? WHERE LOWER(TRIM(student_name)) = LOWER(TRIM(?)) OR LOWER(TRIM(student_name)) = LOWER(TRIM(?))',
                     updatedName, current.name, current.email
-                ).catch(() => {});
+                ).catch(() => { });
             }
         }
 
@@ -1879,7 +2233,7 @@ app.delete('/users/:email', authenticateToken, requireRole('Admin'), async (req,
         try {
             io.emit('users_updated');
             io.emit('admin_stats_update');
-        } catch (_) {}
+        } catch (_) { }
         res.status(200).json({ message: 'User deleted' });
     } catch (e) {
         res.status(500).json({ message: e.message });
@@ -1896,7 +2250,7 @@ app.put('/users/:email/status', authenticateToken, requireRole('Admin'), async (
         try {
             io.emit('users_updated');
             io.emit('admin_stats_update');
-        } catch (_) {}
+        } catch (_) { }
         res.status(200).json({ message: 'User status updated' });
     } catch (e) {
         res.status(500).json({ message: e.message });
@@ -1958,15 +2312,15 @@ async function syncUserEmailAcrossData(userId, oldEmail, newEmail, name, role) {
     // Synchronize both databases (PostgreSQL and local SQLite) so no stale old email records linger
     if (cleanOldEmail && cleanNewEmail && cleanOldEmail !== cleanNewEmail) {
         try {
-            await db.run('UPDATE users SET email = ? WHERE id = ? OR LOWER(email) = LOWER(?)', cleanNewEmail, userId, cleanOldEmail).catch(() => {});
-            await db.run('DELETE FROM users WHERE LOWER(email) = LOWER(?) AND id != ?', cleanOldEmail, userId).catch(() => {});
-        } catch (_) {}
+            await db.run('UPDATE users SET email = ? WHERE id = ? OR LOWER(email) = LOWER(?)', cleanNewEmail, userId, cleanOldEmail).catch(() => { });
+            await db.run('DELETE FROM users WHERE LOWER(email) = LOWER(?) AND id != ?', cleanOldEmail, userId).catch(() => { });
+        } catch (_) { }
         const localSqlite = db.getSqliteDb ? db.getSqliteDb() : null;
         if (localSqlite) {
             try {
                 localSqlite.prepare('UPDATE users SET email = ? WHERE id = ? OR LOWER(email) = LOWER(?)').run(cleanNewEmail, userId, cleanOldEmail);
                 localSqlite.prepare('DELETE FROM users WHERE LOWER(email) = LOWER(?) AND id != ?').run(cleanOldEmail, userId);
-            } catch (_) {}
+            } catch (_) { }
         }
     }
 
@@ -1989,13 +2343,13 @@ async function syncUserEmailAcrossData(userId, oldEmail, newEmail, name, role) {
                 await db.run(
                     'UPDATE enrollments SET student_id = ?, student_name = COALESCE(NULLIF(student_name, \'\'), ?) WHERE id = ?',
                     userId, cleanName, conflict.id
-                ).catch(() => {});
-                await db.run('DELETE FROM enrollments WHERE id = ?', en.id).catch(() => {});
+                ).catch(() => { });
+                await db.run('DELETE FROM enrollments WHERE id = ?', en.id).catch(() => { });
             } else {
                 await db.run(
                     'UPDATE enrollments SET student_email = ?, student_id = ?, student_name = COALESCE(NULLIF(student_name, \'\'), ?) WHERE id = ?',
                     cleanNewEmail, userId, cleanName, en.id
-                ).catch(() => {});
+                ).catch(() => { });
             }
         }
     } catch (e) {
@@ -2012,7 +2366,7 @@ async function syncUserEmailAcrossData(userId, oldEmail, newEmail, name, role) {
                  WHERE (instructor_email IS NOT NULL AND LOWER(instructor_email) = ?) 
                     OR (instructor IS NOT NULL AND TRIM(LOWER(instructor)) = TRIM(LOWER(?)))`,
                 cleanNewEmail, cleanName, cleanOldEmail, cleanName
-            ).catch(() => {});
+            ).catch(() => { });
         } catch (e) {
             console.error('[syncUserEmailAcrossData] Error updating teacher classrooms:', e);
         }
@@ -2022,7 +2376,7 @@ async function syncUserEmailAcrossData(userId, oldEmail, newEmail, name, role) {
     try {
         io.emit('classrooms_updated');
         io.emit('classroom_students_changed', {});
-    } catch (_) {}
+    } catch (_) { }
 }
 
 // --- CHANGE EMAIL VERIFICATION OTP ENDPOINTS ---
@@ -2128,10 +2482,10 @@ app.post('/users/verify-email-change', authenticateToken, async (req, res) => {
         if (!current) {
             const adminCurrent = await db.get('SELECT * FROM admin_users WHERE id = ?', userId);
             if (!adminCurrent) return res.status(404).json({ message: 'User account not found' });
-            
+
             const oldAdminEmail = (adminCurrent.email || '').trim().toLowerCase();
             await db.run('UPDATE admin_users SET email = ? WHERE id = ? OR LOWER(email) = LOWER(?)', cleanEmail, userId, oldAdminEmail);
-            await db.run('DELETE FROM admin_users WHERE LOWER(email) = LOWER(?) AND id != ?', oldAdminEmail, userId).catch(() => {});
+            await db.run('DELETE FROM admin_users WHERE LOWER(email) = LOWER(?) AND id != ?', oldAdminEmail, userId).catch(() => { });
             if (newPassword && newPassword.trim()) {
                 await db.run('UPDATE admin_users SET password = ? WHERE id = ?', newPassword.trim(), userId);
             }
@@ -2140,10 +2494,10 @@ app.post('/users/verify-email-change', authenticateToken, async (req, res) => {
                 try {
                     localSqlite.prepare('UPDATE admin_users SET email = ? WHERE id = ? OR LOWER(email) = LOWER(?)').run(cleanEmail, userId, oldAdminEmail);
                     localSqlite.prepare('DELETE FROM admin_users WHERE LOWER(email) = LOWER(?) AND id != ?').run(oldAdminEmail, userId);
-                } catch (_) {}
+                } catch (_) { }
             }
             await db.run('DELETE FROM otp_verifications WHERE id = ?', record.id);
-            await db.run('DELETE FROM otp_verifications WHERE LOWER(email) = ? OR LOWER(email) = ?', cleanEmail, oldAdminEmail).catch(() => {});
+            await db.run('DELETE FROM otp_verifications WHERE LOWER(email) = ? OR LOWER(email) = ?', cleanEmail, oldAdminEmail).catch(() => { });
             const updatedUser = { ...adminCurrent, email: cleanEmail };
             const token = jwt.sign(
                 { id: updatedUser.id, email: cleanEmail, role: 'Admin', name: updatedUser.name, isAdmin: true },
@@ -2155,7 +2509,7 @@ app.post('/users/verify-email-change', authenticateToken, async (req, res) => {
         const oldEmail = (current.email || '').trim().toLowerCase();
 
         await db.run('UPDATE users SET email = ? WHERE id = ? OR LOWER(email) = LOWER(?)', cleanEmail, userId, oldEmail);
-        await db.run('DELETE FROM users WHERE LOWER(email) = LOWER(?) AND id != ?', oldEmail, userId).catch(() => {});
+        await db.run('DELETE FROM users WHERE LOWER(email) = LOWER(?) AND id != ?', oldEmail, userId).catch(() => { });
 
         if (newPassword && newPassword.trim()) {
             await db.run('UPDATE users SET password = ? WHERE id = ?', newPassword.trim(), userId);
@@ -2165,8 +2519,8 @@ app.post('/users/verify-email-change', authenticateToken, async (req, res) => {
         await syncUserEmailAcrossData(userId, oldEmail, cleanEmail, current.name, current.role);
 
         if (current.role === 'Admin') {
-            await db.run('UPDATE admin_users SET email = ? WHERE id = ? OR LOWER(email) = LOWER(?)', cleanEmail, userId, oldEmail).catch(() => {});
-            await db.run('DELETE FROM admin_users WHERE LOWER(email) = LOWER(?) AND id != ?', oldEmail, userId).catch(() => {});
+            await db.run('UPDATE admin_users SET email = ? WHERE id = ? OR LOWER(email) = LOWER(?)', cleanEmail, userId, oldEmail).catch(() => { });
+            await db.run('DELETE FROM admin_users WHERE LOWER(email) = LOWER(?) AND id != ?', oldEmail, userId).catch(() => { });
         }
 
         const localSqlite = db.getSqliteDb ? db.getSqliteDb() : null;
@@ -2177,11 +2531,11 @@ app.post('/users/verify-email-change', authenticateToken, async (req, res) => {
                 if (newPassword && newPassword.trim()) {
                     localSqlite.prepare('UPDATE users SET password = ? WHERE id = ?').run(newPassword.trim(), userId);
                 }
-            } catch (_) {}
+            } catch (_) { }
         }
 
         await db.run('DELETE FROM otp_verifications WHERE id = ?', record.id);
-        await db.run('DELETE FROM otp_verifications WHERE LOWER(email) = ? OR LOWER(email) = ?', cleanEmail, oldEmail).catch(() => {});
+        await db.run('DELETE FROM otp_verifications WHERE LOWER(email) = ? OR LOWER(email) = ?', cleanEmail, oldEmail).catch(() => { });
 
         const updatedUser = {
             id: current.id,
@@ -2294,6 +2648,7 @@ const getClassworkFromDb = async (classroomId) => {
             testCases: Array.isArray(meta.testCases) ? meta.testCases : [],
             starterCode: meta.starterCode || '',
             duration: meta.duration !== undefined ? meta.duration : 60,
+            videoDuration: meta.videoDuration ?? null,
             autoSaveInterval: meta.autoSaveInterval || '30s',
             treatWarningsAsErrors: !!meta.treatWarningsAsErrors,
             disableBack: !!meta.disableBack
@@ -2346,6 +2701,7 @@ const saveClassworkToDb = async (classroomId, classwork) => {
             activityType: cw.activityType || cw.type || 'Assignment',
             starterCode: cw.starterCode !== undefined ? cw.starterCode : '',
             duration: cw.duration !== undefined ? cw.duration : 60,
+            videoDuration: cw.videoDuration ?? null,
             autoSaveInterval: cw.autoSaveInterval || '30s',
             treatWarningsAsErrors: !!cw.treatWarningsAsErrors,
             disableBack: !!cw.disableBack
@@ -2361,7 +2717,7 @@ const saveClassworkToDb = async (classroomId, classwork) => {
                 type = excluded.type
         `, id, Number(classroomId) || classroomId, cw.title || '', JSON.stringify(descObj), cw.dueDate || '', cw.type || cw.activityType || '');
     }
-    try { db.triggerSync(); } catch (_) {}
+    try { db.triggerSync(); } catch (_) { }
 };
 
 // --- ACCESS CONTROL HELPERS ---
@@ -2389,14 +2745,14 @@ async function checkClassroomAccess(req, classroomId) {
         if (matchesEmail || matchesName || matchesKimAlias) {
             // Self-heal: keep instructor_email up-to-date
             if (teacherEmail && cEmail !== teacherEmail) {
-                db.run('UPDATE classrooms SET instructor_email = ? WHERE id = ?', teacherEmail, c.id).catch(() => {});
+                db.run('UPDATE classrooms SET instructor_email = ? WHERE id = ?', teacherEmail, c.id).catch(() => { });
             }
             return true;
         }
         // Self-heal & Adoption: if classroom is unassigned, has placeholder name, or instructor is missing
         if (!cEmail || !cName || cName === 'instructor' || (c.name && /^Classroom \d+$/i.test(c.name.trim()))) {
             if (teacherEmail || teacherName) {
-                db.run('UPDATE classrooms SET instructor = COALESCE(NULLIF(instructor, \'\'), ?), instructor_email = COALESCE(NULLIF(instructor_email, \'\'), ?) WHERE id = ?', req.user.name || 'Instructor', teacherEmail || null, c.id).catch(() => {});
+                db.run('UPDATE classrooms SET instructor = COALESCE(NULLIF(instructor, \'\'), ?), instructor_email = COALESCE(NULLIF(instructor_email, \'\'), ?) WHERE id = ?', req.user.name || 'Instructor', teacherEmail || null, c.id).catch(() => { });
             }
             return true;
         }
@@ -2436,7 +2792,7 @@ async function checkClassroomAccess(req, classroomId) {
                      VALUES (?, ?, ?, ?, ?)
                      ON CONFLICT(classroom_id, student_email) DO NOTHING`,
                     classroomId, studentId, req.user.name || 'Student', studentEmail, new Date().toISOString()
-                ).catch(() => {});
+                ).catch(() => { });
                 return true;
             }
         }
@@ -2455,7 +2811,7 @@ async function checkClassroomAccess(req, classroomId) {
                  VALUES (?, ?, ?, ?, ?)
                  ON CONFLICT(classroom_id, student_email) DO NOTHING`,
                 classroomId, studentId, req.user.name || 'Student', studentEmail, new Date().toISOString()
-            ).catch(() => {});
+            ).catch(() => { });
             return true;
         }
 
@@ -2560,7 +2916,7 @@ app.delete('/classwork/:classroomId/:id', authenticateToken, requireRole('Teache
             meta.archived = true;
             await db.run('UPDATE classwork SET description = ? WHERE id = ?', JSON.stringify(meta), id);
         }
-        try { db.triggerSync(); } catch (_) {}
+        try { db.triggerSync(); } catch (_) { }
         const updatedClasswork = await getClassworkFromDb(classroomId);
         io.emit('classwork_changed', { classroomId, classwork: updatedClasswork });
         res.status(200).json({ message: 'Classwork deleted', classwork: updatedClasswork });
@@ -2618,7 +2974,7 @@ app.post('/classrooms/:classroomId/announcements', authenticateToken, requireRol
                 posted = excluded.posted
         `, announcementId, Number(classroomId), announcementTitle, details.trim(), announcementAuthor, postedTime);
 
-        try { db.triggerSync(); } catch (_) {}
+        try { db.triggerSync(); } catch (_) { }
 
         const newAnnouncement = {
             id: announcementId,
@@ -2644,7 +3000,7 @@ app.delete('/classrooms/:classroomId/announcements/:id', authenticateToken, requ
             return res.status(403).json({ message: 'Access denied' });
         }
         await db.run('DELETE FROM announcements WHERE id = ? AND classroom_id = ?', Number(id), Number(classroomId));
-        try { db.triggerSync(); } catch (_) {}
+        try { db.triggerSync(); } catch (_) { }
         io.emit('announcement_deleted', { classroomId: Number(classroomId), announcementId: Number(id) });
         res.status(200).json({ success: true, message: 'Announcement deleted' });
     } catch (e) {
@@ -2676,11 +3032,11 @@ app.get('/classrooms', authenticateToken, async (req, res) => {
                 db.run(
                     'UPDATE enrollments SET student_email = ? WHERE (student_id = ? OR CAST(student_id AS TEXT) = CAST(? AS TEXT)) AND (student_email IS NULL OR LOWER(TRIM(student_email)) != ?)',
                     studentEmail, studentId, String(studentId), studentEmail
-                ).catch(() => {});
+                ).catch(() => { });
                 db.run(
                     'UPDATE enrollments SET student_id = ? WHERE (student_email IS NOT NULL AND LOWER(TRIM(student_email)) = ?) AND (student_id IS NULL OR student_id != ?)',
                     studentId, studentEmail, studentId
-                ).catch(() => {});
+                ).catch(() => { });
             }
 
         } else if (roleLower === 'teacher' || roleLower === 'instructor') {
@@ -2699,7 +3055,7 @@ app.get('/classrooms', authenticateToken, async (req, res) => {
                 db.run(
                     'UPDATE classrooms SET instructor_email = ? WHERE (instructor IS NOT NULL AND TRIM(LOWER(instructor)) = ?) AND (instructor_email IS NULL OR instructor_email = \'\' OR LOWER(instructor_email) != ?)',
                     teacherEmail, teacherName, teacherEmail
-                ).catch(() => {});
+                ).catch(() => { });
             }
         } else {
             // Admin can view all classrooms
@@ -2845,7 +3201,7 @@ app.put('/classrooms', authenticateToken, requireRole('Teacher', 'Admin'), async
                 instructorEmail: instEmail
             });
         }
-        try { db.triggerSync(); } catch (_) {}
+        try { db.triggerSync(); } catch (_) { }
         io.emit('classrooms_changed', { classrooms: savedClassrooms });
         res.status(200).json({ message: 'Classrooms saved', classrooms: savedClassrooms });
     } catch (e) {
@@ -2895,19 +3251,19 @@ app.delete('/classrooms/:id', authenticateToken, requireRole('Teacher', 'Admin')
                         allowDelete = true;
                     }
                 }
-            } catch (e) {}
+            } catch (e) { }
             if (!allowDelete) {
                 return res.status(403).json({ message: 'Only System Admins can delete courses according to system settings.' });
             }
         }
 
         const id = req.params.id;
-        await db.run('DELETE FROM submissions WHERE assignment_id IN (SELECT id FROM classwork WHERE classroom_id = ?)', id).catch(() => {});
-        await db.run('DELETE FROM grades WHERE assignment_id IN (SELECT id FROM classwork WHERE classroom_id = ?)', id).catch(() => {});
-        await db.run('DELETE FROM classwork WHERE classroom_id = ?', id).catch(() => {});
-        await db.run('DELETE FROM enrollments WHERE classroom_id = ?', id).catch(() => {});
+        await db.run('DELETE FROM submissions WHERE assignment_id IN (SELECT id FROM classwork WHERE classroom_id = ?)', id).catch(() => { });
+        await db.run('DELETE FROM grades WHERE assignment_id IN (SELECT id FROM classwork WHERE classroom_id = ?)', id).catch(() => { });
+        await db.run('DELETE FROM classwork WHERE classroom_id = ?', id).catch(() => { });
+        await db.run('DELETE FROM enrollments WHERE classroom_id = ?', id).catch(() => { });
         await db.run('DELETE FROM classrooms WHERE id = ?', id);
-        try { db.triggerSync(); } catch (_) {}
+        try { db.triggerSync(); } catch (_) { }
         res.status(200).json({ message: 'Classroom deleted successfully' });
     } catch (e) {
         res.status(500).json({ message: e.message });
@@ -2999,7 +3355,7 @@ async function resolveCanonicalStudent(userObj, fallbackName = '', fallbackId = 
             for (const r of (enrRows || [])) {
                 addAlias(r.student_name);
             }
-        } catch (_) {}
+        } catch (_) { }
     }
 
     return {
@@ -3021,7 +3377,7 @@ app.get('/submissions/:assignmentId', authenticateToken, requireRole('Teacher', 
         try {
             const kimUser = await db.get("SELECT name FROM users WHERE LOWER(email) = 'kimfabie123@gmail.com'");
             if (kimUser?.name && kimUser.name.trim()) canonicalKimName = kimUser.name.trim();
-        } catch (_) {}
+        } catch (_) { }
 
         const normalizeStudentSubName = (rawName) => {
             const trimmed = String(rawName || '').trim();
@@ -3049,7 +3405,7 @@ app.get('/submissions/:assignmentId', authenticateToken, requireRole('Teacher', 
             const normName = normalizeStudentSubName(s.student_name);
             const key = normName.toLowerCase();
             let history = [];
-            try { history = JSON.parse(s.history); } catch {}
+            try { history = JSON.parse(s.history); } catch { }
             const lastCode = Array.isArray(history) && history.length > 0 ? history[history.length - 1]?.code : '';
             const formatted = {
                 ...s,
@@ -3122,11 +3478,11 @@ app.post('/submissions/:assignmentId', authenticateToken, requireRole('Student')
                 await db.run(
                     'INSERT INTO audit_logs (timestamp, "user", type, severity, "desc") VALUES (?, ?, ?, ?, ?)',
                     nowIso, name, 'Malicious Script Attempt', 'High', desc
-                ).catch(() => {});
+                ).catch(() => { });
                 await db.run(
                     `INSERT INTO security_flags (date_string, count, alt_tab_copy_paste_count) VALUES (?, 1, 0) ON CONFLICT(date_string) DO UPDATE SET count = COALESCE(security_flags.count, 0) + 1`,
                     todayKey()
-                ).catch(() => {});
+                ).catch(() => { });
                 io.emit('admin_security_alert', {
                     user: name,
                     name,
@@ -3148,14 +3504,14 @@ app.post('/submissions/:assignmentId', authenticateToken, requireRole('Student')
             await db.run(
                 'DELETE FROM submissions WHERE assignment_id = ? AND LOWER(TRIM(student_name)) = LOWER(TRIM(?))',
                 assignmentId, alias
-            ).catch(() => {});
+            ).catch(() => { });
         }
         await db.run(
             'INSERT INTO submissions (assignment_id, student_name, history, submittedAt) VALUES (?, ?, ?, ?)',
             assignmentId, name, historyStr, new Date().toISOString()
         );
 
-        try { db.triggerSync(); } catch (_) {}
+        try { db.triggerSync(); } catch (_) { }
         io.emit('submission_updated', { assignmentId, studentName: name });
 
         res.status(200).json({ message: 'Submission saved', studentName: name });
@@ -3190,7 +3546,7 @@ app.delete('/submissions/:assignmentId/:studentName', authenticateToken, require
                     if (meta.disableBack || meta.disable_back) {
                         return res.status(403).json({ message: 'Unsubmitting is not permitted for this activity.' });
                     }
-                } catch (_) {}
+                } catch (_) { }
             }
 
             const uId = String(req.user.id || '');
@@ -3218,9 +3574,9 @@ app.delete('/submissions/:assignmentId/:studentName', authenticateToken, require
                  WHERE (assignment_id = ? OR CAST(assignment_id AS TEXT) = ?)
                    AND LOWER(TRIM(student_name)) = LOWER(TRIM(?))`,
                 req.params.assignmentId, String(req.params.assignmentId), alias
-            ).catch(() => {});
+            ).catch(() => { });
         }
-        try { db.triggerSync(); } catch (_) {}
+        try { db.triggerSync(); } catch (_) { }
         const deletedStudentName = canonicalName || studentName;
         io.emit('submission_deleted', { assignmentId: req.params.assignmentId, studentName: deletedStudentName });
         io.emit('student_unsubmitted', { assignmentId: req.params.assignmentId, studentName: deletedStudentName, studentId: String(req.user?.id || '') });
@@ -3457,7 +3813,7 @@ app.get('/classroom-students/:classroomId', authenticateToken, async (req, res) 
             (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base', numeric: true })
         );
 
-        res.status(200).json({ 
+        res.status(200).json({
             students: sortedStudents,
             instructor
         });
@@ -3478,12 +3834,12 @@ app.post('/classrooms/:classroomId/enroll', authenticateToken, async (req, res) 
                         allowManage = false;
                     }
                 }
-            } catch (e) {}
+            } catch (e) { }
             if (!allowManage) {
                 return res.status(403).json({ message: 'Only System Admins can manage students according to system settings.' });
             }
         }
-        
+
         const { classroomId } = req.params;
         const now = new Date().toISOString();
 
@@ -3560,13 +3916,13 @@ app.post('/classrooms/join', authenticateToken, async (req, res) => {
                 enrolled_at = excluded.enrolled_at
         `, classroom.id, studentId, studentName, studentEmail, now);
 
-        try { db.triggerSync(); } catch (_) {}
+        try { db.triggerSync(); } catch (_) { }
 
         let parsedTheme = null;
         if (classroom.theme) {
             try {
                 parsedTheme = typeof classroom.theme === 'string' ? JSON.parse(classroom.theme) : classroom.theme;
-            } catch {}
+            } catch { }
         }
 
         let instName = (classroom.instructor && classroom.instructor.trim()) || '';
@@ -3585,15 +3941,15 @@ app.post('/classrooms/join', authenticateToken, async (req, res) => {
             instEmail = realTeacher.email;
         }
 
-        res.status(200).json({ 
+        res.status(200).json({
             classroom: {
                 ...classroom,
                 theme: parsedTheme,
                 instructor: instName || 'Instructor',
                 instructorEmail: instEmail,
                 instructorAvatar: realTeacher?.avatar || null
-            }, 
-            message: 'Enrolled successfully' 
+            },
+            message: 'Enrolled successfully'
         });
     } catch (e) {
         res.status(500).json({ message: e.message });
@@ -3682,7 +4038,7 @@ app.get('/stats', authenticateToken, requireRole('Admin'), async (req, res) => {
                 securityFlagsToday = Number(flagRow.count || 0);
                 altTabCopyPasteFlags = Number(flagRow.alt_tab_copy_paste_count || 0);
             }
-        } catch (_) {}
+        } catch (_) { }
 
         // Also count directly from audit_logs for today (works for both SQLite and Postgres)
         // Use start-of-day ISO timestamp - compatible with both SQLite TEXT and Postgres TIMESTAMPTZ
@@ -3701,7 +4057,7 @@ app.get('/stats', authenticateToken, requireRole('Admin'), async (req, res) => {
             // Use whichever count is higher (security_flags or audit_logs direct count)
             if (auditAltCount > altTabCopyPasteFlags) altTabCopyPasteFlags = auditAltCount;
             if (auditSecCount > securityFlagsToday) securityFlagsToday = auditSecCount;
-        } catch (_) {}
+        } catch (_) { }
 
         const activeUsers = activeUsersRow ? Number(activeUsersRow.c) : 0;
         const activeClassrooms = activeClassroomsRow ? Number(activeClassroomsRow.c) : 0;
@@ -3923,12 +4279,12 @@ function ensureBaseTemplate() {
                             if (fs.readFileSync(nugetFile, 'utf8').includes('api.nuget.org')) {
                                 fs.writeFileSync(nugetFile, OFFLINE_NUGET_CONFIG, 'utf8');
                             }
-                        } catch (_) {}
+                        } catch (_) { }
                         return COMPILER_BASE_DIR;
                     }
-                } catch (_) {}
+                } catch (_) { }
                 // If TargetFramework differs, remove old template and recreate
-                try { fs.rmSync(COMPILER_BASE_DIR, { recursive: true, force: true }); } catch (_) {}
+                try { fs.rmSync(COMPILER_BASE_DIR, { recursive: true, force: true }); } catch (_) { }
             }
 
             if (!fs.existsSync(COMPILER_BASE_DIR)) {
@@ -4039,10 +4395,10 @@ setInterval(() => {
                     if (now - stats.mtimeMs > MAX_AGE_MS) {
                         fs.rmSync(fullPath, { recursive: true, force: true });
                     }
-                } catch (_) {}
+                } catch (_) { }
             }
         }
-    } catch (_) {}
+    } catch (_) { }
 }, 60 * 60 * 1000);
 
 function parseCompilerDiagnostics(output) {
@@ -4171,7 +4527,7 @@ async function getTreatWarningsAsErrors() {
             const parsed = typeof fallbackRow.value === 'string' ? JSON.parse(fallbackRow.value) : fallbackRow.value;
             return !!parsed?.treatWarningsAsErrors;
         }
-    } catch (_) {}
+    } catch (_) { }
     return false;
 }
 
@@ -4199,7 +4555,7 @@ async function getKioskSettings() {
             const parsed = typeof secRow.value === 'string' ? JSON.parse(secRow.value) : secRow.value;
             return { ...defaults, ...parsed };
         }
-    } catch (_) {}
+    } catch (_) { }
     return defaults;
 }
 
@@ -4361,8 +4717,8 @@ async function recordMaliciousScriptAttempt({ socket, data, securityCheck }) {
                     `Blocked malicious script: ${securityCheck.rule}`,
                     timeText,
                     '#dc2626'
-                ).catch(() => {});
-            } catch (_) {}
+                ).catch(() => { });
+            } catch (_) { }
 
             const targetRoom = `classroom:${classroomId}:assignment:${assignmentId}`;
             io.to(targetRoom).emit('teacher_receive_alert', {
@@ -4413,7 +4769,7 @@ io.on('connection', (socket) => {
     console.log('[Workspace] Student Connected: ' + socket.id);
 
     socket.on('get_active_activities', (data) => {
-        socket.emit('active_activities_update', { 
+        socket.emit('active_activities_update', {
             counts: getActiveActivitiesMap(data?.classroomId),
             classroomCounts: getActiveClassroomsMap()
         });
@@ -4468,7 +4824,7 @@ io.on('connection', (socket) => {
                         targetSocket.emit('authenticated', { user: { id: decoded.id, email: decoded.email, role: decoded.role } });
                         return targetSocket.user;
                     }
-                } catch (_) {}
+                } catch (_) { }
             }
         }
 
@@ -4491,7 +4847,7 @@ io.on('connection', (socket) => {
     if (handshakeToken) {
         authenticateSocket(socket, handshakeToken);
         if (socket.user) {
-            getKioskSettings().then(cfg => socket.emit('kiosk_settings', cfg)).catch(() => {});
+            getKioskSettings().then(cfg => socket.emit('kiosk_settings', cfg)).catch(() => { });
         }
     }
 
@@ -4504,7 +4860,7 @@ io.on('connection', (socket) => {
             u = authenticateSocket(socket, data.token, data.user);
         }
         if (u) {
-            getKioskSettings().then(cfg => socket.emit('kiosk_settings', cfg)).catch(() => {});
+            getKioskSettings().then(cfg => socket.emit('kiosk_settings', cfg)).catch(() => { });
         }
     });
 
@@ -4560,7 +4916,7 @@ io.on('connection', (socket) => {
                     aIdStr, aIdStr
                 ).catch(() => []);
             }
-        } catch (_) {}
+        } catch (_) { }
 
         if (Array.isArray(dbLogs) && dbLogs.length > 0) {
             socket.emit('teacher_past_warnings', dbLogs);
@@ -4573,7 +4929,7 @@ io.on('connection', (socket) => {
                 `SELECT LOWER(student_name) as sname FROM submissions WHERE assignment_id = ? OR CAST(assignment_id AS TEXT) = ?`,
                 aIdStr, aIdStr
             ).catch(() => []);
-        } catch (_) {}
+        } catch (_) { }
         const submittedSet = new Set((submittedRows || []).map(r => r.sname));
 
         for (const [key, student] of Object.entries(activeStudents)) {
@@ -4615,7 +4971,7 @@ io.on('connection', (socket) => {
                 `SELECT LOWER(student_name) as sname FROM submissions WHERE assignment_id = ? OR CAST(assignment_id AS TEXT) = ?`,
                 aIdStr, aIdStr
             ).catch(() => []);
-        } catch (_) {}
+        } catch (_) { }
         const submittedSet = new Set((submittedRows || []).map(r => r.sname));
 
         for (const [key, student] of Object.entries(activeStudents)) {
@@ -4742,95 +5098,95 @@ io.on('connection', (socket) => {
                 return socket.emit('process_exit', { code: 1 });
             }
 
-        const { code, extraFiles = [], language } = data || {};
-        if (language && !['csharp', 'cs', 'c#'].includes(String(language).toLowerCase())) {
-            socket.emit('terminal_output', `\n[Compiler Error: Unsupported language "${language}". Verity Compiler strictly compiles C# (.NET SDK) only.]\n`);
-            return socket.emit('process_exit', { code: 1 });
-        }
-
-        // Verify .NET SDK is available on host machine
-        const dotnetStatus = dotnetManager.checkDotnetStatus(OFFLINE_DOTNET_ENV);
-        if (!dotnetStatus.installed) {
-            socket.emit('terminal_output', "\n[Error: Microsoft .NET SDK is not installed on this machine.]\n[Verity C# Compiler requires Microsoft .NET SDK. Please reinstall The Verity and select the Microsoft .NET SDK option in the installer, or download it from https://dotnet.microsoft.com/download/dotnet/8.0]\n");
-            socket.emit('dotnet_missing', { error: 'DOTNET_NOT_INSTALLED' });
-            return socket.emit('process_exit', { code: 1 });
-        }
-
-        // Security check: Scan C# code for dangerous APIs, process execution, reflection, native calls, etc.
-        const securityCheck = scanCSharpCode(code, extraFiles);
-        if (!securityCheck.isSafe) {
-            await recordMaliciousScriptAttempt({ socket, data, securityCheck });
-            socket.emit('compiler_diagnostics', [{
-                severity: 'error',
-                message: `[Security Violation] ${securityCheck.message}`,
-                startLineNumber: securityCheck.line || 1,
-                startColumn: securityCheck.column || 1,
-                endLineNumber: securityCheck.line || 1,
-                endColumn: (securityCheck.column || 1) + 12
-            }]);
-            socket.emit('terminal_output', `\n[Security Alert: Code execution blocked by Verity Sandbox]\n[File: ${securityCheck.fileName}, Line ${securityCheck.line}:${securityCheck.column}]\n[Rule: ${securityCheck.rule}]\n[Detail: ${securityCheck.message}]\n\n`);
-            return socket.emit('process_exit', { code: 1 });
-        }
-
-        const studentKey = socket.user?.id
-            ? `u_${socket.user.id}`
-            : (socket.user?.email ? `e_${socket.user.email.replace(/[^a-zA-Z0-9]/g, '_')}` : `s_${socket.id.replace(/[^a-zA-Z0-9]/g, '')}`);
-
-        let projectDir = sessionWorkspaces.get(studentKey)?.projectDir;
-        if (!projectDir) {
-            projectDir = path.join(os.tmpdir(), `verity_ws_${studentKey}`);
-            sessionWorkspaces.set(studentKey, { projectDir, lastUsed: Date.now() });
-        } else {
-            sessionWorkspaces.get(studentKey).lastUsed = Date.now();
-        }
-
-        const projectFile = path.join(projectDir, 'verity_base.csproj');
-        let isFirstCompile = !fs.existsSync(projectFile);
-        const targetFramework = getDotnetTargetFramework();
-
-        if (!isFirstCompile) {
-            try {
-                const existingCsproj = fs.readFileSync(projectFile, 'utf8');
-                if (!existingCsproj.includes(`<TargetFramework>${targetFramework}</TargetFramework>`)) {
-                    try { fs.rmSync(projectDir, { recursive: true, force: true }); } catch (_) {}
-                    isFirstCompile = true;
-                }
-            } catch (_) {}
-        }
-
-        if (activeProcess) {
-            try { killProcessTree(activeProcess); } catch (_) {}
-            activeProcess = null;
-        }
-
-        if (isFirstCompile) {
-            socket.emit('terminal_output', "Initializing compiler environment...\n");
-
-            try {
-                await ensureBaseTemplate();
-                if (!fs.existsSync(projectDir)) {
-                    fs.mkdirSync(projectDir, { recursive: true });
-                }
-                fs.cpSync(COMPILER_BASE_DIR, projectDir, { recursive: true });
-                await compileStudentCode(projectDir, code, socket, extraFiles);
-            } catch (err) {
-                console.warn('Fast template clone failed, falling back to dotnet new:', err.message);
-                exec(`dotnet new console -n verity_base --no-restore --framework ${targetFramework} -o "${projectDir}"`, { env: OFFLINE_DOTNET_ENV }, async (newErr) => {
-                    if (newErr) {
-                        sessionWorkspaces.delete(studentKey);
-                        socket.emit('terminal_output', "Error: Could not initialize .NET compiler.\n");
-                        return socket.emit('process_exit', { code: 1 });
-                    }
-                    try {
-                        fs.writeFileSync(path.join(projectDir, 'nuget.config'), OFFLINE_NUGET_CONFIG, 'utf8');
-                        execSync(`dotnet restore "${path.join(projectDir, 'verity_base.csproj')}" --ignore-failed-sources -v q`, { cwd: projectDir, env: OFFLINE_DOTNET_ENV });
-                    } catch (_) {}
-                    await compileStudentCode(projectDir, code, socket, extraFiles);
-                });
+            const { code, extraFiles = [], language } = data || {};
+            if (language && !['csharp', 'cs', 'c#'].includes(String(language).toLowerCase())) {
+                socket.emit('terminal_output', `\n[Compiler Error: Unsupported language "${language}". Verity Compiler strictly compiles C# (.NET SDK) only.]\n`);
+                return socket.emit('process_exit', { code: 1 });
             }
-        } else {
-            await compileStudentCode(projectDir, code, socket, extraFiles);
-        }
+
+            // Verify .NET SDK is available on host machine
+            const dotnetStatus = dotnetManager.checkDotnetStatus(OFFLINE_DOTNET_ENV);
+            if (!dotnetStatus.installed) {
+                socket.emit('terminal_output', "\n[Error: Microsoft .NET SDK is not installed on this machine.]\n[Verity C# Compiler requires Microsoft .NET SDK. Please reinstall The Verity and select the Microsoft .NET SDK option in the installer, or download it from https://dotnet.microsoft.com/download/dotnet/8.0]\n");
+                socket.emit('dotnet_missing', { error: 'DOTNET_NOT_INSTALLED' });
+                return socket.emit('process_exit', { code: 1 });
+            }
+
+            // Security check: Scan C# code for dangerous APIs, process execution, reflection, native calls, etc.
+            const securityCheck = scanCSharpCode(code, extraFiles);
+            if (!securityCheck.isSafe) {
+                await recordMaliciousScriptAttempt({ socket, data, securityCheck });
+                socket.emit('compiler_diagnostics', [{
+                    severity: 'error',
+                    message: `[Security Violation] ${securityCheck.message}`,
+                    startLineNumber: securityCheck.line || 1,
+                    startColumn: securityCheck.column || 1,
+                    endLineNumber: securityCheck.line || 1,
+                    endColumn: (securityCheck.column || 1) + 12
+                }]);
+                socket.emit('terminal_output', `\n[Security Alert: Code execution blocked by Verity Sandbox]\n[File: ${securityCheck.fileName}, Line ${securityCheck.line}:${securityCheck.column}]\n[Rule: ${securityCheck.rule}]\n[Detail: ${securityCheck.message}]\n\n`);
+                return socket.emit('process_exit', { code: 1 });
+            }
+
+            const studentKey = socket.user?.id
+                ? `u_${socket.user.id}`
+                : (socket.user?.email ? `e_${socket.user.email.replace(/[^a-zA-Z0-9]/g, '_')}` : `s_${socket.id.replace(/[^a-zA-Z0-9]/g, '')}`);
+
+            let projectDir = sessionWorkspaces.get(studentKey)?.projectDir;
+            if (!projectDir) {
+                projectDir = path.join(os.tmpdir(), `verity_ws_${studentKey}`);
+                sessionWorkspaces.set(studentKey, { projectDir, lastUsed: Date.now() });
+            } else {
+                sessionWorkspaces.get(studentKey).lastUsed = Date.now();
+            }
+
+            const projectFile = path.join(projectDir, 'verity_base.csproj');
+            let isFirstCompile = !fs.existsSync(projectFile);
+            const targetFramework = getDotnetTargetFramework();
+
+            if (!isFirstCompile) {
+                try {
+                    const existingCsproj = fs.readFileSync(projectFile, 'utf8');
+                    if (!existingCsproj.includes(`<TargetFramework>${targetFramework}</TargetFramework>`)) {
+                        try { fs.rmSync(projectDir, { recursive: true, force: true }); } catch (_) { }
+                        isFirstCompile = true;
+                    }
+                } catch (_) { }
+            }
+
+            if (activeProcess) {
+                try { killProcessTree(activeProcess); } catch (_) { }
+                activeProcess = null;
+            }
+
+            if (isFirstCompile) {
+                socket.emit('terminal_output', "Initializing compiler environment...\n");
+
+                try {
+                    await ensureBaseTemplate();
+                    if (!fs.existsSync(projectDir)) {
+                        fs.mkdirSync(projectDir, { recursive: true });
+                    }
+                    fs.cpSync(COMPILER_BASE_DIR, projectDir, { recursive: true });
+                    await compileStudentCode(projectDir, code, socket, extraFiles);
+                } catch (err) {
+                    console.warn('Fast template clone failed, falling back to dotnet new:', err.message);
+                    exec(`dotnet new console -n verity_base --no-restore --framework ${targetFramework} -o "${projectDir}"`, { env: OFFLINE_DOTNET_ENV }, async (newErr) => {
+                        if (newErr) {
+                            sessionWorkspaces.delete(studentKey);
+                            socket.emit('terminal_output', "Error: Could not initialize .NET compiler.\n");
+                            return socket.emit('process_exit', { code: 1 });
+                        }
+                        try {
+                            fs.writeFileSync(path.join(projectDir, 'nuget.config'), OFFLINE_NUGET_CONFIG, 'utf8');
+                            execSync(`dotnet restore "${path.join(projectDir, 'verity_base.csproj')}" --ignore-failed-sources -v q`, { cwd: projectDir, env: OFFLINE_DOTNET_ENV });
+                        } catch (_) { }
+                        await compileStudentCode(projectDir, code, socket, extraFiles);
+                    });
+                }
+            } else {
+                await compileStudentCode(projectDir, code, socket, extraFiles);
+            }
         } catch (error) {
             console.error('Compiler error:', error);
             socket.emit('terminal_output', `\n[Internal Server Error: ${error.message}]\n`);
@@ -4854,10 +5210,10 @@ io.on('connection', (socket) => {
         try {
             for (const f of fs.readdirSync(projectDir)) {
                 if (f.endsWith('.cs') && f !== 'Program.cs' && !extraNames.has(f)) {
-                    try { fs.unlinkSync(path.join(projectDir, f)); } catch (_) {}
+                    try { fs.unlinkSync(path.join(projectDir, f)); } catch (_) { }
                 }
             }
-        } catch (_) {}
+        } catch (_) { }
 
         socket.emit('terminal_output', "Compiling...\n");
         socket.emit('compiler_diagnostics', []); // Clear existing markers
@@ -4873,7 +5229,7 @@ io.on('connection', (socket) => {
             if (!fs.existsSync(nugetFile) || fs.readFileSync(nugetFile, 'utf8').includes('api.nuget.org')) {
                 fs.writeFileSync(nugetFile, OFFLINE_NUGET_CONFIG, 'utf8');
             }
-        } catch (_) {}
+        } catch (_) { }
 
         // Ensure assets file exists if using dotnet build fallback
         if (compilerConfig.mode === 'dotnet-build') {
@@ -4881,7 +5237,7 @@ io.on('connection', (socket) => {
             if (!fs.existsSync(assetsFile)) {
                 try {
                     execSync(`dotnet restore "${projectFile}" --ignore-failed-sources -v q`, { cwd: projectDir, env: OFFLINE_DOTNET_ENV });
-                } catch (_) {}
+                } catch (_) { }
             }
         }
 
@@ -4897,7 +5253,7 @@ io.on('connection', (socket) => {
 
         const buildTimeout = setTimeout(() => {
             if (activeProcess === buildProcess) {
-                try { buildProcess.kill(); } catch (_) {}
+                try { buildProcess.kill(); } catch (_) { }
                 socket.emit('terminal_output', "\n[Compilation timed out]\n");
                 socket.emit('process_exit', { code: 1 });
                 activeProcess = null;
@@ -4938,7 +5294,7 @@ io.on('connection', (socket) => {
 
             const executionTimeout = setTimeout(() => {
                 if (activeProcess === runProcess) {
-                    try { killProcessTree(runProcess); } catch (_) {}
+                    try { killProcessTree(runProcess); } catch (_) { }
                     socket.emit('terminal_output', "\n[Process terminated: Execution limit of 20s exceeded]\n");
                     socket.emit('process_exit', { code: 1 });
                     activeProcess = null;
@@ -4957,7 +5313,7 @@ io.on('connection', (socket) => {
                 totalOutputBytes += data.length;
                 if (totalOutputBytes > MAX_OUTPUT_BYTES) {
                     isOutputCapped = true;
-                    try { killProcessTree(runProcess); } catch (_) {}
+                    try { killProcessTree(runProcess); } catch (_) { }
                     socket.emit('terminal_output', "\n\n[Process terminated: Execution output exceeded 128 KB limit (Infinite output loop detected)]\n");
                     socket.emit('process_exit', { code: 1 });
                     activeProcess = null;
@@ -4971,7 +5327,7 @@ io.on('connection', (socket) => {
                 totalOutputBytes += data.length;
                 if (totalOutputBytes > MAX_OUTPUT_BYTES) {
                     isOutputCapped = true;
-                    try { killProcessTree(runProcess); } catch (_) {}
+                    try { killProcessTree(runProcess); } catch (_) { }
                     socket.emit('terminal_output', "\n\n[Process terminated: Execution output exceeded 128 KB limit (Infinite output loop detected)]\n");
                     socket.emit('process_exit', { code: 1 });
                     activeProcess = null;
@@ -4997,7 +5353,7 @@ io.on('connection', (socket) => {
 
     socket.on('stop_code', () => {
         if (activeProcess) {
-            try { killProcessTree(activeProcess); } catch (_) {}
+            try { killProcessTree(activeProcess); } catch (_) { }
             socket.emit('terminal_output', "\n[Process stopped by user]\n");
             socket.emit('process_exit', { code: 0 });
             activeProcess = null;
@@ -5014,229 +5370,229 @@ io.on('connection', (socket) => {
                 socket.user = { id: 9999, name: 'CompilerView', role: 'Student' };
             }
 
-        const { code, extraFiles = [], testCases = [], language } = data || {};
-        if (language && !['csharp', 'cs', 'c#'].includes(String(language).toLowerCase())) {
-            const results = (testCases || []).map(tc => ({
-                id: tc.id,
-                status: 'error',
-                passed: false,
-                actualOutput: '',
-                expectedOutput: tc.expectedOutput || '',
-                error: `Compiler Error: Unsupported language "${language}". Verity Compiler strictly compiles C# (.NET SDK) only.`
-            }));
-            return socket.emit('test_cases_results', { results });
-        }
-        if (!Array.isArray(testCases) || testCases.length === 0) {
-            return socket.emit('test_cases_results', { results: [] });
-        }
-
-        // Security check: Scan C# code for dangerous APIs prior to test evaluation
-        const securityCheck = scanCSharpCode(code, extraFiles);
-        if (!securityCheck.isSafe) {
-            await recordMaliciousScriptAttempt({ socket, data, securityCheck });
-            socket.emit('compiler_diagnostics', [{
-                severity: 'error',
-                message: `[Security Violation] ${securityCheck.message}`,
-                startLineNumber: securityCheck.line || 1,
-                startColumn: securityCheck.column || 1,
-                endLineNumber: securityCheck.line || 1,
-                endColumn: (securityCheck.column || 1) + 12
-            }]);
-            const results = (testCases || []).map(tc => ({
-                id: tc.id,
-                status: 'error',
-                passed: false,
-                actualOutput: '',
-                expectedOutput: tc.expectedOutput || '',
-                error: `Security Violation: ${securityCheck.message} (File: ${securityCheck.fileName}, Line ${securityCheck.line})`
-            }));
-            return socket.emit('test_cases_results', { results });
-        }
-
-        const studentKey = socket.user?.id
-            ? `u_${socket.user.id}`
-            : (socket.user?.email ? `e_${socket.user.email.replace(/[^a-zA-Z0-9]/g, '_')}` : `s_${socket.id.replace(/[^a-zA-Z0-9]/g, '')}`);
-
-        let ws = sessionWorkspaces.get(studentKey);
-        let projectDir = ws?.projectDir;
-        if (!projectDir) {
-            projectDir = path.join(os.tmpdir(), `verity_ws_${studentKey}`);
-            ws = { projectDir, lastUsed: Date.now() };
-            sessionWorkspaces.set(studentKey, ws);
-        } else {
-            ws.lastUsed = Date.now();
-        }
-
-        const projectFile = path.join(projectDir, 'verity_base.csproj');
-        const targetFramework = getDotnetTargetFramework();
-        const dllPath = path.join(projectDir, 'bin', 'Debug', targetFramework, 'verity_base.dll');
-
-        let compileSuccess = true;
-        let buildOutput = '';
-        const env = OFFLINE_DOTNET_ENV;
-
-        // Check if compilation is needed
-        if (ws.lastCompiledCode === code && fs.existsSync(dllPath)) {
-            // Skip compilation, code hasn't changed
-            console.log(`[TestCases] Skipping compilation for ${studentKey} (cached)`);
-            socket.emit('compiler_diagnostics', []); // clear old diags
-        } else {
-            console.log(`[TestCases] Compiling for ${studentKey}...`);
-            // Ensure workspace directory exists
-            try {
-                await ensureBaseTemplate();
-                if (!fs.existsSync(projectDir)) {
-                    fs.mkdirSync(projectDir, { recursive: true });
-                    fs.cpSync(COMPILER_BASE_DIR, projectDir, { recursive: true });
-                }
-            } catch (e) {
-                console.warn('Workspace prep failed for test cases:', e.message);
-            }
-
-            // Write student code to Program.cs
-            fs.writeFileSync(path.join(projectDir, 'Program.cs'), code || '', 'utf8');
-
-            // Write any additional .cs files (multi-file support)
-            const extraNames = new Set();
-            for (const ef of extraFiles) {
-                if (!ef || !ef.name || !ef.code) continue;
-                const safeName = ef.name.replace(/[^a-zA-Z0-9_\-\.]/g, '_').replace(/\.cs$/i, '') + '.cs';
-                if (safeName.toLowerCase() === 'program.cs') continue;
-                fs.writeFileSync(path.join(projectDir, safeName), ef.code || '', 'utf8');
-                extraNames.add(safeName);
-            }
-            try {
-                for (const f of fs.readdirSync(projectDir)) {
-                    if (f.endsWith('.cs') && f !== 'Program.cs' && !extraNames.has(f)) {
-                        try { fs.unlinkSync(path.join(projectDir, f)); } catch (_) {}
-                    }
-                }
-            } catch (_) {}
-
-            // Ensure nuget and obj assets exist
-            const nugetFile = path.join(projectDir, 'nuget.config');
-            try {
-                if (!fs.existsSync(nugetFile) || fs.readFileSync(nugetFile, 'utf8').includes('api.nuget.org')) {
-                    fs.writeFileSync(nugetFile, OFFLINE_NUGET_CONFIG, 'utf8');
-                }
-            } catch (_) {}
-
-            const treatWarningsAsErrors = await getTreatWarningsAsErrors();
-            const compilerConfig = getCompilerSpawnConfig(projectDir, treatWarningsAsErrors, extraFiles);
-
-            if (compilerConfig.mode === 'dotnet-build') {
-                const assetsFile = path.join(projectDir, 'obj', 'project.assets.json');
-                if (!fs.existsSync(assetsFile)) {
-                    try {
-                        execSync(`dotnet restore "${projectFile}" --ignore-failed-sources -v q`, { cwd: projectDir, env: OFFLINE_DOTNET_ENV });
-                    } catch (_) {}
-                }
-            }
-
-            compileSuccess = await new Promise((resolve) => {
-                const bp = spawn(compilerConfig.command, compilerConfig.args, { cwd: projectDir, env });
-                bp.stdout.on('data', d => { buildOutput += d.toString(); });
-                bp.stderr.on('data', d => { buildOutput += d.toString(); });
-                const timeout = setTimeout(() => {
-                    try { bp.kill(); } catch (_) {}
-                    resolve(false);
-                }, 15000);
-                bp.on('close', code => {
-                    clearTimeout(timeout);
-                    const diags = parseCompilerDiagnostics(buildOutput);
-                    socket.emit('compiler_diagnostics', diags);
-                    resolve(code === 0 && fs.existsSync(dllPath));
-                });
-                bp.on('error', () => {
-                    clearTimeout(timeout);
-                    resolve(false);
-                });
-            });
-
-            if (compileSuccess) {
-                ws.lastCompiledCode = code;
-            } else {
-                ws.lastCompiledCode = null;
-                const results = testCases.map(tc => ({
+            const { code, extraFiles = [], testCases = [], language } = data || {};
+            if (language && !['csharp', 'cs', 'c#'].includes(String(language).toLowerCase())) {
+                const results = (testCases || []).map(tc => ({
                     id: tc.id,
                     status: 'error',
                     passed: false,
                     actualOutput: '',
                     expectedOutput: tc.expectedOutput || '',
-                    error: buildOutput || 'Compilation failed. Please fix syntax or type errors in code.'
+                    error: `Compiler Error: Unsupported language "${language}". Verity Compiler strictly compiles C# (.NET SDK) only.`
                 }));
                 return socket.emit('test_cases_results', { results });
             }
-        }
-
-        // Run all test cases in parallel
-        const results = await Promise.all(testCases.map(tc => new Promise((resolve) => {
-            let actual = '';
-            let runError = '';
-            let killed = false;
-            const rp = spawn('dotnet', [dllPath], { cwd: projectDir, env });
-
-            const execTimeout = setTimeout(() => {
-                killed = true;
-                try { killProcessTree(rp); } catch (_) {}
-                const result = {
-                    id: tc.id,
-                    status: 'error',
-                    passed: false,
-                    actualOutput: actual.replace(/\r\n/g, '\n'),
-                    expectedOutput: tc.expectedOutput || '',
-                    error: 'Execution timed out (5s limit exceeded)'
-                };
-                socket.emit('test_case_result', result);
-                resolve(result);
-            }, 5000);
-
-            if (tc.input !== undefined && tc.input !== null && tc.input !== '') {
-                try {
-                    const inStr = String(tc.input);
-                    rp.stdin.write(inStr.endsWith('\n') ? inStr : inStr + '\n');
-                } catch (_) {}
+            if (!Array.isArray(testCases) || testCases.length === 0) {
+                return socket.emit('test_cases_results', { results: [] });
             }
-            try { rp.stdin.end(); } catch (_) {}
 
-            rp.stdout.on('data', d => { actual += d.toString(); });
-            rp.stderr.on('data', d => { runError += d.toString(); });
-
-            rp.on('close', () => {
-                clearTimeout(execTimeout);
-                if (killed) return;
-                const normActual = actual.replace(/\r\n/g, '\n').trim();
-                const normExpected = (tc.expectedOutput || '').replace(/\r\n/g, '\n').trim();
-                const passed = normActual === normExpected;
-                const result = {
-                    id: tc.id,
-                    status: passed ? 'passed' : 'failed',
-                    passed,
-                    actualOutput: actual.replace(/\r\n/g, '\n'),
-                    expectedOutput: tc.expectedOutput || '',
-                    error: runError || null
-                };
-                socket.emit('test_case_result', result);
-                resolve(result);
-            });
-
-            rp.on('error', (err) => {
-                clearTimeout(execTimeout);
-                if (killed) return;
-                const result = {
+            // Security check: Scan C# code for dangerous APIs prior to test evaluation
+            const securityCheck = scanCSharpCode(code, extraFiles);
+            if (!securityCheck.isSafe) {
+                await recordMaliciousScriptAttempt({ socket, data, securityCheck });
+                socket.emit('compiler_diagnostics', [{
+                    severity: 'error',
+                    message: `[Security Violation] ${securityCheck.message}`,
+                    startLineNumber: securityCheck.line || 1,
+                    startColumn: securityCheck.column || 1,
+                    endLineNumber: securityCheck.line || 1,
+                    endColumn: (securityCheck.column || 1) + 12
+                }]);
+                const results = (testCases || []).map(tc => ({
                     id: tc.id,
                     status: 'error',
                     passed: false,
-                    actualOutput: actual.replace(/\r\n/g, '\n'),
+                    actualOutput: '',
                     expectedOutput: tc.expectedOutput || '',
-                    error: err.message
-                };
-                socket.emit('test_case_result', result);
-                resolve(result);
-            });
-        })));
+                    error: `Security Violation: ${securityCheck.message} (File: ${securityCheck.fileName}, Line ${securityCheck.line})`
+                }));
+                return socket.emit('test_cases_results', { results });
+            }
 
-        socket.emit('test_cases_results', { results });
+            const studentKey = socket.user?.id
+                ? `u_${socket.user.id}`
+                : (socket.user?.email ? `e_${socket.user.email.replace(/[^a-zA-Z0-9]/g, '_')}` : `s_${socket.id.replace(/[^a-zA-Z0-9]/g, '')}`);
+
+            let ws = sessionWorkspaces.get(studentKey);
+            let projectDir = ws?.projectDir;
+            if (!projectDir) {
+                projectDir = path.join(os.tmpdir(), `verity_ws_${studentKey}`);
+                ws = { projectDir, lastUsed: Date.now() };
+                sessionWorkspaces.set(studentKey, ws);
+            } else {
+                ws.lastUsed = Date.now();
+            }
+
+            const projectFile = path.join(projectDir, 'verity_base.csproj');
+            const targetFramework = getDotnetTargetFramework();
+            const dllPath = path.join(projectDir, 'bin', 'Debug', targetFramework, 'verity_base.dll');
+
+            let compileSuccess = true;
+            let buildOutput = '';
+            const env = OFFLINE_DOTNET_ENV;
+
+            // Check if compilation is needed
+            if (ws.lastCompiledCode === code && fs.existsSync(dllPath)) {
+                // Skip compilation, code hasn't changed
+                console.log(`[TestCases] Skipping compilation for ${studentKey} (cached)`);
+                socket.emit('compiler_diagnostics', []); // clear old diags
+            } else {
+                console.log(`[TestCases] Compiling for ${studentKey}...`);
+                // Ensure workspace directory exists
+                try {
+                    await ensureBaseTemplate();
+                    if (!fs.existsSync(projectDir)) {
+                        fs.mkdirSync(projectDir, { recursive: true });
+                        fs.cpSync(COMPILER_BASE_DIR, projectDir, { recursive: true });
+                    }
+                } catch (e) {
+                    console.warn('Workspace prep failed for test cases:', e.message);
+                }
+
+                // Write student code to Program.cs
+                fs.writeFileSync(path.join(projectDir, 'Program.cs'), code || '', 'utf8');
+
+                // Write any additional .cs files (multi-file support)
+                const extraNames = new Set();
+                for (const ef of extraFiles) {
+                    if (!ef || !ef.name || !ef.code) continue;
+                    const safeName = ef.name.replace(/[^a-zA-Z0-9_\-\.]/g, '_').replace(/\.cs$/i, '') + '.cs';
+                    if (safeName.toLowerCase() === 'program.cs') continue;
+                    fs.writeFileSync(path.join(projectDir, safeName), ef.code || '', 'utf8');
+                    extraNames.add(safeName);
+                }
+                try {
+                    for (const f of fs.readdirSync(projectDir)) {
+                        if (f.endsWith('.cs') && f !== 'Program.cs' && !extraNames.has(f)) {
+                            try { fs.unlinkSync(path.join(projectDir, f)); } catch (_) { }
+                        }
+                    }
+                } catch (_) { }
+
+                // Ensure nuget and obj assets exist
+                const nugetFile = path.join(projectDir, 'nuget.config');
+                try {
+                    if (!fs.existsSync(nugetFile) || fs.readFileSync(nugetFile, 'utf8').includes('api.nuget.org')) {
+                        fs.writeFileSync(nugetFile, OFFLINE_NUGET_CONFIG, 'utf8');
+                    }
+                } catch (_) { }
+
+                const treatWarningsAsErrors = await getTreatWarningsAsErrors();
+                const compilerConfig = getCompilerSpawnConfig(projectDir, treatWarningsAsErrors, extraFiles);
+
+                if (compilerConfig.mode === 'dotnet-build') {
+                    const assetsFile = path.join(projectDir, 'obj', 'project.assets.json');
+                    if (!fs.existsSync(assetsFile)) {
+                        try {
+                            execSync(`dotnet restore "${projectFile}" --ignore-failed-sources -v q`, { cwd: projectDir, env: OFFLINE_DOTNET_ENV });
+                        } catch (_) { }
+                    }
+                }
+
+                compileSuccess = await new Promise((resolve) => {
+                    const bp = spawn(compilerConfig.command, compilerConfig.args, { cwd: projectDir, env });
+                    bp.stdout.on('data', d => { buildOutput += d.toString(); });
+                    bp.stderr.on('data', d => { buildOutput += d.toString(); });
+                    const timeout = setTimeout(() => {
+                        try { bp.kill(); } catch (_) { }
+                        resolve(false);
+                    }, 15000);
+                    bp.on('close', code => {
+                        clearTimeout(timeout);
+                        const diags = parseCompilerDiagnostics(buildOutput);
+                        socket.emit('compiler_diagnostics', diags);
+                        resolve(code === 0 && fs.existsSync(dllPath));
+                    });
+                    bp.on('error', () => {
+                        clearTimeout(timeout);
+                        resolve(false);
+                    });
+                });
+
+                if (compileSuccess) {
+                    ws.lastCompiledCode = code;
+                } else {
+                    ws.lastCompiledCode = null;
+                    const results = testCases.map(tc => ({
+                        id: tc.id,
+                        status: 'error',
+                        passed: false,
+                        actualOutput: '',
+                        expectedOutput: tc.expectedOutput || '',
+                        error: buildOutput || 'Compilation failed. Please fix syntax or type errors in code.'
+                    }));
+                    return socket.emit('test_cases_results', { results });
+                }
+            }
+
+            // Run all test cases in parallel
+            const results = await Promise.all(testCases.map(tc => new Promise((resolve) => {
+                let actual = '';
+                let runError = '';
+                let killed = false;
+                const rp = spawn('dotnet', [dllPath], { cwd: projectDir, env });
+
+                const execTimeout = setTimeout(() => {
+                    killed = true;
+                    try { killProcessTree(rp); } catch (_) { }
+                    const result = {
+                        id: tc.id,
+                        status: 'error',
+                        passed: false,
+                        actualOutput: actual.replace(/\r\n/g, '\n'),
+                        expectedOutput: tc.expectedOutput || '',
+                        error: 'Execution timed out (5s limit exceeded)'
+                    };
+                    socket.emit('test_case_result', result);
+                    resolve(result);
+                }, 5000);
+
+                if (tc.input !== undefined && tc.input !== null && tc.input !== '') {
+                    try {
+                        const inStr = String(tc.input);
+                        rp.stdin.write(inStr.endsWith('\n') ? inStr : inStr + '\n');
+                    } catch (_) { }
+                }
+                try { rp.stdin.end(); } catch (_) { }
+
+                rp.stdout.on('data', d => { actual += d.toString(); });
+                rp.stderr.on('data', d => { runError += d.toString(); });
+
+                rp.on('close', () => {
+                    clearTimeout(execTimeout);
+                    if (killed) return;
+                    const normActual = actual.replace(/\r\n/g, '\n').trim();
+                    const normExpected = (tc.expectedOutput || '').replace(/\r\n/g, '\n').trim();
+                    const passed = normActual === normExpected;
+                    const result = {
+                        id: tc.id,
+                        status: passed ? 'passed' : 'failed',
+                        passed,
+                        actualOutput: actual.replace(/\r\n/g, '\n'),
+                        expectedOutput: tc.expectedOutput || '',
+                        error: runError || null
+                    };
+                    socket.emit('test_case_result', result);
+                    resolve(result);
+                });
+
+                rp.on('error', (err) => {
+                    clearTimeout(execTimeout);
+                    if (killed) return;
+                    const result = {
+                        id: tc.id,
+                        status: 'error',
+                        passed: false,
+                        actualOutput: actual.replace(/\r\n/g, '\n'),
+                        expectedOutput: tc.expectedOutput || '',
+                        error: err.message
+                    };
+                    socket.emit('test_case_result', result);
+                    resolve(result);
+                });
+            })));
+
+            socket.emit('test_cases_results', { results });
         } catch (error) {
             console.error('Test case error:', error);
             socket.emit('test_cases_results', { results: [] });
@@ -5260,7 +5616,7 @@ io.on('connection', (socket) => {
                 if (foundCw && foundCw.classroom_id != null) {
                     classroomId = String(foundCw.classroom_id);
                 }
-            } catch (_) {}
+            } catch (_) { }
         }
 
         let classCode = null;
@@ -5274,7 +5630,7 @@ io.on('connection', (socket) => {
                     classroomId = String(clsRow.id);
                     classCode = clsRow.code ? String(clsRow.code) : null;
                 }
-            } catch (_) {}
+            } catch (_) { }
         }
 
         const studentKey = `${classroomId}:${assignmentId}:${studentId}`;
@@ -5289,8 +5645,8 @@ io.on('connection', (socket) => {
                 delete activeStudents[studentKey];
                 return;
             }
-        } catch (_) {}
-        
+        } catch (_) { }
+
         // Alisin sa lumang activity para di mag-duplicate
         removeStudentFromPreviousActivities(studentId, studentName, studentKey);
 
@@ -5381,7 +5737,7 @@ io.on('connection', (socket) => {
                         assignmentId = assignmentId || (parts[1] !== 'default' ? parts[1] : null);
                     }
                 } else {
-                    const found = Object.values(activeStudents).find(s => 
+                    const found = Object.values(activeStudents).find(s =>
                         s && (s.studentId === studentId || s.name === studentName)
                     );
                     if (found) {
@@ -5421,10 +5777,10 @@ io.on('connection', (socket) => {
                     await db.run(
                         'INSERT INTO proctor_session_logs (classroom_id, assignment_id, student_id, student_name, action, message, time, color) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
                         classroomId, assignmentId, studentId, studentName, newLog.action, newLog.message, newLog.time, newLog.color
-                    ).catch(() => {});
+                    ).catch(() => { });
                     return;
                 }
-            } catch (_) {}
+            } catch (_) { }
 
             const existing = activeStudents[studentKey] || {
                 studentId,
@@ -5468,8 +5824,8 @@ io.on('connection', (socket) => {
                     messageText,
                     timeText,
                     colorVal
-                ).catch(() => {});
-            } catch (_) {}
+                ).catch(() => { });
+            } catch (_) { }
 
             const roomName = `classroom:${classroomId}:assignment:${assignmentId}`;
             const alertPayload = {
@@ -5520,10 +5876,10 @@ io.on('connection', (socket) => {
             // Log event to audit_logs for admin activity view
             if (data && (data.studentId || data.name || data.email)) {
                 const userName = data.name || data.email || data.studentId;
-                
+
                 let logType = 'Security Flag Alert';
                 let logSeverity = 'High';
-                
+
                 if (isCrash) {
                     logType = 'System Crash Violation';
                     logSeverity = 'High';
@@ -5570,11 +5926,11 @@ io.on('connection', (socket) => {
         );
         const classroomId = data.classroomId || 'none';
         const assignmentId = data.assignmentId != null ? String(data.assignmentId) : 'unassigned';
-        
+
         const strictWarnings = await getTreatWarningsAsErrors();
-        const payload = { 
-            ...data, 
-            studentName: authenticatedName, 
+        const payload = {
+            ...data,
+            studentName: authenticatedName,
             studentId: authenticatedId,
             studentEmail: canonicalEmail || data.studentEmail || data.email || '',
             strictWarningsEnforced: strictWarnings
@@ -5613,7 +5969,7 @@ io.on('connection', (socket) => {
                 await db.run(
                     'DELETE FROM submissions WHERE assignment_id = ? AND LOWER(TRIM(student_name)) = LOWER(TRIM(?))',
                     assignmentId, alias
-                ).catch(() => {});
+                ).catch(() => { });
             }
             const historyStr = JSON.stringify(Array.isArray(data.codeHistory) ? data.codeHistory : []);
             await db.run('INSERT INTO submissions (assignment_id, student_name, history, submittedAt) VALUES (?, ?, ?, ?)', assignmentId, authenticatedName, historyStr, new Date().toISOString());
@@ -5640,7 +5996,7 @@ io.on('connection', (socket) => {
                         return;
                     }
                 }
-            } catch (_) {}
+            } catch (_) { }
         }
         const { canonicalName: studentName, canonicalId: studentId, aliases } = await resolveCanonicalStudent(
             isTeacherOrAdmin ? null : socket.user,
@@ -5662,7 +6018,7 @@ io.on('connection', (socket) => {
                      WHERE (assignment_id = ? OR CAST(assignment_id AS TEXT) = ?)
                        AND LOWER(TRIM(student_name)) = LOWER(TRIM(?))`,
                     assignmentId, String(assignmentId), alias
-                ).catch(() => {});
+                ).catch(() => { });
             }
         } catch (e) { console.error(e); }
 
@@ -5685,7 +6041,7 @@ io.on('connection', (socket) => {
 
     socket.on('student_leave_workspace', (data) => {
         if (activeProcess) {
-            try { killProcessTree(activeProcess); } catch (_) {}
+            try { killProcessTree(activeProcess); } catch (_) { }
             activeProcess = null;
         }
         const studentId = socket.data.studentId || data?.studentId;
@@ -5728,7 +6084,7 @@ io.on('connection', (socket) => {
 
     socket.on('disconnect', async () => {
         if (activeProcess) {
-            try { killProcessTree(activeProcess); } catch (_) {}
+            try { killProcessTree(activeProcess); } catch (_) { }
             activeProcess = null;
         }
         const studentId = socket.data.studentId || socket.user?.id;
@@ -5795,7 +6151,7 @@ io.on('connection', (socket) => {
                     });
                     io.emit('admin_stats_update');
                 }
-            } catch (_) {}
+            } catch (_) { }
         }
     });
 });
@@ -5872,8 +6228,8 @@ app.post('/audit-logs', authenticateToken, async (req, res) => {
                     actionText,
                     timeText,
                     colorVal
-                ).catch(() => {});
-            } catch (_) {}
+                ).catch(() => { });
+            } catch (_) { }
 
             // Broadcast directly to instructors in Live Monitoring for this specific activity
             if (aId && aId !== 'none' && aId !== 'default') {
@@ -5942,7 +6298,7 @@ const handleSaveSettings = async (req, res) => {
         io.emit('system_settings_updated', { settings });
         getKioskSettings().then(kioskConfig => {
             io.emit('kiosk_settings', kioskConfig);
-        }).catch(() => {});
+        }).catch(() => { });
         const userName = req.user?.email || req.user?.name || 'unknown';
         await db.run('INSERT INTO audit_logs ("user", type, severity, "desc") VALUES (?, ?, ?, ?)', userName, 'System Settings Updated', 'Normal', 'Admin updated system settings via API');
         res.status(200).json({ message: 'Settings saved successfully' });
@@ -6081,7 +6437,7 @@ async function reconcileDatabaseClassrooms() {
                  WHERE (instructor IS NOT NULL AND TRIM(LOWER(instructor)) = TRIM(LOWER(?)))
                    AND (instructor_email IS NULL OR instructor_email = '' OR LOWER(instructor_email) != LOWER(?))`,
                 t.email.trim().toLowerCase(), t.name.trim(), t.email.trim().toLowerCase()
-            ).catch(() => {});
+            ).catch(() => { });
         }
     } catch (e) {
         console.warn('[reconcileDatabaseClassrooms] Warning during startup sync:', e.message);
@@ -6102,9 +6458,9 @@ if (frontendDistPath) {
     app.use(express.static(frontendDistPath));
     app.use((req, res, next) => {
         if (req.method !== 'GET') return next();
-        if (req.path.startsWith('/api') || 
-            req.path.startsWith('/socket.io') || 
-            req.path.startsWith('/uploads') || 
+        if (req.path.startsWith('/api') ||
+            req.path.startsWith('/socket.io') ||
+            req.path.startsWith('/uploads') ||
             req.path === '/health' ||
             req.path.includes('.')) {
             return next();
@@ -6150,15 +6506,15 @@ function start(port = process.env.PORT || 3001) {
             }
             console.log('  100% Offline Capable: No external internet required');
             console.log('========================================================\n');
-            
+
             // Check if this instance is designated as the Host/Teacher Server
             const isExplicitClient = process.env.IS_LAN_HOST === 'false';
             const isHost = !isExplicitClient && (
-                process.env.IS_LAN_HOST === 'true' || 
-                process.env.IS_VERITY_ADMIN === 'true' || 
+                process.env.IS_LAN_HOST === 'true' ||
+                process.env.IS_VERITY_ADMIN === 'true' ||
                 fs.existsSync(path.join(DATA_DIR, 'host.flag')) ||
                 fs.existsSync(path.join(__dirname, 'host.flag')) ||
-                process.argv.includes('--host') || 
+                process.argv.includes('--host') ||
                 require.main === module
             );
 
@@ -6168,7 +6524,7 @@ function start(port = process.env.PORT || 3001) {
                 console.warn('[LAN Discovery] Start error:', dErr.message);
             }
 
-            reconcileDatabaseClassrooms().catch(() => {});
+            reconcileDatabaseClassrooms().catch(() => { });
             resolve(p);
         });
     });
@@ -6178,7 +6534,7 @@ function stop() {
     return new Promise((resolve) => {
         try {
             stopLanDiscovery();
-        } catch (_) {}
+        } catch (_) { }
         io.close();
         server.close(() => resolve());
     });

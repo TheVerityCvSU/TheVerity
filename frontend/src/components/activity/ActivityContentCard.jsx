@@ -2,6 +2,7 @@ import React from 'react';
 import { ArrowLeft, BookOpen, Calendar, Award, FileText, Video, Link2, ClipboardList } from 'lucide-react';
 import AttachmentCard from '../AttachmentCard';
 import { formatFullDate } from '../../utils/dateUtils';
+import { resolveMediaUrlsInHtml } from '../../utils/mediaUrl';
 
 export default function ActivityContentCard({
   assignment,
@@ -167,7 +168,7 @@ export default function ActivityContentCard({
           }}>
             <div
               style={{ ...styles.instructionText, whiteSpace: 'normal', margin: 0, color: isDark ? '#d1d5db' : '#334155' }}
-              dangerouslySetInnerHTML={{ __html: details }}
+              dangerouslySetInnerHTML={{ __html: resolveMediaUrlsInHtml(details) }}
               onClick={onInstructionClick}
             />
 

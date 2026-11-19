@@ -5,6 +5,7 @@ import Skeleton from '../Skeleton';
 import AttachmentCard from '../AttachmentCard';
 import { formatShortDate } from '../../utils/dateUtils';
 import { getLessonType } from '../../utils/lessonType';
+import { resolveMediaUrlsInHtml } from '../../utils/mediaUrl';
 
 export default function ClassroomMaterialsTab({
   visibleMaterials,
@@ -151,7 +152,7 @@ export default function ClassroomMaterialsTab({
                                   }}
                                   onClick={handleInstructionClick}
                                 >
-                                  <div dangerouslySetInnerHTML={{ __html: item.details }} />
+                                  <div dangerouslySetInnerHTML={{ __html: resolveMediaUrlsInHtml(item.details) }} />
                                 </div>
                                 {expandedInstructionId !== item.id && typeof item?.details === 'string' && item.details.replace(/<[^>]*>?/gm, '').length > 100 && (
                                   <div

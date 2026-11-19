@@ -68,7 +68,7 @@ export default function AttachmentCard({
     cursor: 'pointer',
     position: 'relative',
     transition: 'all 0.15s ease',
-    boxShadow: isHovered 
+    boxShadow: isHovered
       ? (isDark ? '0 2px 8px rgba(0,0,0,0.35)' : '0 2px 8px rgba(0,0,0,0.08)')
       : 'none',
     boxSizing: 'border-box',

@@ -95966,8 +95966,12 @@ var require_cloudSync = __commonJS({
     var lastSyncStatus = "idle";
     var connectionString = null;
     var socketIoInstance = null;
+    var onClassworkPulledCallback = null;
     function setSocketIo(io2) {
       socketIoInstance = io2;
+    }
+    function setOnClassworkPulled(fn) {
+      onClassworkPulledCallback = typeof fn === "function" ? fn : null;
     }
     function getCleanConnectionString(rawUrl) {
       if (!rawUrl) return null;
@@ -96147,6 +96151,7 @@ var require_cloudSync = __commonJS({
                     dueDate = excluded.dueDate,
                     type = excluded.type
             `);
+          const pulledClassworkRows = [];
           for (const [id, cCw] of cloudCwMap) {
             const lCw = localCwMap.get(id);
             const needsPull = !lCw || String(cCw.title || "") !== String(lCw.title || "") || String(cCw.description || "") !== String(lCw.description || "") || String(cCw.duedate || "") !== String(lCw.dueDate || "") || String(cCw.type || "") !== String(lCw.type || "");
@@ -96157,7 +96162,17 @@ var require_cloudSync = __commonJS({
               }
               upsertCwStmt.run(cCw.id, cCw.classroom_id, cCw.title || "", cCw.description || "", cCw.duedate || "", cCw.type || "Assignment", cCw.created_at ? new Date(cCw.created_at).toISOString() : null);
               pulledCount++;
+              pulledClassworkRows.push(cCw);
             }
+          }
+          if (pulledClassworkRows.length > 0 && onClassworkPulledCallback) {
+            setImmediate(() => {
+              try {
+                Promise.resolve(onClassworkPulledCallback(pulledClassworkRows)).catch(() => {
+                });
+              } catch (_) {
+              }
+            });
           }
         } catch (cwErr) {
           console.warn("[Cloud Sync] Classwork sync notice:", cwErr.message);
@@ -96481,7 +96496,8 @@ var require_cloudSync = __commonJS({
       syncBidirectional,
       triggerSync,
       getSyncStatus,
-      setSocketIo
+      setSocketIo,
+      setOnClassworkPulled
     };
   }
 });
@@ -107287,6 +107303,21 @@ var requireRole = (...allowedRoles) => {
 };
 var UPLOADS_DIR = path.join(DATA_DIR, "uploads");
 if (!fs2.existsSync(UPLOADS_DIR)) fs2.mkdirSync(UPLOADS_DIR, { recursive: true });
+var IS_RENDER_CLOUD = Boolean(
+  process.env.RENDER || process.env.RENDER_SERVICE_ID || process.env.IS_RENDER_SERVICE
+);
+var CLOUD_MEDIA_BASE_URL = (process.env.CLOUD_API_URL || process.env.CLOUD_SOCKET_URL || "https://verity-2z4v.onrender.com").trim().replace(/\/$/, "");
+try {
+  for (const entry of fs2.readdirSync(UPLOADS_DIR)) {
+    if (entry.endsWith(".part") || entry.endsWith("_faststart.mp4") || entry.endsWith("_opt.mp4")) {
+      try {
+        fs2.unlinkSync(path.join(UPLOADS_DIR, entry));
+      } catch (_) {
+      }
+    }
+  }
+} catch (_) {
+}
 var ALLOWED_UPLOAD_EXTS = /* @__PURE__ */ new Set([
   ".png",
   ".jpg",
@@ -107300,22 +107331,238 @@ var ALLOWED_UPLOAD_EXTS = /* @__PURE__ */ new Set([
   ".quicktime",
   ".m4v",
   ".pdf",
+  ".doc",
+  ".docx",
+  ".ppt",
+  ".pptx",
   ".zip",
   ".txt"
 ]);
-app.use("/uploads", (req, res, next) => {
+var VIDEO_UPLOAD_EXTS = /* @__PURE__ */ new Set([".mp4", ".webm", ".mov", ".mkv", ".avi", ".m4v"]);
+var FASTSTART_REMUX_EXTS = /* @__PURE__ */ new Set([".mp4", ".m4v", ".mov"]);
+var UPLOAD_MIME_TYPES = {
+  ".mov": "video/quicktime",
+  ".mp4": "video/mp4",
+  ".m4v": "video/mp4",
+  ".webm": "video/webm",
+  ".ogg": "video/ogg",
+  ".pdf": "application/pdf",
+  ".doc": "application/msword",
+  ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  ".ppt": "application/vnd.ms-powerpoint",
+  ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  ".txt": "text/plain; charset=utf-8"
+};
+var SUPPORTED_UPLOAD_MESSAGE = "Supported formats: images (.png, .jpg, .gif, .webp), videos (.mp4, .webm, .mov, .m4v), documents (.pdf, .doc, .docx, .ppt, .pptx, .txt), zip.";
+var activeUploadStreams = /* @__PURE__ */ new Map();
+var pendingVideoSwaps = /* @__PURE__ */ new Map();
+var inFlightCloudPulls = /* @__PURE__ */ new Map();
+function tryApplyPendingSwap(filename) {
+  const tempPath = pendingVideoSwaps.get(filename);
+  if (!tempPath || (activeUploadStreams.get(filename) || 0) > 0) return;
+  const targetPath = path.join(UPLOADS_DIR, filename);
+  try {
+    if (fs2.existsSync(tempPath)) {
+      fs2.renameSync(tempPath, targetPath);
+    }
+    pendingVideoSwaps.delete(filename);
+  } catch (err) {
+    console.warn(`[Video Swap] Deferred rename skipped for ${filename}:`, err.message);
+  }
+}
+function safeReplaceOrDeferSwap(targetPath, tempPath) {
+  const filename = path.basename(targetPath);
+  if ((activeUploadStreams.get(filename) || 0) > 0) {
+    const previousTemp = pendingVideoSwaps.get(filename);
+    if (previousTemp && previousTemp !== tempPath) {
+      try {
+        if (fs2.existsSync(previousTemp)) fs2.unlinkSync(previousTemp);
+      } catch (_) {
+      }
+    }
+    pendingVideoSwaps.set(filename, tempPath);
+    return false;
+  }
+  try {
+    fs2.renameSync(tempPath, targetPath);
+    pendingVideoSwaps.delete(filename);
+    return true;
+  } catch (err) {
+    pendingVideoSwaps.set(filename, tempPath);
+    console.warn(`[Video Swap] Deferred swap for ${filename} (${err.message})`);
+    return false;
+  }
+}
+function isSafeUploadBasename(rawName) {
+  if (!rawName || typeof rawName !== "string") return false;
+  if (rawName.includes("/") || rawName.includes("\\") || rawName.includes("..") || rawName.startsWith(".")) {
+    return false;
+  }
+  if (rawName.endsWith(".part") || rawName.endsWith("_faststart.mp4") || rawName.endsWith("_opt.mp4")) {
+    return false;
+  }
+  return path.basename(rawName) === rawName;
+}
+async function pullUploadFromCloud(filename) {
+  if (IS_RENDER_CLOUD || !CLOUD_MEDIA_BASE_URL || !isSafeUploadBasename(filename)) {
+    return false;
+  }
+  const targetPath = path.join(UPLOADS_DIR, filename);
+  if (fs2.existsSync(targetPath)) return true;
+  if (inFlightCloudPulls.has(filename)) {
+    return inFlightCloudPulls.get(filename);
+  }
+  const pullPromise = (async () => {
+    const partPath = path.join(UPLOADS_DIR, `${filename}.${Date.now()}.part`);
+    const connectController = new AbortController();
+    const connectTimer = setTimeout(() => connectController.abort(), 4e3);
+    try {
+      const remoteUrl = `${CLOUD_MEDIA_BASE_URL}/uploads/${encodeURIComponent(filename)}`;
+      const res = await fetch(remoteUrl, { signal: connectController.signal });
+      clearTimeout(connectTimer);
+      if (!res.ok || !res.body) return false;
+      const { Readable } = require("stream");
+      const { pipeline: pipeline2 } = require("stream/promises");
+      const ws = fs2.createWriteStream(partPath);
+      await pipeline2(Readable.fromWeb(res.body), ws);
+      fs2.renameSync(partPath, targetPath);
+      console.log(`[LAN Media Cache] Cached ${filename} locally from Cloud`);
+      return true;
+    } catch (_) {
+      clearTimeout(connectTimer);
+      try {
+        if (fs2.existsSync(partPath)) fs2.unlinkSync(partPath);
+      } catch (__) {
+      }
+      return false;
+    } finally {
+      inFlightCloudPulls.delete(filename);
+    }
+  })();
+  inFlightCloudPulls.set(filename, pullPromise);
+  return pullPromise;
+}
+var mediaPrefetchQueue = [];
+var mediaPrefetchQueuedSet = /* @__PURE__ */ new Set();
+var isPrefetchRunning = false;
+async function drainMediaPrefetchQueue() {
+  if (isPrefetchRunning) return;
+  isPrefetchRunning = true;
+  let consecutiveFailures = 0;
+  try {
+    while (mediaPrefetchQueue.length > 0) {
+      const filename = mediaPrefetchQueue.shift();
+      mediaPrefetchQueuedSet.delete(filename);
+      if (!filename) continue;
+      const ok = await pullUploadFromCloud(filename).catch(() => false);
+      if (ok) {
+        consecutiveFailures = 0;
+      } else {
+        consecutiveFailures++;
+        if (consecutiveFailures >= 3) {
+          mediaPrefetchQueue.length = 0;
+          mediaPrefetchQueuedSet.clear();
+          break;
+        }
+      }
+    }
+  } finally {
+    isPrefetchRunning = false;
+  }
+}
+function isHostServerInstance() {
+  const isExplicitClient = process.env.IS_LAN_HOST === "false";
+  return !isExplicitClient && Boolean(
+    fs2.existsSync(path.join(DATA_DIR, "host.flag")) || fs2.existsSync(path.join(__dirname, "host.flag")) || process.env.IS_LAN_HOST === "true" || process.env.IS_VERITY_ADMIN === "true" || process.argv.includes("--host") || require.main === module
+  );
+}
+function prefetchUploadsFromClasswork(rows) {
+  if (IS_RENDER_CLOUD || !isHostServerInstance() || !Array.isArray(rows)) return;
+  const foundNames = /* @__PURE__ */ new Set();
+  const uploadRegex = /\/uploads\/([^"'\s<>?#)]+)/g;
+  for (const row of rows) {
+    const rawDesc = typeof row?.description === "string" ? row.description : "";
+    if (!rawDesc.includes("/uploads/")) continue;
+    let match;
+    uploadRegex.lastIndex = 0;
+    while ((match = uploadRegex.exec(rawDesc)) !== null) {
+      try {
+        const decoded = decodeURIComponent(match[1]);
+        if (isSafeUploadBasename(decoded)) {
+          foundNames.add(decoded);
+          const ext = path.extname(decoded).toLowerCase();
+          if (VIDEO_UPLOAD_EXTS.has(ext)) {
+            foundNames.add(`${decoded.slice(0, -ext.length)}_thumb.jpg`);
+          }
+        }
+      } catch (_) {
+      }
+    }
+  }
+  for (const fname of foundNames) {
+    if (!fs2.existsSync(path.join(UPLOADS_DIR, fname)) && !mediaPrefetchQueuedSet.has(fname)) {
+      mediaPrefetchQueuedSet.add(fname);
+      mediaPrefetchQueue.push(fname);
+    }
+  }
+  if (mediaPrefetchQueue.length > 0) {
+    drainMediaPrefetchQueue().catch(() => {
+    });
+  }
+}
+app.use("/uploads", async (req, res, next) => {
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("Accept-Ranges", "bytes");
+  let requestedName = "";
+  try {
+    requestedName = decodeURIComponent((req.path || "").replace(/^\/+/, ""));
+  } catch (_) {
+    return res.status(400).end();
+  }
+  if (!isSafeUploadBasename(requestedName)) {
+    return res.status(404).end();
+  }
+  const localTarget = path.join(UPLOADS_DIR, requestedName);
+  if (req.method === "GET" && !fs2.existsSync(localTarget) && !IS_RENDER_CLOUD) {
+    try {
+      const cloudHost = new URL(CLOUD_MEDIA_BASE_URL).host;
+      if (req.get("host") !== cloudHost) {
+        await pullUploadFromCloud(requestedName);
+      }
+    } catch (_) {
+    }
+  }
+  if (req.method === "GET" || req.method === "HEAD") {
+    activeUploadStreams.set(requestedName, (activeUploadStreams.get(requestedName) || 0) + 1);
+    let released = false;
+    const releaseStream = () => {
+      if (released) return;
+      released = true;
+      const remaining = (activeUploadStreams.get(requestedName) || 1) - 1;
+      if (remaining <= 0) {
+        activeUploadStreams.delete(requestedName);
+        tryApplyPendingSwap(requestedName);
+      } else {
+        activeUploadStreams.set(requestedName, remaining);
+      }
+    };
+    res.on("close", releaseStream);
+    res.on("finish", releaseStream);
+  }
   next();
 }, express.static(UPLOADS_DIR, {
+  etag: true,
+  lastModified: true,
   setHeaders: (res, filePath) => {
     const ext = path.extname(filePath).toLowerCase();
-    if (ext === ".mov") {
-      res.setHeader("Content-Type", "video/quicktime");
-    } else if (ext === ".mp4") {
-      res.setHeader("Content-Type", "video/mp4");
-    } else if (ext === ".webm") {
-      res.setHeader("Content-Type", "video/webm");
+    const mime = UPLOAD_MIME_TYPES[ext];
+    if (mime) {
+      res.setHeader("Content-Type", mime);
+    }
+    if (VIDEO_UPLOAD_EXTS.has(ext)) {
+      res.setHeader("Cache-Control", "public, max-age=60");
+    } else {
+      res.setHeader("Cache-Control", "public, max-age=604800, immutable");
     }
   }
 }));
@@ -107333,18 +107580,79 @@ if (!ffmpegStaticPath || typeof ffmpegStaticPath !== "string") {
     ffmpegStaticPath = null;
   }
 }
+function runFfmpegAsync(args, label = "FFmpeg") {
+  return new Promise((resolve) => {
+    try {
+      const proc = spawn(ffmpegStaticPath, args, { stdio: "ignore" });
+      if (proc.pid) {
+        try {
+          os2.setPriority(proc.pid, os2.constants.priority.PRIORITY_BELOW_NORMAL);
+        } catch (_) {
+        }
+      }
+      proc.on("close", (code) => resolve(code ?? -1));
+      proc.on("error", (err) => {
+        console.warn(`[${label}] Error:`, err.message);
+        resolve(-1);
+      });
+    } catch (err) {
+      console.warn(`[${label}] Failed to spawn:`, err.message);
+      resolve(-1);
+    }
+  });
+}
+var videoProcessingQueue = [];
+var isVideoQueueRunning = false;
+async function drainVideoProcessingQueue() {
+  if (isVideoQueueRunning) return;
+  isVideoQueueRunning = true;
+  try {
+    while (videoProcessingQueue.length > 0) {
+      const targetPath = videoProcessingQueue.shift();
+      await processVideoJob(targetPath);
+    }
+  } finally {
+    isVideoQueueRunning = false;
+  }
+}
 function processVideoUpload(targetPath) {
   if (!ffmpegStaticPath || !fs2.existsSync(targetPath)) return;
   const ext = path.extname(targetPath).toLowerCase();
-  if (![".mp4", ".webm", ".mov", ".mkv", ".avi"].includes(ext)) return;
+  if (!VIDEO_UPLOAD_EXTS.has(ext)) return;
+  if (!videoProcessingQueue.includes(targetPath)) {
+    videoProcessingQueue.push(targetPath);
+  }
+  drainVideoProcessingQueue().catch((err) => {
+    console.warn("[Video Queue] Error:", err?.message || err);
+  });
+}
+async function processVideoJob(targetPath) {
+  if (!ffmpegStaticPath || !fs2.existsSync(targetPath)) return;
+  const ext = path.extname(targetPath).toLowerCase();
+  if (!VIDEO_UPLOAD_EXTS.has(ext)) return;
   const baseNoExt = targetPath.slice(0, -ext.length);
   const thumbPath = `${baseNoExt}_thumb.jpg`;
+  const faststartTempPath = `${baseNoExt}_faststart.mp4`;
   const tempOptPath = `${baseNoExt}_opt.mp4`;
-  try {
-    const thumbArgs = [
+  const thumbCode = await runFfmpegAsync([
+    "-y",
+    "-ss",
+    "00:00:03",
+    "-i",
+    targetPath,
+    "-vframes",
+    "1",
+    "-vf",
+    "scale='min(640,iw)':-2",
+    "-q:v",
+    "3",
+    thumbPath
+  ], "Video Thumb");
+  if (thumbCode !== 0 || !fs2.existsSync(thumbPath)) {
+    await runFfmpegAsync([
       "-y",
       "-ss",
-      "00:00:03",
+      "00:00:00",
       "-i",
       targetPath,
       "-vframes",
@@ -107354,33 +107662,78 @@ function processVideoUpload(targetPath) {
       "-q:v",
       "3",
       thumbPath
-    ];
-    const thumbProc = spawn(ffmpegStaticPath, thumbArgs);
-    thumbProc.on("error", (err) => console.warn("[Video Thumb] Error:", err.message));
-  } catch (e2) {
-    console.warn("[Video Thumb] Failed to spawn thumbnail generation:", e2.message);
+    ], "Video Thumb Fallback");
   }
   try {
     const stats = fs2.statSync(targetPath);
-    if (stats.size > 15 * 1024 * 1024) {
-      const compressArgs = [
+    if (stats.size <= 15 * 1024 * 1024) return;
+    if (FASTSTART_REMUX_EXTS.has(ext)) {
+      const remuxCode = await runFfmpegAsync([
+        "-y",
+        "-i",
+        targetPath,
+        "-c",
+        "copy",
+        "-movflags",
+        "+faststart",
+        faststartTempPath
+      ], "Video Faststart");
+      if (remuxCode === 0 && fs2.existsSync(faststartTempPath) && fs2.statSync(faststartTempPath).size > 0) {
+        safeReplaceOrDeferSwap(targetPath, faststartTempPath);
+      } else {
+        try {
+          if (fs2.existsSync(faststartTempPath)) fs2.unlinkSync(faststartTempPath);
+        } catch (_) {
+        }
+      }
+    }
+    const nvencCode = await runFfmpegAsync([
+      "-y",
+      "-i",
+      targetPath,
+      "-vf",
+      "scale='min(1280,iw)':-2",
+      "-c:v",
+      "h264_nvenc",
+      "-preset",
+      "p4",
+      "-cq",
+      "28",
+      "-b:v",
+      "350k",
+      "-maxrate",
+      "500k",
+      "-bufsize",
+      "800k",
+      "-c:a",
+      "aac",
+      "-b:a",
+      "64k",
+      "-movflags",
+      "+faststart",
+      tempOptPath
+    ], "Video Compression NVENC");
+    let compressedOk = nvencCode === 0 && fs2.existsSync(tempOptPath);
+    if (!compressedOk) {
+      try {
+        if (fs2.existsSync(tempOptPath)) fs2.unlinkSync(tempOptPath);
+      } catch (_) {
+      }
+      const cpuThreads = String(Math.max(1, Math.min(4, Math.floor((os2.cpus()?.length || 2) / 2))));
+      const cpuCode = await runFfmpegAsync([
         "-y",
         "-i",
         targetPath,
         "-vf",
         "scale='min(1280,iw)':-2",
         "-c:v",
-        "h264_nvenc",
-        "-preset",
-        "p4",
-        "-cq",
+        "libx264",
+        "-crf",
         "28",
-        "-b:v",
-        "350k",
-        "-maxrate",
-        "500k",
-        "-bufsize",
-        "800k",
+        "-preset",
+        "veryfast",
+        "-threads",
+        cpuThreads,
         "-c:a",
         "aac",
         "-b:a",
@@ -107388,103 +107741,100 @@ function processVideoUpload(targetPath) {
         "-movflags",
         "+faststart",
         tempOptPath
-      ];
-      const compProc = spawn(ffmpegStaticPath, compressArgs);
-      compProc.on("close", (code) => {
-        if (code === 0 && fs2.existsSync(tempOptPath)) {
-          const optStats = fs2.statSync(tempOptPath);
-          if (optStats.size > 0 && optStats.size < stats.size) {
-            try {
-              fs2.renameSync(tempOptPath, targetPath);
-              console.log(`[Video Compression] Compressed ${path.basename(targetPath)} from ${(stats.size / 1024 / 1024).toFixed(1)}MB to ${(optStats.size / 1024 / 1024).toFixed(1)}MB`);
-            } catch (renErr) {
-              console.warn("[Video Compression] Rename failed:", renErr.message);
-            }
-          } else {
-            try {
-              fs2.unlinkSync(tempOptPath);
-            } catch (_) {
-            }
-          }
-        } else {
-          try {
-            const fallbackArgs = [
-              "-y",
-              "-i",
-              targetPath,
-              "-vf",
-              "scale='min(1280,iw)':-2",
-              "-c:v",
-              "libx264",
-              "-crf",
-              "28",
-              "-preset",
-              "veryfast",
-              "-c:a",
-              "aac",
-              "-b:a",
-              "64k",
-              "-movflags",
-              "+faststart",
-              tempOptPath
-            ];
-            const fallbackProc = spawn(ffmpegStaticPath, fallbackArgs);
-            fallbackProc.on("close", (fCode) => {
-              if (fCode === 0 && fs2.existsSync(tempOptPath)) {
-                try {
-                  fs2.renameSync(tempOptPath, targetPath);
-                  console.log(`[Video Compression] Compressed ${path.basename(targetPath)} (CPU fallback)`);
-                } catch (_) {
-                }
-              } else {
-                try {
-                  fs2.unlinkSync(tempOptPath);
-                } catch (_) {
-                }
-              }
-            });
-          } catch (_) {
-          }
+      ], "Video Compression CPU");
+      compressedOk = cpuCode === 0 && fs2.existsSync(tempOptPath);
+    }
+    if (compressedOk) {
+      const curStats = fs2.statSync(targetPath);
+      const optStats = fs2.statSync(tempOptPath);
+      if (optStats.size > 0 && optStats.size < curStats.size) {
+        const swapped = safeReplaceOrDeferSwap(targetPath, tempOptPath);
+        if (swapped) {
+          console.log(`[Video Compression] Compressed ${path.basename(targetPath)} from ${(curStats.size / 1024 / 1024).toFixed(1)}MB to ${(optStats.size / 1024 / 1024).toFixed(1)}MB`);
         }
-      });
-      compProc.on("error", () => {
+      } else {
         try {
-          if (fs2.existsSync(tempOptPath)) fs2.unlinkSync(tempOptPath);
+          fs2.unlinkSync(tempOptPath);
         } catch (_) {
         }
-      });
+      }
+    } else {
+      try {
+        if (fs2.existsSync(tempOptPath)) fs2.unlinkSync(tempOptPath);
+      } catch (_) {
+      }
     }
   } catch (e2) {
+    try {
+      if (fs2.existsSync(faststartTempPath)) fs2.unlinkSync(faststartTempPath);
+    } catch (_) {
+    }
+    try {
+      if (fs2.existsSync(tempOptPath)) fs2.unlinkSync(tempOptPath);
+    } catch (_) {
+    }
     console.warn("[Video Compression] Failed:", e2.message);
   }
 }
+function buildUploadResponse(req, unique, ext) {
+  const host = req.get("host");
+  const protocol = req.headers["x-forwarded-proto"] || req.protocol;
+  const isVideo = VIDEO_UPLOAD_EXTS.has(ext);
+  const baseNoExt = unique.slice(0, -ext.length);
+  return {
+    url: `${protocol}://${host}/uploads/${unique}`,
+    path: `/uploads/${unique}`,
+    filename: unique,
+    thumbnailUrl: isVideo ? `${protocol}://${host}/uploads/${baseNoExt}_thumb.jpg` : null,
+    thumbnailPath: isVideo ? `/uploads/${baseNoExt}_thumb.jpg` : null
+  };
+}
 app.post("/upload-raw", (req, res) => {
+  req.setTimeout(0);
+  res.setTimeout(0);
   const rawFilename = req.query.filename || req.headers["x-filename"] || "file.mp4";
   const ext = path.extname(rawFilename).toLowerCase();
   if (!ALLOWED_UPLOAD_EXTS.has(ext)) {
     return res.status(400).json({
-      message: `File type "${ext || "unknown"}" is not allowed. Supported formats: images (.png, .jpg, .gif, .webp), videos (.mp4, .webm, .mov), pdf, zip, txt.`
+      message: `File type "${ext || "unknown"}" is not allowed. ${SUPPORTED_UPLOAD_MESSAGE}`
     });
   }
   const safeName = (rawFilename || "file").replace(/[^a-zA-Z0-9._-]/g, "_");
   const unique = `${Date.now()}_${safeName}`;
   const targetPath = path.join(UPLOADS_DIR, unique);
   const writeStream = fs2.createWriteStream(targetPath);
+  let finished = false;
+  const cleanupPartial = () => {
+    if (finished) return;
+    finished = true;
+    try {
+      writeStream.destroy();
+    } catch (_) {
+    }
+    fs2.unlink(targetPath, () => {
+    });
+  };
+  req.on("aborted", cleanupPartial);
+  req.on("error", (err) => {
+    console.error("Upload request error:", err);
+    cleanupPartial();
+    if (!res.headersSent) {
+      res.status(499).json({ message: "Upload aborted" });
+    }
+  });
   req.pipe(writeStream);
   writeStream.on("finish", () => {
-    const host = req.get("host");
-    const protocol = req.headers["x-forwarded-proto"] || req.protocol;
+    if (finished) return;
+    finished = true;
     processVideoUpload(targetPath);
-    const isVideo = [".mp4", ".webm", ".mov", ".mkv", ".avi"].includes(ext);
-    const baseNoExt = unique.slice(0, -ext.length);
-    res.status(201).json({
-      url: `${protocol}://${host}/uploads/${unique}`,
-      thumbnailUrl: isVideo ? `${protocol}://${host}/uploads/${baseNoExt}_thumb.jpg` : null
-    });
+    res.status(201).json(buildUploadResponse(req, unique, ext));
   });
   writeStream.on("error", (err) => {
     console.error("Upload stream error:", err);
-    res.status(500).json({ message: "Failed to write upload stream" });
+    cleanupPartial();
+    if (!res.headersSent) {
+      res.status(500).json({ message: "Failed to write upload stream" });
+    }
   });
 });
 app.post("/upload", (req, res, next) => {
@@ -107506,7 +107856,7 @@ app.post("/upload", (req, res, next) => {
   const ext = path.extname(filename || "").toLowerCase();
   if (!ALLOWED_UPLOAD_EXTS.has(ext)) {
     return res.status(400).json({
-      message: `File type "${ext || "unknown"}" is not allowed. Supported formats: images (.png, .jpg, .gif, .webp), videos (.mp4, .webm, .mov), pdf, zip, txt.`
+      message: `File type "${ext || "unknown"}" is not allowed. ${SUPPORTED_UPLOAD_MESSAGE}`
     });
   }
   const buffer = Buffer.from(match[2], "base64");
@@ -107515,14 +107865,7 @@ app.post("/upload", (req, res, next) => {
   const targetPath = path.join(UPLOADS_DIR, unique);
   fs2.writeFileSync(targetPath, buffer);
   processVideoUpload(targetPath);
-  const host = req.get("host");
-  const protocol = req.headers["x-forwarded-proto"] || req.protocol;
-  const isVideo = [".mp4", ".webm", ".mov", ".mkv", ".avi"].includes(ext);
-  const baseNoExt = unique.slice(0, -ext.length);
-  res.status(201).json({
-    url: `${protocol}://${host}/uploads/${unique}`,
-    thumbnailUrl: isVideo ? `${protocol}://${host}/uploads/${baseNoExt}_thumb.jpg` : null
-  });
+  res.status(201).json(buildUploadResponse(req, unique, ext));
 });
 app.get("/api/check-update", async (req, res) => {
   const isNewer = (latest, current) => {
@@ -107842,12 +108185,18 @@ app.get("/api/sync-status", (req, res) => {
   }
 });
 var server = http3.createServer(app);
+server.requestTimeout = 0;
+server.keepAliveTimeout = 65e3;
+server.headersTimeout = 66e3;
 var io = new Server(server, {
-  cors: { origin: "*" }
+  cors: { origin: "*" },
+  pingTimeout: 6e4,
+  pingInterval: 25e3
 });
 try {
-  const { setSocketIo } = require_cloudSync();
+  const { setSocketIo, setOnClassworkPulled } = require_cloudSync();
   setSocketIo(io);
+  setOnClassworkPulled(prefetchUploadsFromClasswork);
 } catch (_) {
 }
 io.use((socket, next) => {
@@ -109259,6 +109608,7 @@ var getClassworkFromDb = async (classroomId) => {
       testCases: Array.isArray(meta.testCases) ? meta.testCases : [],
       starterCode: meta.starterCode || "",
       duration: meta.duration !== void 0 ? meta.duration : 60,
+      videoDuration: meta.videoDuration ?? null,
       autoSaveInterval: meta.autoSaveInterval || "30s",
       treatWarningsAsErrors: !!meta.treatWarningsAsErrors,
       disableBack: !!meta.disableBack
@@ -109307,6 +109657,7 @@ var saveClassworkToDb = async (classroomId, classwork) => {
       activityType: cw.activityType || cw.type || "Assignment",
       starterCode: cw.starterCode !== void 0 ? cw.starterCode : "",
       duration: cw.duration !== void 0 ? cw.duration : 60,
+      videoDuration: cw.videoDuration ?? null,
       autoSaveInterval: cw.autoSaveInterval || "30s",
       treatWarningsAsErrors: !!cw.treatWarningsAsErrors,
       disableBack: !!cw.disableBack

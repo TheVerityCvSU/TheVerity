@@ -79,13 +79,13 @@ function initCloudSync(sqliteDatabase, dbUrl) {
 
     // Initial sync probe on startup (delayed 2s to allow server to bind)
     setTimeout(() => {
-        syncBidirectional().catch(() => {});
+        syncBidirectional().catch(() => { });
     }, 2000);
 
     // Continuous background sync every 15 seconds
     if (syncTimer) clearInterval(syncTimer);
     syncTimer = setInterval(() => {
-        syncBidirectional().catch(() => {});
+        syncBidirectional().catch(() => { });
     }, 15000);
 }
 
@@ -108,7 +108,7 @@ async function syncBidirectional() {
             ALTER TABLE classrooms ADD COLUMN IF NOT EXISTS archived INTEGER DEFAULT 0;
             ALTER TABLE classrooms ADD COLUMN IF NOT EXISTS theme TEXT;
             ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar TEXT;
-        `).catch(() => {});
+        `).catch(() => { });
 
         let pushedCount = 0;
         let pulledCount = 0;
@@ -288,7 +288,7 @@ async function syncBidirectional() {
                 if (needsPull) {
                     try {
                         sqliteDb.prepare('INSERT OR IGNORE INTO classrooms (id, name) VALUES (?, ?)').run(cCw.classroom_id, 'Classroom ' + cCw.classroom_id);
-                    } catch (_) {}
+                    } catch (_) { }
                     upsertCwStmt.run(cCw.id, cCw.classroom_id, cCw.title || '', cCw.description || '', cCw.duedate || '', cCw.type || 'Assignment', cCw.created_at ? new Date(cCw.created_at).toISOString() : null);
                     pulledCount++;
                 }
@@ -469,7 +469,7 @@ async function syncBidirectional() {
                     pulledCount++;
                 }
             }
-        } catch (_) {}
+        } catch (_) { }
 
         // ----------------------------------------------------
         // 6. SUBMISSIONS DIFFERENTIAL SYNC (by assignment_id + student_name)
@@ -557,7 +557,7 @@ async function syncBidirectional() {
                         }
                         insLocalSub.run(cS.assignment_id, cS.student_name, cS.history || '[]', cS.submittedat ? new Date(cS.submittedat).toISOString() : null);
                         pulledCount++;
-                    } catch (_) {}
+                    } catch (_) { }
                 }
             }
         } catch (subErr) {
@@ -632,7 +632,7 @@ async function syncBidirectional() {
                     socketIoInstance.emit('users_updated');
                     socketIoInstance.emit('admin_stats_update');
                     socketIoInstance.emit('verity_data_synced', { pushed: pushedCount, pulled: pulledCount });
-                } catch (_) {}
+                } catch (_) { }
             }
         }
 
@@ -646,14 +646,14 @@ async function syncBidirectional() {
     } catch (err) {
         lastSyncStatus = 'offline';
         if (pgPool && (err.code === 'ECONNREFUSED' || err.code === 'ENOTFOUND' || (err.message && err.message.includes('closed')))) {
-            try { pgPool.end().catch(() => {}); } catch (_) {}
+            try { pgPool.end().catch(() => { }); } catch (_) { }
             pgPool = null;
         }
         // Network errors (offline router) are expected and handled silently
         return { status: 'offline', error: err.message };
     } finally {
         if (client) {
-            try { client.release(); } catch (_) {}
+            try { client.release(); } catch (_) { }
         }
         isSyncing = false;
     }
@@ -666,7 +666,7 @@ let debounceTimeout = null;
 function triggerSync() {
     if (debounceTimeout) clearTimeout(debounceTimeout);
     debounceTimeout = setTimeout(() => {
-        syncBidirectional().catch(() => {});
+        syncBidirectional().catch(() => { });
     }, 300);
 }
 

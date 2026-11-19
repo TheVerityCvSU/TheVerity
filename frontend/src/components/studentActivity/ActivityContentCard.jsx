@@ -23,8 +23,8 @@ export default function ActivityContentCard({
   const isMaterial = assignment?.activityType === 'Material';
   const lessonType = isMaterial ? (
     assignment?.attachments?.some(a => a?.type?.toLowerCase()?.includes('video') || a?.type === 'youtube') ? 'video' :
-    assignment?.attachments?.some(a => a?.type?.toLowerCase()?.includes('link') || a?.type === 'url') ? 'link' :
-    'document'
+      assignment?.attachments?.some(a => a?.type?.toLowerCase()?.includes('link') || a?.type === 'url') ? 'link' :
+        'document'
   ) : null;
 
   const pointsText = assignment?.points ? `${assignment.points} points` : '100 points';
@@ -39,7 +39,7 @@ export default function ActivityContentCard({
         sessionStorage.setItem('verity_student_classroom_tab_active', 'materials');
         sessionStorage.setItem(`verity_student_tab_${classroom?.id}`, 'materials');
         sessionStorage.setItem('verity_student_tab_active', 'materials');
-      } catch (_) {}
+      } catch (_) { }
     }
     if (onBack) onBack();
   };
@@ -69,9 +69,9 @@ export default function ActivityContentCard({
       </div>
 
       {/* Main Dark Card */}
-      <div style={{ 
-        backgroundColor: isDark ? '#2E2E2E' : '#ffffff', 
-        borderRadius: '16px', 
+      <div style={{
+        backgroundColor: isDark ? '#2E2E2E' : '#ffffff',
+        borderRadius: '16px',
         border: isDark ? '1px solid #484848' : '1px solid #e2e8f0',
         display: 'flex',
         flexDirection: 'column',
@@ -79,7 +79,7 @@ export default function ActivityContentCard({
         boxShadow: isDark ? '0 10px 30px rgba(0,0,0,0.4)' : '0 10px 30px rgba(0,0,0,0.04)'
       }}>
         {/* Banner Header */}
-        <div style={{ 
+        <div style={{
           background: isDark ? '#262626' : '#f8fafc',
           padding: '40px 32px',
           display: 'flex',
@@ -109,7 +109,7 @@ export default function ActivityContentCard({
               <ClipboardList size={28} />
             )}
           </div>
-          
+
           <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
             <span style={{ fontSize: '0.7rem', fontWeight: '700', color: isDark ? '#94a3b8' : '#64748b', letterSpacing: '0.05em', textTransform: 'uppercase' }}>
               {isMaterial ? 'MATERIAL DETAILS' : 'ACTIVITY DETAILS'}
@@ -121,8 +121,8 @@ export default function ActivityContentCard({
         </div>
 
         {/* Meta Strip */}
-        <div style={{ 
-          backgroundColor: isDark ? '#262626' : '#ffffff', 
+        <div style={{
+          backgroundColor: isDark ? '#262626' : '#ffffff',
           borderBottom: isDark ? '1px solid #484848' : '1px solid #e2e8f0',
           padding: '16px 32px',
           display: 'flex',
@@ -176,9 +176,9 @@ export default function ActivityContentCard({
                   <span style={{ fontSize: '0.9rem', color: isDark ? '#e2e8f0' : '#1e293b', fontWeight: 'bold' }}>{pointsText}</span>
                 </div>
               </div>
-              
+
               <div style={{ width: '1px', height: '28px', backgroundColor: isDark ? '#334155' : '#e2e8f0' }} />
-              
+
               <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                 <div style={{ backgroundColor: isDark ? 'rgba(16, 185, 129, 0.12)' : '#ecfdf5', padding: '6px', borderRadius: '8px', color: '#10b981', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                   <Calendar size={16} />
@@ -197,20 +197,20 @@ export default function ActivityContentCard({
           <h3 style={{ fontSize: '1.05rem', fontWeight: '700', color: isDark ? 'white' : '#1e293b', margin: '0 0 16px 0' }}>
             {isMaterial ? 'Material Overview & Resources' : 'Instructions'}
           </h3>
-          
-          <div style={{ 
-            backgroundColor: isDark ? '#262626' : '#f8fafc', 
-            borderRadius: '12px', 
-            padding: '24px', 
+
+          <div style={{
+            backgroundColor: isDark ? '#262626' : '#f8fafc',
+            borderRadius: '12px',
+            padding: '24px',
             minHeight: '180px',
             border: isDark ? '1px solid #444444' : '1px solid #e2e8f0'
           }}>
-            <div 
+            <div
               style={{ ...styles.instructionText, whiteSpace: 'normal', margin: 0, color: isDark ? '#d1d5db' : '#334155' }}
               dangerouslySetInnerHTML={{ __html: details }}
               onClick={handleInstructionClick}
             />
-            
+
             {assignment?.attachments?.length > 0 && (
               <div style={styles.cardAttachments}>
                 {assignment.attachments.map((att, i) => (
@@ -224,7 +224,7 @@ export default function ActivityContentCard({
               </div>
             )}
           </div>
-          
+
           <ActivitySubmissionSection
             isDark={isDark}
             styles={styles}

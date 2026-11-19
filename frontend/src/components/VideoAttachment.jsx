@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Maximize2, AlertCircle, Download, Film } from 'lucide-react';
+import { getVideoThumbnailUrl, resolveMediaUrl } from '../utils/mediaUrl';
 
 /**
  * VideoAttachment
@@ -11,7 +12,8 @@ export default function VideoAttachment({ att, onExpand, style = {} }) {
 
   if (!att) return null;
 
-  const url = att.url || '';
+  const url = resolveMediaUrl(att.url || '');
+  const posterUrl = getVideoThumbnailUrl(url);
   const name = att.name || 'Video Attachment';
 
   if (!url) {
@@ -33,9 +35,10 @@ export default function VideoAttachment({ att, onExpand, style = {} }) {
       <div style={{ position: 'relative', display: 'inline-block' }}>
         <video
           src={url}
+          poster={posterUrl || undefined}
           controls
           playsInline
-          preload="metadata"
+          preload="none"
           onError={() => setLoadError(true)}
           style={{
             ...defaultStyles.video,
