@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Database, Clipboard, HardDrive, Download, Server, RefreshCw, Check, Globe, Wifi } from 'lucide-react';
+import { Database, Clipboard, Download, Server, RefreshCw, Check, Globe, Wifi } from 'lucide-react';
 import { tabVariants } from '../../../data/adminSettings';
 import { Toggle } from './SettingControls';
 import { 
@@ -22,7 +22,6 @@ export default function SystemDataTab({ data, onChange, currentUserName = 'Admin
   const styles = propStyles || getStyles(isDark);
   const T = propT || styles.T;
 
-  const [backupStatus, setBackupStatus] = useState(null);
   const [exporting, setExporting] = useState(false);
   const [isSyncingData, setIsSyncingData] = useState(false);
   const [syncDone, setSyncDone] = useState(false);
@@ -98,41 +97,6 @@ export default function SystemDataTab({ data, onChange, currentUserName = 'Admin
   };
 
   const update = (key, val) => onChange({ ...data, [key]: val });
-
-  const handleGenerateBackup = async () => {
-    setBackupStatus('Generating full database snapshot...');
-    try {
-      const res = await apiFetch('/api/admin/backup', { method: 'POST' });
-      const json = await res.json().catch(() => null);
-      if (!res.ok || !json?.success) {
-        setBackupStatus(json?.message || 'Backup failed: Server error.');
-        setTimeout(() => setBackupStatus(null), 4000);
-        return;
-      }
-      const nowStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-      onChange({ ...data, lastBackupTime: `Today at ${nowStr}` });
-
-      // Trigger direct browser download of the generated JSON snapshot
-      if (json.backup) {
-        const blob = new Blob([JSON.stringify(json.backup, null, 2)], { type: 'application/json;charset=utf-8' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = json.filename || `verity_backup_${Date.now()}.json`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        setTimeout(() => URL.revokeObjectURL(url), 5000);
-      }
-
-      const kb = json.sizeBytes ? ` (${(json.sizeBytes / 1024).toFixed(1)} KB)` : '';
-      setBackupStatus(`Backup saved & downloaded${kb}!`);
-      setTimeout(() => setBackupStatus(null), 4000);
-    } catch (e) {
-      setBackupStatus(`Backup failed: ${e.message || 'Connection error'}`);
-      setTimeout(() => setBackupStatus(null), 4000);
-    }
-  };
 
   const handleSyncNow = async () => {
     setIsSyncingData(true);
@@ -235,37 +199,17 @@ export default function SystemDataTab({ data, onChange, currentUserName = 'Admin
 
         <div style={styles.divider} />
 
-        {/* Backup & Export */}
+        {/* Audit Export */}
         <div>
-          <h3 style={styles.sectionTitle}><HardDrive size={18} color={T.blue} /><span>System Snapshot & Audit Export</span></h3>
-          <p style={styles.sectionSub}>Create instant SQLite snapshots or export security reports for the dean or parents.</p>
+          <h3 style={styles.sectionTitle}><Download size={18} color={T.blue} /><span>Audit Export</span></h3>
+          <p style={styles.sectionSub}>Export global security and activity audit reports as CSV.</p>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', alignItems: 'center' }}>
-            <motion.button whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }} onClick={handleGenerateBackup} style={styles.secBtn}>
-              <HardDrive size={16} color={T.blue} />
-              <span>Generate System Backup</span>
-            </motion.button>
             <motion.button whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }} onClick={handleExportAuditCSV} disabled={exporting}
               style={{ ...styles.secBtn, opacity: exporting ? 0.6 : 1 }}>
               <Download size={16} color="#16a34a" />
               <span>{exporting ? 'Exporting...' : 'Export Global Audit Report (.CSV)'}</span>
             </motion.button>
-            <span style={{ fontSize: '0.82rem', color: T.muted, fontWeight: '500' }}>
-              Last backup: <strong style={{ color: T.text }}>{data.lastBackupTime}</strong>
-            </span>
           </div>
-          <AnimatePresence>
-            {backupStatus && (
-              <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
-                style={{
-                  marginTop: '12px', padding: '10px 14px', borderRadius: '10px', fontSize: '0.82rem',
-                  backgroundColor: backupStatus.includes('completed') ? '#dcfce7' : '#dbeafe',
-                  color: backupStatus.includes('completed') ? '#15803d' : '#1d4ed8',
-                  fontWeight: '600', width: 'fit-content',
-                }}>
-                {backupStatus}
-              </motion.div>
-            )}
-          </AnimatePresence>
         </div>
 
         <div style={styles.divider} />

@@ -27,13 +27,6 @@ export default function NotificationsUITab({
           <p style={styles.sectionSub}>Control when and how warnings appear on the instructor's dashboard during live exams.</p>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
             <Toggle
-              on={notifData.soundAlerts}
-              onToggle={() => updateN('soundAlerts', !notifData.soundAlerts)}
-              label="Enable Sound Alerts for Security Flags"
-              subtext="Plays an audio chime on the instructor's dashboard when a student triggers a security event (e.g. Alt-Tab detected)."
-              T={T}
-            />
-            <Toggle
               on={notifData.notifyOnSubmission}
               onToggle={() => updateN('notifyOnSubmission', !notifData.notifyOnSubmission)}
               label="Notify on Exam Submission"

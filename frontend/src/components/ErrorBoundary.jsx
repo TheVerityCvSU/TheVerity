@@ -16,19 +16,56 @@ export default class ErrorBoundary extends React.Component {
     this.setState({ errorInfo });
   }
 
-  handleReset = () => {
-    this.setState({ hasError: false, error: null, errorInfo: null });
+  componentDidUpdate(prevProps) {
+    if (this.state.hasError && prevProps.resetKey !== this.props.resetKey) {
+      this.setState({ hasError: false, error: null, errorInfo: null });
+    }
+  }
+
+  resolveDashboardTarget = () => {
     try {
       const userStr = localStorage.getItem('currentUser') || localStorage.getItem('verity_user');
       const user = userStr ? JSON.parse(userStr) : null;
       const role = String(user?.role || '').toLowerCase();
-      const target = (role === 'teacher' || role === 'instructor') ? 'teacher_dashboard' : 'student_dashboard';
-      localStorage.setItem('currentScreen', target);
-      if (this.props.onNavigateFallback) {
-        this.props.onNavigateFallback(target);
-      } else {
-        window.location.reload();
+      if (role === 'admin' || window.IS_ADMIN_APP) {
+        return user ? 'admin_dashboard' : 'admin_login';
       }
+      if (role === 'teacher' || role === 'instructor') return 'teacher_dashboard';
+      if (role === 'student') return 'student_dashboard';
+      return 'login';
+    } catch {
+      return window.IS_ADMIN_APP ? 'admin_login' : 'login';
+    }
+  };
+
+  handleReset = () => {
+    const target = this.resolveDashboardTarget();
+    try {
+      localStorage.setItem('currentScreen', target);
+      localStorage.removeItem('activeClassroom');
+      localStorage.removeItem('activeAssignment');
+      sessionStorage.removeItem('verity_nav_stack');
+      sessionStorage.removeItem('verity_playback_student');
+      sessionStorage.removeItem('verity_teacher_classwork_tab_active');
+      sessionStorage.removeItem('verity_student_classroom_tab_active');
+      if (window.electronAPI?.disableLockdown) {
+        window.electronAPI.disableLockdown();
+      }
+    } catch {}
+
+    // If the crash occurred on the dashboard screen itself (or no callback is wired),
+    // reload directly onto the clean dashboard target so React resets all corrupted sub-state.
+    if (
+      typeof this.props.onNavigateFallback !== 'function' ||
+      (this.props.currentScreen && this.props.currentScreen === target)
+    ) {
+      window.location.reload();
+      return;
+    }
+
+    try {
+      this.props.onNavigateFallback(target);
+      this.setState({ hasError: false, error: null, errorInfo: null });
     } catch {
       window.location.reload();
     }

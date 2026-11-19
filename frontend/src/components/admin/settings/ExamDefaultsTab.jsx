@@ -1,6 +1,6 @@
 import React from 'react';
 import { motion } from 'framer-motion';
-import { Code2, Timer, Clock } from 'lucide-react';
+import { Code2, Timer } from 'lucide-react';
 import { tabVariants } from '../../../data/adminSettings';
 import { Toggle } from './SettingControls';
 
@@ -57,14 +57,6 @@ export default function ExamDefaultsTab({ data, onChange, direction, styles, T }
               </span>
             </div>
           </div>
-        </div>
-
-        {/* Timer Preview */}
-        <div style={{ padding: '16px 20px', backgroundColor: '#eff6ff', borderRadius: '16px', border: '1px solid #bfdbfe', display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <Clock size={20} color={T.blue} />
-          <span style={{ fontSize: '0.88rem', color: '#1d4ed8', fontWeight: '600' }}>
-            With current settings, new exams will default to a <strong>{data.defaultExamTimer}-minute</strong> countdown with auto-save every <strong>{data.autoSaveInterval === '10s' ? '10 seconds' : data.autoSaveInterval === '30s' ? '30 seconds' : '1 minute'}</strong>.
-          </span>
         </div>
       </div>
     </motion.div>

@@ -145,27 +145,6 @@ export function createTeacherSocketHandlers({
       setTimeout(() => setToast(null), 5000);
     }
 
-    // Respect Admin Setting: notifications.soundAlerts (clean Web Audio API alert chime)
-    if (notifSettingsRef.current?.soundAlerts) {
-      try {
-        const AudioCtx = window.AudioContext || window.webkitAudioContext;
-        if (AudioCtx) {
-          const ctx = new AudioCtx();
-          const osc = ctx.createOscillator();
-          const gain = ctx.createGain();
-          osc.type = 'sine';
-          osc.frequency.setValueAtTime(isCritical ? 880 : 660, ctx.currentTime);
-          gain.gain.setValueAtTime(0.08, ctx.currentTime);
-          gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.22);
-          osc.connect(gain);
-          gain.connect(ctx.destination);
-          osc.start();
-          osc.stop(ctx.currentTime + 0.24);
-          setTimeout(() => { try { ctx.close(); } catch (_) {} }, 350);
-        }
-      } catch (_) {}
-    }
-
   };
 
   const handleTerminalUpdate = (data) => {

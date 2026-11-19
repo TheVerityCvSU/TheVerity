@@ -408,41 +408,45 @@ export default function IframePreviewModal({ url, title, type, onClose, isDark: 
               </div>
             )}
 
-            {/* 2. PDF DOCUMENT PREVIEW */}
-            {isPdf && (
-              <object
-                data={resolvedUrl}
-                type="application/pdf"
-                style={{ width: '100%', height: '100%', border: 'none', display: 'block' }}
-              >
-                <iframe 
-                  src={resolvedUrl}
-                  style={{ width: '100%', height: '100%', border: 'none' }}
-                  title={title || "PDF Preview"}
+            {/* 2. PDF DOCUMENT PREVIEW — #toolbar=0&navpanes=0 hides Chrome's native Save/GDrive/Print toolbar */}
+            {isPdf && (() => {
+              const basePdfUrl = String(resolvedUrl || '').split('#')[0];
+              const pdfEmbedUrl = basePdfUrl ? `${basePdfUrl}#toolbar=0&navpanes=0` : resolvedUrl;
+              return (
+                <object
+                  data={pdfEmbedUrl}
+                  type="application/pdf"
+                  style={{ width: '100%', height: '100%', border: 'none', display: 'block' }}
                 >
-                  <div style={{
-                    display: 'flex',
-                    flexDirection: 'column',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    height: '100%',
-                    padding: '40px',
-                    textAlign: 'center'
-                  }}>
-                    <FileText size={48} color="#ef4444" style={{ marginBottom: '16px' }} />
-                    <h4 style={{ margin: '0 0 8px 0', fontSize: '1.1rem', color: isDark ? '#f1f5f9' : '#1e293b' }}>
-                      PDF Preview
-                    </h4>
-                    <p style={{ margin: '0 0 20px 0', fontSize: '0.9rem', color: isDark ? '#94a3b8' : '#64748b' }}>
-                      Your browser could not embed this PDF directly.
-                    </p>
-                    <button onClick={handleDownload} style={{ padding: '10px 20px', borderRadius: '8px', background: '#ef4444', color: 'white', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <Download size={18} /> Download PDF
-                    </button>
-                  </div>
-                </iframe>
-              </object>
-            )}
+                  <iframe
+                    src={pdfEmbedUrl}
+                    style={{ width: '100%', height: '100%', border: 'none' }}
+                    title={title || "PDF Preview"}
+                  >
+                    <div style={{
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      height: '100%',
+                      padding: '40px',
+                      textAlign: 'center'
+                    }}>
+                      <FileText size={48} color="#ef4444" style={{ marginBottom: '16px' }} />
+                      <h4 style={{ margin: '0 0 8px 0', fontSize: '1.1rem', color: isDark ? '#f1f5f9' : '#1e293b' }}>
+                        PDF Preview
+                      </h4>
+                      <p style={{ margin: '0 0 20px 0', fontSize: '0.9rem', color: isDark ? '#94a3b8' : '#64748b' }}>
+                        Your browser could not embed this PDF directly.
+                      </p>
+                      <button onClick={handleDownload} style={{ padding: '10px 20px', borderRadius: '8px', background: '#ef4444', color: 'white', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <Download size={18} /> Download PDF
+                      </button>
+                    </div>
+                  </iframe>
+                </object>
+              );
+            })()}
 
             {/* 3. OTHER OFFICE DOCUMENTS (.doc, .ppt, .pptx, .xls, .xlsx) */}
             {isOffice && !isDocx && (

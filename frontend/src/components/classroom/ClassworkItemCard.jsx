@@ -29,8 +29,7 @@ export default function ClassworkItemCard({
   const isRedState = dueState === 'missing' || dueState === 'submitted_late';
   const isYellowState = dueState === 'due_soon';
 
-  // Status-aware accent colors (Red for late/missing, Amber/Yellow for due soon, Emerald for on-track/on-time)
-  const accentLineColor = isRedState ? '#ef4444' : isYellowState ? '#f59e0b' : '#10b981';
+  // Status-aware colors (Red for late/missing, Amber/Yellow for due soon, Emerald for on-track/on-time)
   const iconBg = isRedState
     ? (isDark ? 'rgba(239, 68, 68, 0.14)' : '#fee2e2')
     : isYellowState
@@ -58,7 +57,6 @@ export default function ClassworkItemCard({
             borderRadius: '12px',
             backgroundColor: isDark ? (isOpen ? '#242a2b' : '#1e2324') : (isOpen ? '#f1f5f9' : '#f8fafc'),
             border: isDark ? (isOpen ? '1px solid #444c4f' : '1px solid #2d3335') : (isOpen ? '1px solid #cbd5e1' : '1px solid #e2e8f0'),
-            borderLeft: `4px solid ${accentLineColor}`,
             cursor: 'pointer',
             userSelect: 'none',
             transition: 'all 0.2s ease',

@@ -519,7 +519,15 @@ export default function StudentView({
   }, []);
 
   return (
-    <ErrorBoundary onNavigateFallback={() => { if (typeof onBack === 'function') onBack(); }}>
+    <ErrorBoundary
+      onNavigateFallback={() => {
+        if (typeof onBack === 'function') {
+          onBack();
+        } else {
+          window.location.reload();
+        }
+      }}
+    >
       <motion.div
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}

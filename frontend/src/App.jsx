@@ -66,21 +66,35 @@ export default function App() {
     }
   }, []);
 
+  const handleErrorReturnToDashboard = (targetScreen) => {
+    setActiveClassroom(null);
+    setActiveAssignment(null);
+    setSelectedStudentForPlayback(null);
+    navigateTo(targetScreen, { force: true, classroom: null, assignment: null, student: null });
+    setCurrentScreen(targetScreen);
+  };
+
   return (
     <div style={{ minHeight: '100vh', width: '100%', display: 'flex', flexDirection: 'column' }}>
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', width: '100%' }}>
         {isAdminApp ? (
-          <AppAuthRoutes
-            isAdminApp={true}
+          <ErrorBoundary
             currentScreen={currentScreen}
-            currentUser={currentUser}
-            setCurrentScreen={setCurrentScreen}
-            setCurrentUser={setCurrentUser}
-            socket={socket}
-            handleLogout={handleLogout}
-            handleUserLogin={handleUserLogin}
-            lockDown={lockDown}
-          />
+            resetKey={currentScreen}
+            onNavigateFallback={handleErrorReturnToDashboard}
+          >
+            <AppAuthRoutes
+              isAdminApp={true}
+              currentScreen={currentScreen}
+              currentUser={currentUser}
+              setCurrentScreen={setCurrentScreen}
+              setCurrentUser={setCurrentUser}
+              socket={socket}
+              handleLogout={handleLogout}
+              handleUserLogin={handleUserLogin}
+              lockDown={lockDown}
+            />
+          </ErrorBoundary>
         ) : (() => {
           const userRoleLower = String(currentUser?.role || '').toLowerCase();
           const isStudent = userRoleLower === 'student';
@@ -93,7 +107,11 @@ export default function App() {
               ) : isStudent && vmDetected ? (
                 <AppVmBlocker isDark={isDark} vmReasons={vmReasons} handleLogout={handleLogout} />
               ) : (
-                <ErrorBoundary onNavigateFallback={(screen) => navigateTo(screen)}>
+                <ErrorBoundary
+                  currentScreen={currentScreen}
+                  resetKey={currentScreen}
+                  onNavigateFallback={handleErrorReturnToDashboard}
+                >
                   <AppAuthRoutes
                     isAdminApp={false}
                     currentScreen={currentScreen}
