@@ -13,28 +13,29 @@ import {
   Image as ImageIcon
 } from 'lucide-react';
 import { resolveMediaUrl } from '../utils/mediaUrl';
+import { triggerDirectDownload } from '../utils/downloadFile';
 import { renderAsync } from 'docx-preview';
 
 export default function IframePreviewModal({ url, title, type, onClose, isDark: explicitDark }) {
   const isDark = typeof explicitDark === 'boolean'
     ? explicitDark
-    : (typeof document !== 'undefined' && document.body.classList.contains('dark')) ||
+    : (typeof document !== 'undefined' && (document.documentElement.classList.contains('dark') || document.body.classList.contains('dark'))) ||
       (typeof localStorage !== 'undefined' && localStorage.getItem('verity_dark_mode') === 'true');
 
-  // Resolve media URL properly (resolves /uploads/ against the active backend server)
+  // Resolve media URL properly (rewrites /uploads/ from any localhost/LAN/cloud host to active server)
   const resolvedUrl = useMemo(() => {
     if (!url) return '';
     const trimmed = String(url).trim();
     if (trimmed.startsWith('blob:') || trimmed.startsWith('data:')) return trimmed;
-    if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) return trimmed;
-    if (trimmed.startsWith('/uploads/') || trimmed.startsWith('uploads/')) {
-      return resolveMediaUrl(trimmed);
+    const resolved = resolveMediaUrl(trimmed);
+    if (resolved && (resolved.startsWith('http://') || resolved.startsWith('https://') || resolved.startsWith('/'))) {
+      return resolved;
     }
     // Domain without scheme
     if (trimmed.includes('.') && !trimmed.startsWith('/')) {
       return `https://${trimmed}`;
     }
-    return resolveMediaUrl(trimmed);
+    return resolved;
   }, [url]);
 
   // Determine file type
@@ -140,16 +141,12 @@ export default function IframePreviewModal({ url, title, type, onClose, isDark: 
     return () => { document.body.style.overflow = orig; };
   }, []);
 
+  const isDownloadable = !(type === 'link' && !isPdf && !isOffice && !isText && !isImage);
+
   const handleDownload = (e) => {
     if (e && e.stopPropagation) e.stopPropagation();
-    const a = document.createElement('a');
-    a.href = resolvedUrl;
     const downloadName = (title || cleanName.split('/').pop() || 'download').trim();
-    a.download = downloadName;
-    a.target = '_blank';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
+    triggerDirectDownload(resolvedUrl, downloadName);
   };
 
   const handleOpenExternal = (e) => {
@@ -195,30 +192,32 @@ export default function IframePreviewModal({ url, title, type, onClose, isDark: 
       >
         {/* Floating Top Right Header Controls */}
         <div style={{ position: 'absolute', top: '24px', right: '32px', display: 'flex', gap: '12px', zIndex: 100000 }}>
-          <button 
-            onClick={handleDownload}
-            style={{
-              background: 'rgba(255,255,255,0.12)',
-              border: '1px solid rgba(255,255,255,0.2)',
-              borderRadius: '8px',
-              padding: '10px 14px',
-              color: 'white',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
-              fontSize: '0.88rem',
-              fontWeight: '500',
-              backdropFilter: 'blur(8px)',
-              transition: 'all 0.2s'
-            }}
-            title="Download document"
-            onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.25)'}
-            onMouseLeave={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.12)'}
-          >
-            <Download size={18} />
-            <span>Download</span>
-          </button>
+          {isDownloadable && (
+            <button
+              onClick={handleDownload}
+              style={{
+                background: 'rgba(255,255,255,0.12)',
+                border: '1px solid rgba(255,255,255,0.2)',
+                borderRadius: '8px',
+                padding: '10px 14px',
+                color: 'white',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                fontSize: '0.88rem',
+                fontWeight: '500',
+                backdropFilter: 'blur(8px)',
+                transition: 'all 0.2s'
+              }}
+              title="Download document"
+              onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.25)'}
+              onMouseLeave={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.12)'}
+            >
+              <Download size={18} />
+              <span>Download</span>
+            </button>
+          )}
 
           <button 
             onClick={handleOpenExternal}
@@ -334,14 +333,15 @@ export default function IframePreviewModal({ url, title, type, onClose, isDark: 
             </div>
           </div>
           
-          {/* Document Content Viewport */}
-          <div style={{
+          {/* Document Content Viewport (verity-doc-viewer keeps document pages bright & readable) */}
+          <div className="verity-doc-viewer" style={{
             flex: 1,
             position: 'relative',
             overflow: 'auto',
             display: 'flex',
             flexDirection: 'column',
-            backgroundColor: isDark ? '#0f172a' : '#f1f5f9'
+            backgroundColor: '#f1f5f9',
+            colorScheme: 'light'
           }}>
             {/* 1. WORD DOCUMENT (.docx) PREVIEW */}
             {isDocx && (
@@ -353,7 +353,7 @@ export default function IframePreviewModal({ url, title, type, onClose, isDark: 
                 flexDirection: 'column',
                 alignItems: 'center',
                 padding: '24px 16px',
-                backgroundColor: isDark ? '#182234' : '#e2e8f0'
+                backgroundColor: '#f1f5f9'
               }}>
                 {docxLoading && (
                   <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', flex: 1, padding: '40px' }}>

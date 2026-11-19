@@ -204,7 +204,26 @@ export default function ClassDetailsModal({
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                 {viewLoadingStudents ? (
-                  Array.from({ length: 3 }).map((_, i) => <Skeleton.Row key={i} />)
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    {[0, 1, 2].map((i) => (
+                      <div
+                        key={i}
+                        style={{
+                          backgroundColor: rowBg,
+                          borderRadius: '9999px',
+                          padding: '8px 20px',
+                          display: 'grid',
+                          gridTemplateColumns: '1.5fr 2fr 1fr',
+                          alignItems: 'center',
+                          height: '36px'
+                        }}
+                      >
+                        <div className="skeleton-shimmer" style={{ width: '60%', height: '14px', borderRadius: '4px' }} />
+                        <div className="skeleton-shimmer" style={{ width: '70%', height: '12px', borderRadius: '4px' }} />
+                        <div><div className="skeleton-shimmer" style={{ width: '60px', height: '20px', borderRadius: '9999px' }} /></div>
+                      </div>
+                    ))}
+                  </div>
                 ) : viewStudents.length === 0 ? (
                   <div style={{ textAlign: 'center', padding: '24px', color: muted }}>No students currently enrolled</div>
                 ) : (

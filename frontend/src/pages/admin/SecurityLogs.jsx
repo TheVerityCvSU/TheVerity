@@ -1,10 +1,10 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Search, AlertCircle, ShieldAlert, Shield, X, Copy, Check } from 'lucide-react';
+import Skeleton from '../../components/Skeleton';
 import { getSecurityLogs, logSecurityEvent } from '../../data/securityLogger';
 import { useDarkMode } from '../../hooks/useDarkMode';
 import { apiFetch } from '../../data/api';
-import Skeleton from '../../components/Skeleton';
 
 const getStyles = (isDark) => ({
   pageWrap: {
@@ -56,17 +56,29 @@ export default function SecurityAuditLogsTab() {
 
   useEffect(() => {
     let isMounted = true;
-    apiFetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/system-settings`)
-      .then(res => res.ok ? res.json() : {})
-      .then(d => {
-        if (!isMounted) return;
-        const s = d.settings?.global_config || d.settings;
-        if (s?.uiPrefs?.auditTableDensity) {
-          setDensity(s.uiPrefs.auditTableDensity);
-        }
-      })
-      .catch(() => { });
-    return () => { isMounted = false; };
+    const loadDensity = () => {
+      apiFetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/system-settings`)
+        .then(res => res.ok ? res.json() : {})
+        .then(d => {
+          if (!isMounted) return;
+          const s = d.settings?.global_config || d.settings;
+          if (s?.uiPrefs?.auditTableDensity) {
+            setDensity(s.uiPrefs.auditTableDensity);
+          }
+        })
+        .catch(() => { });
+    };
+    loadDensity();
+    const onSettingsUpdate = (e) => {
+      const nextDensity = e?.detail?.uiPrefs?.auditTableDensity;
+      if (nextDensity) setDensity(nextDensity);
+      else loadDensity();
+    };
+    window.addEventListener('verity:system-settings-updated', onSettingsUpdate);
+    return () => {
+      isMounted = false;
+      window.removeEventListener('verity:system-settings-updated', onSettingsUpdate);
+    };
   }, []);
 
   const fetchLogs = async () => {
@@ -247,7 +259,7 @@ export default function SecurityAuditLogsTab() {
             <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: '14px' }}>Description</div>
           </div>
           {loading ? (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: density === 'Compact' ? '4px' : '8px' }}>
               {Array.from({ length: 5 }).map((_, i) => <Skeleton.Row key={i} />)}
             </div>
           ) : filteredLogs.length === 0 ? (

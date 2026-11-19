@@ -3,11 +3,8 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Sparkles, Shield, Code2, Bell, Users, Database } from 'lucide-react';
 import { useDarkMode } from '../../hooks/useDarkMode';
 import { useCurrentUser } from '../../hooks/useCurrentUser';
-import {
-  DEFAULT_SETTINGS,
-  loadSystemSettings,
-  saveSystemSettings,
-} from '../../data/adminSettings';
+import { DEFAULT_SETTINGS, loadSystemSettings, saveSystemSettings } from '../../data/adminSettings';
+import Skeleton from '../../components/Skeleton';
 import { getStyles } from './adminSettingsStyles';
 
 import GeneralPreferencesTab from '../../components/admin/settings/GeneralPreferencesTab';
@@ -16,7 +13,6 @@ import ExamDefaultsTab from '../../components/admin/settings/ExamDefaultsTab';
 import NotificationsUITab from '../../components/admin/settings/NotificationsUITab';
 import RolesPermissionsTab from '../../components/admin/settings/RolesPermissionsTab';
 import SystemDataTab from '../../components/admin/settings/SystemDataTab';
-import Skeleton from '../../components/Skeleton';
 
 export default function SystemSettingsTab({ currentUser: propCurrentUser }) {
   const [activeTab, setActiveTab] = useState('general');
@@ -54,10 +50,10 @@ export default function SystemSettingsTab({ currentUser: propCurrentUser }) {
       return;
     }
     const timer = setTimeout(() => {
-      saveSystemSettings(settings, activeTab, currentUserName);
+      saveSystemSettings(settings);
     }, 600);
     return () => clearTimeout(timer);
-  }, [settings, loading, activeTab, currentUserName]);
+  }, [settings, loading]);
 
   const tabs = [
     { id: 'general', Icon: Sparkles, label: 'General' },
@@ -94,7 +90,7 @@ export default function SystemSettingsTab({ currentUser: propCurrentUser }) {
 
       {/* TAB PANELS */}
       {loading ? (
-        <div style={{ padding: '24px 0' }}>
+        <div style={{ padding: '30px 10px' }}>
           <Skeleton.Settings />
         </div>
       ) : (

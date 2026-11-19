@@ -161,3 +161,20 @@ ON CONFLICT (email) DO NOTHING;
 -- Ensure admin accounts do not exist in users table
 DELETE FROM users WHERE role = 'Admin';
 
+-- Persistent uploaded file fallback store (used when Cloudflare R2 is not configured)
+CREATE TABLE IF NOT EXISTS uploaded_files (
+    filename VARCHAR(255) PRIMARY KEY,
+    mime_type VARCHAR(120) DEFAULT 'application/octet-stream',
+    size_bytes BIGINT DEFAULT 0,
+    chunk_count INTEGER DEFAULT 0,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS uploaded_file_chunks (
+    filename VARCHAR(255) NOT NULL,
+    chunk_index INTEGER NOT NULL,
+    data BYTEA NOT NULL,
+    PRIMARY KEY (filename, chunk_index)
+);
+
+

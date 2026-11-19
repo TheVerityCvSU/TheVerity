@@ -3,7 +3,7 @@ import { ArrowLeft, BookOpen, Calendar, Award, FileText, Video, Link2, Clipboard
 import AttachmentCard from '../AttachmentCard';
 import RichInstruction from '../RichInstruction';
 import ActivitySubmissionSection from './ActivitySubmissionSection';
-import { formatFullDate } from '../../utils/dateUtils';
+import { formatFullDate, formatDateTimeCompact } from '../../utils/dateUtils';
 
 export default function ActivityContentCard({
   assignment,
@@ -186,7 +186,7 @@ export default function ActivityContentCard({
                 <div style={{ display: 'flex', flexDirection: 'column' }}>
                   <span style={{ fontSize: '0.7rem', color: isDark ? '#94a3b8' : '#64748b', fontWeight: '600' }}>Posted</span>
                   <span className="tabular-nums" style={{ fontSize: '0.9rem', color: isDark ? '#e2e8f0' : '#1e293b', fontWeight: 'bold', fontVariantNumeric: 'tabular-nums' }}>
-                    {assignment?.posted || formatFullDate(assignment?.id)}
+                    {formatDateTimeCompact(assignment?.posted || assignment?.id)}
                   </span>
                 </div>
               </div>

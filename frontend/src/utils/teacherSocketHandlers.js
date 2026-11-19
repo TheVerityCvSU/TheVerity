@@ -134,14 +134,37 @@ export function createTeacherSocketHandlers({
     checkSelection(studentId || studentName);
 
     const isCrash = Boolean(data.isCrash || (actionText && actionText.toLowerCase().includes('crash')) || (data.message && data.message.toLowerCase().includes('crash')));
+    const isCritical = isCrash || String(data.severity || '').toLowerCase() === 'high' || actionText.toLowerCase().includes('malicious') || actionText.toLowerCase().includes('multiple login');
     const actionLower = actionText.toLowerCase();
     const isExitTab = !isCrash && (actionLower.includes('alt') || actionLower.includes('tab') || actionLower.includes('blur') || actionLower.includes('exit'));
     const cleanAction = isCrash ? 'System crash' : isExitTab ? 'Alt tab' : toSentenceCase(actionText);
 
-    setToast({ message: `Alert: ${formatStudentName(studentName)} - ${cleanAction}`, type: isCrash ? 'error' : 'warning', isAlert: true });
-    setTimeout(() => setToast(null), 5000);
+    // Respect Admin Setting: notifications.showToastWarnings (critical security alerts still show)
+    if (isCritical || notifSettingsRef.current?.showToastWarnings) {
+      setToast({ message: `Alert: ${formatStudentName(studentName)} - ${cleanAction}`, type: isCritical ? 'error' : 'warning', isAlert: true });
+      setTimeout(() => setToast(null), 5000);
+    }
 
-    // Sound alerts silenced to avoid disruptive beeps
+    // Respect Admin Setting: notifications.soundAlerts (clean Web Audio API alert chime)
+    if (notifSettingsRef.current?.soundAlerts) {
+      try {
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        if (AudioCtx) {
+          const ctx = new AudioCtx();
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(isCritical ? 880 : 660, ctx.currentTime);
+          gain.gain.setValueAtTime(0.08, ctx.currentTime);
+          gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.22);
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          osc.start();
+          osc.stop(ctx.currentTime + 0.24);
+          setTimeout(() => { try { ctx.close(); } catch (_) {} }, 350);
+        }
+      } catch (_) {}
+    }
 
   };
 

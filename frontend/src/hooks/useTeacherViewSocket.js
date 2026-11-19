@@ -30,22 +30,38 @@ export function useTeacherViewSocket({
     notifSettingsRef.current = notifSettings;
   }, [notifSettings]);
 
-  // Load notification settings
+  // Load notification settings (initial + live Socket.IO updates)
   useEffect(() => {
     let isMounted = true;
-    apiFetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/system-settings`)
-      .then((res) => (res.ok ? res.json() : {}))
-      .then((d) => {
-        if (!isMounted) return;
-        if (d.settings?.notifications) {
-          setNotifSettings(d.settings.notifications);
-        }
-      })
-      .catch(() => {});
+    const applyNotifs = (settingsObj) => {
+      if (!isMounted || !settingsObj) return;
+      const config = settingsObj.global_config || settingsObj;
+      if (config?.notifications) {
+        setNotifSettings((prev) => ({ ...prev, ...config.notifications }));
+      }
+    };
+
+    const loadNotifs = () => {
+      apiFetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/system-settings`)
+        .then((res) => (res.ok ? res.json() : {}))
+        .then((d) => {
+          if (d?.settings) applyNotifs(d.settings);
+        })
+        .catch(() => {});
+    };
+
+    loadNotifs();
+    const handleSettingsUpdate = (payload) => {
+      if (payload?.settings) applyNotifs(payload.settings);
+      else loadNotifs();
+    };
+    if (socket) socket.on('system_settings_updated', handleSettingsUpdate);
+
     return () => {
       isMounted = false;
+      if (socket) socket.off('system_settings_updated', handleSettingsUpdate);
     };
-  }, []);
+  }, [socket]);
 
   // Broadcast assignment instruction on socket
   const assignmentInstruction = assignment?.details || '';

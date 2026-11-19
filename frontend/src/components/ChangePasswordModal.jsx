@@ -2,6 +2,8 @@ import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { AlertCircle, Loader2, ShieldCheck } from 'lucide-react';
 import { changeUserPassword } from '../data/passwordService';
+import { fetchPasswordPolicies } from '../data/registerService';
+import { validatePasswordAgainstPolicies } from './PasswordRequirements';
 import { useCurrentUser, updateCurrentUser } from '../hooks/useCurrentUser';
 import PasswordInputField from './passwordModal/PasswordInputField';
 import ChangePasswordHeader from './passwordModal/ChangePasswordHeader';
@@ -31,6 +33,7 @@ export default function ChangePasswordModal({
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [policies, setPolicies] = useState(null);
 
   const currentInputRef = useRef(null);
 
@@ -44,6 +47,7 @@ export default function ChangePasswordModal({
       setShowConfirm(false);
       setError('');
       setLoading(false);
+      fetchPasswordPolicies().then(p => setPolicies(p)).catch(() => {});
       setTimeout(() => currentInputRef.current?.focus(), 80);
     }
   }, [isOpen]);
@@ -73,7 +77,12 @@ export default function ChangePasswordModal({
       return;
     }
 
-    if (newPassword.length < 8) {
+    const policyErr = validatePasswordAgainstPolicies(newPassword, policies);
+    if (policyErr) {
+      setError(policyErr);
+      return;
+    }
+    if (!policies && newPassword.length < 8) {
       setError('New password must be at least 8 characters long.');
       return;
     }

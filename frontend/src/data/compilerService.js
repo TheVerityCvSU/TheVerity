@@ -1,5 +1,5 @@
 import { io } from 'socket.io-client';
-import { getCompilerSocketUrl, getLocalApiUrl } from './api';
+import { getCompilerSocketUrl, LOCAL_DEV_API_URL, isElectronApp } from './api';
 
 export const DEFAULT_CSHARP =
   'using System;\n\nclass Program {\n    static void Main(string[] args) {\n        Console.WriteLine("Hello, World!");\n    }\n}';
@@ -41,11 +41,10 @@ export function persistExtraFiles(files) {
  * Executes C# test cases over socket.io connection.
  */
 export function executeTestCasesSocket({ code, extraFiles, testCases, storedUser, token, onResults, onError }) {
-  const primaryUrl = getCompilerSocketUrl();
-  const localUrl = getLocalApiUrl();
-  let hasSwitchedToLocal = primaryUrl === localUrl;
+  const strictLocal = typeof window !== 'undefined' && (isElectronApp() || Boolean(window.electronAPI) || ['localhost', '127.0.0.1', '::1'].includes(window.location?.hostname || ''));
+  const targetUrl = strictLocal ? (LOCAL_DEV_API_URL || 'http://localhost:3001') : getCompilerSocketUrl();
 
-  const socket = io(primaryUrl, {
+  const socket = io(targetUrl, {
     timeout: 5000,
     transports: ['websocket', 'polling'],
     auth: { token },
@@ -85,15 +84,9 @@ export function executeTestCasesSocket({ code, extraFiles, testCases, storedUser
   });
 
   socket.on('connect_error', () => {
-    if (!hasSwitchedToLocal && socket.io && socket.io.uri !== localUrl) {
-      hasSwitchedToLocal = true;
-      socket.io.uri = localUrl;
-      socket.connect();
-      return;
-    }
     clearTimeout(timer);
     cleanup();
-    if (onError) onError(new Error('Connection error'));
+    if (onError) onError(new Error('Local compiler engine unreachable on this PC (localhost:3001)'));
   });
 
   socket.on('disconnect', () => {

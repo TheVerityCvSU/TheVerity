@@ -73,6 +73,7 @@ export default function StudentEditorWorkspace({
           handleExtraFileCodeChange={filesHook.handleExtraFileCodeChange}
           copiedInternallyRef={copiedInternallyRef}
           addProctorLog={kioskHook.addProctorLog}
+          strictClipboardBlocking={kioskHook.kioskRules?.strictClipboardBlocking !== false}
           isResizingTerminal={layout.isResizingTerminal}
           handleDividerMouseDown={layout.handleDividerMouseDown}
         />

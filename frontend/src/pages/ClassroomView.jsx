@@ -73,7 +73,7 @@ export default function ClassroomView({
     markSingleMaterialAsSeen
   } = useClassroomClasswork({ classroom, currentUser, socket, activeTab });
 
-  const { submittedTasks, handleUnsubmitAssignment } = useClassroomSubmissions({
+  const { submittedTasks, submissionTimestamps, handleUnsubmitAssignment } = useClassroomSubmissions({
     assignments,
     classroom,
     currentUser,
@@ -151,12 +151,12 @@ export default function ClassroomView({
                 isDark={isDark}
                 cardBg={cardBg}
                 textMuted={textMuted}
+                loadingAssignments={loadingAssignments}
                 upcomingItems={upcomingItems}
                 visibleClasswork={visibleClasswork}
                 visibleMaterials={visibleMaterials}
                 unseenMaterials={unseenMaterials}
                 classroom={classroom}
-                loadingAssignments={loadingAssignments}
                 onSelectTodo={(id) => {
                   if (id) setExpandedId(id);
                   handleTabChange('classwork');
@@ -180,6 +180,7 @@ export default function ClassroomView({
                 expandedId={expandedId}
                 setExpandedId={setExpandedId}
                 submittedTasks={submittedTasks}
+                submissionTimestamps={submissionTimestamps}
                 onOpenAssignment={onOpenAssignment}
                 onStartAssignment={onStartAssignment}
                 onUnsubmitAssignment={handleUnsubmitAssignment}

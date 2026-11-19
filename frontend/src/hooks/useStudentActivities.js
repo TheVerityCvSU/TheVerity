@@ -5,6 +5,35 @@ import { isPhantomClassroom } from '../utils/classroomList';
 import { getLessonType } from '../utils/lessonType';
 import { extractVideoTitle } from '../utils/videoTitle';
 import { formatVideoTimestamp } from '../utils/videoTimestamp';
+import { parseDueDeadline, DUE_SOON_WINDOW_MS } from '../utils/dateUtils';
+
+const isMaterialActivity = (item) => {
+  if (!item) return false;
+  const t = String(item.activityType || item.type || '').toLowerCase();
+  return t === 'material' || t === 'resource' || t === 'lesson';
+};
+
+function readLocalSubmittedAssignmentIds() {
+  const ids = new Set();
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (!key || !key.startsWith('verity_sub_')) continue;
+      const val = localStorage.getItem(key);
+      if (!val) continue;
+      const parts = key.replace(/^verity_sub_/, '').split('_');
+      for (const p of parts) {
+        if (/^\d{6,}$/.test(p)) ids.add(String(p));
+      }
+      try {
+        const parsed = JSON.parse(val);
+        if (parsed?.assignmentId != null) ids.add(String(parsed.assignmentId));
+        if (parsed?.assignment_id != null) ids.add(String(parsed.assignment_id));
+      } catch (_) {}
+    }
+  } catch (_) {}
+  return ids;
+}
 
 export function useStudentActivities({ currentUser, classrooms, activeClassrooms, onOpenAssignment }) {
   const getActivitiesStorageKey = useCallback((user) => {
@@ -53,7 +82,7 @@ export function useStudentActivities({ currentUser, classrooms, activeClassrooms
     return [];
   });
 
-  const [dashboardStats, setDashboardStats] = useState({ done: 0, dueSoon: 0, miss: 0 });
+  const [submittedAssignmentIds, setSubmittedAssignmentIds] = useState(() => readLocalSubmittedAssignmentIds());
   const [loadingActivities, setLoadingActivities] = useState(() => {
     try {
       const raw = localStorage.getItem(getActivitiesStorageKey(currentUser));
@@ -95,10 +124,100 @@ export function useStudentActivities({ currentUser, classrooms, activeClassrooms
 
   const displayedUpcomingActivities = useMemo(() => {
     if (!Array.isArray(upcomingActivities) || upcomingActivities.length === 0) return [];
-    if (!Array.isArray(classrooms) || classrooms.length === 0) return upcomingActivities;
-    const filtered = upcomingActivities.filter(act => classrooms.some(c => String(c.id) === String(act.classroom_id || act.classId)));
-    return filtered.length > 0 ? filtered : upcomingActivities;
+    const nonMaterials = upcomingActivities.filter(act => !isMaterialActivity(act));
+    if (!Array.isArray(classrooms) || classrooms.length === 0) return nonMaterials;
+    const filtered = nonMaterials.filter(act => classrooms.some(c => String(c.id) === String(act.classroom_id || act.classId)));
+    return filtered.length > 0 ? filtered : nonMaterials;
   }, [upcomingActivities, classrooms]);
+
+  const dashboardStats = useMemo(() => {
+    const classList = (Array.isArray(classrooms) && classrooms.length > 0)
+      ? classrooms
+      : getCachedClassrooms(currentUser, 'student').filter(c => !isPhantomClassroom(c));
+
+    const sourceList = (Array.isArray(allClasswork) && allClasswork.length > 0)
+      ? allClasswork
+      : (Array.isArray(upcomingActivities) ? upcomingActivities : []);
+
+    const enrolledActivities = sourceList.filter((cw) => {
+      if (!cw || cw.archived || isMaterialActivity(cw)) return false;
+      if (classList.length === 0) return true;
+      return classList.some(c => String(c.id) === String(cw.classroom_id || cw.classId));
+    });
+
+    const listToCount = enrolledActivities.length > 0
+      ? enrolledActivities
+      : sourceList.filter(cw => cw && !cw.archived && !isMaterialActivity(cw));
+
+    let done = 0;
+    let dueSoon = 0;
+    let miss = 0;
+    const nowMs = Date.now();
+
+    listToCount.forEach((cw) => {
+      if (submittedAssignmentIds.has(String(cw.id))) {
+        done++;
+        return;
+      }
+      const deadline = parseDueDeadline(cw.dueDate);
+      if (!deadline) return;
+      const diff = deadline.getTime() - nowMs;
+      if (diff < 0) {
+        miss++;
+      } else if (diff <= DUE_SOON_WINDOW_MS) {
+        dueSoon++;
+      }
+    });
+
+    return { done, dueSoon, miss };
+  }, [allClasswork, upcomingActivities, classrooms, currentUser, submittedAssignmentIds]);
+
+  // Keep submittedAssignmentIds synced with backend + live submission events
+  useEffect(() => {
+    let active = true;
+    const syncSubmissions = async () => {
+      const localIds = readLocalSubmittedAssignmentIds();
+      try {
+        const subRes = await apiFetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/student/submissions`);
+        if (subRes.ok && active) {
+          const subData = await subRes.json();
+          const merged = new Set(localIds);
+          (subData.submissions || []).forEach(s => {
+            if (s?.assignment_id != null) merged.add(String(s.assignment_id));
+          });
+          setSubmittedAssignmentIds(merged);
+          return;
+        }
+      } catch (_) {}
+      if (active) setSubmittedAssignmentIds(localIds);
+    };
+
+    syncSubmissions();
+
+    const handleSubEvent = (e) => {
+      if (e?.detail?.assignmentId != null) {
+        const aId = String(e.detail.assignmentId);
+        setSubmittedAssignmentIds(prev => {
+          const next = new Set(prev);
+          if (e.detail.submitted) next.add(aId);
+          else next.delete(aId);
+          return next;
+        });
+      } else {
+        syncSubmissions();
+      }
+    };
+
+    window.addEventListener('verity:submission-updated', handleSubEvent);
+    window.addEventListener('storage', syncSubmissions);
+    window.addEventListener('focus', syncSubmissions);
+    return () => {
+      active = false;
+      window.removeEventListener('verity:submission-updated', handleSubEvent);
+      window.removeEventListener('storage', syncSubmissions);
+      window.removeEventListener('focus', syncSubmissions);
+    };
+  }, [currentUser]);
 
   useEffect(() => {
     let active = true;
@@ -138,31 +257,6 @@ export function useStudentActivities({ currentUser, classrooms, activeClassrooms
               try {
                 localStorage.setItem(getActivitiesStorageKey(currentUser), JSON.stringify(sortedActivities));
               } catch (_) {}
-
-              try {
-                const subRes = await apiFetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/student/submissions`);
-                if (subRes.ok && active) {
-                  const subData = await subRes.json();
-                  const submittedAssignmentIds = new Set((subData.submissions || []).map(s => String(s.assignment_id)));
-                  let done = 0, dueSoon = 0, miss = 0;
-                  const now = new Date();
-                  sortedActivities.forEach(cw => {
-                    if (submittedAssignmentIds.has(String(cw.id))) {
-                      done++;
-                    } else {
-                      const due = cw.dueDate ? new Date(cw.dueDate) : null;
-                      if (due && due < now) {
-                        miss++;
-                      } else {
-                        dueSoon++;
-                      }
-                    }
-                  });
-                  setDashboardStats({ done, dueSoon, miss });
-                }
-              } catch (e) {
-                console.warn('Failed to fetch submissions for stats', e);
-              }
             }
           }
         }

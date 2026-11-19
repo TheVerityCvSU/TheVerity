@@ -17,9 +17,7 @@ export function useStudentClassrooms({ currentUser, socket }) {
     );
   });
 
-  const [loadingClassrooms, setLoadingClassrooms] = useState(
-    () => getCachedClassrooms(currentUser, 'student').length === 0
-  );
+  const [loadingClassrooms, setLoadingClassrooms] = useState(true);
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [classCode, setClassCode] = useState('');
@@ -69,7 +67,9 @@ export function useStudentClassrooms({ currentUser, socket }) {
         }
       } catch (_) {
       } finally {
-        if (active) setLoadingClassrooms(false);
+        setTimeout(() => {
+          if (active) setLoadingClassrooms(false);
+        }, 350);
       }
     };
     fetchEnrolledClassrooms();

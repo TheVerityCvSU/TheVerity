@@ -1,10 +1,20 @@
-import { ArrowLeft, Save, Play, Square, Check, AlertTriangle, Settings, Lock, Moon, Sun } from 'lucide-react';
+import { ArrowLeft, Save, Play, Square, Check, AlertTriangle, Settings, Lock, Clock } from 'lucide-react';
 import { studentViewStyles as styles } from '../../utils/studentViewStyles';
+
+function formatCountdown(totalSec) {
+  if (totalSec == null || totalSec < 0) return '00:00';
+  const hrs = Math.floor(totalSec / 3600);
+  const mins = Math.floor((totalSec % 3600) / 60);
+  const secs = totalSec % 60;
+  if (hrs > 0) {
+    return `${hrs}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+  }
+  return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+}
 
 export default function StudentViewToolbar({
   isSandbox,
   isDark,
-  toggleDarkMode,
   isBackBlocked,
   isBackStrictLock,
   submitted,
@@ -12,6 +22,7 @@ export default function StudentViewToolbar({
   isRunning,
   isRunningTests,
   strictCompiler,
+  examRemainingSeconds = null,
   handleBackClick,
   handleSaveCode,
   handleRunCode,
@@ -53,12 +64,7 @@ export default function StudentViewToolbar({
           title={submitted ? 'Workspace is locked — saving is disabled' : 'Save draft (Ctrl+S)'}
         >
           {saveStatus ? (
-            <>
-              <Check size={18} color="#059669" />
-              <span style={{ fontSize: '0.85rem', fontWeight: 'bold', color: '#059669', marginLeft: '4px' }}>
-                Saved
-              </span>
-            </>
+            <Check size={18} color="#059669" />
           ) : (
             <Save size={18} />
           )}
@@ -139,22 +145,40 @@ export default function StudentViewToolbar({
               Submit
             </button>
           ))}
+        {!isSandbox && !submitted && examRemainingSeconds != null && (
+          <div
+            className="tabular-nums"
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '5px',
+              padding: '4px 10px',
+              borderRadius: '8px',
+              fontSize: '0.78rem',
+              fontWeight: '700',
+              fontVariantNumeric: 'tabular-nums',
+              backgroundColor: examRemainingSeconds <= 300
+                ? (isDark ? 'rgba(239, 68, 68, 0.16)' : '#fef2f2')
+                : (isDark ? '#333333' : '#f1f5f9'),
+              color: examRemainingSeconds <= 300
+                ? (isDark ? '#fca5a5' : '#dc2626')
+                : (isDark ? '#e2e8f0' : '#334155'),
+              border: examRemainingSeconds <= 300
+                ? (isDark ? '1px solid rgba(239, 68, 68, 0.35)' : '1px solid #fecaca')
+                : (isDark ? '1px solid #484848' : '1px solid #e2e8f0')
+            }}
+            title="Remaining exam time"
+          >
+            <Clock size={13} />
+            <span>{formatCountdown(examRemainingSeconds)}</span>
+          </div>
+        )}
         {!isSandbox && (
           <div
             className="recording-dot-blink"
             style={styles.recordingDot}
             title="Recording active: Your workspace activity is being recorded and proctored"
           />
-        )}
-        {typeof toggleDarkMode === 'function' && (
-          <button
-            onClick={toggleDarkMode}
-            style={styles.gearIcon}
-            title={isDark ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
-            aria-label="Toggle Dark Mode"
-          >
-            {isDark ? <Sun size={20} color="#f59e0b" /> : <Moon size={20} color="#6b7280" />}
-          </button>
         )}
         <button onClick={() => setShowSettingsModal(true)} style={styles.gearIcon} title="Settings">
           <Settings size={22} color={isDark ? '#d4d4d4' : '#6b7280'} />

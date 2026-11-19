@@ -34,9 +34,7 @@ export function useTeacherClassrooms({ currentUser, socket }) {
     }
   });
 
-  const [loadingClassrooms, setLoadingClassrooms] = useState(
-    () => getCachedClassrooms(currentUser, 'teacher').length === 0
-  );
+  const [loadingClassrooms, setLoadingClassrooms] = useState(true);
   const [activeClassroomCounts, setActiveClassroomCounts] = useState({});
   const [allowDelete, setAllowDelete] = useState(false);
   const [deleteClassConfirm, setDeleteClassConfirm] = useState(null);
@@ -232,21 +230,51 @@ export function useTeacherClassrooms({ currentUser, socket }) {
     };
   }, [socket]);
 
-  // Check system setting for course deletion permissions
+  // Check system setting for course deletion permissions (initial + real-time socket + focus/server-change)
   useEffect(() => {
     let active = true;
-    apiFetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/system-settings`)
-      .then(res => res.json())
-      .then(d => {
-        if (!active) return;
-        const config = d.settings?.global_config || d.settings || {};
-        if (config.roles && typeof config.roles.allowDeleteCourses !== 'undefined') {
-          setAllowDelete(config.roles.allowDeleteCourses);
+    const applySettings = (settingsObj) => {
+      if (!active || !settingsObj) return;
+      const config = settingsObj.global_config || settingsObj;
+      if (config?.roles && typeof config.roles.allowDeleteCourses === 'boolean') {
+        const nextAllowed = config.roles.allowDeleteCourses;
+        setAllowDelete(nextAllowed);
+        if (!nextAllowed) {
+          setDeleteClassConfirm(null);
         }
-      })
-      .catch(() => {});
-    return () => { active = false; };
-  }, []);
+      }
+    };
+
+    const fetchPermission = () => {
+      apiFetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/system-settings`)
+        .then(res => (res.ok ? res.json() : null))
+        .then(d => {
+          if (d?.settings) applySettings(d.settings);
+        })
+        .catch(() => {});
+    };
+
+    fetchPermission();
+
+    const handleSocketSettings = (payload) => {
+      if (payload?.settings) applySettings(payload.settings);
+      else fetchPermission();
+    };
+    const handleFocusOrServer = () => fetchPermission();
+
+    if (socket) socket.on('system_settings_updated', handleSocketSettings);
+    window.addEventListener('focus', handleFocusOrServer);
+    window.addEventListener('verity:server-changed', handleFocusOrServer);
+    window.addEventListener('verity:sync-completed', handleFocusOrServer);
+
+    return () => {
+      active = false;
+      if (socket) socket.off('system_settings_updated', handleSocketSettings);
+      window.removeEventListener('focus', handleFocusOrServer);
+      window.removeEventListener('verity:server-changed', handleFocusOrServer);
+      window.removeEventListener('verity:sync-completed', handleFocusOrServer);
+    };
+  }, [socket]);
 
   // Fetch real classrooms from backend server strictly for this teacher
   useEffect(() => {
@@ -304,7 +332,9 @@ export function useTeacherClassrooms({ currentUser, socket }) {
         }
       } catch (_) {
       } finally {
-        if (active) setLoadingClassrooms(false);
+        setTimeout(() => {
+          if (active) setLoadingClassrooms(false);
+        }, 350);
       }
     };
     fetchClassrooms();
@@ -383,14 +413,28 @@ export function useTeacherClassrooms({ currentUser, socket }) {
     });
   }, [classrooms]);
 
-  const handleExecuteDeleteClass = useCallback(() => {
+  const handleExecuteDeleteClass = useCallback(async () => {
     if (!deleteClassConfirm) return;
     const targetId = deleteClassConfirm.id;
-    setClassrooms(prev => prev.filter(c => String(c.id) !== String(targetId)));
-    apiFetch(`${import.meta.env.VITE_API_URL}/classrooms/${targetId}`, {
-      method: 'DELETE'
-    }).catch(() => {});
-    setDeleteClassConfirm(null);
+    try {
+      const res = await apiFetch(`${import.meta.env.VITE_API_URL}/classrooms/${targetId}`, {
+        method: 'DELETE'
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        if (res.status === 403) {
+          setAllowDelete(false);
+        }
+        alert(data?.message || 'Unable to delete classroom. Permission denied by Admin settings.');
+        setDeleteClassConfirm(null);
+        return;
+      }
+      setClassrooms(prev => prev.filter(c => String(c.id) !== String(targetId)));
+    } catch (err) {
+      alert(err?.message || 'Failed to delete classroom. Please check your connection.');
+    } finally {
+      setDeleteClassConfirm(null);
+    }
   }, [deleteClassConfirm]);
 
   const handleCreateClass = useCallback((newClass) => {

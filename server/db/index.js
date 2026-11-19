@@ -261,6 +261,21 @@ function initSqlite() {
             value TEXT
         );
 
+        CREATE TABLE IF NOT EXISTS uploaded_files (
+            filename TEXT PRIMARY KEY,
+            mime_type TEXT DEFAULT 'application/octet-stream',
+            size_bytes INTEGER DEFAULT 0,
+            chunk_count INTEGER DEFAULT 0,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS uploaded_file_chunks (
+            filename TEXT NOT NULL,
+            chunk_index INTEGER NOT NULL,
+            data BLOB NOT NULL,
+            PRIMARY KEY (filename, chunk_index)
+        );
+
         CREATE TABLE IF NOT EXISTS access_tokens (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             token TEXT UNIQUE,
@@ -1086,6 +1101,178 @@ const db = {
     getSqliteDb() {
         if (!sqliteDb) initSqlite();
         return sqliteDb;
+    },
+
+    getPgPool() {
+        return pgPool;
+    },
+
+    /**
+     * Persists a local uploaded file in 1 MB chunks to PostgreSQL (and SQLite)
+     * as a cross-device persistence fallback when Cloudflare R2 is not configured.
+     */
+    async persistUploadToCloudDb(filename, filePath, mimeType = 'application/octet-stream', maxBytes = 50 * 1024 * 1024) {
+        try {
+            if (!filename || !filePath || !fs.existsSync(filePath)) return false;
+            const stat = fs.statSync(filePath);
+            if (stat.size <= 0 || stat.size > maxBytes) return false;
+
+            const CHUNK_SIZE = 1024 * 1024; // 1 MB chunks
+            const totalChunks = Math.ceil(stat.size / CHUNK_SIZE);
+            const fd = fs.openSync(filePath, 'r');
+            const chunks = [];
+            try {
+                for (let idx = 0; idx < totalChunks; idx++) {
+                    const offset = idx * CHUNK_SIZE;
+                    const len = Math.min(CHUNK_SIZE, stat.size - offset);
+                    const buf = Buffer.allocUnsafe(len);
+                    fs.readSync(fd, buf, 0, len, offset);
+                    chunks.push(buf);
+                }
+            } finally {
+                fs.closeSync(fd);
+            }
+
+            // Try PostgreSQL (Supabase) first so all devices & Render instances can read it
+            let pool = pgPool;
+            if (!pool && DATABASE_URL && DATABASE_URL.startsWith('postgres')) {
+                try {
+                    const { Pool } = require('pg');
+                    pool = new Pool({
+                        connectionString: DATABASE_URL,
+                        ssl: { rejectUnauthorized: false },
+                        connectionTimeoutMillis: 4000,
+                        idleTimeoutMillis: 20000,
+                        max: 3
+                    });
+                    pgPool = pool;
+                } catch (_) { }
+            }
+
+            if (pool) {
+                try {
+                    const client = await pool.connect();
+                    try {
+                        await client.query(`
+                            CREATE TABLE IF NOT EXISTS uploaded_files (
+                                filename VARCHAR(255) PRIMARY KEY,
+                                mime_type VARCHAR(120) DEFAULT 'application/octet-stream',
+                                size_bytes BIGINT DEFAULT 0,
+                                chunk_count INTEGER DEFAULT 0,
+                                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                            )
+                        `);
+                        await client.query(`
+                            CREATE TABLE IF NOT EXISTS uploaded_file_chunks (
+                                filename VARCHAR(255) NOT NULL,
+                                chunk_index INTEGER NOT NULL,
+                                data BYTEA NOT NULL,
+                                PRIMARY KEY (filename, chunk_index)
+                            )
+                        `);
+                        await client.query('BEGIN');
+                        await client.query('DELETE FROM uploaded_file_chunks WHERE filename = $1', [filename]);
+                        await client.query(`
+                            INSERT INTO uploaded_files (filename, mime_type, size_bytes, chunk_count)
+                            VALUES ($1, $2, $3, $4)
+                            ON CONFLICT (filename) DO UPDATE SET
+                                mime_type = EXCLUDED.mime_type,
+                                size_bytes = EXCLUDED.size_bytes,
+                                chunk_count = EXCLUDED.chunk_count,
+                                created_at = CURRENT_TIMESTAMP
+                        `, [filename, mimeType, stat.size, totalChunks]);
+                        for (let i = 0; i < chunks.length; i++) {
+                            await client.query(
+                                'INSERT INTO uploaded_file_chunks (filename, chunk_index, data) VALUES ($1, $2, $3)',
+                                [filename, i, chunks[i]]
+                            );
+                        }
+                        await client.query('COMMIT');
+                        console.log(`[Media DB Fallback] Persisted ${filename} (${stat.size} bytes, ${totalChunks} chunks) to PostgreSQL`);
+                        return true;
+                    } catch (txErr) {
+                        try { await client.query('ROLLBACK'); } catch (_) { }
+                        console.warn(`[Media DB Fallback] PG persist failed for ${filename}:`, txErr.message);
+                    } finally {
+                        client.release();
+                    }
+                } catch (connErr) {
+                    console.warn(`[Media DB Fallback] PG connect notice for ${filename}:`, connErr.message);
+                }
+            }
+            return false;
+        } catch (err) {
+            console.warn(`[Media DB Fallback] Persist error for ${filename}:`, err.message);
+            return false;
+        }
+    },
+
+    /**
+     * Restores a missing /uploads/<filename> from PostgreSQL chunk storage into targetPath.
+     */
+    async restoreUploadFromCloudDb(filename, targetPath) {
+        try {
+            if (!filename || !targetPath) return false;
+            if (fs.existsSync(targetPath)) return true;
+
+            let pool = pgPool;
+            if (!pool && DATABASE_URL && DATABASE_URL.startsWith('postgres')) {
+                try {
+                    const { Pool } = require('pg');
+                    pool = new Pool({
+                        connectionString: DATABASE_URL,
+                        ssl: { rejectUnauthorized: false },
+                        connectionTimeoutMillis: 4000,
+                        idleTimeoutMillis: 20000,
+                        max: 3
+                    });
+                    pgPool = pool;
+                } catch (_) { }
+            }
+            if (!pool) return false;
+
+            const client = await pool.connect();
+            try {
+                const metaRes = await client.query(
+                    'SELECT filename, chunk_count FROM uploaded_files WHERE filename = $1',
+                    [filename]
+                );
+                if (!metaRes.rows || metaRes.rows.length === 0) return false;
+
+                const chunkRes = await client.query(
+                    'SELECT chunk_index, data FROM uploaded_file_chunks WHERE filename = $1 ORDER BY chunk_index ASC',
+                    [filename]
+                );
+                if (!chunkRes.rows || chunkRes.rows.length === 0) return false;
+
+                const dir = path.dirname(targetPath);
+                if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+                const partPath = `${targetPath}.${Date.now()}.dbpart`;
+                const ws = fs.createWriteStream(partPath);
+                try {
+                    for (const row of chunkRes.rows) {
+                        const buf = Buffer.isBuffer(row.data) ? row.data : Buffer.from(row.data);
+                        ws.write(buf);
+                    }
+                    await new Promise((resolve, reject) => {
+                        ws.on('finish', resolve);
+                        ws.on('error', reject);
+                        ws.end();
+                    });
+                    fs.renameSync(partPath, targetPath);
+                    console.log(`[Media DB Fallback] Restored ${filename} from PostgreSQL into local cache`);
+                    return true;
+                } catch (writeErr) {
+                    try { ws.destroy(); } catch (_) { }
+                    try { if (fs.existsSync(partPath)) fs.unlinkSync(partPath); } catch (_) { }
+                    return false;
+                }
+            } finally {
+                client.release();
+            }
+        } catch (err) {
+            return false;
+        }
     },
 
     generateClassCodeSync

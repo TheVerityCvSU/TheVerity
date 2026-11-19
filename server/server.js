@@ -38,6 +38,7 @@ const { sendOtpEmail } = require('./utils/emailService');
 const db = require('./db/index.js');
 const dotnetManager = require('./dotnetManager');
 const { scanCSharpCode } = require('./csharpSecurityScanner');
+const r2Storage = require('./r2Storage');
 
 function killProcessTree(proc) {
     if (!proc || !proc.pid) return;
@@ -197,9 +198,9 @@ try {
 
 // Whitelist of permitted file extensions to prevent Stored XSS and arbitrary file execution
 const ALLOWED_UPLOAD_EXTS = new Set([
-    '.png', '.jpg', '.jpeg', '.gif', '.webp',
-    '.mp4', '.webm', '.ogg', '.mov', '.quicktime', '.m4v',
-    '.pdf', '.doc', '.docx', '.ppt', '.pptx',
+    '.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.bmp', '.avif',
+    '.mp4', '.webm', '.ogg', '.mov', '.quicktime', '.m4v', '.mkv', '.avi',
+    '.pdf', '.doc', '.docx', '.ppt', '.pptx', '.xls', '.xlsx', '.csv',
     '.zip', '.txt'
 ]);
 
@@ -213,21 +214,48 @@ const UPLOAD_MIME_TYPES = {
     '.gif': 'image/gif',
     '.webp': 'image/webp',
     '.svg': 'image/svg+xml',
+    '.bmp': 'image/bmp',
+    '.avif': 'image/avif',
     '.mov': 'video/quicktime',
     '.mp4': 'video/mp4',
     '.m4v': 'video/mp4',
     '.webm': 'video/webm',
     '.ogg': 'video/ogg',
+    '.mkv': 'video/x-matroska',
+    '.avi': 'video/x-msvideo',
     '.pdf': 'application/pdf',
     '.doc': 'application/msword',
     '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
     '.ppt': 'application/vnd.ms-powerpoint',
     '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    '.xls': 'application/vnd.ms-excel',
+    '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    '.csv': 'text/csv; charset=utf-8',
+    '.zip': 'application/zip',
     '.txt': 'text/plain; charset=utf-8'
 };
 
 const SUPPORTED_UPLOAD_MESSAGE =
-    'Supported formats: images (.png, .jpg, .gif, .webp), videos (.mp4, .webm, .mov, .m4v), documents (.pdf, .doc, .docx, .ppt, .pptx, .txt), zip.';
+    'Supported formats: images (.png, .jpg, .gif, .webp, .svg), videos (.mp4, .webm, .mov, .m4v, .mkv, .avi), documents (.pdf, .doc, .docx, .ppt, .pptx, .xls, .xlsx, .csv, .txt), zip.';
+
+/**
+ * Persists an uploaded file to Cloudflare R2 (when configured) or falls back
+ * to chunked PostgreSQL storage so files load across all devices & Incognito.
+ */
+async function persistUploadedFile(uniqueName, targetPath, ext) {
+    try {
+        if (!uniqueName || !targetPath || !fs.existsSync(targetPath)) return false;
+        const mime = UPLOAD_MIME_TYPES[ext] || 'application/octet-stream';
+        if (r2Storage.isR2Configured()) {
+            const res = await r2Storage.uploadFileToR2(uniqueName, targetPath, mime);
+            if (res.uploaded) return true;
+        }
+        return await db.persistUploadToCloudDb(uniqueName, targetPath, mime);
+    } catch (err) {
+        console.warn(`[Media Persist] Notice for ${uniqueName}:`, err.message);
+        return false;
+    }
+}
 
 // Track active /uploads readers so FFmpeg swaps never break active 40-student streams or hit Windows file locks
 const activeUploadStreams = new Map();
@@ -424,13 +452,36 @@ app.use('/uploads', async (req, res, next) => {
     }
 
     const localTarget = path.join(UPLOADS_DIR, requestedName);
-    if (req.method === 'GET' && !fs.existsSync(localTarget) && !IS_RENDER_CLOUD) {
-        try {
-            const cloudHost = new URL(CLOUD_MEDIA_BASE_URL).host;
-            if (req.get('host') !== cloudHost) {
-                await pullUploadFromCloud(requestedName);
-            }
-        } catch (_) { }
+    if ((req.method === 'GET' || req.method === 'HEAD') && !fs.existsSync(localTarget)) {
+        // 1. Hydrate from Cloudflare R2 if configured
+        let hydrated = false;
+        if (r2Storage.isR2Configured()) {
+            hydrated = await r2Storage.downloadFileFromR2(requestedName, localTarget).catch(() => false);
+        }
+        // 2. Fallback: hydrate from PostgreSQL chunk storage
+        if (!hydrated) {
+            hydrated = await db.restoreUploadFromCloudDb(requestedName, localTarget).catch(() => false);
+        }
+        // 3. Fallback: pull from Cloud HTTP server when running on a LAN host
+        if (!hydrated && !IS_RENDER_CLOUD) {
+            try {
+                const cloudHost = new URL(CLOUD_MEDIA_BASE_URL).host;
+                if (req.get('host') !== cloudHost) {
+                    await pullUploadFromCloud(requestedName);
+                }
+            } catch (_) { }
+        }
+    }
+
+    // Direct-to-Downloads attachment header when ?download=1 is requested
+    if (req.query && (req.query.download === '1' || req.query.download === 'true')) {
+        const rawDownloadName = (typeof req.query.filename === 'string' && req.query.filename.trim())
+            ? req.query.filename.trim()
+            : requestedName.replace(/^\d+_/, '');
+        const safeAscii = rawDownloadName.replace(/["\\\r\n]/g, '_').replace(/[^\x20-\x7E]/g, '_') || 'download';
+        const encodedUtf8 = encodeURIComponent(rawDownloadName);
+        res.setHeader('Content-Disposition', `attachment; filename="${safeAscii}"; filename*=UTF-8''${encodedUtf8}`);
+        res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition');
     }
 
     if (req.method === 'GET' || req.method === 'HEAD') {
@@ -462,10 +513,9 @@ app.use('/uploads', async (req, res, next) => {
             res.setHeader('Content-Type', mime);
         }
         if (VIDEO_UPLOAD_EXTS.has(ext)) {
-            // Short cache max-age so byte-range seeks reuse chunks while allowing post-FFmpeg ETag updates
             res.setHeader('Cache-Control', 'public, max-age=60');
         } else {
-            res.setHeader('Cache-Control', 'public, max-age=604800, immutable');
+            res.setHeader('Cache-Control', 'public, max-age=300');
         }
     }
 }));
@@ -570,6 +620,9 @@ async function processVideoJob(targetPath) {
             '-q:v', '3',
             thumbPath
         ], 'Video Thumb Fallback');
+    }
+    if (fs.existsSync(thumbPath)) {
+        persistUploadedFile(path.basename(thumbPath), thumbPath, '.jpg').catch(() => { });
     }
 
     try {
@@ -702,10 +755,20 @@ app.post('/upload-raw', (req, res) => {
 
     req.pipe(writeStream);
 
-    writeStream.on('finish', () => {
+    writeStream.on('finish', async () => {
         if (finished) return;
         finished = true;
         processVideoUpload(targetPath);
+        try {
+            const stat = fs.statSync(targetPath);
+            // Await persistence for files <= 25 MB so immediate cross-device loads never 404;
+            // larger videos persist in background without delaying HTTP response.
+            if (stat.size <= 25 * 1024 * 1024) {
+                await persistUploadedFile(unique, targetPath, ext);
+            } else {
+                persistUploadedFile(unique, targetPath, ext).catch(() => { });
+            }
+        } catch (_) { }
         res.status(201).json(buildUploadResponse(req, unique, ext));
     });
 
@@ -750,7 +813,11 @@ app.post('/upload', (req, res, next) => {
     const targetPath = path.join(UPLOADS_DIR, unique);
     fs.writeFileSync(targetPath, buffer);
     processVideoUpload(targetPath);
-    res.status(201).json(buildUploadResponse(req, unique, ext));
+    persistUploadedFile(unique, targetPath, ext)
+        .catch(() => { })
+        .finally(() => {
+            res.status(201).json(buildUploadResponse(req, unique, ext));
+        });
 });
 
 app.get('/api/check-update', async (req, res) => {
@@ -1159,19 +1226,119 @@ const todayKey = () => {
 };
 
 // --- PASSWORD VALIDATION HELPER ---
+const DEFAULT_PASSWORD_POLICIES = {
+    specialChars: true,
+    numbers: true,
+    minLength8: true
+};
+
+const getPasswordPolicies = async () => {
+    try {
+        const globalRow = await db.get("SELECT value FROM system_settings WHERE key = 'global_config'");
+        if (globalRow && globalRow.value) {
+            const parsed = typeof globalRow.value === 'string' ? JSON.parse(globalRow.value) : globalRow.value;
+            if (parsed?.security?.passwordPolicies && typeof parsed.security.passwordPolicies === 'object') {
+                return { ...DEFAULT_PASSWORD_POLICIES, ...parsed.security.passwordPolicies };
+            }
+        }
+        const secRow = await db.get("SELECT value FROM system_settings WHERE key = 'security'");
+        if (secRow && secRow.value) {
+            const parsed = typeof secRow.value === 'string' ? JSON.parse(secRow.value) : secRow.value;
+            if (parsed?.passwordPolicies && typeof parsed.passwordPolicies === 'object') {
+                return { ...DEFAULT_PASSWORD_POLICIES, ...parsed.passwordPolicies };
+            }
+        }
+    } catch (_) { }
+    return { ...DEFAULT_PASSWORD_POLICIES };
+};
+
 const validatePassword = async (password) => {
     try {
-        const row = await db.get("SELECT value FROM system_settings WHERE key = 'security'");
-        if (row && row.value) {
-            const config = JSON.parse(row.value);
-            const policies = config.passwordPolicies || {};
-            if (policies.minLength8 && password.length < 8) return 'Password must be at least 8 characters long.';
-            if (policies.numbers && !/\d/.test(password)) return 'Password must contain at least one number.';
-            if (policies.specialChars && !/[!@#$%^&*(),.?":{}|<>]/.test(password)) return 'Password must contain at least one special character.';
-        }
+        const str = String(password || '');
+        const policies = await getPasswordPolicies();
+        if (policies.minLength8 && str.length < 8) return 'Password must be at least 8 characters long.';
+        if (policies.numbers && !/\d/.test(str)) return 'Password must contain at least one number.';
+        if (policies.specialChars && !/[!@#$%^&*(),.?":{}|<>_\-\\[\];'`~+/=]/.test(str)) return 'Password must contain at least one special character.';
     } catch (_) { }
     return null;
 };
+
+// --- CONCURRENT MULTIPLE-LOGIN TRACKER (Admin Setting: security.flagMultipleLogins) ---
+const activeLoginSessions = new Map(); // email -> Map<ip, { lastSeen: number, socketIds: Set<string> }>
+const LOGIN_SESSION_WINDOW_MS = 30 * 60 * 1000;
+
+function extractClientIp(reqOrSocket) {
+    try {
+        if (reqOrSocket?.headers) {
+            const fwd = reqOrSocket.headers['x-forwarded-for'];
+            if (typeof fwd === 'string' && fwd.trim()) return fwd.split(',')[0].trim();
+        }
+        const raw = reqOrSocket?.ip || reqOrSocket?.socket?.remoteAddress || reqOrSocket?.handshake?.address || '';
+        return String(raw).replace(/^::ffff:/, '') || 'unknown';
+    } catch (_) {
+        return 'unknown';
+    }
+}
+
+async function checkAndFlagMultipleLogins(user, reqOrSocket, socketId = null) {
+    try {
+        if (!user || !user.email || user.role === 'Admin' || user.role === 'admin') return;
+        const emailKey = String(user.email).trim().toLowerCase();
+        const ip = extractClientIp(reqOrSocket);
+        const now = Date.now();
+
+        let ipMap = activeLoginSessions.get(emailKey);
+        if (!ipMap) {
+            ipMap = new Map();
+            activeLoginSessions.set(emailKey, ipMap);
+        }
+
+        // Prune stale IP sessions
+        for (const [existingIp, meta] of ipMap.entries()) {
+            if (meta.socketIds.size === 0 && now - meta.lastSeen > LOGIN_SESSION_WINDOW_MS) {
+                ipMap.delete(existingIp);
+            }
+        }
+
+        const otherActiveIps = [...ipMap.keys()].filter((k) => k !== ip);
+        const currentEntry = ipMap.get(ip) || { lastSeen: now, socketIds: new Set() };
+        currentEntry.lastSeen = now;
+        if (socketId) currentEntry.socketIds.add(socketId);
+        ipMap.set(ip, currentEntry);
+
+        if (otherActiveIps.length === 0) return;
+
+        const kioskCfg = await getKioskSettings();
+        if (kioskCfg?.flagMultipleLogins === false) return;
+
+        const desc = `Concurrent login detected for ${user.name || emailKey} (${emailKey}) from ${ip} while active at ${otherActiveIps.join(', ')}`;
+        await db.run(
+            'INSERT INTO audit_logs ("user", type, severity, "desc") VALUES (?, ?, ?, ?)',
+            user.name || emailKey,
+            'Multiple Login Detected',
+            'High',
+            desc
+        ).catch(() => { });
+
+        const tKey = todayKey();
+        await db.run(`
+            INSERT INTO security_flags (date_string, count, alt_tab_copy_paste_count)
+            VALUES (?, 1, 0)
+            ON CONFLICT(date_string) DO UPDATE SET count = security_flags.count + 1
+        `, tKey).catch(() => { });
+
+        io.emit('receive_alert', {
+            studentId: user.id || emailKey,
+            studentName: user.name || emailKey,
+            action: 'Multiple Login',
+            message: desc,
+            severity: 'High',
+            color: '#ef4444',
+            time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        });
+        io.emit('admin_stats_update');
+    } catch (_) { }
+}
 
 // --- MAINTENANCE MODE HELPER ---
 const getMaintenanceStatus = async () => {
@@ -1659,6 +1826,7 @@ app.post('/login', async (req, res) => {
         }
         user.lastLogin = new Date().toISOString();
         db.run('UPDATE users SET lastLogin = ? WHERE id = ?', user.lastLogin, user.id).catch(() => { });
+        checkAndFlagMultipleLogins(user, req).catch(() => { });
         const token = jwt.sign({ id: user.id, email: user.email, role: user.role, name: user.name }, JWT_SECRET);
         res.status(200).json({ message: 'Login successful', user, token });
     } catch (e) {
@@ -3287,33 +3455,31 @@ app.delete('/classrooms/:id', authenticateToken, requireRole('Teacher', 'Admin')
     }
 });
 
-// --- BIDIRECTIONAL CLOUD SYNC ENDPOINTS ---
-app.post('/api/sync', async (req, res) => {
-    try {
-        const result = await db.syncWithCloud();
-        res.status(200).json({ success: true, result });
-    } catch (e) {
-        res.status(500).json({ success: false, error: e.message });
-    }
-});
-
-app.get('/api/sync', async (req, res) => {
-    try {
-        const status = db.getSyncStatus();
-        res.status(200).json({ success: true, status });
-    } catch (e) {
-        res.status(500).json({ success: false, error: e.message });
-    }
-});
-
 // --- SUBMISSIONS ---
 app.get('/student/submissions', authenticateToken, requireRole('Student'), async (req, res) => {
     try {
+        const canonical = await resolveCanonicalStudent(req.user);
+        const candidates = Array.from(new Set([
+            req.user.name,
+            req.user.email,
+            canonical?.name,
+            canonical?.email
+        ].filter(Boolean).map(v => String(v).trim().toLowerCase())));
+
+        if (candidates.length === 0) {
+            return res.status(200).json({ submissions: [] });
+        }
+
+        const placeholders = candidates.map(() => '?').join(', ');
         const rows = await db.all(
-            'SELECT assignment_id FROM submissions WHERE student_name = ? OR student_name = ? OR LOWER(student_name) = LOWER(?) OR LOWER(student_name) = LOWER(?)',
-            req.user.name || '', req.user.email || '', req.user.name || '', req.user.email || ''
+            `SELECT assignment_id, submittedAt FROM submissions WHERE LOWER(TRIM(student_name)) IN (${placeholders})`,
+            ...candidates
         );
-        res.status(200).json({ submissions: rows });
+        const normalized = (rows || []).map(r => ({
+            assignment_id: r.assignment_id,
+            submittedAt: r.submittedAt || r.submittedat || null
+        }));
+        res.status(200).json({ submissions: normalized });
     } catch (e) {
         res.status(500).json({ message: e.message });
     }
@@ -3839,9 +4005,32 @@ app.get('/classroom-students/:classroomId', authenticateToken, async (req, res) 
     }
 });
 
+app.get('/users/check-student', authenticateToken, requireRole('Teacher', 'Admin'), async (req, res) => {
+    try {
+        const email = String(req.query.email || '').trim().toLowerCase();
+        if (!email) return res.status(400).json({ exists: false, message: 'Email is required.' });
+        const user = await db.get('SELECT id, name, email, role, status FROM users WHERE LOWER(TRIM(email)) = ?', email);
+        if (!user) {
+            return res.status(200).json({ exists: false, message: 'Student account not found. Please make sure the student is registered first.' });
+        }
+        if (String(user.role || '').toLowerCase() !== 'student') {
+            return res.status(200).json({ exists: false, message: 'This email does not belong to a Student account.' });
+        }
+        return res.status(200).json({ exists: true, student: { id: user.id, name: user.name, email: user.email, status: user.status } });
+    } catch (e) {
+        res.status(500).json({ exists: false, message: e.message });
+    }
+});
+
 app.post('/classrooms/:classroomId/enroll', authenticateToken, async (req, res) => {
     try {
+        const { classroomId } = req.params;
+
         if (req.user.role === 'Teacher') {
+            const hasAccess = await checkClassroomAccess(req, classroomId);
+            if (!hasAccess) {
+                return res.status(403).json({ message: 'You do not have permission to enroll students in this classroom.' });
+            }
             let allowManage = true;
             try {
                 const row = await db.get("SELECT value FROM system_settings WHERE key = 'global_config'");
@@ -3857,38 +4046,89 @@ app.post('/classrooms/:classroomId/enroll', authenticateToken, async (req, res) 
             }
         }
 
-        const { classroomId } = req.params;
         const now = new Date().toISOString();
+        const isBulk = Array.isArray(req.body?.students);
 
-        // Support array of students or single student
-        const incomingStudents = Array.isArray(req.body?.students)
+        // Support array of students (Admin bulk) or single student
+        const incomingStudents = isBulk
             ? req.body.students
             : [{
                 name: req.body?.studentName || req.user.name,
                 email: req.body?.studentEmail || req.user.email,
-                id: req.body?.studentId || (req.body?.studentName ? null : req.user.id)
+                id: req.body?.studentId || (req.body?.studentEmail ? null : req.user.id)
             }];
 
-        const enrolledList = [];
+        if (!incomingStudents.length) {
+            return res.status(400).json({ message: 'Please provide at least one student email.' });
+        }
 
+        // Verify every target student exists in users table and is a Student account
+        const verifiedStudents = [];
         for (const st of incomingStudents) {
-            const studentName = (st.name || st.studentName || '').trim();
             const studentEmail = (st.email || st.studentEmail || '').trim().toLowerCase();
-            const studentId = st.id || st.studentId || null;
+            if (!studentEmail) {
+                if (!isBulk) {
+                    return res.status(400).json({ message: 'Please enter a valid student email address.' });
+                }
+                continue;
+            }
 
-            if (!studentName || !studentEmail) continue;
+            const existingUser = await db.get(
+                'SELECT id, name, email, role, status FROM users WHERE LOWER(TRIM(email)) = ?',
+                studentEmail
+            );
 
+            if (!existingUser) {
+                return res.status(404).json({
+                    message: `Student "${studentEmail}" does not exist. Please make sure the student has a registered account first.`
+                });
+            }
+
+            if (String(existingUser.role || '').toLowerCase() !== 'student') {
+                return res.status(400).json({
+                    message: `"${studentEmail}" is not a Student account and cannot be enrolled as a student.`
+                });
+            }
+
+            if (!isBulk) {
+                const alreadyEnrolled = await db.get(
+                    'SELECT id FROM enrollments WHERE classroom_id = ? AND LOWER(TRIM(student_email)) = ?',
+                    classroomId,
+                    existingUser.email.trim().toLowerCase()
+                );
+                if (alreadyEnrolled) {
+                    return res.status(409).json({
+                        message: `${existingUser.name || existingUser.email} is already enrolled in this classroom.`
+                    });
+                }
+            }
+
+            verifiedStudents.push({
+                id: existingUser.id,
+                name: existingUser.name || studentEmail.split('@')[0],
+                email: existingUser.email.trim().toLowerCase()
+            });
+        }
+
+        if (verifiedStudents.length === 0) {
+            return res.status(400).json({ message: 'No valid registered students were provided.' });
+        }
+
+        const enrolledList = [];
+        for (const student of verifiedStudents) {
             await db.run(`
                 INSERT INTO enrollments (classroom_id, student_id, student_name, student_email, enrolled_at)
                 VALUES (?, ?, ?, ?, ?)
                 ON CONFLICT(classroom_id, student_email) DO UPDATE SET
+                    student_id = excluded.student_id,
                     student_name = excluded.student_name,
                     enrolled_at = excluded.enrolled_at
-            `, classroomId, studentId, studentName, studentEmail, now);
+            `, classroomId, student.id, student.name, student.email, now);
 
-            enrolledList.push({ name: studentName, email: studentEmail, id: studentId });
+            enrolledList.push(student);
         }
 
+        db.triggerSync();
         io.emit('classroom_students_changed', { classroomId });
 
         res.status(200).json({ message: 'Enrolled successfully', enrolledCount: enrolledList.length, students: enrolledList });
@@ -4559,21 +4799,80 @@ async function getKioskSettings() {
         strictClipboardBlocking: true,
         enforceSingleMonitor: false,
         disableWindowsKeyAltTab: true,
-        blockVirtualMachine: true
+        blockVirtualMachine: true,
+        passwordPolicies: { ...DEFAULT_PASSWORD_POLICIES }
     };
     try {
         const row = await db.get("SELECT value FROM system_settings WHERE key = 'global_config'");
         if (row && row.value) {
             const parsed = typeof row.value === 'string' ? JSON.parse(row.value) : row.value;
-            if (parsed && parsed.security) return { ...defaults, ...parsed.security };
+            if (parsed && parsed.security) {
+                return {
+                    ...defaults,
+                    ...parsed.security,
+                    passwordPolicies: {
+                        ...DEFAULT_PASSWORD_POLICIES,
+                        ...(parsed.security.passwordPolicies || {})
+                    }
+                };
+            }
         }
         const secRow = await db.get("SELECT value FROM system_settings WHERE key = 'security'");
         if (secRow && secRow.value) {
             const parsed = typeof secRow.value === 'string' ? JSON.parse(secRow.value) : secRow.value;
-            return { ...defaults, ...parsed };
+            return {
+                ...defaults,
+                ...parsed,
+                passwordPolicies: {
+                    ...DEFAULT_PASSWORD_POLICIES,
+                    ...(parsed.passwordPolicies || {})
+                }
+            };
         }
     } catch (_) { }
     return defaults;
+}
+
+/**
+ * Creates a minimal, secret-free environment for executing compiled student C# DLLs.
+ * Strips DATABASE_URL, JWT_SECRET, SMTP credentials, and host user paths while enforcing
+ * a 256 MB .NET GC heap hard limit and pointing TEMP/USERPROFILE inside an isolated sandbox folder.
+ */
+function createSandboxedRunEnv(sandboxRunDir) {
+    const dotnetExe = dotnetManager.ensureDotnetInPath();
+    const dotnetDir = dotnetExe ? path.dirname(dotnetExe) : (process.env.DOTNET_ROOT || (process.platform === 'win32' ? 'C:\\Program Files\\dotnet' : '/usr/share/dotnet'));
+    const sysRoot = process.env.SystemRoot || process.env.WINDIR || 'C:\\Windows';
+    const minimalPath = process.platform === 'win32'
+        ? `${dotnetDir};${path.join(sysRoot, 'System32')};${sysRoot}`
+        : `${dotnetDir}:/usr/local/bin:/usr/bin:/bin`;
+
+    return {
+        PATH: minimalPath,
+        SystemRoot: sysRoot,
+        WINDIR: sysRoot,
+        DOTNET_ROOT: dotnetDir,
+        DOTNET_CLI_TELEMETRY_OPTOUT: '1',
+        DOTNET_NOLOGO: '1',
+        DOTNET_EnableWriteXorExecute: '1',
+        DOTNET_GCHeapHardLimit: '0x10000000', // 256 MB hard runtime memory cap
+        DOTNET_TieredCompilation: '0',
+        TEMP: sandboxRunDir,
+        TMP: sandboxRunDir,
+        HOME: sandboxRunDir,
+        USERPROFILE: sandboxRunDir,
+        COMPlus_EnableDiagnostics: '0'
+    };
+}
+
+function createEphemeralSandboxDir(prefix = 'verity_sandbox_') {
+    const dir = path.join(os.tmpdir(), `${prefix}${Date.now()}_${crypto.randomBytes(4).toString('hex')}`);
+    fs.mkdirSync(dir, { recursive: true });
+    return dir;
+}
+
+function cleanupEphemeralSandboxDir(dir) {
+    if (!dir) return;
+    try { fs.rmSync(dir, { recursive: true, force: true }); } catch (_) { }
 }
 
 let currentInstruction = "";
@@ -4885,6 +5184,7 @@ io.on('connection', (socket) => {
             u = authenticateSocket(socket, data.token, data.user);
         }
         if (u) {
+            checkAndFlagMultipleLogins(u, socket, socket.id).catch(() => { });
             getKioskSettings().then(cfg => socket.emit('kiosk_settings', cfg)).catch(() => { });
         }
     });
@@ -5306,11 +5606,14 @@ io.on('connection', (socket) => {
                 return;
             }
 
-            // Stage 2: Direct .dll execution (sub-100ms startup, zero MSBuild wrapper overhead)
+            // Stage 2: Direct sandboxed .dll execution (isolated ephemeral cwd, secret-free env, 256 MB heap cap)
             socket.emit('terminal_output', "Running...\n\n");
             socket.emit('program_started');
 
-            const runProcess = spawn('dotnet', [dllPath], { cwd: projectDir, env });
+            const sandboxRunDir = createEphemeralSandboxDir('verity_sandbox_run_');
+            const sandboxEnv = createSandboxedRunEnv(sandboxRunDir);
+            const runProcess = spawn('dotnet', [dllPath], { cwd: sandboxRunDir, env: sandboxEnv });
+            runProcess._sandboxRunDir = sandboxRunDir;
             activeProcess = runProcess;
 
             let totalOutputBytes = 0;
@@ -5320,6 +5623,7 @@ io.on('connection', (socket) => {
             const executionTimeout = setTimeout(() => {
                 if (activeProcess === runProcess) {
                     try { killProcessTree(runProcess); } catch (_) { }
+                    cleanupEphemeralSandboxDir(sandboxRunDir);
                     socket.emit('terminal_output', "\n[Process terminated: Execution limit of 20s exceeded]\n");
                     socket.emit('process_exit', { code: 1 });
                     activeProcess = null;
@@ -5328,6 +5632,7 @@ io.on('connection', (socket) => {
 
             runProcess.on('error', (err) => {
                 clearTimeout(executionTimeout);
+                cleanupEphemeralSandboxDir(sandboxRunDir);
                 socket.emit('terminal_output', `\n[Execution error: ${err.message}]\n`);
                 socket.emit('process_exit', { code: 1 });
                 activeProcess = null;
@@ -5339,6 +5644,7 @@ io.on('connection', (socket) => {
                 if (totalOutputBytes > MAX_OUTPUT_BYTES) {
                     isOutputCapped = true;
                     try { killProcessTree(runProcess); } catch (_) { }
+                    cleanupEphemeralSandboxDir(sandboxRunDir);
                     socket.emit('terminal_output', "\n\n[Process terminated: Execution output exceeded 128 KB limit (Infinite output loop detected)]\n");
                     socket.emit('process_exit', { code: 1 });
                     activeProcess = null;
@@ -5353,6 +5659,7 @@ io.on('connection', (socket) => {
                 if (totalOutputBytes > MAX_OUTPUT_BYTES) {
                     isOutputCapped = true;
                     try { killProcessTree(runProcess); } catch (_) { }
+                    cleanupEphemeralSandboxDir(sandboxRunDir);
                     socket.emit('terminal_output', "\n\n[Process terminated: Execution output exceeded 128 KB limit (Infinite output loop detected)]\n");
                     socket.emit('process_exit', { code: 1 });
                     activeProcess = null;
@@ -5363,6 +5670,7 @@ io.on('connection', (socket) => {
 
             runProcess.on('close', (runCode) => {
                 clearTimeout(executionTimeout);
+                cleanupEphemeralSandboxDir(sandboxRunDir);
                 socket.emit('terminal_output', `\n[Process exited with code ${runCode ?? 0}]\n`);
                 socket.emit('process_exit', { code: runCode ?? 0 });
                 activeProcess = null;
@@ -5378,7 +5686,9 @@ io.on('connection', (socket) => {
 
     socket.on('stop_code', () => {
         if (activeProcess) {
+            const dirToClean = activeProcess._sandboxRunDir;
             try { killProcessTree(activeProcess); } catch (_) { }
+            cleanupEphemeralSandboxDir(dirToClean);
             socket.emit('terminal_output', "\n[Process stopped by user]\n");
             socket.emit('process_exit', { code: 0 });
             activeProcess = null;
@@ -5409,6 +5719,21 @@ io.on('connection', (socket) => {
             }
             if (!Array.isArray(testCases) || testCases.length === 0) {
                 return socket.emit('test_cases_results', { results: [] });
+            }
+
+            // Verify local .NET SDK is available on host machine
+            const dotnetStatus = dotnetManager.checkDotnetStatus(OFFLINE_DOTNET_ENV);
+            if (!dotnetStatus.installed) {
+                socket.emit('dotnet_missing', { error: 'DOTNET_NOT_INSTALLED' });
+                const results = testCases.map(tc => ({
+                    id: tc.id,
+                    status: 'error',
+                    passed: false,
+                    actualOutput: '',
+                    expectedOutput: tc.expectedOutput || '',
+                    error: 'Microsoft .NET SDK is not installed on this PC. Please install .NET SDK to run tests.'
+                }));
+                return socket.emit('test_cases_results', { results });
             }
 
             // Security check: Scan C# code for dangerous APIs prior to test evaluation
@@ -5550,16 +5875,21 @@ io.on('connection', (socket) => {
                 }
             }
 
-            // Run all test cases in parallel
+            // Run all test cases in parallel inside isolated ephemeral sandbox directories
+            const MAX_TEST_OUTPUT_BYTES = 128 * 1024;
             const results = await Promise.all(testCases.map(tc => new Promise((resolve) => {
                 let actual = '';
                 let runError = '';
                 let killed = false;
-                const rp = spawn('dotnet', [dllPath], { cwd: projectDir, env });
+                let totalBytes = 0;
+                const tcSandboxDir = createEphemeralSandboxDir('verity_sandbox_tc_');
+                const tcSandboxEnv = createSandboxedRunEnv(tcSandboxDir);
+                const rp = spawn('dotnet', [dllPath], { cwd: tcSandboxDir, env: tcSandboxEnv });
 
                 const execTimeout = setTimeout(() => {
                     killed = true;
                     try { killProcessTree(rp); } catch (_) { }
+                    cleanupEphemeralSandboxDir(tcSandboxDir);
                     const result = {
                         id: tc.id,
                         status: 'error',
@@ -5580,11 +5910,36 @@ io.on('connection', (socket) => {
                 }
                 try { rp.stdin.end(); } catch (_) { }
 
-                rp.stdout.on('data', d => { actual += d.toString(); });
-                rp.stderr.on('data', d => { runError += d.toString(); });
+                const onChunk = (chunk, isErr) => {
+                    if (killed) return;
+                    totalBytes += chunk.length;
+                    if (totalBytes > MAX_TEST_OUTPUT_BYTES) {
+                        killed = true;
+                        clearTimeout(execTimeout);
+                        try { killProcessTree(rp); } catch (_) { }
+                        cleanupEphemeralSandboxDir(tcSandboxDir);
+                        const result = {
+                            id: tc.id,
+                            status: 'error',
+                            passed: false,
+                            actualOutput: actual.replace(/\r\n/g, '\n'),
+                            expectedOutput: tc.expectedOutput || '',
+                            error: 'Output exceeded 128 KB sandbox limit (infinite output loop detected)'
+                        };
+                        socket.emit('test_case_result', result);
+                        resolve(result);
+                        return;
+                    }
+                    if (isErr) runError += chunk.toString();
+                    else actual += chunk.toString();
+                };
+
+                rp.stdout.on('data', d => onChunk(d, false));
+                rp.stderr.on('data', d => onChunk(d, true));
 
                 rp.on('close', () => {
                     clearTimeout(execTimeout);
+                    cleanupEphemeralSandboxDir(tcSandboxDir);
                     if (killed) return;
                     const normActual = actual.replace(/\r\n/g, '\n').trim();
                     const normExpected = (tc.expectedOutput || '').replace(/\r\n/g, '\n').trim();
@@ -5603,6 +5958,7 @@ io.on('connection', (socket) => {
 
                 rp.on('error', (err) => {
                     clearTimeout(execTimeout);
+                    cleanupEphemeralSandboxDir(tcSandboxDir);
                     if (killed) return;
                     const result = {
                         id: tc.id,
@@ -6310,20 +6666,134 @@ app.get('/system-settings', authenticateToken, async (req, res) => {
     }
 });
 
+// --- DATA RETENTION & AUDIT ARCHIVAL MAINTENANCE (Admin Settings: data.retentionPeriod / data.autoArchiveAuditLogs) ---
+async function runDataRetentionMaintenance() {
+    try {
+        const row = await db.get("SELECT value FROM system_settings WHERE key = 'global_config'");
+        if (!row || !row.value) return;
+        const config = typeof row.value === 'string' ? JSON.parse(row.value) : row.value;
+        const dataCfg = config?.data || {};
+        const now = Date.now();
+
+        // 1. Delete archived classes older than configured retentionPeriod ('1 Year' | '3 Years' | 'Never')
+        const retention = String(dataCfg.retentionPeriod || '3 Years');
+        let retentionMs = null;
+        if (retention === '1 Year') retentionMs = 365 * 24 * 60 * 60 * 1000;
+        else if (retention === '3 Years') retentionMs = 3 * 365 * 24 * 60 * 60 * 1000;
+
+        if (retentionMs) {
+            const cutoffMs = now - retentionMs;
+            const archivedClasses = await db.all('SELECT id FROM classrooms WHERE archived = 1').catch(() => []);
+            for (const cls of archivedClasses) {
+                const clsIdNum = Number(cls.id);
+                // Class IDs are epoch ms (> 1e12); delete if older than retention cutoff
+                if (!isNaN(clsIdNum) && clsIdNum > 1e12 && clsIdNum < cutoffMs) {
+                    await db.run('DELETE FROM enrollments WHERE classroom_id = ?', cls.id).catch(() => { });
+                    await db.run('DELETE FROM classwork WHERE classroom_id = ?', cls.id).catch(() => { });
+                    await db.run('DELETE FROM announcements WHERE classroom_id = ?', cls.id).catch(() => { });
+                    await db.run('DELETE FROM classrooms WHERE id = ?', cls.id).catch(() => { });
+                }
+            }
+        }
+
+        // 2. Auto-archive / prune audit logs older than configured autoArchiveAuditLogs ('7 Days' | '30 Days' | 'Never')
+        const auditPolicy = String(dataCfg.autoArchiveAuditLogs || '30 Days');
+        let auditDays = null;
+        if (auditPolicy === '7 Days') auditDays = 7;
+        else if (auditPolicy === '30 Days') auditDays = 30;
+
+        if (auditDays) {
+            const cutoffIso = new Date(now - auditDays * 24 * 60 * 60 * 1000).toISOString();
+            const logs = await db.all('SELECT id, timestamp FROM audit_logs').catch(() => []);
+            for (const log of logs) {
+                if (log.timestamp) {
+                    const ts = new Date(log.timestamp).getTime();
+                    if (!isNaN(ts) && ts < new Date(cutoffIso).getTime()) {
+                        await db.run('DELETE FROM audit_logs WHERE id = ?', log.id).catch(() => { });
+                    }
+                }
+            }
+        }
+    } catch (e) {
+        console.warn('[Data Retention] Maintenance notice:', e.message);
+    }
+}
+
+setTimeout(() => runDataRetentionMaintenance().catch(() => { }), 15000);
+setInterval(() => runDataRetentionMaintenance().catch(() => { }), 6 * 60 * 60 * 1000);
+
+// --- REAL SYSTEM BACKUP ENDPOINT (Admin Settings: Generate System Backup) ---
+app.post('/api/admin/backup', authenticateToken, requireRole('Admin'), async (req, res) => {
+    try {
+        const backupsDir = path.join(DATA_DIR, 'backups');
+        if (!fs.existsSync(backupsDir)) fs.mkdirSync(backupsDir, { recursive: true });
+
+        const tables = ['users', 'admin_users', 'classrooms', 'enrollments', 'classwork', 'submissions', 'grades', 'announcements', 'system_settings', 'audit_logs'];
+        const snapshot = {
+            generatedAt: new Date().toISOString(),
+            generatedBy: req.user?.email || req.user?.name || 'Admin',
+            version: process.env.APP_VERSION || '1.0.0',
+            tables: {}
+        };
+
+        for (const tbl of tables) {
+            try {
+                const rows = await db.all(`SELECT * FROM ${tbl}`);
+                // Redact password hashes/values in backup export? Keep full DB snapshot for restore while tagging counts
+                snapshot.tables[tbl] = rows || [];
+            } catch (_) {
+                snapshot.tables[tbl] = [];
+            }
+        }
+
+        const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const filename = `verity_backup_${stamp}.json`;
+        const filePath = path.join(backupsDir, filename);
+        const jsonContent = JSON.stringify(snapshot, null, 2);
+        fs.writeFileSync(filePath, jsonContent, 'utf8');
+
+        const userName = req.user?.email || req.user?.name || 'Admin';
+        await db.run(
+            'INSERT INTO audit_logs ("user", type, severity, "desc") VALUES (?, ?, ?, ?)',
+            userName,
+            'Database Backup',
+            'Normal',
+            `Admin generated full system backup (${filename}, ${(Buffer.byteLength(jsonContent) / 1024).toFixed(1)} KB)`
+        ).catch(() => { });
+
+        res.status(200).json({
+            success: true,
+            filename,
+            sizeBytes: Buffer.byteLength(jsonContent),
+            generatedAt: snapshot.generatedAt,
+            backup: snapshot
+        });
+    } catch (e) {
+        res.status(500).json({ success: false, message: e.message });
+    }
+});
+
 const handleSaveSettings = async (req, res) => {
     try {
         const { settings } = req.body || {};
         if (!settings || typeof settings !== 'object') {
             return res.status(400).json({ message: 'Invalid settings object' });
         }
+        const enrichedSettings = {};
         for (const [key, val] of Object.entries(settings)) {
-            const strVal = typeof val === 'object' ? JSON.stringify(val) : String(val);
+            const payload = (val && typeof val === 'object' && !Array.isArray(val))
+                ? { ...val, _updatedAt: Date.now() }
+                : val;
+            enrichedSettings[key] = payload;
+            const strVal = typeof payload === 'object' ? JSON.stringify(payload) : String(payload);
             await db.run('INSERT INTO system_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value', key, strVal);
         }
-        io.emit('system_settings_updated', { settings });
+        io.emit('system_settings_updated', { settings: enrichedSettings });
         getKioskSettings().then(kioskConfig => {
             io.emit('kiosk_settings', kioskConfig);
         }).catch(() => { });
+        db.triggerSync();
+        runDataRetentionMaintenance().catch(() => { });
         const userName = req.user?.email || req.user?.name || 'unknown';
         await db.run('INSERT INTO audit_logs ("user", type, severity, "desc") VALUES (?, ?, ?, ?)', userName, 'System Settings Updated', 'Normal', 'Admin updated system settings via API');
         res.status(200).json({ message: 'Settings saved successfully' });

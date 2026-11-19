@@ -6,6 +6,8 @@ export async function uploadClassworkFile(file, type) {
   const cleanFilename = encodeURIComponent(filename);
   const uploadBase = getActiveUploadBaseUrl() || getLocalApiUrl();
 
+  let lastError = 'Upload failed. Please check your connection and file format.';
+
   // 1. Direct binary streaming upload
   try {
     const token = localStorage.getItem('verity_token') || localStorage.getItem('token');
@@ -24,8 +26,13 @@ export async function uploadClassworkFile(file, type) {
         const canonicalThumb = data.thumbnailPath || (data.thumbnailUrl ? extractUploadPath(data.thumbnailUrl) : null) || data.thumbnailUrl;
         return { type, name: filename, url: canonicalPath, thumbnailUrl: canonicalThumb };
       }
+    } else {
+      const errData = await res.json().catch(() => ({}));
+      if (errData?.message) lastError = errData.message;
     }
-  } catch (_) {}
+  } catch (err) {
+    if (err?.message) lastError = err.message;
+  }
 
   // 2. Base64 fallback
   try {
@@ -53,8 +60,13 @@ export async function uploadClassworkFile(file, type) {
         const canonicalThumb = data.thumbnailPath || (data.thumbnailUrl ? extractUploadPath(data.thumbnailUrl) : null) || data.thumbnailUrl;
         return { type, name: filename, url: canonicalPath, thumbnailUrl: canonicalThumb };
       }
+    } else {
+      const errData = await res.json().catch(() => ({}));
+      if (errData?.message) lastError = errData.message;
     }
-  } catch (_) {}
+  } catch (err) {
+    if (err?.message) lastError = err.message;
+  }
 
-  return { type, name: filename, url: URL.createObjectURL(file) };
+  throw new Error(lastError);
 }

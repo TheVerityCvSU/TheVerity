@@ -12,6 +12,7 @@ export default function StudentViewTerminalOutput({
   submitted,
   copiedInternallyRef,
   addProctorLog,
+  strictClipboardBlocking = true,
   terminalBodyRef,
   terminalEndRef
 }) {
@@ -85,6 +86,7 @@ export default function StudentViewTerminalOutput({
             onChange={(e) => setInputValue(e.target.value)}
             onKeyDown={handleTerminalInput}
             onPaste={(e) => {
+              if (strictClipboardBlocking === false) return;
               const pasted = e.clipboardData?.getData('text/plain') || '';
               const key = normalize(pasted);
               if (key && copiedInternallyRef?.current && !copiedInternallyRef.current.has(key)) {

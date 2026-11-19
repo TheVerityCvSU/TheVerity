@@ -1,8 +1,8 @@
 import React from 'react';
 import { motion } from 'framer-motion';
 import StudentCourseCard from './StudentCourseCard';
-import { cardThemes } from '../../data/studentDashboardConstants';
 import Skeleton from '../Skeleton';
+import { cardThemes } from '../../data/studentDashboardConstants';
 
 export default function StudentClassroomsGrid({
   isMobile,
@@ -31,10 +31,10 @@ export default function StudentClassroomsGrid({
             <div
               key={i}
               style={{
-                gridColumn: `span ${isMobile ? 12 : cardThemes[i % cardThemes.length].colSpan}`,
+                gridColumn: `span ${isMobile ? 12 : cardThemes[i % cardThemes.length].colSpan}`
               }}
             >
-              <Skeleton.Card />
+              <Skeleton.CourseCard />
             </div>
           ))
         ) : (

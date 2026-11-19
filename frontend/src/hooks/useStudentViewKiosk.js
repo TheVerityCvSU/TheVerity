@@ -36,6 +36,11 @@ export function useStudentViewKiosk({
     kioskRulesRef.current = kioskRules;
   }, [kioskRules]);
 
+  const [examDefaults, setExamDefaults] = useState({
+    treatWarningsAsErrors: false,
+    autoSaveInterval: '30s',
+    defaultExamTimer: 60
+  });
   const [multiMonitorDetected, setMultiMonitorDetected] = useState(false);
   const [vmDetected, setVmDetected] = useState(false);
   const [vmReasons, setVmReasons] = useState([]);
@@ -65,13 +70,24 @@ export function useStudentViewKiosk({
   // Sync settings and socket auth
   useEffect(() => {
     let isMounted = true;
+    const applySettings = (settingsObj) => {
+      if (!isMounted || !settingsObj) return;
+      const cfg = settingsObj.global_config || settingsObj;
+      if (cfg?.examDefaults) {
+        setExamDefaults((prev) => ({ ...prev, ...cfg.examDefaults }));
+        if (cfg.examDefaults.treatWarningsAsErrors !== undefined) {
+          setStrictCompiler(!!cfg.examDefaults.treatWarningsAsErrors);
+        }
+      }
+      if (cfg?.security) {
+        setKioskRules((prev) => ({ ...prev, ...cfg.security }));
+      }
+    };
+
     apiFetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/system-settings`)
       .then((res) => (res.ok ? res.json() : {}))
       .then((d) => {
-        if (!isMounted) return;
-        setStrictCompiler(!!d.settings?.examDefaults?.treatWarningsAsErrors);
-        if (d.settings?.global_config?.security) setKioskRules((prev) => ({ ...prev, ...d.settings.global_config.security }));
-        else if (d.settings?.security) setKioskRules((prev) => ({ ...prev, ...d.settings.security }));
+        if (d?.settings) applySettings(d.settings);
       })
       .catch(() => {});
 
@@ -91,12 +107,7 @@ export function useStudentViewKiosk({
       socket.on('connect', sendAuth);
 
       const handleSettingsUpdate = (data) => {
-        if (data?.settings?.examDefaults?.treatWarningsAsErrors !== undefined) {
-          setStrictCompiler(!!data.settings.examDefaults.treatWarningsAsErrors);
-        }
-        if (data?.settings?.global_config?.security) {
-          setKioskRules((prev) => ({ ...prev, ...data.settings.global_config.security }));
-        }
+        if (data?.settings) applySettings(data.settings);
       };
       const handleKioskSettings = (newSettings) => {
         if (newSettings) setKioskRules((prev) => ({ ...prev, ...newSettings }));
@@ -268,6 +279,7 @@ export function useStudentViewKiosk({
 
   return {
     kioskRules,
+    examDefaults,
     multiMonitorDetected,
     vmDetected,
     vmReasons,

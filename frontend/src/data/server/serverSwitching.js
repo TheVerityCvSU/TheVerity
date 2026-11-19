@@ -155,8 +155,12 @@ export const switchToLanMode = async (customUrl) => {
       window.electronAPI.localDB.setLocal('verity_preferred_mode', 'lan').catch(() => {});
     }
   } catch (_) {}
-  await checkLocalHealth();
+  const isHealthy = await checkLocalHealth();
   const localUrl = getLocalApiUrl();
+  if (!isHealthy) {
+    notifyListeners();
+    return { success: false, url: localUrl, error: `Local LAN server at ${localUrl} is currently unreachable.` };
+  }
   announceServerChange(localUrl, { lan: true });
   notifyListeners();
   return { success: true, url: localUrl };

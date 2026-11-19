@@ -229,7 +229,7 @@ export default function StudentDashboard({
 
           {activeView === 'calendar' && (
             <motion.div key="calendar" custom={slideDirection} variants={drillVariants} initial="initial" animate="animate" exit="exit">
-              <StudentCalendar classrooms={classrooms} />
+              <StudentCalendar classrooms={classrooms} currentUser={currentUser} />
             </motion.div>
           )}
 

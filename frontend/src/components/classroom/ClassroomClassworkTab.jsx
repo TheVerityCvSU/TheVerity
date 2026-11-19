@@ -11,6 +11,7 @@ export default function ClassroomClassworkTab({
   expandedId,
   setExpandedId,
   submittedTasks,
+  submissionTimestamps = {},
   onOpenAssignment,
   onStartAssignment,
   onUnsubmitAssignment,
@@ -73,6 +74,7 @@ export default function ClassroomClassworkTab({
               isOpen={expandedId === item.id}
               onToggle={() => setExpandedId(prev => (prev === item.id ? null : item.id))}
               isSubmitted={submittedTasks[item.id]}
+              submittedAt={submissionTimestamps[item.id] || submissionTimestamps[String(item.id)] || null}
               onOpenAssignment={onOpenAssignment}
               onStartAssignment={handleStartWithCheck}
               onRequestUnsubmit={setUnsubmittingItem}

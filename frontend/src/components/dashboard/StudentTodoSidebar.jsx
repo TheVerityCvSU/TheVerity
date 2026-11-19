@@ -62,13 +62,7 @@ export default function StudentTodoSidebar({
       <h3 style={{ fontSize: '1rem', fontWeight: 'bold', margin: '0 0 16px' }}>To Do</h3>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-        {loadingActivities ? (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-            <Skeleton.AssignmentRow />
-            <Skeleton.AssignmentRow />
-            <Skeleton.AssignmentRow />
-          </div>
-        ) : displayedUpcomingActivities.length === 0 ? (
+        {displayedUpcomingActivities.length === 0 ? (
           <div style={{ color: textMuted, fontSize: '0.9rem', textAlign: 'center', padding: '20px' }}>No upcoming tasks!</div>
         ) : (
           displayedUpcomingActivities

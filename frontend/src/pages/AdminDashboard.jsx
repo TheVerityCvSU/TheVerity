@@ -46,7 +46,7 @@ export default function AdminDashboard({ currentUser, onLogout, socket }) {
   const [dashboardSearchFocused, setDashboardSearchFocused] = useState(false);
   const [msg, setMsg] = useState(null);
   const [maliciousAlert, setMaliciousAlert] = useState(null);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState({ activeUsers: 0, activeClassrooms: 0, securityFlagsToday: 0, altTabCopyPasteFlags: 0 });
 
   const loadStats = async () => {

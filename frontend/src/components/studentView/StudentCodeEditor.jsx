@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useRef, useEffect } from 'react';
 import Editor from '@monaco-editor/react';
 import { registerMonacoSnippets } from '../../utils/monaco/registerMonacoSnippets';
 import { studentViewStyles as styles } from '../../utils/studentViewStyles';
@@ -36,9 +36,15 @@ export default function StudentCodeEditor({
   handleExtraFileCodeChange,
   copiedInternallyRef,
   addProctorLog,
+  strictClipboardBlocking = true,
   isResizingTerminal,
   handleDividerMouseDown
 }) {
+  const strictClipboardRef = useRef(strictClipboardBlocking);
+  useEffect(() => {
+    strictClipboardRef.current = strictClipboardBlocking;
+  }, [strictClipboardBlocking]);
+
   const handleEditorDidMount = (editor, monaco) => {
     editorRef.current = editor;
     monacoRef.current = monaco;
@@ -84,6 +90,7 @@ export default function StudentCodeEditor({
           e.stopImmediatePropagation();
           return false;
         }
+        if (strictClipboardRef.current === false) return;
         const pastedText = e.clipboardData?.getData('text/plain') || '';
         const key = normalize(pastedText);
         if (!key) return;
@@ -103,6 +110,7 @@ export default function StudentCodeEditor({
       editorDom.addEventListener('paste', handleEditorDomPaste, true);
 
       const handleEditorDrop = (e) => {
+        if (strictClipboardRef.current === false) return;
         const droppedText = e.dataTransfer?.getData('text/plain') || '';
         const key = normalize(droppedText);
         if (key && copiedInternallyRef.current && !copiedInternallyRef.current.has(key)) {
@@ -124,6 +132,7 @@ export default function StudentCodeEditor({
         editor.trigger('keyboard', 'undo', null);
         return;
       }
+      if (strictClipboardRef.current === false) return;
       const model = editor.getModel();
       if (!model) return;
       const pastedText = model.getValueInRange(e.range);

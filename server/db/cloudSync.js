@@ -19,9 +19,14 @@ let lastSyncTime = null;
 let lastSyncStatus = 'idle';
 let connectionString = null;
 let socketIoInstance = null;
+let onClassworkPulledCallback = null;
 
 function setSocketIo(io) {
     socketIoInstance = io;
+}
+
+function setOnClassworkPulled(cb) {
+    onClassworkPulledCallback = typeof cb === 'function' ? cb : null;
 }
 
 function getCleanConnectionString(rawUrl) {
@@ -283,6 +288,7 @@ async function syncBidirectional() {
                     type = excluded.type
             `);
 
+            const pulledCwRows = [];
             for (const [id, cCw] of cloudCwMap) {
                 const lCw = localCwMap.get(id);
                 const needsPull = !lCw ||
@@ -297,7 +303,11 @@ async function syncBidirectional() {
                     } catch (_) { }
                     upsertCwStmt.run(cCw.id, cCw.classroom_id, cCw.title || '', cCw.description || '', cCw.duedate || '', cCw.type || 'Assignment', cCw.created_at ? new Date(cCw.created_at).toISOString() : null);
                     pulledCount++;
+                    pulledCwRows.push(cCw);
                 }
+            }
+            if (pulledCwRows.length > 0 && onClassworkPulledCallback) {
+                try { onClassworkPulledCallback(pulledCwRows); } catch (_) { }
             }
         } catch (cwErr) {
             console.warn('[Cloud Sync] Classwork sync notice:', cwErr.message);
@@ -627,6 +637,70 @@ async function syncBidirectional() {
             console.warn('[Cloud Sync] Grades sync notice:', gradeErr.message);
         }
 
+        // ----------------------------------------------------
+        // 8. SYSTEM SETTINGS DIFFERENTIAL SYNC
+        // ----------------------------------------------------
+        try {
+            const localSettings = sqliteDb.prepare('SELECT key, value FROM system_settings').all();
+            const cloudSettingsRes = await client.query('SELECT key, value FROM system_settings');
+            const cloudSettings = cloudSettingsRes.rows || [];
+
+            const localSetMap = new Map(localSettings.map(r => [r.key, r.value]));
+            const cloudSetMap = new Map(cloudSettings.map(r => [r.key, r.value]));
+
+            const extractTs = (raw) => {
+                try {
+                    const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+                    return Number(parsed?._updatedAt || 0);
+                } catch (_) {
+                    return 0;
+                }
+            };
+
+            const upsertLocalSetting = sqliteDb.prepare(`
+                INSERT INTO system_settings (key, value)
+                VALUES (?, ?)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value
+            `);
+
+            let settingsChanged = false;
+            const allKeys = new Set([...localSetMap.keys(), ...cloudSetMap.keys()]);
+            for (const key of allKeys) {
+                const lVal = localSetMap.get(key);
+                const cVal = cloudSetMap.get(key);
+                if (lVal === cVal) continue;
+
+                const lTs = extractTs(lVal);
+                const cTs = extractTs(cVal);
+
+                if (lVal !== undefined && (cVal === undefined || lTs > cTs)) {
+                    await client.query(`
+                        INSERT INTO system_settings (key, value)
+                        VALUES ($1, $2)
+                        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+                    `, [key, lVal]);
+                    pushedCount++;
+                } else if (cVal !== undefined) {
+                    upsertLocalSetting.run(key, cVal);
+                    pulledCount++;
+                    settingsChanged = true;
+                }
+            }
+
+            if (settingsChanged && socketIoInstance) {
+                try {
+                    const rows = sqliteDb.prepare('SELECT key, value FROM system_settings').all();
+                    const settingsObj = {};
+                    rows.forEach(r => {
+                        try { settingsObj[r.key] = JSON.parse(r.value); } catch (_) { settingsObj[r.key] = r.value; }
+                    });
+                    socketIoInstance.emit('system_settings_updated', { settings: settingsObj });
+                } catch (_) { }
+            }
+        } catch (settingsErr) {
+            console.warn('[Cloud Sync] System settings sync notice:', settingsErr.message);
+        }
+
         lastSyncTime = Date.now();
         lastSyncStatus = 'success';
 
@@ -689,5 +763,6 @@ module.exports = {
     syncBidirectional,
     triggerSync,
     getSyncStatus,
-    setSocketIo
+    setSocketIo,
+    setOnClassworkPulled
 };

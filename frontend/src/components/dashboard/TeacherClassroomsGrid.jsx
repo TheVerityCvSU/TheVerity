@@ -2,8 +2,8 @@ import React from 'react';
 import { Plus, Home } from 'lucide-react';
 import { motion } from 'framer-motion';
 import TeacherCourseCard from './TeacherCourseCard';
-import { getCardColSpan } from '../../data/teacherDashboardConstants';
 import Skeleton from '../Skeleton';
+import { getCardColSpan } from '../../data/teacherDashboardConstants';
 
 export default function TeacherClassroomsGrid({
   isDark,
@@ -35,6 +35,17 @@ export default function TeacherClassroomsGrid({
           <h2 style={{ fontSize: '1.4rem', fontWeight: '800', margin: 0, color: isDark ? '#f5f5f5' : '#111827' }}>
             Active Classrooms
           </h2>
+          <span style={{
+            fontSize: '0.8rem',
+            fontWeight: '700',
+            padding: '3px 10px',
+            borderRadius: '9999px',
+            backgroundColor: isDark ? 'rgba(16, 185, 129, 0.16)' : '#dcfce7',
+            color: isDark ? '#34d399' : '#065f46',
+            border: isDark ? '1px solid rgba(16, 185, 129, 0.25)' : '1px solid rgba(16, 185, 129, 0.2)'
+          }}>
+            {activeClassrooms.length} Active
+          </span>
         </div>
 
         <motion.button
@@ -75,10 +86,10 @@ export default function TeacherClassroomsGrid({
             <div
               key={i}
               style={{
-                gridColumn: `span ${isMobile ? 12 : getCardColSpan(i, 4, isMobile)}`,
+                gridColumn: `span ${isMobile ? 12 : getCardColSpan(i, 4, isMobile)}`
               }}
             >
-              <Skeleton.Card />
+              <Skeleton.CourseCard />
             </div>
           ))
         ) : activeClassrooms.length === 0 ? (

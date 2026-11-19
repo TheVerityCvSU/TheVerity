@@ -8,6 +8,7 @@ import {
 
 export function useClassroomSubmissions({ assignments, classroom, currentUser, socket, isMaterialItem }) {
   const [submittedTasks, setSubmittedTasks] = useState({});
+  const [submissionTimestamps, setSubmissionTimestamps] = useState({});
   const unsubmittedIdsRef = useRef(new Set());
 
   const identity = getStudentIdentity(currentUser, null, null, classroom);
@@ -46,8 +47,15 @@ export function useClassroomSubmissions({ assignments, classroom, currentUser, s
         currentUser?.id ? `verity_sub_default_${aId}_id_${currentUser.id}` : null
       ].filter(Boolean);
 
-      if (specificKeys.some(k => { try { return !!localStorage.getItem(k); } catch { return false; } })) {
+      const matchedKey = specificKeys.find(k => { try { return !!localStorage.getItem(k); } catch { return false; } });
+      if (matchedKey) {
         map[task.id] = true;
+        try {
+          const parsed = JSON.parse(localStorage.getItem(matchedKey) || '{}');
+          if (parsed?.submittedAt) {
+            setSubmissionTimestamps(prev => (prev[task.id] === parsed.submittedAt ? prev : { ...prev, [task.id]: parsed.submittedAt }));
+          }
+        } catch {}
         return;
       }
 
@@ -97,6 +105,19 @@ export function useClassroomSubmissions({ assignments, classroom, currentUser, s
               const aId = String(s.assignment_id);
               if (s.assignment_id != null && !next[s.assignment_id] && !unsubmittedIdsRef.current.has(aId)) {
                 next[s.assignment_id] = true;
+                changed = true;
+              }
+            });
+            return changed ? next : prev;
+          });
+          setSubmissionTimestamps(prev => {
+            const next = { ...prev };
+            let changed = false;
+            data.submissions.forEach(s => {
+              const ts = s.submittedAt || s.submittedat;
+              if (s.assignment_id != null && ts && next[s.assignment_id] !== ts) {
+                next[s.assignment_id] = ts;
+                next[String(s.assignment_id)] = ts;
                 changed = true;
               }
             });
@@ -241,5 +262,5 @@ export function useClassroomSubmissions({ assignments, classroom, currentUser, s
     }));
   }, [classroom?.id, classroomId, currentUser, studentId, safeUsername, socket]);
 
-  return { submittedTasks, handleUnsubmitAssignment };
+  return { submittedTasks, submissionTimestamps, handleUnsubmitAssignment };
 }

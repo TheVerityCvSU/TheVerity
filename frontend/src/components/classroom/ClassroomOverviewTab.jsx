@@ -10,12 +10,12 @@ export default function ClassroomOverviewTab({
   isDark,
   cardBg,
   textMuted,
+  loadingAssignments = false,
   upcomingItems = [],
   visibleClasswork = [],
   visibleMaterials = [],
   unseenMaterials = [],
   classroom,
-  loadingAssignments = false,
   onSelectTodo,
   onOpenMaterials,
   onSelectMaterial
@@ -108,8 +108,32 @@ export default function ClassroomOverviewTab({
             <style dangerouslySetInnerHTML={{__html: `.hide-scroll::-webkit-scrollbar { display: none; }`}} />
             {loadingAssignments ? (
               <div style={{ display: 'flex', gap: '14px', width: '100%' }}>
-                <div className="skeleton-shimmer" style={{ flex: isMobile ? '0 0 260px' : '0 0 320px', height: 140, borderRadius: 16 }} />
-                <div className="skeleton-shimmer" style={{ flex: isMobile ? '0 0 260px' : '0 0 320px', height: 140, borderRadius: 16 }} />
+                {[0, 1].map((i) => (
+                  <div
+                    key={i}
+                    className="skeleton-course-card"
+                    style={{
+                      flex: isMobile ? '0 0 260px' : '0 0 320px',
+                      width: isMobile ? '260px' : '320px',
+                      borderRadius: '16px',
+                      padding: '18px',
+                      height: '140px',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      justifyContent: 'space-between',
+                      boxSizing: 'border-box'
+                    }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div className="skeleton-shimmer" style={{ width: '32px', height: '32px', borderRadius: '50%' }} />
+                      <div className="skeleton-shimmer" style={{ width: '60px', height: '14px', borderRadius: '6px' }} />
+                    </div>
+                    <div>
+                      <div className="skeleton-shimmer" style={{ width: '70%', height: '16px', borderRadius: '6px', marginBottom: '8px' }} />
+                      <div className="skeleton-shimmer" style={{ width: '90%', height: '12px', borderRadius: '4px' }} />
+                    </div>
+                  </div>
+                ))}
               </div>
             ) : safeUpcoming.length === 0 ? (
               <div style={{ width: '100%', display: 'flex', alignItems: 'center', gap: '10px', color: isDark ? '#34d399' : '#059669', padding: '4px 0' }}>
@@ -190,8 +214,23 @@ export default function ClassroomOverviewTab({
 
           <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fill, minmax(220px, 1fr))', gap: '14px' }}>
             {loadingAssignments ? (
-              Array.from({ length: 3 }).map((_, i) => (
-                <div key={i} className="skeleton-shimmer" style={{ height: 110, borderRadius: 14 }} />
+              [0, 1, 2, 3].map((i) => (
+                <div
+                  key={i}
+                  style={{
+                    borderRadius: '12px',
+                    padding: '8px 10px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '14px'
+                  }}
+                >
+                  <div className="skeleton-shimmer" style={{ width: '40px', height: '40px', borderRadius: '10px', flexShrink: 0 }} />
+                  <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    <div className="skeleton-shimmer" style={{ width: '75%', height: '14px', borderRadius: '4px' }} />
+                    <div className="skeleton-shimmer" style={{ width: '45%', height: '11px', borderRadius: '4px' }} />
+                  </div>
+                </div>
               ))
             ) : safeMaterials.length === 0 ? (
               <div style={{ gridColumn: '1 / -1', backgroundColor: 'transparent', borderRadius: '12px', padding: '12px 6px', display: 'flex', alignItems: 'center', gap: '12px', color: textMuted, fontSize: '0.88rem', fontStyle: 'italic' }}>

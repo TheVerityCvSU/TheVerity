@@ -99,15 +99,39 @@ export default function SystemDataTab({ data, onChange, currentUserName = 'Admin
 
   const update = (key, val) => onChange({ ...data, [key]: val });
 
-  const handleGenerateBackup = () => {
+  const handleGenerateBackup = async () => {
     setBackupStatus('Generating full database snapshot...');
-    setTimeout(() => {
+    try {
+      const res = await apiFetch('/api/admin/backup', { method: 'POST' });
+      const json = await res.json().catch(() => null);
+      if (!res.ok || !json?.success) {
+        setBackupStatus(json?.message || 'Backup failed: Server error.');
+        setTimeout(() => setBackupStatus(null), 4000);
+        return;
+      }
       const nowStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
       onChange({ ...data, lastBackupTime: `Today at ${nowStr}` });
-      setBackupStatus('System backup completed successfully!');
-      logSecurityEvent({ user: currentUserName, type: 'Database Backup', severity: 'Normal', desc: 'Manual system backup triggered from Admin Settings' });
-      setTimeout(() => setBackupStatus(null), 3000);
-    }, 1200);
+
+      // Trigger direct browser download of the generated JSON snapshot
+      if (json.backup) {
+        const blob = new Blob([JSON.stringify(json.backup, null, 2)], { type: 'application/json;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = json.filename || `verity_backup_${Date.now()}.json`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(url), 5000);
+      }
+
+      const kb = json.sizeBytes ? ` (${(json.sizeBytes / 1024).toFixed(1)} KB)` : '';
+      setBackupStatus(`Backup saved & downloaded${kb}!`);
+      setTimeout(() => setBackupStatus(null), 4000);
+    } catch (e) {
+      setBackupStatus(`Backup failed: ${e.message || 'Connection error'}`);
+      setTimeout(() => setBackupStatus(null), 4000);
+    }
   };
 
   const handleSyncNow = async () => {

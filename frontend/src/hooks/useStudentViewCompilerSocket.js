@@ -1,6 +1,13 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { io } from 'socket.io-client';
-import { getCompilerSocketUrl, getLocalApiUrl, getCloudUrl, getConnectionStatus } from '../data/api';
+import { getCompilerSocketUrl, getLocalApiUrl, getCloudUrl, getConnectionStatus, LOCAL_DEV_API_URL, isElectronApp } from '../data/api';
+
+function isStrictLocalPcCompiler() {
+  if (typeof window === 'undefined') return false;
+  if (isElectronApp() || Boolean(window.electronAPI)) return true;
+  const host = window.location?.hostname || '';
+  return host === 'localhost' || host === '127.0.0.1' || host === '::1';
+}
 
 export function useStudentViewCompilerSocket({ socket, currentUser }) {
   const [localSocket, setLocalSocket] = useState(null);
@@ -12,12 +19,16 @@ export function useStudentViewCompilerSocket({ socket, currentUser }) {
     let isSubscribed = true;
     const token = localStorage.getItem('verity_token') || localStorage.getItem('token');
     try {
-      const socketEndpoint = getCompilerSocketUrl();
-      const localFallback = getLocalApiUrl();
+      const strictLocal = isStrictLocalPcCompiler();
+      // In The Verity desktop app (Electron) / local PC, ALWAYS pin compiler strictly to localhost:3001
+      // so student C# code compiles on the student's own PC using their local .NET SDK (never Teacher LAN or Cloud).
+      const socketEndpoint = strictLocal ? (LOCAL_DEV_API_URL || 'http://localhost:3001') : getCompilerSocketUrl();
       const local = io(socketEndpoint, {
-        timeout: 3000,
-        reconnectionAttempts: 5,
-        reconnectionDelay: 2000,
+        timeout: 4000,
+        reconnection: true,
+        reconnectionAttempts: Infinity,
+        reconnectionDelay: 1000,
+        reconnectionDelayMax: 5000,
         auth: { token }
       });
 
@@ -31,11 +42,6 @@ export function useStudentViewCompilerSocket({ socket, currentUser }) {
         if (isSubscribed) setLocalSocket(null);
       });
       local.on('connect_error', () => {
-        if (local.io && local.io.uri !== localFallback) {
-          local.io.uri = localFallback;
-          local.connect();
-          return;
-        }
         if (isSubscribed) setLocalSocket(null);
       });
       localSocketRef.current = local;
@@ -127,6 +133,10 @@ export function useStudentViewCompilerSocket({ socket, currentUser }) {
   }, [socket]);
 
   const getCompilerSocket = useCallback(() => {
+    // On Verity desktop app / local PC, strictly require the student's own localhost compiler engine
+    if (isStrictLocalPcCompiler()) {
+      return localSocket && localSocket.connected ? localSocket : null;
+    }
     return localSocket && localSocket.connected ? localSocket : socket;
   }, [localSocket, socket]);
 

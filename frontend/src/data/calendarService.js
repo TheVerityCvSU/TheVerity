@@ -60,6 +60,16 @@ export const PASTEL_THEMES = [
   }
 ];
 
+export const MISSED_ACTIVITY_THEME = {
+  lightBg: '#fee2e2',
+  lightText: '#b91c1c',
+  lightTime: '#dc2626',
+  darkBg: 'rgba(239, 68, 68, 0.2)',
+  darkText: '#fca5a5',
+  darkTime: '#f87171',
+  dot: '#ef4444'
+};
+
 export const isLegacyHardcoded = (item) =>
   (item?.id === 1 || item?.id === 2) &&
   (item?.title?.startsWith('Activity 1:') || item?.title?.startsWith('Activity 2:'));

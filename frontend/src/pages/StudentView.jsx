@@ -411,6 +411,73 @@ export default function StudentView({
     } catch {}
   }, [submissionHook.submitted, filesHook.draftKey, filesHook.code, emitPresence]);
 
+  // Honor Admin Setting: examDefaults.autoSaveInterval (and per-assignment autoSaveInterval)
+  useEffect(() => {
+    if (submissionHook.submitted) return;
+    const rawInterval = effectiveAssignment?.autoSaveInterval || kioskHook.examDefaults?.autoSaveInterval || '30s';
+    let ms = 30000;
+    if (rawInterval === '10s') ms = 10000;
+    else if (rawInterval === '30s') ms = 30000;
+    else if (rawInterval === '1m') ms = 60000;
+    else {
+      const parsed = parseInt(String(rawInterval), 10);
+      if (!isNaN(parsed) && parsed > 0) {
+        ms = String(rawInterval).includes('m') ? parsed * 60000 : parsed * 1000;
+      }
+    }
+
+    const timer = setInterval(() => {
+      try {
+        const latestCode = filesHook.codeRef?.current;
+        if (typeof latestCode === 'string') {
+          localStorage.setItem(filesHook.draftKey, latestCode);
+          emitPresence();
+        }
+      } catch (_) {}
+    }, ms);
+    return () => clearInterval(timer);
+  }, [submissionHook.submitted, effectiveAssignment?.autoSaveInterval, kioskHook.examDefaults?.autoSaveInterval, filesHook.draftKey, filesHook.codeRef, emitPresence]);
+
+  // Honor Admin Setting: examDefaults.defaultExamTimer (and per-assignment duration in minutes)
+  const [examRemainingSeconds, setExamRemainingSeconds] = useState(null);
+  const timerExpiredLoggedRef = useRef(false);
+  useEffect(() => {
+    if (isSandbox || submissionHook.submitted) {
+      setExamRemainingSeconds(null);
+      return;
+    }
+    const rawMinutes = Number(effectiveAssignment?.duration || kioskHook.examDefaults?.defaultExamTimer || 0);
+    if (!rawMinutes || rawMinutes <= 0) {
+      setExamRemainingSeconds(null);
+      return;
+    }
+    const totalMs = rawMinutes * 60 * 1000;
+    const startKey = `verity_exam_timer_start_${classroomId}_${assignmentId}_${studentActualId}`;
+    let startTime = Date.now();
+    try {
+      const saved = Number(localStorage.getItem(startKey));
+      if (saved && !isNaN(saved) && saved > 0) {
+        startTime = saved;
+      } else {
+        localStorage.setItem(startKey, String(startTime));
+      }
+    } catch (_) {}
+
+    const tick = () => {
+      const remaining = Math.max(0, Math.ceil((startTime + totalMs - Date.now()) / 1000));
+      setExamRemainingSeconds(remaining);
+      if (remaining === 0 && !timerExpiredLoggedRef.current) {
+        timerExpiredLoggedRef.current = true;
+        if (typeof kioskHook.addProctorLog === 'function') {
+          kioskHook.addProctorLog('Exam Timer Expired', '#ef4444');
+        }
+      }
+    };
+    tick();
+    const interval = setInterval(tick, 1000);
+    return () => clearInterval(interval);
+  }, [isSandbox, submissionHook.submitted, effectiveAssignment?.duration, kioskHook.examDefaults?.defaultExamTimer, classroomId, assignmentId, studentActualId, kioskHook.addProctorLog]);
+
   const isBackStrictLock = Boolean(effectiveAssignment?.disableBack || effectiveAssignment?.disable_back);
   const isBackBlocked = !submissionHook.submitted && (Boolean(kioskHook.kioskRules?.lockdownActive) || isBackStrictLock);
 
@@ -481,7 +548,6 @@ export default function StudentView({
           <StudentViewToolbar
             isSandbox={isSandbox}
             isDark={isDark}
-            toggleDarkMode={toggleDarkMode}
             isBackBlocked={isBackBlocked}
             isBackStrictLock={isBackStrictLock}
             submitted={submissionHook.submitted}
@@ -489,6 +555,7 @@ export default function StudentView({
             isRunning={compilerHook.isRunning}
             isRunningTests={testCasesHook.isRunningTests}
             strictCompiler={strictCompiler}
+            examRemainingSeconds={examRemainingSeconds}
             handleBackClick={handleBackClick}
             handleSaveCode={handleSaveCode}
             handleRunCode={compilerHook.handleRunCode}
@@ -548,6 +615,7 @@ export default function StudentView({
             handleTerminalInput={compilerHook.handleTerminalInput}
             copiedInternallyRef={copiedInternallyRef}
             addProctorLog={kioskHook.addProctorLog}
+            strictClipboardBlocking={kioskHook.kioskRules?.strictClipboardBlocking !== false}
             output={compilerHook.output}
             terminalBodyRef={compilerHook.terminalBodyRef}
             terminalEndRef={compilerHook.terminalEndRef}

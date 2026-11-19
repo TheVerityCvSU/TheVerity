@@ -179,6 +179,21 @@ export default function UserManagementTab({ users = [], loading = false, onDelet
   const handleSaveEdit = async (e) => {
     e.preventDefault();
     if (!editingUser) return;
+    if (editingUser.password && policies) {
+      const pw = editingUser.password;
+      if (policies.minLength8 && pw.length < 8) {
+        setEditError('Password must be at least 8 characters long.');
+        return;
+      }
+      if (policies.numbers && !/\d/.test(pw)) {
+        setEditError('Password must contain at least one number.');
+        return;
+      }
+      if (policies.specialChars && !/[!@#$%^&*(),.?":{}|<>_\-\\[\];'`~+/=]/.test(pw)) {
+        setEditError('Password must contain at least one special character.');
+        return;
+      }
+    }
     setEditLoading(true);
     setEditError(null);
 
@@ -212,6 +227,21 @@ export default function UserManagementTab({ users = [], loading = false, onDelet
   const handleAdd = async (e) => {
     e.preventDefault();
     setAddError(null);
+    if (policies) {
+      const pw = newUser.password || '';
+      if (policies.minLength8 && pw.length < 8) {
+        setAddError('Password must be at least 8 characters long.');
+        return;
+      }
+      if (policies.numbers && !/\d/.test(pw)) {
+        setAddError('Password must contain at least one number.');
+        return;
+      }
+      if (policies.specialChars && !/[!@#$%^&*(),.?":{}|<>_\-\\[\];'`~+/=]/.test(pw)) {
+        setAddError('Password must contain at least one special character.');
+        return;
+      }
+    }
     setAddLoading(true);
     try {
       await registerNewUser({

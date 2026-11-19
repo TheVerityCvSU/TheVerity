@@ -1,7 +1,8 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { io } from 'socket.io-client';
-import { getCompilerSocketUrl, getLocalApiUrl } from '../data/api';
+import { getCompilerSocketUrl, LOCAL_DEV_API_URL, isElectronApp } from '../data/api';
 import { executeTestCasesSocket } from '../data/compilerService';
+import { openDotnetSetup } from '../utils/openDotnetSetup';
 
 export function useCompilerRunner() {
   const [output, setOutput] = useState([]);
@@ -98,17 +99,14 @@ export function useCompilerRunner() {
     }, 25000);
 
     try {
-      const primaryUrl = getCompilerSocketUrl();
-      const localUrl = getLocalApiUrl();
+      const strictLocal = isElectronApp() || Boolean(window.electronAPI) || ['localhost', '127.0.0.1', '::1'].includes(window.location?.hostname || '');
+      const currentUrl = strictLocal ? (LOCAL_DEV_API_URL || 'http://localhost:3001') : getCompilerSocketUrl();
       const token = localStorage.getItem('verity_token') || localStorage.getItem('token');
       let storedUser = null;
       try {
         const u = localStorage.getItem('currentUser');
         if (u) storedUser = JSON.parse(u);
       } catch (_) {}
-
-      let currentUrl = primaryUrl;
-      let hasSwitchedToLocal = primaryUrl === localUrl;
 
       const socket = io(currentUrl, {
         timeout: 5000,
@@ -157,14 +155,7 @@ export function useCompilerRunner() {
       });
 
       socket.on('connect_error', () => {
-        if (!hasSwitchedToLocal && socket.io && socket.io.uri !== localUrl) {
-          hasSwitchedToLocal = true;
-          currentUrl = localUrl;
-          socket.io.uri = localUrl;
-          socket.connect();
-          return;
-        }
-        addLine(`Error: Local compiler server unreachable at ${currentUrl}. Please ensure The Verity local server is running on port 3001.`, 'err');
+        addLine(`Error: Local compiler server unreachable at ${currentUrl}. Please ensure The Verity local compiler service on this PC is running on port 3001.`, 'err');
         cleanupRun();
       });
 
@@ -176,9 +167,10 @@ export function useCompilerRunner() {
 
       socket.on('dotnet_missing', () => {
         addLine(
-          '\n[Error: Microsoft .NET SDK is not installed on this machine.]\n[Please run the Verity installer and select the Microsoft .NET SDK option, or download it from https://dotnet.microsoft.com/download/dotnet/8.0]\n',
+          '\n[Error: Microsoft .NET SDK is not installed on this machine.]\n[Please install Microsoft .NET SDK on this PC to compile and run C# code.]\n',
           'err'
         );
+        openDotnetSetup();
         cleanupRun();
       });
     } catch (err) {

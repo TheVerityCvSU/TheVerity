@@ -22,6 +22,7 @@ function maskCommentsAndStrings(code) {
   let inBlockComment = false;
   let inNormalString = false;
   let inVerbatimString = false;
+  let rawStringQuotes = 0; // C# 11+ raw string literals (3+ consecutive double quotes)
   const strings = [];
 
   let currentString = '';
@@ -60,6 +61,25 @@ function maskCommentsAndStrings(code) {
       } else {
         maskedCode += ch === '\n' ? '\n' : ' ';
       }
+      continue;
+    }
+
+    if (rawStringQuotes > 0) {
+      if (ch === '"') {
+        let count = 1;
+        while (code[i + count] === '"') count++;
+        if (count >= rawStringQuotes) {
+          maskedCode += '"'.repeat(rawStringQuotes);
+          strings.push({ value: currentString, line: stringStartLine, col: stringStartCol });
+          currentString = '';
+          i += rawStringQuotes - 1;
+          col += rawStringQuotes - 1;
+          rawStringQuotes = 0;
+          continue;
+        }
+      }
+      currentString += ch;
+      maskedCode += ch === '\n' ? '\n' : ' ';
       continue;
     }
 
@@ -113,6 +133,28 @@ function maskCommentsAndStrings(code) {
       col++;
       continue;
     }
+    // Verbatim interpolated strings: $@"..." or @$"..."
+    if (((ch === '$' && next === '@') || (ch === '@' && next === '$')) && code[i + 2] === '"') {
+      inVerbatimString = true;
+      stringStartLine = line;
+      stringStartCol = col;
+      maskedCode += '   ';
+      i += 2;
+      col += 2;
+      continue;
+    }
+    // C# 11+ raw string literals: """...""" or $"""..."""
+    if (ch === '"' && next === '"' && code[i + 2] === '"') {
+      let count = 3;
+      while (code[i + count] === '"') count++;
+      rawStringQuotes = count;
+      stringStartLine = line;
+      stringStartCol = col;
+      maskedCode += ' '.repeat(count);
+      i += count - 1;
+      col += count - 1;
+      continue;
+    }
     if (ch === '@' && next === '"') {
       inVerbatimString = true;
       stringStartLine = line;
@@ -147,23 +189,28 @@ function maskCommentsAndStrings(code) {
 
 const BANNED_CODE_PATTERNS = [
   { pattern: /\bSystem\s*\.\s*Diagnostics\s*\.\s*Process\b/i, rule: 'PROCESS_SPAWN', message: 'Restricted API: System.Diagnostics.Process is prohibited.' },
-  { pattern: /\bProcess\s*\.\s*(Start|Kill|GetProcesses)\b/i, rule: 'PROCESS_SPAWN', message: 'Restricted API: Process spawning or manipulation is prohibited.' },
+  { pattern: /\bProcess\s*\.\s*(Start|Kill|GetProcesses|GetCurrentProcess|EnterDebugMode)\b/i, rule: 'PROCESS_SPAWN', message: 'Restricted API: Process spawning or manipulation is prohibited.' },
   { pattern: /\bProcessStartInfo\b/i, rule: 'PROCESS_SPAWN', message: 'Restricted API: ProcessStartInfo is prohibited.' },
-  { pattern: /\[\s*DllImport\b/i, rule: 'NATIVE_INTEROP', message: 'Restricted API: Native DllImport interop is prohibited.' },
+  { pattern: /\[\s*(DllImport|LibraryImport)\b/i, rule: 'NATIVE_INTEROP', message: 'Restricted API: Native DllImport/LibraryImport interop is prohibited.' },
   { pattern: /\bSystem\s*\.\s*Runtime\s*\.\s*InteropServices\b/i, rule: 'NATIVE_INTEROP', message: 'Restricted API: Native InteropServices are prohibited.' },
+  { pattern: /\b(NativeLibrary|GCHandle|Marshal)\s*\./i, rule: 'NATIVE_INTEROP', message: 'Restricted API: Native memory/library interop is prohibited.' },
+  { pattern: /\bSystem\s*\.\s*Runtime\s*\.\s*CompilerServices\s*\.\s*Unsafe\b/i, rule: 'UNSAFE_CODE', message: 'Restricted API: CompilerServices.Unsafe is prohibited.' },
   { pattern: /\bunsafe\b/i, rule: 'UNSAFE_CODE', message: 'Restricted API: Unsafe code blocks are prohibited.' },
   { pattern: /\bSystem\s*\.\s*Reflection\b/i, rule: 'REFLECTION', message: 'Restricted API: System.Reflection is prohibited.' },
+  { pattern: /\bSystem\s*\.\s*Runtime\s*\.\s*Loader\b/i, rule: 'REFLECTION', message: 'Restricted API: AssemblyLoadContext/Runtime.Loader is prohibited.' },
+  { pattern: /\bAssemblyLoadContext\b/i, rule: 'REFLECTION', message: 'Restricted API: Dynamic AssemblyLoadContext loading is prohibited.' },
   { pattern: /\bType\s*\.\s*GetType\b/i, rule: 'REFLECTION', message: 'Restricted API: Dynamic Type.GetType reflection is prohibited.' },
-  { pattern: /\bAssembly\s*\.\s*Load\b/i, rule: 'REFLECTION', message: 'Restricted API: Dynamic Assembly.Load reflection is prohibited.' },
+  { pattern: /\bAssembly\s*\.\s*(Load|LoadFrom|LoadFile)\b/i, rule: 'REFLECTION', message: 'Restricted API: Dynamic Assembly loading is prohibited.' },
   { pattern: /\bActivator\s*\.\s*CreateInstance\b/i, rule: 'REFLECTION', message: 'Restricted API: Dynamic Activator is prohibited.' },
   { pattern: /\bSystem\s*\.\s*Net\b/i, rule: 'NETWORK_ACCESS', message: 'Restricted API: System.Net networking is prohibited.' },
-  { pattern: /\bHttpClient\b/i, rule: 'NETWORK_ACCESS', message: 'Restricted API: HttpClient network calls are prohibited.' },
-  { pattern: /\bTcpClient\b/i, rule: 'NETWORK_ACCESS', message: 'Restricted API: TcpClient network calls are prohibited.' },
-  { pattern: /\bUdpClient\b/i, rule: 'NETWORK_ACCESS', message: 'Restricted API: UdpClient network calls are prohibited.' },
-  { pattern: /\bWebClient\b/i, rule: 'NETWORK_ACCESS', message: 'Restricted API: WebClient network calls are prohibited.' },
-  { pattern: /\b(File|Directory)\s*\.\s*Delete\b/i, rule: 'DESTRUCTIVE_IO', message: 'Restricted API: File or directory deletion is prohibited.' },
+  { pattern: /\b(HttpClient|TcpClient|UdpClient|WebClient|WebRequest|HttpWebRequest|Socket|TcpListener|RestClient)\b/i, rule: 'NETWORK_ACCESS', message: 'Restricted API: Network socket/HTTP calls are prohibited in sandbox.' },
+  { pattern: /\bSystem\s*\.\s*IO\s*\.\s*(File|Directory|FileStream|StreamReader|StreamWriter|FileInfo|DirectoryInfo|DriveInfo|FileSystemWatcher|MemoryMappedFiles|Pipes)\b/i, rule: 'FILESYSTEM_IO', message: 'Restricted API: Direct filesystem or pipe I/O is prohibited in sandbox.' },
+  { pattern: /\b(File|Directory)\s*\.\s*(Read|Write|Append|Open|Create|Delete|Move|Copy|Exists|GetFiles|GetDirectories|Enumerate|SetAttributes|Replace)\w*/i, rule: 'FILESYSTEM_IO', message: 'Restricted API: Direct filesystem access is prohibited in sandbox.' },
+  { pattern: /\bnew\s+(FileStream|StreamReader|StreamWriter|FileInfo|DirectoryInfo|DriveInfo|FileSystemWatcher|NamedPipeClientStream|NamedPipeServerStream)\b/i, rule: 'FILESYSTEM_IO', message: 'Restricted API: Direct file/stream/pipe handles are prohibited in sandbox.' },
+  { pattern: /\bMemoryMappedFile\b/i, rule: 'FILESYSTEM_IO', message: 'Restricted API: MemoryMappedFile is prohibited in sandbox.' },
   { pattern: /\bMicrosoft\s*\.\s*Win32\s*\.\s*Registry\b/i, rule: 'SYSTEM_TAMPER', message: 'Restricted API: Registry access is prohibited.' },
   { pattern: /\bRegistryKey\b/i, rule: 'SYSTEM_TAMPER', message: 'Restricted API: RegistryKey access is prohibited.' },
+  { pattern: /\bEnvironment\s*\.\s*(GetEnvironmentVariable|GetEnvironmentVariables|SetEnvironmentVariable|GetFolderPath|MachineName|UserName|CurrentDirectory)\b/i, rule: 'ENV_ACCESS', message: 'Restricted API: Reading or modifying host environment/OS paths is prohibited in sandbox.' },
   { pattern: /\bEnvironment\s*\.\s*Exit\b/i, rule: 'PROCESS_KILL', message: 'Restricted API: Environment.Exit is prohibited in classroom IDE.' },
   { pattern: /\bEnvironment\s*\.\s*FailFast\b/i, rule: 'PROCESS_KILL', message: 'Restricted API: Environment.FailFast is prohibited.' },
   { pattern: /\bAppDomain\s*\.\s*CurrentDomain\b/i, rule: 'SYSTEM_TAMPER', message: 'Restricted API: AppDomain manipulation is prohibited.' }

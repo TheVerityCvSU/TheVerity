@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Download, AlertCircle, Video } from 'lucide-react';
 import { resolveMediaUrl } from '../utils/mediaUrl';
+import { triggerDirectDownload } from '../utils/downloadFile';
 
 /**
  * Helper to determine the best MIME type for a video URL or name
@@ -48,12 +49,7 @@ export default function VideoPreviewModal({ src, name, onClose }) {
 
   const handleDownload = (e) => {
     e.stopPropagation();
-    const a = document.createElement('a');
-    a.href = resolvedSrc;
-    a.download = name || 'video';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
+    triggerDirectDownload(resolvedSrc, name || 'video');
   };
 
   if (!resolvedSrc) return null;

@@ -30,6 +30,7 @@ export default function StudentViewTerminalPanel({
   handleTerminalInput,
   copiedInternallyRef,
   addProctorLog,
+  strictClipboardBlocking = true,
   output,
   terminalBodyRef,
   terminalEndRef,
@@ -111,6 +112,7 @@ export default function StudentViewTerminalPanel({
             submitted={submitted}
             copiedInternallyRef={copiedInternallyRef}
             addProctorLog={addProctorLog}
+            strictClipboardBlocking={strictClipboardBlocking}
             terminalBodyRef={terminalBodyRef}
             terminalEndRef={terminalEndRef}
           />

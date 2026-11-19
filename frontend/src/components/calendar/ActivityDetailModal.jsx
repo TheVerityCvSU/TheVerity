@@ -11,7 +11,7 @@ export default function ActivityDetailModal({ activity, onClose, isDark, styles 
         <div style={styles.modalHeader}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <span style={styles.modalTypeBadge(activity.theme)}>
-              {activity.type || activity.activityType || 'Activity'}
+              {activity.isMissed ? 'Missing Activity' : (activity.type || activity.activityType || 'Activity')}
             </span>
             {activity.className && (
               <span style={styles.modalClassBadge}>{activity.className}</span>
@@ -26,7 +26,7 @@ export default function ActivityDetailModal({ activity, onClose, isDark, styles 
           <h3 style={styles.modalTitle}>{activity.title}</h3>
 
           <div style={styles.modalMetaBox}>
-            <Clock size={18} color="#10b981" />
+            <Clock size={18} color={activity.isMissed ? '#ef4444' : '#10b981'} />
             <div>
               <div style={{ fontSize: '0.74rem', color: isDark ? '#94a3b8' : '#64748b' }}>
                 Scheduled Due Date & Deadline

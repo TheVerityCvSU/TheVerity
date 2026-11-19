@@ -295,6 +295,7 @@ function createSplashWindow() {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
+      sandbox: true,
     },
   });
 
@@ -319,6 +320,7 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.cjs'),
       nodeIntegration: false,
       contextIsolation: true,
+      sandbox: true,
       devTools: !app.isPackaged,
     },
   });
@@ -745,6 +747,7 @@ ipcMain.on('open-google-auth', (event, url) => {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
+      sandbox: true,
       userAgent: CHROME_USER_AGENT,
     }
   });

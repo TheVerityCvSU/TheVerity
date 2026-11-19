@@ -2,6 +2,8 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { useDarkMode } from '../../hooks/useDarkMode';
 import { useMediaQuery } from '../../hooks/useMediaQuery';
 import { sortClassroomsAlphabetically } from '../../utils/classroomList';
+import { apiFetch } from '../../data/api';
+import { parseDueDeadline } from '../../utils/dateUtils';
 import {
   getWeekDaysFromMonday,
   getWeekRangeString,
@@ -10,6 +12,7 @@ import {
   parseDueDate,
   getDeadlineTime,
   getActivityTheme,
+  MISSED_ACTIVITY_THEME,
 } from '../../data/calendarService';
 import { getStyles } from './calendarStyles';
 import CalendarHeader from './CalendarHeader';
@@ -17,7 +20,28 @@ import MiniCalendar from './MiniCalendar';
 import CalendarWeekGrid from './CalendarWeekGrid';
 import ActivityDetailModal from './ActivityDetailModal';
 
-export default function CalendarView({ classrooms = [] }) {
+function readLocalSubmittedIds() {
+  const ids = new Set();
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (!key || !key.startsWith('verity_sub_')) continue;
+      const val = localStorage.getItem(key);
+      if (!val) continue;
+      key.replace(/^verity_sub_/, '').split('_').forEach((p) => {
+        if (/^\d{6,}$/.test(p)) ids.add(String(p));
+      });
+      try {
+        const parsed = JSON.parse(val);
+        if (parsed?.assignmentId != null) ids.add(String(parsed.assignmentId));
+        if (parsed?.assignment_id != null) ids.add(String(parsed.assignment_id));
+      } catch (_) {}
+    }
+  } catch (_) {}
+  return ids;
+}
+
+export default function CalendarView({ classrooms = [], isStudent = false, currentUser = null }) {
   const { isDark } = useDarkMode();
   const isMobile = useMediaQuery('(max-width: 960px)');
 
@@ -27,6 +51,7 @@ export default function CalendarView({ classrooms = [] }) {
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [selectedActivity, setSelectedActivity] = useState(null);
   const [activities, setActivities] = useState(() => getCachedActivities(classrooms));
+  const [submittedIds, setSubmittedIds] = useState(() => (isStudent ? readLocalSubmittedIds() : new Set()));
 
   const weekDays = useMemo(() => getWeekDaysFromMonday(selectedDate), [selectedDate]);
   const sortedClassrooms = useMemo(() => sortClassroomsAlphabetically(classrooms), [classrooms]);
@@ -44,16 +69,54 @@ export default function CalendarView({ classrooms = [] }) {
     };
   }, [classrooms]);
 
+  // Fetch student submissions when rendering Student Calendar to identify missed activities
+  useEffect(() => {
+    if (!isStudent) return;
+    let active = true;
+    const syncSubs = async () => {
+      const localIds = readLocalSubmittedIds();
+      try {
+        const res = await apiFetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/student/submissions`);
+        if (res.ok && active) {
+          const data = await res.json();
+          const merged = new Set(localIds);
+          (data.submissions || []).forEach((s) => {
+            if (s?.assignment_id != null) merged.add(String(s.assignment_id));
+          });
+          setSubmittedIds(merged);
+          return;
+        }
+      } catch (_) {}
+      if (active) setSubmittedIds(localIds);
+    };
+
+    syncSubs();
+    const onSubUpdated = () => syncSubs();
+    window.addEventListener('verity:submission-updated', onSubUpdated);
+    window.addEventListener('focus', onSubUpdated);
+    return () => {
+      active = false;
+      window.removeEventListener('verity:submission-updated', onSubUpdated);
+      window.removeEventListener('focus', onSubUpdated);
+    };
+  }, [isStudent, currentUser]);
+
   const processedActivities = useMemo(() => {
+    const nowMs = Date.now();
     return activities
       .filter((act) => {
+        const t = String(act.activityType || act.type || '').toLowerCase();
+        if (t === 'material' || t === 'resource' || t === 'lesson') return false;
         if (filterClass === 'all') return true;
         return String(act.classroom_id || act.classId) === String(filterClass);
       })
       .map((act, idx) => {
         const parsedDate = parseDueDate(act.dueDate);
+        const deadlineDate = parseDueDeadline(act.dueDate);
         const deadlineTime = getDeadlineTime(act);
-        const theme = getActivityTheme(act, idx);
+        const isSubmitted = isStudent && submittedIds.has(String(act.id));
+        const isMissed = Boolean(isStudent && !isSubmitted && deadlineDate && deadlineDate.getTime() < nowMs);
+        const theme = isMissed ? MISSED_ACTIVITY_THEME : getActivityTheme(act, idx);
         const cls = Array.isArray(classrooms)
           ? classrooms.find((c) => String(c.id) === String(act.classroom_id || act.classId))
           : null;
@@ -63,12 +126,14 @@ export default function CalendarView({ classrooms = [] }) {
           parsedDate,
           deadlineTime,
           theme,
+          isMissed,
+          isSubmitted,
           className: cls ? cls.name : act.className || '',
           classCode: cls ? cls.code : '',
         };
       })
       .filter((act) => act.parsedDate !== null);
-  }, [activities, filterClass, classrooms]);
+  }, [activities, filterClass, classrooms, isStudent, submittedIds]);
 
   const miniCalendarDays = useMemo(() => {
     const year = miniCalendarMonth.getFullYear();

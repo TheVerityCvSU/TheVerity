@@ -4,6 +4,7 @@ import { X, Download } from 'lucide-react';
 import { modalStyles } from './imagePreview/imagePreviewStyles';
 import ImagePreviewToolbar from './imagePreview/ImagePreviewToolbar';
 import { resolveMediaUrl } from '../utils/mediaUrl';
+import { triggerDirectDownload } from '../utils/downloadFile';
 
 /**
  * ImagePreviewModal
@@ -115,12 +116,7 @@ export default function ImagePreviewModal({ src, alt, onClose }) {
   // Download helper
   const handleDownload = (e) => {
     e.stopPropagation();
-    const a = document.createElement('a');
-    a.href = resolvedSrc || src;
-    a.download = alt || 'image';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
+    triggerDirectDownload(resolvedSrc || src, alt || 'image');
   };
 
   if (!src) return null;

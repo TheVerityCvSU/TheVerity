@@ -14,26 +14,30 @@ export const enrollStudentInClassroom = async ({ classroomId, studentEmail, stud
     }
   );
 
-  const data = await response.json();
+  const data = await response.json().catch(() => ({}));
 
   if (!response.ok) {
     throw new Error(data?.message || 'Failed to add student to classroom.');
   }
 
-  // Also persist to local storage enrollment key for instant peer detection
+  // Persist verified canonical student returned by server to local storage cache
   try {
-    const localKey = `verity_classroom_enrollments_${classroomId}`;
-    const existing = JSON.parse(localStorage.getItem(localKey) || '[]');
-    const alreadyExists = existing.some(
-      (s) => s.email?.toLowerCase() === studentEmail.toLowerCase()
-    );
-    if (!alreadyExists) {
-      existing.push({
-        name: studentName,
-        email: studentEmail,
-        avatar: null
-      });
-      localStorage.setItem(localKey, JSON.stringify(existing));
+    const enrolled = Array.isArray(data?.students) && data.students[0] ? data.students[0] : null;
+    if (enrolled && enrolled.email) {
+      const localKey = `verity_classroom_enrollments_${classroomId}`;
+      const existing = JSON.parse(localStorage.getItem(localKey) || '[]');
+      const alreadyExists = existing.some(
+        (s) => s.email?.toLowerCase() === enrolled.email.toLowerCase()
+      );
+      if (!alreadyExists) {
+        existing.push({
+          id: enrolled.id || null,
+          name: enrolled.name || studentName,
+          email: enrolled.email,
+          avatar: null
+        });
+        localStorage.setItem(localKey, JSON.stringify(existing));
+      }
     }
   } catch {}
 

@@ -53,7 +53,7 @@ export default function Login({ onLogin, onGoToRegister }) {
   useEffect(() => {
     const check = async () => {
       const status = await checkMaintenanceStatus();
-      if (status.enabled) setMaintenance(status);
+      setMaintenance(status.enabled ? status : { enabled: false, message: '' });
     };
     check();
     const interval = setInterval(check, 30000);

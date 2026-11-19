@@ -22,65 +22,7 @@ export default function ActivitySubmissionSection({
     : "No feedback yet. Your submission is pending instructor review.");
 
   if (isMaterial) {
-    return (
-      <div style={{
-        marginTop: '32px',
-        padding: '20px 24px',
-        borderRadius: '12px',
-        backgroundColor: isDark ? '#1f2425' : '#ecfdf5',
-        border: `1px solid ${isDark ? '#2d3739' : '#a7f3d0'}`,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        flexWrap: 'wrap',
-        gap: '16px'
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
-          <div style={{
-            width: '40px',
-            height: '40px',
-            borderRadius: '10px',
-            backgroundColor: '#10b981',
-            color: '#ffffff',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            flexShrink: 0
-          }}>
-            <BookOpen size={20} />
-          </div>
-          <div>
-            <div style={{ fontSize: '0.95rem', fontWeight: '700', color: isDark ? '#f3f4f6' : '#065f46' }}>
-              Reference Learning Material
-            </div>
-            <p style={{ margin: '2px 0 0 0', fontSize: '0.85rem', color: isDark ? '#9ca3af' : '#047857' }}>
-              This material is provided for study and review. No code or assignment submission is required.
-            </p>
-          </div>
-        </div>
-
-        <button
-          onClick={onBackToClassroom}
-          style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: '8px',
-            padding: '10px 22px',
-            borderRadius: '50px',
-            backgroundColor: '#10b981',
-            color: '#ffffff',
-            border: 'none',
-            fontWeight: '700',
-            fontSize: '0.88rem',
-            cursor: 'pointer',
-            boxShadow: '0 4px 10px rgba(16, 185, 129, 0.25)',
-            transition: 'all 0.2s ease'
-          }}
-        >
-          <ArrowLeft size={16} /> Back to Materials
-        </button>
-      </div>
-    );
+    return null;
   }
 
   if (!isSubmitted) {

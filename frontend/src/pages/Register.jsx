@@ -144,6 +144,21 @@ export default function Register({ onBackToLogin, onLogin }) {
       setMessage({ type: 'error', text: 'Passwords do not match. Please try again.' });
       return;
     }
+    if (policies) {
+      const pw = formData.password || '';
+      if (policies.minLength8 && pw.length < 8) {
+        setMessage({ type: 'error', text: 'Password must be at least 8 characters long.' });
+        return;
+      }
+      if (policies.numbers && !/\d/.test(pw)) {
+        setMessage({ type: 'error', text: 'Password must contain at least one number.' });
+        return;
+      }
+      if (policies.specialChars && !/[!@#$%^&*(),.?":{}|<>_\-\\[\];'`~+/=]/.test(pw)) {
+        setMessage({ type: 'error', text: 'Password must contain at least one special character.' });
+        return;
+      }
+    }
 
     const payload = {
       name: `${formData.firstName} ${formData.lastName}`.trim(),

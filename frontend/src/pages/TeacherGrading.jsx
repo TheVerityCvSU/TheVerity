@@ -153,7 +153,7 @@ export default function TeacherGrading({
           {/* Main Two-Column Workspace */}
           {loading ? (
             <div style={{ marginTop: '24px' }}>
-              <Skeleton.Grading />
+              <Skeleton.Grading isDark={isDark} isMobile={isMobile} />
             </div>
           ) : (
             <div style={styles.workspaceGrid}>

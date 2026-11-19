@@ -1,16 +1,17 @@
 import React from 'react';
 import { 
-  ClipboardList, CheckCircle2, Calendar, Award, Clock, ArrowUpRight, ArrowRight, Lock 
+  ClipboardList, CheckCircle2, Calendar, Award, Clock, ArrowUpRight, ArrowRight, AlertCircle
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import AttachmentCard from '../AttachmentCard';
-import { formatShortDate } from '../../utils/dateUtils';
+import { formatShortDate, getActivityDueState } from '../../utils/dateUtils';
 
 export default function ClassworkItemCard({
   item,
   isOpen,
   onToggle,
   isSubmitted,
+  submittedAt = null,
   onOpenAssignment,
   onStartAssignment,
   onRequestUnsubmit,
@@ -23,6 +24,25 @@ export default function ClassworkItemCard({
 }) {
   const due = formatShortDate(item.dueDate);
   const posted = formatShortDate(item.posted || (typeof item.id === 'number' && item.id > 1e12 ? item.id : null));
+  const dueState = getActivityDueState({ dueDate: item.dueDate, isSubmitted: Boolean(isSubmitted), submittedAt });
+
+  const isRedState = dueState === 'missing' || dueState === 'submitted_late';
+  const isYellowState = dueState === 'due_soon';
+
+  // Status-aware accent colors (Red for late/missing, Amber/Yellow for due soon, Emerald for on-track/on-time)
+  const accentLineColor = isRedState ? '#ef4444' : isYellowState ? '#f59e0b' : '#10b981';
+  const iconBg = isRedState
+    ? (isDark ? 'rgba(239, 68, 68, 0.14)' : '#fee2e2')
+    : isYellowState
+      ? (isDark ? 'rgba(245, 158, 11, 0.14)' : '#fef3c7')
+      : (isDark ? 'rgba(16, 185, 129, 0.12)' : '#dcfce7');
+  const iconBorder = isRedState
+    ? (isDark ? '1px solid rgba(239, 68, 68, 0.3)' : 'none')
+    : isYellowState
+      ? (isDark ? '1px solid rgba(245, 158, 11, 0.3)' : 'none')
+      : (isDark ? '1px solid rgba(16, 185, 129, 0.25)' : 'none');
+  const iconColor = isRedState ? '#ef4444' : isYellowState ? '#f59e0b' : '#10b981';
+  const arrowColor = isRedState ? '#f87171' : isYellowState ? '#fbbf24' : '#34d399';
 
   return (
     <div style={styles.itemWrapper}>
@@ -38,6 +58,7 @@ export default function ClassworkItemCard({
             borderRadius: '12px',
             backgroundColor: isDark ? (isOpen ? '#242a2b' : '#1e2324') : (isOpen ? '#f1f5f9' : '#f8fafc'),
             border: isDark ? (isOpen ? '1px solid #444c4f' : '1px solid #2d3335') : (isOpen ? '1px solid #cbd5e1' : '1px solid #e2e8f0'),
+            borderLeft: `4px solid ${accentLineColor}`,
             cursor: 'pointer',
             userSelect: 'none',
             transition: 'all 0.2s ease',
@@ -46,26 +67,63 @@ export default function ClassworkItemCard({
           }}
           onClick={onToggle}
         >
-          <div style={{ display: 'flex', alignItems: 'center' }}>
-            <div style={{ width: '36px', height: '36px', borderRadius: '10px', backgroundColor: isDark ? 'rgba(16, 185, 129, 0.12)' : '#dcfce7', border: isDark ? '1px solid rgba(16, 185, 129, 0.25)' : 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#10b981', marginRight: '16px', flexShrink: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', minWidth: 0 }}>
+            <div style={{ width: '36px', height: '36px', borderRadius: '10px', backgroundColor: iconBg, border: iconBorder, display: 'flex', alignItems: 'center', justifyContent: 'center', color: iconColor, marginRight: '16px', flexShrink: 0 }}>
               <ClipboardList size={18} />
             </div>
-            <span style={{ color: isDark ? '#f5f5f5' : '#1e293b', fontSize: '1.05rem', fontWeight: '700' }}>{item.title}</span>
+            <span style={{ color: isDark ? '#f5f5f5' : '#1e293b', fontSize: '1.05rem', fontWeight: '700', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.title}</span>
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '20px', flexShrink: 0, marginLeft: '12px' }}>
             {isSubmitted ? (
-              <span style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.75rem', color: isDark ? '#a7f3d0' : '#059669', backgroundColor: isDark ? 'rgba(16, 185, 129, 0.08)' : '#ecfdf5', border: isDark ? '1px solid rgba(16, 185, 129, 0.2)' : '1px solid #d1fae5', padding: '5px 12px', borderRadius: '8px', fontWeight: '600' }}>
-                <CheckCircle2 size={12} /> Turned in
+              <span style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                fontSize: '0.75rem',
+                color: dueState === 'submitted_late' ? (isDark ? '#fca5a5' : '#dc2626') : (isDark ? '#a7f3d0' : '#059669'),
+                backgroundColor: dueState === 'submitted_late' ? (isDark ? 'rgba(239, 68, 68, 0.14)' : '#fef2f2') : (isDark ? 'rgba(16, 185, 129, 0.08)' : '#ecfdf5'),
+                border: dueState === 'submitted_late' ? (isDark ? '1px solid rgba(239, 68, 68, 0.35)' : '1px solid #fecaca') : (isDark ? '1px solid rgba(16, 185, 129, 0.2)' : '1px solid #d1fae5'),
+                padding: '5px 12px',
+                borderRadius: '8px',
+                fontWeight: '600'
+              }}>
+                <CheckCircle2 size={12} /> {dueState === 'submitted_late' ? 'Turned in late' : 'Turned in'}
+              </span>
+            ) : dueState === 'missing' ? (
+              <span style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                fontSize: '0.75rem',
+                color: isDark ? '#fca5a5' : '#dc2626',
+                backgroundColor: isDark ? 'rgba(239, 68, 68, 0.14)' : '#fef2f2',
+                border: isDark ? '1px solid rgba(239, 68, 68, 0.35)' : '1px solid #fecaca',
+                padding: '5px 12px',
+                borderRadius: '8px',
+                fontWeight: '700'
+              }}>
+                <AlertCircle size={12} /> Missing
               </span>
             ) : due ? (
-              <span style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.75rem', color: isDark ? '#a7f3d0' : '#059669', backgroundColor: isDark ? 'rgba(16, 185, 129, 0.08)' : '#ecfdf5', border: isDark ? '1px solid rgba(16, 185, 129, 0.2)' : '1px solid #d1fae5', padding: '5px 12px', borderRadius: '8px', fontWeight: '600' }}>
+              <span style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                fontSize: '0.75rem',
+                color: isYellowState ? (isDark ? '#fcd34d' : '#b45309') : (isDark ? '#a7f3d0' : '#059669'),
+                backgroundColor: isYellowState ? (isDark ? 'rgba(245, 158, 11, 0.14)' : '#fffbeb') : (isDark ? 'rgba(16, 185, 129, 0.08)' : '#ecfdf5'),
+                border: isYellowState ? (isDark ? '1px solid rgba(245, 158, 11, 0.35)' : '1px solid #fde68a') : (isDark ? '1px solid rgba(16, 185, 129, 0.2)' : '1px solid #d1fae5'),
+                padding: '5px 12px',
+                borderRadius: '8px',
+                fontWeight: '600'
+              }}>
                 <Calendar size={12} /> Due {due}
               </span>
             ) : null}
 
             <div style={{ width: '1px', height: '24px', backgroundColor: isDark ? '#3d4447' : '#e2e8f0' }} />
-            <div style={{ color: '#34d399', display: 'flex', alignItems: 'center', justifyContent: 'center', transform: isOpen ? 'rotate(90deg)' : 'none', transition: 'transform 0.2s ease', marginRight: '20px' }}>
+            <div style={{ color: arrowColor, display: 'flex', alignItems: 'center', justifyContent: 'center', transform: isOpen ? 'rotate(90deg)' : 'none', transition: 'transform 0.2s ease', marginRight: '20px' }}>
               <ArrowUpRight size={18} />
             </div>
           </div>
@@ -181,9 +239,20 @@ export default function ClassworkItemCard({
                 </div>
                 
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: 'auto' }}>
-                  <div style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: isSubmitted ? '#10b981' : '#3b82f6' }} />
-                  <span style={{ fontSize: '1.4rem', fontWeight: '800', color: isDark ? '#f5f5f5' : '#1e293b' }}>
-                    {isSubmitted ? 'Turned in' : 'Assigned'}
+                  <div style={{
+                    width: '8px',
+                    height: '8px',
+                    borderRadius: '50%',
+                    backgroundColor: isRedState ? '#ef4444' : isSubmitted ? '#10b981' : isYellowState ? '#f59e0b' : '#3b82f6'
+                  }} />
+                  <span style={{ fontSize: '1.4rem', fontWeight: '800', color: isRedState ? (isDark ? '#fca5a5' : '#dc2626') : (isDark ? '#f5f5f5' : '#1e293b') }}>
+                    {dueState === 'submitted_late'
+                      ? 'Turned in late'
+                      : isSubmitted
+                        ? 'Turned in'
+                        : dueState === 'missing'
+                          ? 'Missing'
+                          : 'Assigned'}
                   </span>
                 </div>
 

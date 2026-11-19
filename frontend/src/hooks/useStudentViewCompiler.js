@@ -1,5 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { useStudentViewCompilerSocket } from './useStudentViewCompilerSocket';
+import { openDotnetSetup } from '../utils/openDotnetSetup';
 
 export function useStudentViewCompiler({
   socket,
@@ -109,6 +110,11 @@ export function useStudentViewCompiler({
       setIsRunning(false);
       setProgramStarted(false);
     };
+    const handleDotnetMissing = () => {
+      setIsRunning(false);
+      setProgramStarted(false);
+      openDotnetSetup();
+    };
 
     const bind = (sock) => {
       if (!sock) return () => { };
@@ -116,6 +122,7 @@ export function useStudentViewCompiler({
       sock.on('program_started', handleStarted);
       sock.on('process_exit', handleExit);
       sock.on('compiler_diagnostics', updateEditorMarkers);
+      sock.on('dotnet_missing', handleDotnetMissing);
       if (onTestResults) sock.on('test_cases_results', onTestResults);
       if (onSingleTestResult) sock.on('test_case_result', onSingleTestResult);
       return () => {
@@ -123,6 +130,7 @@ export function useStudentViewCompiler({
         sock.off('program_started', handleStarted);
         sock.off('process_exit', handleExit);
         sock.off('compiler_diagnostics', updateEditorMarkers);
+        sock.off('dotnet_missing', handleDotnetMissing);
         if (onTestResults) sock.off('test_cases_results', onTestResults);
         if (onSingleTestResult) sock.off('test_case_result', onSingleTestResult);
       };
@@ -167,7 +175,7 @@ export function useStudentViewCompiler({
 
     const targetSocket = getCompilerSocket();
     if (!targetSocket || !targetSocket.connected) {
-      setOutput('Error: No connection to compiler server. Please check your internet connection or restart the server.\n');
+      setOutput('Error: Local C# compiler engine on this PC (localhost:3001) is starting or offline. Please wait a moment and try again.\n');
       setIsRunning(false);
       return;
     }

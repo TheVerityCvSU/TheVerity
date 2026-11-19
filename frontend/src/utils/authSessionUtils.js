@@ -8,16 +8,43 @@ export const normalizeSavedUser = (u) => {
   return u;
 };
 
-export const clearAuthStorage = () => {
-  const keys = [
+const SERVER_PRESERVED_KEYS = new Set([
+  'verity_lan_server',
+  'verity_custom_server',
+  'verity_cloud_url',
+  'verity_preferred_mode',
+  'verity_dark_mode',
+  'verity_saved_email',
+  'verity_clear_storage_on_logout'
+]);
+
+export const clearAuthStorage = (clearAllLocal = true) => {
+  const sessionOnlyKeys = [
     'currentScreen', 'currentUser', 'activeClassroom', 'activeAssignment',
-    'verity_token', 'token', 'verity_user', 'verity_teacher_classrooms',
-    'verity_classrooms', 'verity_student_classrooms_default',
-    'verity_student_classrooms_anon', 'verity_teacher_classrooms_anon',
-    'verity_teacher_classrooms_default', 'verity_cached_classrooms'
+    'verity_token', 'token', 'verity_user'
   ];
-  keys.forEach(k => {
-    try { localStorage.removeItem(k); } catch (_) {}
-  });
+
+  if (clearAllLocal) {
+    try {
+      const allKeys = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k) allKeys.push(k);
+      }
+      allKeys.forEach(k => {
+        if (!SERVER_PRESERVED_KEYS.has(k) && (sessionOnlyKeys.includes(k) || k.startsWith('verity_'))) {
+          try { localStorage.removeItem(k); } catch (_) {}
+        }
+      });
+    } catch (_) {
+      sessionOnlyKeys.forEach(k => {
+        try { localStorage.removeItem(k); } catch (_) {}
+      });
+    }
+  } else {
+    sessionOnlyKeys.forEach(k => {
+      try { localStorage.removeItem(k); } catch (_) {}
+    });
+  }
   try { sessionStorage.clear(); } catch (_) {}
 };

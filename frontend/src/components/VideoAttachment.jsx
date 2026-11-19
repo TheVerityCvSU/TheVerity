@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Maximize2, AlertCircle, Download, Film } from 'lucide-react';
 import { getVideoThumbnailUrl, resolveMediaUrl } from '../utils/mediaUrl';
+import { triggerDirectDownload } from '../utils/downloadFile';
 
 /**
  * VideoAttachment
@@ -66,15 +67,16 @@ export default function VideoAttachment({ att, onExpand, style = {} }) {
             <AlertCircle size={13} color="#F59E0B" />
             <span style={{ fontSize: '0.72rem', color: '#CBD5E1' }}>Cannot preview in browser</span>
           </div>
-          <a
-            href={url}
-            download={name}
-            style={defaultStyles.downloadLink}
-            target="_blank"
-            rel="noreferrer"
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              triggerDirectDownload(url, name);
+            }}
+            style={{ ...defaultStyles.downloadLink, border: 'none', cursor: 'pointer' }}
           >
             <Download size={11} style={{ marginRight: '3px' }} /> Download
-          </a>
+          </button>
         </div>
       )}
     </div>

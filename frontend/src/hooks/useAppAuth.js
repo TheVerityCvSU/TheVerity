@@ -140,8 +140,13 @@ export function useAppAuth({
     const wasAdmin = isAdminApp || currentUser?.role === 'Admin';
     const targetScreen = wasAdmin ? 'admin_login' : 'login';
 
-    // 1. Wipe all storages immediately
-    clearAuthStorage();
+    // 1. Wipe storage according to Admin Setting: data.clearLocalStorageOnLogout
+    let shouldClearAll = true;
+    try {
+      const savedPref = localStorage.getItem('verity_clear_storage_on_logout');
+      if (savedPref === 'false') shouldClearAll = false;
+    } catch (_) {}
+    clearAuthStorage(shouldClearAll);
     localStorage.removeItem('currentScreen');
     localStorage.removeItem('currentUser');
     localStorage.removeItem('verity_user');
@@ -188,8 +193,38 @@ export function useAppAuth({
     };
     checkMaintenance();
     const interval = setInterval(checkMaintenance, 30000);
-    return () => clearInterval(interval);
-  }, [currentUser?.role, handleLogout]);
+
+    // Sync clearLocalStorageOnLogout setting for logout enforcement
+    const token = localStorage.getItem('verity_token') || localStorage.getItem('token');
+    if (token) {
+      apiFetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/system-settings`)
+        .then(r => (r.ok ? r.json() : null))
+        .then(d => {
+          const cfg = d?.settings?.global_config || d?.settings;
+          if (cfg?.data && typeof cfg.data.clearLocalStorageOnLogout === 'boolean') {
+            try { localStorage.setItem('verity_clear_storage_on_logout', String(cfg.data.clearLocalStorageOnLogout)); } catch (_) {}
+          }
+        })
+        .catch(() => {});
+    }
+
+    const activeSock = typeof getSocket === 'function' ? getSocket() : socket;
+    const onSettingsUpdated = (payload) => {
+      const cfg = payload?.settings?.global_config || payload?.settings || {};
+      if (cfg?.data && typeof cfg.data.clearLocalStorageOnLogout === 'boolean') {
+        try { localStorage.setItem('verity_clear_storage_on_logout', String(cfg.data.clearLocalStorageOnLogout)); } catch (_) {}
+      }
+      if (cfg?.general?.maintenanceMode && currentUser && currentUser.role !== 'Admin') {
+        handleLogout();
+      }
+    };
+    if (activeSock) activeSock.on('system_settings_updated', onSettingsUpdated);
+
+    return () => {
+      clearInterval(interval);
+      if (activeSock) activeSock.off('system_settings_updated', onSettingsUpdated);
+    };
+  }, [currentUser?.role, handleLogout, socket, getSocket]);
 
   useEffect(() => {
     const token = localStorage.getItem('verity_token') || localStorage.getItem('token');

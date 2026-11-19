@@ -60,16 +60,20 @@ export const tabVariants = {
 };
 
 /**
- * Deep-merge helper: merges nested objects from server on top of defaults.
+ * Recursive deep-merge helper: merges nested objects from server on top of defaults.
  */
 export function deepMerge(defaults, incoming) {
+  if (!incoming || typeof incoming !== 'object' || Array.isArray(incoming)) {
+    return defaults;
+  }
   const result = { ...defaults };
   for (const key of Object.keys(incoming)) {
+    if (key === '_updatedAt') continue;
     if (
       incoming[key] && typeof incoming[key] === 'object' && !Array.isArray(incoming[key]) &&
       defaults[key] && typeof defaults[key] === 'object' && !Array.isArray(defaults[key])
     ) {
-      result[key] = { ...defaults[key], ...incoming[key] };
+      result[key] = deepMerge(defaults[key], incoming[key]);
     } else {
       result[key] = incoming[key];
     }
@@ -95,21 +99,18 @@ export async function loadSystemSettings() {
 }
 
 /**
- * Saves system settings to the backend.
+ * Saves system settings to the backend (backend records the audit log & broadcasts socket updates).
  */
-export async function saveSystemSettings(settings, activeTab = 'general', currentUserName = 'Admin') {
+export async function saveSystemSettings(settings) {
   try {
     await apiFetch(`${API_BASE}/system-settings`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ settings: { global_config: settings } }),
     });
-    logSecurityEvent({
-      user: currentUserName,
-      type: 'Settings Updated',
-      severity: 'Normal',
-      desc: `Updated system settings tab: ${activeTab.toUpperCase()}`
-    });
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('verity:system-settings-updated', { detail: settings }));
+    }
   } catch (e) {
     console.warn('Auto-save error:', e);
   }

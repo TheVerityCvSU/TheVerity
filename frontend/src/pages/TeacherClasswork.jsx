@@ -20,7 +20,7 @@ import { THEME_PRESETS } from '../utils/themePresets';
 import { getClassroomTheme, saveClassroomTheme } from '../data/classroomTheme';
 import { getClassroomStorageKey, getCachedClassrooms, saveCachedClassrooms } from '../data/classroomCache';
 import { getLessonType } from '../utils/lessonType';
-import { resolveMediaUrlsInHtml, getActiveUploadBaseUrl, extractUploadPath } from '../utils/mediaUrl';
+import { resolveMediaUrl, resolveMediaUrlsInHtml, getActiveUploadBaseUrl, extractUploadPath } from '../utils/mediaUrl';
 import ImagePreviewModal from '../components/ImagePreviewModal';
 import AddLinkModal from '../components/AddLinkModal';
 import VideoPreviewModal from '../components/VideoPreviewModal';
@@ -691,18 +691,48 @@ export default function TeacherClasswork({
 
   useEffect(() => {
     let active = true;
-    apiFetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/system-settings`)
-      .then(res => res.json())
-      .then(d => {
-        if (!active) return;
-        const config = d.settings?.global_config || d.settings || {};
-        if (config.roles && typeof config.roles.allowManageStudents !== 'undefined') {
-          setAllowManageStudents(config.roles.allowManageStudents);
+    const applyPermission = (settingsObj) => {
+      if (!active || !settingsObj) return;
+      const config = settingsObj.global_config || settingsObj;
+      if (config?.roles && typeof config.roles.allowManageStudents === 'boolean') {
+        const nextAllowed = config.roles.allowManageStudents;
+        setAllowManageStudents(nextAllowed);
+        if (!nextAllowed) {
+          setIsAddStudentOpen(false);
         }
-      })
-      .catch(() => {});
-    return () => { active = false; };
-  }, []);
+      }
+    };
+
+    const fetchPermission = () => {
+      apiFetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/system-settings`)
+        .then(res => (res.ok ? res.json() : null))
+        .then(d => {
+          if (d?.settings) applyPermission(d.settings);
+        })
+        .catch(() => {});
+    };
+
+    fetchPermission();
+
+    const handleSocketSettings = (payload) => {
+      if (payload?.settings) applyPermission(payload.settings);
+      else fetchPermission();
+    };
+    const handleFocusOrServer = () => fetchPermission();
+
+    if (socket) socket.on('system_settings_updated', handleSocketSettings);
+    window.addEventListener('focus', handleFocusOrServer);
+    window.addEventListener('verity:server-changed', handleFocusOrServer);
+    window.addEventListener('verity:sync-completed', handleFocusOrServer);
+
+    return () => {
+      active = false;
+      if (socket) socket.off('system_settings_updated', handleSocketSettings);
+      window.removeEventListener('focus', handleFocusOrServer);
+      window.removeEventListener('verity:server-changed', handleFocusOrServer);
+      window.removeEventListener('verity:sync-completed', handleFocusOrServer);
+    };
+  }, [socket]);
   const [originalBannerTheme, setOriginalBannerTheme] = useState(null);
 
 
@@ -1210,6 +1240,7 @@ export default function TeacherClasswork({
     const filename = file.name;
     const cleanFilename = encodeURIComponent(filename);
     const uploadBase = getActiveUploadBaseUrl() || getLocalApiUrl();
+    let lastError = 'Failed to upload file to server. Please check your connection and try again.';
 
     // 1. Direct binary streaming upload (fast, supports 100MB+ MP4/WebM/MOV)
     try {
@@ -1230,9 +1261,13 @@ export default function TeacherClasswork({
           const canonicalThumb = data.thumbnailPath || (data.thumbnailUrl ? extractUploadPath(data.thumbnailUrl) : null) || data.thumbnailUrl;
           return { type, name: filename, url: canonicalPath, thumbnailUrl: canonicalThumb };
         }
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        if (errData?.message) lastError = errData.message;
       }
     } catch (rawErr) {
       console.warn('Direct stream upload failed, trying base64...', rawErr);
+      if (rawErr?.message) lastError = rawErr.message;
     }
 
     // 2. Base64 fallback to /upload (for smaller images/clips)
@@ -1261,13 +1296,17 @@ export default function TeacherClasswork({
           const canonicalThumb = data.thumbnailPath || (data.thumbnailUrl ? extractUploadPath(data.thumbnailUrl) : null) || data.thumbnailUrl;
           return { type, name: filename, url: canonicalPath, thumbnailUrl: canonicalThumb };
         }
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        if (errData?.message) lastError = errData.message;
       }
     } catch (b64Err) {
       console.warn('Base64 fallback failed:', b64Err);
+      if (b64Err?.message) lastError = b64Err.message;
     }
 
-    // 3. Object URL fallback so the video is immediately playable in current session
-    return { type, name: filename, url: URL.createObjectURL(file) };
+    // Never save a session-only blob: URL into the database (breaks across devices & Incognito)
+    throw new Error(lastError);
   };
 
   const insertAtMarker = (appendHtml) => {
@@ -1316,25 +1355,30 @@ export default function TeacherClasswork({
     e.target.value = '';
     if (!file) return;
     setUploading(true);
-    const attachment = await uploadFile(file, type);
+    try {
+      const attachment = await uploadFile(file, type);
 
-    // Always register in attachments list so it shows as an attached resource
-    setForm(prev => ({
-      ...prev,
-      attachments: [...(prev.attachments || []), attachment]
-    }));
+      // Always register in attachments list so it shows as an attached resource
+      setForm(prev => ({
+        ...prev,
+        attachments: [...(prev.attachments || []), attachment]
+      }));
 
-    if (type === 'image') {
-      const resolvedImg = resolveMediaUrl(attachment.url);
-      const appendHtml = `<br/><img src="${resolvedImg}" alt="${attachment.name}" style="max-width: 100%; height: auto; border-radius: 8px;" /><br/>`;
-      if (!insertAtMarker(appendHtml)) {
-        setForm(prev => ({ 
-          ...prev, 
-          instruction: (prev.instruction || "") + appendHtml 
-        }));
+      if (type === 'image') {
+        const resolvedImg = resolveMediaUrl(attachment.url);
+        const appendHtml = `<br/><img src="${resolvedImg}" alt="${attachment.name}" style="max-width: 100%; height: auto; border-radius: 8px;" /><br/>`;
+        if (!insertAtMarker(appendHtml)) {
+          setForm(prev => ({
+            ...prev,
+            instruction: (prev.instruction || "") + appendHtml
+          }));
+        }
       }
+    } catch (err) {
+      alert(err?.message || 'Upload failed. Please verify the file format and server connection.');
+    } finally {
+      setUploading(false);
     }
-    setUploading(false);
   };
 
   const handleDropCapture = async (e) => {
@@ -1378,25 +1422,30 @@ export default function TeacherClasswork({
         }
       }
       
-      for (let i = 0; i < files.length; i++) {
-        const file = files[i];
-        if (file.type.startsWith('image/') || file.type.startsWith('video/')) {
-          const type = file.type.startsWith('image/') ? 'image' : 'video';
-          const attachment = await uploadFile(file, type);
-          setForm(prev => ({
-            ...prev,
-            attachments: [...(prev.attachments || []), attachment]
-          }));
-          if (type === 'image') {
-            const resolvedImg = resolveMediaUrl(attachment.url);
-            const appendHtml = `<br/><img src="${resolvedImg}" alt="${attachment.name}" style="max-width: 100%; height: auto; border-radius: 8px;" /><br/>`;
-            if (editorObj?.s) {
-              editorObj.s.insertHTML(appendHtml);
+      try {
+        for (let i = 0; i < files.length; i++) {
+          const file = files[i];
+          if (file.type.startsWith('image/') || file.type.startsWith('video/')) {
+            const type = file.type.startsWith('image/') ? 'image' : 'video';
+            const attachment = await uploadFile(file, type);
+            setForm(prev => ({
+              ...prev,
+              attachments: [...(prev.attachments || []), attachment]
+            }));
+            if (type === 'image') {
+              const resolvedImg = resolveMediaUrl(attachment.url);
+              const appendHtml = `<br/><img src="${resolvedImg}" alt="${attachment.name}" style="max-width: 100%; height: auto; border-radius: 8px;" /><br/>`;
+              if (editorObj?.s) {
+                editorObj.s.insertHTML(appendHtml);
+              }
             }
           }
         }
+      } catch (err) {
+        alert(err?.message || 'Upload failed. Please verify the file format and server connection.');
+      } finally {
+        setUploading(false);
       }
-      setUploading(false);
     }
   };
 
@@ -1416,30 +1465,35 @@ export default function TeacherClasswork({
       e.stopPropagation();
       setUploading(true);
       
-      for (let i = 0; i < items.length; i++) {
-        const item = items[i];
-        if (item.type.startsWith('image/') || item.type.startsWith('video/')) {
-          const file = item.getAsFile();
-          if (!file) continue;
-          const type = item.type.startsWith('image/') ? 'image' : 'video';
-          const attachment = await uploadFile(file, type);
-          setForm(prev => ({
-            ...prev,
-            attachments: [...(prev.attachments || []), attachment]
-          }));
-          if (type === 'image') {
-            const resolvedImg = resolveMediaUrl(attachment.url);
-            const appendHtml = `<br/><img src="${resolvedImg}" alt="${attachment.name}" style="max-width: 100%; height: auto; border-radius: 8px;" /><br/>`;
-            const editorObj = joditRef.current;
-            if (editorObj?.s) {
-              if (editorObj.editor?.focus) editorObj.editor.focus();
-              else if (editorObj.focus) editorObj.focus();
-              editorObj.s.insertHTML(appendHtml);
+      try {
+        for (let i = 0; i < items.length; i++) {
+          const item = items[i];
+          if (item.type.startsWith('image/') || item.type.startsWith('video/')) {
+            const file = item.getAsFile();
+            if (!file) continue;
+            const type = item.type.startsWith('image/') ? 'image' : 'video';
+            const attachment = await uploadFile(file, type);
+            setForm(prev => ({
+              ...prev,
+              attachments: [...(prev.attachments || []), attachment]
+            }));
+            if (type === 'image') {
+              const resolvedImg = resolveMediaUrl(attachment.url);
+              const appendHtml = `<br/><img src="${resolvedImg}" alt="${attachment.name}" style="max-width: 100%; height: auto; border-radius: 8px;" /><br/>`;
+              const editorObj = joditRef.current;
+              if (editorObj?.s) {
+                if (editorObj.editor?.focus) editorObj.editor.focus();
+                else if (editorObj.focus) editorObj.focus();
+                editorObj.s.insertHTML(appendHtml);
+              }
             }
           }
         }
+      } catch (err) {
+        alert(err?.message || 'Upload failed. Please verify the file format and server connection.');
+      } finally {
+        setUploading(false);
       }
-      setUploading(false);
     }
   };
 
@@ -1526,10 +1580,11 @@ export default function TeacherClasswork({
       const res = await apiFetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/system-settings`);
       if (res.ok) {
         const data = await res.json();
-        if (data?.settings?.examDefaults) {
-          defaults.duration = data.settings.examDefaults.defaultExamTimer || 60;
-          defaults.autoSaveInterval = data.settings.examDefaults.autoSaveInterval || '30s';
-          defaults.treatWarningsAsErrors = !!data.settings.examDefaults.treatWarningsAsErrors;
+        const examDefaults = data?.settings?.global_config?.examDefaults || data?.settings?.examDefaults;
+        if (examDefaults) {
+          defaults.duration = examDefaults.defaultExamTimer || 60;
+          defaults.autoSaveInterval = examDefaults.autoSaveInterval || '30s';
+          defaults.treatWarningsAsErrors = !!examDefaults.treatWarningsAsErrors;
         }
       }
     } catch (e) {
@@ -2691,7 +2746,9 @@ export default function TeacherClasswork({
                     </div>
                   </div>
                   <div style={{ ...styles.list, padding: '0 0 40px 0' }}>
-                    {visibleMaterials.length === 0 ? (
+                    {loadingClasswork ? (
+                      Array.from({ length: 3 }).map((_, i) => <Skeleton.AssignmentRow key={i} />)
+                    ) : visibleMaterials.length === 0 ? (
                       <div style={{ textAlign: 'center', padding: '40px 20px', color: isDark ? '#a3a3a3' : '#94a3b8' }}>
                         <FileText size={48} color={isDark ? '#4A4A4A' : '#cbd5e1'} style={{ margin: '0 auto 12px auto', display: 'block' }} />
                         <p style={{ margin: 0, fontSize: '1rem', fontWeight: '600' }}>No materials uploaded yet</p>
@@ -2923,30 +2980,6 @@ export default function TeacherClasswork({
                                   >
                                     <FileText size={16} /> View Material Details
                                   </button>
-
-                                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', width: isMobile ? '100%' : 'auto' }}>
-                                    <button
-                                      style={{
-                                        ...styles.viewGradingBtn,
-                                        backgroundColor: isDark ? 'rgba(16, 185, 129, 0.12)' : '#ecfdf5',
-                                        borderColor: isDark ? 'rgba(16, 185, 129, 0.35)' : '#a7f3d0',
-                                        color: isDark ? '#34d399' : '#059669',
-                                        boxShadow: isDark
-                                          ? '0 0 12px rgba(16, 185, 129, 0.12)'
-                                          : '0 1px 3px rgba(16, 185, 129, 0.10)',
-                                        width: isMobile ? '100%' : 'auto',
-                                        justifyContent: 'center'
-                                      }}
-                                      className="btn-anim"
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        openModify(e, item);
-                                      }}
-                                      title="Edit this material"
-                                    >
-                                      <Edit3 size={15} /> Edit Material
-                                    </button>
-                                  </div>
                                 </div>
                               </div>
                             </motion.div>
@@ -3024,11 +3057,10 @@ export default function TeacherClasswork({
 
                     <div style={styles.peopleList}>
                       {loadingStudents ? (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                          <Skeleton.Row />
-                          <Skeleton.Row />
-                          <Skeleton.Row />
-                          <Skeleton.Row />
+                        <div style={{ display: 'flex', flexDirection: 'column' }}>
+                          {Array.from({ length: 5 }).map((_, i) => (
+                            <Skeleton.Person key={i} isDark={isDark} />
+                          ))}
                         </div>
                       ) : enrolledStudents.length === 0 ? (
                         <div style={{ padding: '30px 10px', textAlign: 'center', color: isDark ? '#a3a3a3' : '#64748b' }}>
@@ -3107,7 +3139,9 @@ export default function TeacherClasswork({
                     </div>
                   </div>
 
-                  {visibleClasswork.length === 0 ? (
+                  {loadingClasswork ? (
+                    <Skeleton.Grading isDark={isDark} isMobile={isMobile} showActivitySelector={true} />
+                  ) : visibleClasswork.length === 0 ? (
                     <div style={{ padding: '40px', textAlign: 'center', color: isDark ? '#a3a3a3' : '#94a3b8' }}>
                       No assignments created yet in this classroom.
                     </div>
@@ -4350,70 +4384,38 @@ export default function TeacherClasswork({
                 </button>
               </div>
 
-              {/* Meta information strip */}
-              <div style={{
-                backgroundColor: isDark ? '#262626' : '#f8fafc',
-                border: isDark ? '1px solid #444' : '1px solid #e2e8f0',
-                borderRadius: '12px',
-                padding: '14px 20px',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '24px',
-                flexWrap: 'wrap',
-                marginBottom: '24px'
-              }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <BookOpen size={16} color={isDark ? '#94a3b8' : '#64748b'} />
-                  <span style={{ fontSize: '0.85rem', color: isDark ? '#cbd5e1' : '#334155', fontWeight: '600' }}>
-                    Topic: <strong>{viewingMaterialModal.topic || 'General Material'}</strong>
-                  </span>
-                </div>
-                <div style={{ width: '1px', height: '18px', backgroundColor: isDark ? '#404040' : '#e2e8f0' }} />
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <Calendar size={16} color="#10b981" />
-                  <span style={{ fontSize: '0.85rem', color: isDark ? '#cbd5e1' : '#334155', fontWeight: '600' }}>
-                    Posted: <strong>{formatShortDate(viewingMaterialModal.posted || viewingMaterialModal.id)}</strong>
-                  </span>
-                </div>
-                {viewingMaterialModal.attachments?.length > 0 && (
-                  <>
-                    <div style={{ width: '1px', height: '18px', backgroundColor: isDark ? '#404040' : '#e2e8f0' }} />
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <FileText size={16} color={isDark ? '#94a3b8' : '#64748b'} />
-                      <span style={{ fontSize: '0.85rem', color: isDark ? '#cbd5e1' : '#334155', fontWeight: '600' }}>
-                        {viewingMaterialModal.attachments.length} attachment{viewingMaterialModal.attachments.length > 1 ? 's' : ''}
-                      </span>
+              {/* Material Overview / Content — hidden when no description exists */}
+              {(() => {
+                const rawDetails = String(viewingMaterialModal.details || '');
+                const hasMedia = /<(img|video|iframe|svg|audio|embed|object)\b/i.test(rawDetails);
+                const plainText = rawDetails
+                  .replace(/<[^>]*>/g, ' ')
+                  .replace(/&nbsp;/gi, ' ')
+                  .replace(/\s+/g, ' ')
+                  .trim();
+                if (!hasMedia && !plainText) return null;
+                return (
+                  <div style={{ marginBottom: '24px' }}>
+                    <h4 style={{ margin: '0 0 12px 0', fontSize: '0.95rem', fontWeight: '700', color: isDark ? '#f1f5f9' : '#1e293b' }}>
+                      Material Content & Description
+                    </h4>
+                    <div style={{
+                      backgroundColor: isDark ? '#262626' : '#ffffff',
+                      border: isDark ? '1px solid #3e3e3e' : '1px solid #e2e8f0',
+                      borderRadius: '12px',
+                      padding: '20px',
+                      maxHeight: '520px',
+                      overflowY: 'auto'
+                    }}>
+                      <RichInstruction
+                        html={viewingMaterialModal.details}
+                        style={{ color: isDark ? '#d1d5db' : '#334155', fontSize: '0.95rem', lineHeight: 1.6 }}
+                        onClick={handleInstructionClick}
+                      />
                     </div>
-                  </>
-                )}
-              </div>
-
-              {/* Material Overview / Content */}
-              <div style={{ marginBottom: '24px' }}>
-                <h4 style={{ margin: '0 0 12px 0', fontSize: '0.95rem', fontWeight: '700', color: isDark ? '#f1f5f9' : '#1e293b' }}>
-                  Material Content & Description
-                </h4>
-                <div style={{
-                  backgroundColor: isDark ? '#262626' : '#ffffff',
-                  border: isDark ? '1px solid #3e3e3e' : '1px solid #e2e8f0',
-                  borderRadius: '12px',
-                  padding: '20px',
-                  maxHeight: '520px',
-                  overflowY: 'auto'
-                }}>
-                  {viewingMaterialModal.details ? (
-                    <RichInstruction
-                      html={viewingMaterialModal.details}
-                      style={{ color: isDark ? '#d1d5db' : '#334155', fontSize: '0.95rem', lineHeight: 1.6 }}
-                      onClick={handleInstructionClick}
-                    />
-                  ) : (
-                    <p style={{ margin: 0, color: isDark ? '#9ca3af' : '#64748b', fontSize: '0.9rem', fontStyle: 'italic' }}>
-                      No description or written notes provided for this material.
-                    </p>
-                  )}
-                </div>
-              </div>
+                  </div>
+                );
+              })()}
 
               {/* Attachments Section */}
               {viewingMaterialModal.attachments?.length > 0 && (

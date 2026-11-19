@@ -26,6 +26,7 @@ export {
   LOCAL_DEV_API_URL,
   LOCAL_API_URL,
   isPrivateHost,
+  isElectronApp,
   getCloudUrl,
   getLocalApiUrl,
   getCompilerSocketUrl,
