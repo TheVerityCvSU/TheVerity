@@ -1,8 +1,9 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Download } from 'lucide-react';
 import { modalStyles } from './imagePreview/imagePreviewStyles';
 import ImagePreviewToolbar from './imagePreview/ImagePreviewToolbar';
+import { resolveMediaUrl } from '../utils/mediaUrl';
 
 /**
  * ImagePreviewModal
@@ -10,6 +11,7 @@ import ImagePreviewToolbar from './imagePreview/ImagePreviewToolbar';
  * wheel zoom, click-drag panning, double-click toggle, and keyboard shortcuts.
  */
 export default function ImagePreviewModal({ src, alt, onClose }) {
+  const resolvedSrc = useMemo(() => resolveMediaUrl(src), [src]);
   const [scale, setScale] = useState(1);
   const [position, setPosition] = useState({ x: 0, y: 0 });
   const [isDragging, setIsDragging] = useState(false);
@@ -114,7 +116,7 @@ export default function ImagePreviewModal({ src, alt, onClose }) {
   const handleDownload = (e) => {
     e.stopPropagation();
     const a = document.createElement('a');
-    a.href = src;
+    a.href = resolvedSrc || src;
     a.download = alt || 'image';
     document.body.appendChild(a);
     a.click();
@@ -173,7 +175,7 @@ export default function ImagePreviewModal({ src, alt, onClose }) {
           onClick={(e) => e.stopPropagation()}
         >
           <img
-            src={src}
+            src={resolvedSrc || src}
             alt={alt || 'Preview'}
             draggable={false}
             style={{

@@ -141,16 +141,8 @@ export function createTeacherSocketHandlers({
     setToast({ message: `Alert: ${formatStudentName(studentName)} - ${cleanAction}`, type: isCrash ? 'error' : 'warning', isAlert: true });
     setTimeout(() => setToast(null), 5000);
 
-    // Do not play pop sound when student is exiting tab
-    if (notifSettingsRef.current?.soundAlerts && !isExitTab) {
-      try {
-        const ctx = new (window.AudioContext || window.webkitAudioContext)();
-        const osc = ctx.createOscillator();
-        osc.connect(ctx.destination);
-        osc.start();
-        osc.stop(ctx.currentTime + 0.15);
-      } catch {}
-    }
+    // Sound alerts silenced to avoid disruptive beeps
+
   };
 
   const handleTerminalUpdate = (data) => {

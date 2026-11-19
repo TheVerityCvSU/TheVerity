@@ -1,6 +1,7 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, User, CheckCircle } from 'lucide-react';
+import Skeleton from '../Skeleton';
 
 export default function UserAuditModal({
   viewUser,
@@ -72,7 +73,7 @@ export default function UserAuditModal({
                 )}
               </div>
               {flagHistoryLoading ? (
-                <div style={{ textAlign: 'center', padding: '16px', color: isDark ? '#94a3b8' : '#64748b', fontSize: '0.85rem' }}>Loading history...</div>
+                Array.from({ length: 3 }).map((_, i) => <Skeleton.Row key={i} />)
               ) : flagHistory.length === 0 ? (
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', textAlign: 'center', padding: '16px', backgroundColor: isDark ? '#2a2a2a' : '#f8fafc', borderRadius: '12px', color: isDark ? '#64748b' : '#94a3b8', fontSize: '0.85rem', border: isDark ? '1px solid #3a3a3a' : '1px solid #e2e8f0' }}>
                   <CheckCircle size={16} color="#16a34a" />

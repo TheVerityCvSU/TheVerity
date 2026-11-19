@@ -265,11 +265,12 @@ export default function ClassroomMaterialsTab({
                                     isDark={isDark}
                                     onClick={(clickedAtt) => {
                                       onMarkMaterialSeen(item.id);
-                                      if (clickedAtt.type === 'image') setPreviewImage(clickedAtt);
-                                      else if (clickedAtt.type === 'video') setPreviewVideo(clickedAtt);
-                                      else if (clickedAtt.type === 'document' || (clickedAtt.type === 'link' && clickedAtt.url)) {
-                                        setPreviewIframe(clickedAtt);
-                                      }
+                                      const targetName = (clickedAtt.name || clickedAtt.url || '').toLowerCase();
+                                      const isImg = clickedAtt.type === 'image' || /\.(png|jpe?g|gif|webp|svg)(\?.*)?$/i.test(targetName);
+                                      const isVid = clickedAtt.type === 'video' || /\.(mp4|webm|mov|m4v|mkv|avi)(\?.*)?$/i.test(targetName);
+                                      if (isImg) setPreviewImage(clickedAtt);
+                                      else if (isVid) setPreviewVideo(clickedAtt);
+                                      else setPreviewIframe(clickedAtt);
                                     }}
                                   />
                                 ))}

@@ -474,6 +474,7 @@ export default function StudentView({
           assignment={currentAssignment || assignment}
           setPreviewImage={setPreviewImage}
           setPreviewVideo={setPreviewVideo}
+          setPreviewIframe={setPreviewIframe}
         />
 
         <div style={styles.mainArea}>

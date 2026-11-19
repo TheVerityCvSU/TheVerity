@@ -48,6 +48,9 @@ export function extractUploadPath(rawUrl) {
   if (trimmed.startsWith('/uploads/')) {
     return trimmed;
   }
+  if (trimmed.startsWith('uploads/')) {
+    return `/${trimmed}`;
+  }
 
   if (/^https?:\/\//i.test(trimmed)) {
     try {

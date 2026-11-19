@@ -99,8 +99,12 @@ export default function TeacherGrading({
   };
 
   const handlePreviewAttachment = (clickedAtt) => {
-    if (clickedAtt.type === 'image') setPreviewImage(clickedAtt);
-    else if (clickedAtt.type === 'video') setPreviewVideo(clickedAtt);
+    if (!clickedAtt) return;
+    const ext = (clickedAtt.url || clickedAtt.name || '').split('?')[0].split('.').pop().toLowerCase();
+    const isImg = clickedAtt.type === 'image' || ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'avif'].includes(ext);
+    const isVid = clickedAtt.type === 'video' || ['mp4', 'webm', 'ogg', 'mov', 'm4v'].includes(ext);
+    if (isImg) setPreviewImage(clickedAtt);
+    else if (isVid) setPreviewVideo(clickedAtt);
     else if (clickedAtt.url) setPreviewIframe(clickedAtt);
   };
 

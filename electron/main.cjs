@@ -245,18 +245,17 @@ function stopServer() {
 }
 
 // Shortcuts we swallow while a student is locked in.
+// (Bare Super, Super+L, and Ctrl+Alt+Del are handled at the low-level WH_KEYBOARD_LL hook by KioskLockHook.exe to avoid Windows hotkey registration beeps)
 const LOCKED_SHORTCUTS = [
   'Alt+Tab',
   'Alt+F4',
   'Alt+Escape',
   'Alt+Space',
-  'Super',            // Windows key
   'Super+Tab',        // Task View
   'Meta+Tab',         // Task View (alternate key name)
   'Super+D',          // Show Desktop
   'Super+M',          // Minimize all
   'Super+E',          // File Explorer
-  'Super+L',          // Lock screen
   'Super+R',          // Run dialog
   'Super+S',          // Search
   'Super+A',          // Action center
@@ -269,7 +268,6 @@ const LOCKED_SHORTCUTS = [
   'CommandOrControl+W',
   'CommandOrControl+Shift+W',
   'CommandOrControl+Tab',
-  'CommandOrControl+Alt+Delete',
   'F11',
   'F12',
   'CommandOrControl+Shift+I',
@@ -586,7 +584,9 @@ function enableLockdown(options = {}) {
     setLockedFile(true);
     for (const accel of LOCKED_SHORTCUTS) {
       try {
-        globalShortcut.register(accel, () => {});
+        if (!globalShortcut.isRegistered(accel)) {
+          globalShortcut.register(accel, () => {});
+        }
       } catch (_) {}
     }
   } else {

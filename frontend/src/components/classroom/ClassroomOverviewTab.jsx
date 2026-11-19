@@ -15,6 +15,7 @@ export default function ClassroomOverviewTab({
   visibleMaterials = [],
   unseenMaterials = [],
   classroom,
+  loadingAssignments = false,
   onSelectTodo,
   onOpenMaterials,
   onSelectMaterial
@@ -105,7 +106,12 @@ export default function ClassroomOverviewTab({
             }}
           >
             <style dangerouslySetInnerHTML={{__html: `.hide-scroll::-webkit-scrollbar { display: none; }`}} />
-            {safeUpcoming.length === 0 ? (
+            {loadingAssignments ? (
+              <div style={{ display: 'flex', gap: '14px', width: '100%' }}>
+                <div className="skeleton-shimmer" style={{ flex: isMobile ? '0 0 260px' : '0 0 320px', height: 140, borderRadius: 16 }} />
+                <div className="skeleton-shimmer" style={{ flex: isMobile ? '0 0 260px' : '0 0 320px', height: 140, borderRadius: 16 }} />
+              </div>
+            ) : safeUpcoming.length === 0 ? (
               <div style={{ width: '100%', display: 'flex', alignItems: 'center', gap: '10px', color: isDark ? '#34d399' : '#059669', padding: '4px 0' }}>
                 <CheckCircle2 size={20} color={isDark ? '#34d399' : '#10b981'} />
                 <span style={{ fontWeight: '600', color: isDark ? '#f5f5f5' : '#1e293b', fontSize: '0.95rem' }}>
@@ -183,7 +189,11 @@ export default function ClassroomOverviewTab({
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fill, minmax(220px, 1fr))', gap: '14px' }}>
-            {safeMaterials.length === 0 ? (
+            {loadingAssignments ? (
+              Array.from({ length: 3 }).map((_, i) => (
+                <div key={i} className="skeleton-shimmer" style={{ height: 110, borderRadius: 14 }} />
+              ))
+            ) : safeMaterials.length === 0 ? (
               <div style={{ gridColumn: '1 / -1', backgroundColor: 'transparent', borderRadius: '12px', padding: '12px 6px', display: 'flex', alignItems: 'center', gap: '12px', color: textMuted, fontSize: '0.88rem', fontStyle: 'italic' }}>
                 <FileText size={20} color={textMuted} />
                 <span>No learning materials uploaded yet for this class.</span>

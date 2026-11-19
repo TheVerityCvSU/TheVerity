@@ -207,6 +207,12 @@ const VIDEO_UPLOAD_EXTS = new Set(['.mp4', '.webm', '.mov', '.mkv', '.avi', '.m4
 const FASTSTART_REMUX_EXTS = new Set(['.mp4', '.m4v', '.mov']);
 
 const UPLOAD_MIME_TYPES = {
+    '.png': 'image/png',
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.gif': 'image/gif',
+    '.webp': 'image/webp',
+    '.svg': 'image/svg+xml',
     '.mov': 'video/quicktime',
     '.mp4': 'video/mp4',
     '.m4v': 'video/mp4',
@@ -401,6 +407,9 @@ function prefetchUploadsFromClasswork(rows) {
 
 // Serve uploaded files statically at /uploads/<file> with pull-through cache, active stream tracking, and range headers
 app.use('/uploads', async (req, res, next) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', '*');
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Accept-Ranges', 'bytes');
 

@@ -6,7 +6,7 @@ import {
   Calendar, ClipboardList, Settings, User, MoreVertical, ArrowLeft, X, Link2, 
   Image, Video, Monitor, Menu, Home, Archive, Edit3, Maximize2, Copy, Check, 
   Info, Users, BookOpen, Sparkles, Plus, Send, ChevronRight, ChevronDown, CheckCircle2, 
-  MessageSquare, PlayCircle, Eye, RefreshCw, Palette, ExternalLink, FileText,
+  MessageSquare, PlayCircle, Eye, RefreshCw, Palette, ExternalLink, FileText, FileCode,
   Paperclip, MoreHorizontal, Code2, Trash2, AlertTriangle, Lock, Unlock, ShieldAlert
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -27,6 +27,7 @@ import AddLinkModal from '../components/AddLinkModal';
 import VideoPreviewModal from '../components/VideoPreviewModal';
 import IframePreviewModal from '../components/IframePreviewModal';
 import AddStudentModal from '../components/AddStudentModal';
+import PasteAsCodeModal from '../components/PasteAsCodeModal';
 import VideoAttachment from '../components/VideoAttachment';
 import AttachmentCard from '../components/AttachmentCard';
 import RichInstruction from '../components/RichInstruction';
@@ -1179,6 +1180,7 @@ export default function TeacherClasswork({
   const [previewVideo, setPreviewVideo] = useState(null);
   const [previewIframe, setPreviewIframe] = useState(null);
   const [isLinkModalOpen, setIsLinkModalOpen] = useState(false);
+  const [pasteCodeModal, setPasteCodeModal] = useState(null);
   const imageInputRef = useRef(null);
   const videoInputRef = useRef(null);
   const docInputRef = useRef(null);
@@ -1317,16 +1319,15 @@ export default function TeacherClasswork({
     setUploading(true);
     const attachment = await uploadFile(file, type);
 
-    if (type === 'document' || type === 'video') {
-      setForm(prev => ({
-        ...prev,
-        attachments: [...(prev.attachments || []), attachment]
-      }));
-    } else {
-      let appendHtml = "";
-      if (type === 'image') {
-        appendHtml = `<br/><img src="${attachment.url}" alt="${attachment.name}" style="max-width: 100%; height: auto; border-radius: 8px;" /><br/>`;
-      }
+    // Always register in attachments list so it shows as an attached resource
+    setForm(prev => ({
+      ...prev,
+      attachments: [...(prev.attachments || []), attachment]
+    }));
+
+    if (type === 'image') {
+      const resolvedImg = resolveMediaUrl(attachment.url);
+      const appendHtml = `<br/><img src="${resolvedImg}" alt="${attachment.name}" style="max-width: 100%; height: auto; border-radius: 8px;" /><br/>`;
       if (!insertAtMarker(appendHtml)) {
         setForm(prev => ({ 
           ...prev, 
@@ -1383,13 +1384,13 @@ export default function TeacherClasswork({
         if (file.type.startsWith('image/') || file.type.startsWith('video/')) {
           const type = file.type.startsWith('image/') ? 'image' : 'video';
           const attachment = await uploadFile(file, type);
-          if (type === 'video') {
-            setForm(prev => ({
-              ...prev,
-              attachments: [...(prev.attachments || []), attachment]
-            }));
-          } else {
-            const appendHtml = `<br/><img src="${attachment.url}" alt="${attachment.name}" style="max-width: 100%; height: auto; border-radius: 8px;" /><br/>`;
+          setForm(prev => ({
+            ...prev,
+            attachments: [...(prev.attachments || []), attachment]
+          }));
+          if (type === 'image') {
+            const resolvedImg = resolveMediaUrl(attachment.url);
+            const appendHtml = `<br/><img src="${resolvedImg}" alt="${attachment.name}" style="max-width: 100%; height: auto; border-radius: 8px;" /><br/>`;
             if (editorObj?.s) {
               editorObj.s.insertHTML(appendHtml);
             }
@@ -1423,13 +1424,13 @@ export default function TeacherClasswork({
           if (!file) continue;
           const type = item.type.startsWith('image/') ? 'image' : 'video';
           const attachment = await uploadFile(file, type);
-          if (type === 'video') {
-            setForm(prev => ({
-              ...prev,
-              attachments: [...(prev.attachments || []), attachment]
-            }));
-          } else {
-            const appendHtml = `<br/><img src="${attachment.url}" alt="${attachment.name}" style="max-width: 100%; height: auto; border-radius: 8px;" /><br/>`;
+          setForm(prev => ({
+            ...prev,
+            attachments: [...(prev.attachments || []), attachment]
+          }));
+          if (type === 'image') {
+            const resolvedImg = resolveMediaUrl(attachment.url);
+            const appendHtml = `<br/><img src="${resolvedImg}" alt="${attachment.name}" style="max-width: 100%; height: auto; border-radius: 8px;" /><br/>`;
             const editorObj = joditRef.current;
             if (editorObj?.s) {
               if (editorObj.editor?.focus) editorObj.editor.focus();
@@ -1658,6 +1659,46 @@ export default function TeacherClasswork({
     hidePoweredByJodit: true,
     disablePlugins: 'image-properties,image-processor,video-properties',
     popup: { img: [], image: [], video: [], a: [] },
+    i18n: {
+      en: {
+        'Paste as HTML': 'Paste as Code?',
+        'Your code is similar to HTML. Keep as HTML?': 'The content you are pasting looks like code or HTML. How would you like to paste it?',
+        'Keep': 'Paste as HTML',
+        'Insert as Text': 'Paste as Code'
+      }
+    },
+    events: {
+      beforeOpenPasteDialog: (msg, title, callback, buttonList) => {
+        const isWord = String(title || '').toLowerCase().includes('word');
+        setPasteCodeModal({
+          isWord,
+          title: isWord ? 'Word Paste Detected' : 'Paste as Code?',
+          msg: isWord
+            ? 'The pasted content is coming from a Microsoft Word or Excel document. Do you want to keep formatting or clean it up?'
+            : 'The content you are pasting looks like code or HTML. How would you like to format it in the instructions?',
+          callback,
+          buttonList
+        });
+        return false;
+      },
+      onCustomPasteHTMLOption: (action, html) => {
+        if (action === 'cancel') {
+          return '';
+        }
+        if (action === 'as-code') {
+          const escape = (str) => String(str || '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;');
+          const bg = isDark ? '#1a221f' : '#f8fafc';
+          const text = isDark ? '#a7f3d0' : '#065f46';
+          const border = isDark ? '#2e3d38' : '#cbd5e1';
+          return `<pre style="background-color: ${bg}; color: ${text}; border: 1px solid ${border}; padding: 12px 16px; border-radius: 8px; font-family: Consolas, Monaco, 'Courier New', monospace; font-size: 0.88rem; line-height: 1.5; white-space: pre-wrap; margin: 8px 0; overflow-x: auto;"><code>${escape(html)}</code></pre><p><br></p>`;
+        }
+        return html;
+      }
+    },
     style: {
       background: isDark ? '#242424' : '#f9fafb',
       color: isDark ? '#E8EAED' : '#111827'
@@ -2514,10 +2555,12 @@ export default function TeacherClasswork({
                                             att={att}
                                             isDark={isDark}
                                             onClick={(clickedAtt) => {
-                                              if (clickedAtt.type === 'image') setPreviewImage(clickedAtt);
-                                              else if (clickedAtt.type === 'video') setPreviewVideo(clickedAtt);
-                                              else if (clickedAtt.type === 'document') setPreviewIframe(clickedAtt);
-                                              else if (clickedAtt.type === 'link' && clickedAtt.url) setPreviewIframe(clickedAtt);
+                                              const targetName = (clickedAtt.name || clickedAtt.url || '').toLowerCase();
+                                              const isImg = clickedAtt.type === 'image' || /\.(png|jpe?g|gif|webp|svg)(\?.*)?$/i.test(targetName);
+                                              const isVid = clickedAtt.type === 'video' || /\.(mp4|webm|mov|m4v|mkv|avi)(\?.*)?$/i.test(targetName);
+                                              if (isImg) setPreviewImage(clickedAtt);
+                                              else if (isVid) setPreviewVideo(clickedAtt);
+                                              else setPreviewIframe(clickedAtt);
                                             }}
                                           />
                                         ))}
@@ -2546,14 +2589,14 @@ export default function TeacherClasswork({
                                   alignItems: isMobile ? 'stretch' : 'center',
                                   padding: isMobile ? '14px 20px' : '16px 28px'
                                 }}>
-                                  {/* Button para sa activity details at grading */}
-                                  <button
+                                  {/* Link para sa activity details at grading */}
+                                  <span
                                     style={{
-                                      ...styles.viewGradingBtn,
-                                      width: isMobile ? '100%' : 'auto',
-                                      justifyContent: 'center'
+                                      ...styles.viewActivityLink,
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      cursor: 'pointer'
                                     }}
-                                    className="btn-anim"
                                     onClick={() => {
                                       try {
                                         sessionStorage.setItem(`verity_teacher_classwork_tab_${classroom?.id || 'default'}`, activeTab);
@@ -2565,20 +2608,23 @@ export default function TeacherClasswork({
                                         handleTabChange('grades');
                                       }
                                     }}
+                                    onMouseEnter={(e) => { e.currentTarget.style.textDecoration = 'underline'; }}
+                                    onMouseLeave={(e) => { e.currentTarget.style.textDecoration = 'none'; }}
                                     title="Open activity details and grade student submissions"
                                   >
-                                    <ClipboardList size={16} /> View Activity & Grading
-                                  </button>
-                                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', width: isMobile ? '100%' : 'auto' }}>
-                                    {/* Button para sa VCR Replay playback */}
-                                    <button
+                                    View Activity & Grading
+                                  </span>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap', width: isMobile ? '100%' : 'auto', justifyContent: isMobile ? 'space-between' : 'flex-end' }}>
+                                    {/* Link para sa VCR Replay playback */}
+                                    <span
                                       style={{
-                                        ...styles.viewGradingBtn,
                                         color: isDark ? '#c084fc' : '#7c3aed',
-                                        width: isMobile ? '100%' : 'auto',
-                                        justifyContent: 'center'
+                                        fontSize: '0.92rem',
+                                        cursor: 'pointer',
+                                        fontWeight: '700',
+                                        display: 'inline-flex',
+                                        alignItems: 'center'
                                       }}
-                                      className="btn-anim"
                                       onClick={(e) => {
                                         e.stopPropagation();
                                         try {
@@ -2587,10 +2633,12 @@ export default function TeacherClasswork({
                                         } catch {}
                                         onOpenPlayback && onOpenPlayback(item, null);
                                       }}
+                                      onMouseEnter={(e) => { e.currentTarget.style.textDecoration = 'underline'; }}
+                                      onMouseLeave={(e) => { e.currentTarget.style.textDecoration = 'none'; }}
                                       title="Open VCR replay & student recordings"
                                     >
                                       Replay Playback
-                                    </button>
+                                    </span>
                                     {/* Button para sa Live Monitoring */}
                                     <button
                                       style={{
@@ -2839,11 +2887,12 @@ export default function TeacherClasswork({
                                             att={att}
                                             isDark={isDark}
                                             onClick={(clickedAtt) => {
-                                              if (clickedAtt.type === 'image') setPreviewImage(clickedAtt);
-                                              else if (clickedAtt.type === 'video') setPreviewVideo(clickedAtt);
-                                              else if (clickedAtt.type === 'document' || clickedAtt.type === 'link') {
-                                                setPreviewIframe(clickedAtt);
-                                              }
+                                              const targetName = (clickedAtt.name || clickedAtt.url || '').toLowerCase();
+                                              const isImg = clickedAtt.type === 'image' || /\.(png|jpe?g|gif|webp|svg)(\?.*)?$/i.test(targetName);
+                                              const isVid = clickedAtt.type === 'video' || /\.(mp4|webm|mov|m4v|mkv|avi)(\?.*)?$/i.test(targetName);
+                                              if (isImg) setPreviewImage(clickedAtt);
+                                              else if (isVid) setPreviewVideo(clickedAtt);
+                                              else setPreviewIframe(clickedAtt);
                                             }}
                                           />
                                         ))}
@@ -3715,10 +3764,12 @@ export default function TeacherClasswork({
                       isDark={isDark}
                       onRemove={() => removeAttachment(i)}
                       onClick={(clickedAtt) => {
-                        if (clickedAtt.type === 'image') setPreviewImage(clickedAtt);
-                        else if (clickedAtt.type === 'video') setPreviewVideo(clickedAtt);
-                        else if (clickedAtt.type === 'document') setPreviewIframe(clickedAtt);
-                        else if (clickedAtt.type === 'link' && clickedAtt.url) setPreviewIframe(clickedAtt);
+                        const targetName = (clickedAtt.name || clickedAtt.url || '').toLowerCase();
+                        const isImg = clickedAtt.type === 'image' || /\.(png|jpe?g|gif|webp|svg)(\?.*)?$/i.test(targetName);
+                        const isVid = clickedAtt.type === 'video' || /\.(mp4|webm|mov|m4v|mkv|avi)(\?.*)?$/i.test(targetName);
+                        if (isImg) setPreviewImage(clickedAtt);
+                        else if (isVid) setPreviewVideo(clickedAtt);
+                        else setPreviewIframe(clickedAtt);
                       }}
                     />
                   ))}
@@ -3994,6 +4045,45 @@ export default function TeacherClasswork({
           onClose={() => setPreviewIframe(null)}
         />
       )}
+
+      {/* ═══ MODAL: PASTE AS CODE? ═══ */}
+      <PasteAsCodeModal
+        isOpen={Boolean(pasteCodeModal)}
+        isDark={isDark}
+        data={pasteCodeModal}
+        onPasteCode={() => {
+          if (pasteCodeModal?.callback) {
+            pasteCodeModal.callback('as-code');
+          }
+          setPasteCodeModal(null);
+        }}
+        onPasteHtml={() => {
+          if (pasteCodeModal?.callback) {
+            pasteCodeModal.callback('as-html');
+          }
+          setPasteCodeModal(null);
+        }}
+        onPasteText={() => {
+          if (pasteCodeModal?.callback) {
+            pasteCodeModal.callback('as-text');
+          }
+          setPasteCodeModal(null);
+        }}
+        onPasteOnlyText={() => {
+          if (pasteCodeModal?.callback) {
+            pasteCodeModal.callback('only-text');
+          }
+          setPasteCodeModal(null);
+        }}
+        onClose={() => {
+          if (pasteCodeModal?.callback) {
+            try {
+              pasteCodeModal.callback('cancel');
+            } catch {}
+          }
+          setPasteCodeModal(null);
+        }}
+      />
 
       <AddStudentModal
         isOpen={isAddStudentOpen}
@@ -4339,11 +4429,12 @@ export default function TeacherClasswork({
                         att={att}
                         isDark={isDark}
                         onClick={(clickedAtt) => {
-                          if (clickedAtt.type === 'image') setPreviewImage(clickedAtt);
-                          else if (clickedAtt.type === 'video') setPreviewVideo(clickedAtt);
-                          else if (clickedAtt.type === 'document' || clickedAtt.type === 'link') {
-                            setPreviewIframe(clickedAtt);
-                          }
+                          const targetName = (clickedAtt.name || clickedAtt.url || '').toLowerCase();
+                          const isImg = clickedAtt.type === 'image' || /\.(png|jpe?g|gif|webp|svg)(\?.*)?$/i.test(targetName);
+                          const isVid = clickedAtt.type === 'video' || /\.(mp4|webm|mov|m4v|mkv|avi)(\?.*)?$/i.test(targetName);
+                          if (isImg) setPreviewImage(clickedAtt);
+                          else if (isVid) setPreviewVideo(clickedAtt);
+                          else setPreviewIframe(clickedAtt);
                         }}
                       />
                     ))}

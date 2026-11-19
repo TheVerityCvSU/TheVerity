@@ -67,11 +67,15 @@ export default function StudentActivityDetail({
   };
 
   const handlePreviewAttachment = (clickedAtt) => {
-    if (clickedAtt.type === 'image') {
+    if (!clickedAtt) return;
+    const ext = (clickedAtt.url || clickedAtt.name || '').split('?')[0].split('.').pop().toLowerCase();
+    const isImg = clickedAtt.type === 'image' || ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'avif'].includes(ext);
+    const isVid = clickedAtt.type === 'video' || ['mp4', 'webm', 'ogg', 'mov', 'm4v'].includes(ext);
+    if (isImg) {
       setPreviewImage(clickedAtt);
-    } else if (clickedAtt.type === 'video') {
+    } else if (isVid) {
       setPreviewVideo(clickedAtt);
-    } else if (clickedAtt.type === 'document' || clickedAtt.type === 'link') {
+    } else if (clickedAtt.type === 'document' || clickedAtt.type === 'link' || clickedAtt.url) {
       setPreviewIframe(clickedAtt);
     }
   };

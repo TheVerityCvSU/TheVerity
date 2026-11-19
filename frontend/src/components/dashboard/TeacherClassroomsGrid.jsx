@@ -3,6 +3,7 @@ import { Plus, Home } from 'lucide-react';
 import { motion } from 'framer-motion';
 import TeacherCourseCard from './TeacherCourseCard';
 import { getCardColSpan } from '../../data/teacherDashboardConstants';
+import Skeleton from '../Skeleton';
 
 export default function TeacherClassroomsGrid({
   isDark,
@@ -75,13 +76,10 @@ export default function TeacherClassroomsGrid({
               key={i}
               style={{
                 gridColumn: `span ${isMobile ? 12 : getCardColSpan(i, 4, isMobile)}`,
-                height: '260px',
-                backgroundColor: isDark ? '#262626' : '#ffffff',
-                borderRadius: '20px',
-                animation: 'pulse 1.5s infinite',
-                border: isDark ? '1px solid #333333' : '1px solid #e5e7eb'
               }}
-            />
+            >
+              <Skeleton.Card />
+            </div>
           ))
         ) : activeClassrooms.length === 0 ? (
           <div style={{
