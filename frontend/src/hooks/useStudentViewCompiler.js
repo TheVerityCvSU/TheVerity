@@ -36,7 +36,7 @@ export function useStudentViewCompiler({
   const editorRef = externalEditorRef || internalEditorRef;
   const monacoRef = externalMonacoRef || internalMonacoRef;
 
-  const { localSocket, emitToSockets, getCompilerSocket } = useStudentViewCompilerSocket({
+  const { localSocket, secondarySocket, emitToSockets, getCompilerSocket } = useStudentViewCompilerSocket({
     socket,
     currentUser
   });
@@ -242,6 +242,8 @@ export function useStudentViewCompiler({
     diagnosticsRef,
     diagnosticsCount,
     updateEditorMarkers,
+    localSocket,
+    secondarySocket,
     emitToSockets,
     getCompilerSocket,
     handleRunCode,

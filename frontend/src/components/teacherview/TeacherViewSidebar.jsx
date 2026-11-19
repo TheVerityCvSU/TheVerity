@@ -18,11 +18,17 @@ export default function TeacherViewSidebar({
   mode,
   visibleStudents,
   allLogs,
+  activeStudentWarnings,
   students,
   selectedStudentId,
   setSelectedStudentId,
-  activeStudent
+  activeStudent,
+  onSeekToWarning
 }) {
+  const displayedWarnings =
+    mode === 'playback' && selectedStudentId && Array.isArray(activeStudentWarnings)
+      ? activeStudentWarnings
+      : allLogs;
   if (!sidebarOpen) {
     return (
       <TeacherViewSidebarRail
@@ -90,7 +96,7 @@ export default function TeacherViewSidebar({
             >
               <Users size={14} />
               <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {mode === 'live' ? `Live (${visibleStudents.length})` : `Submissions (${visibleStudents.length})`}
+                {mode === 'live' ? 'Live' : `Submissions (${visibleStudents.length})`}
               </span>
             </button>
 
@@ -208,10 +214,13 @@ export default function TeacherViewSidebar({
         />
       ) : (
         <TeacherViewWarningsList
-          allLogs={allLogs}
+          allLogs={displayedWarnings}
           studentSearch={studentSearch}
           students={students}
           setSelectedStudentId={setSelectedStudentId}
+          mode={mode}
+          onSeekToWarning={onSeekToWarning}
+          isDark={isDark}
           theme={theme}
           isCompact={isCompact}
           setSidebarOpen={setSidebarOpen}

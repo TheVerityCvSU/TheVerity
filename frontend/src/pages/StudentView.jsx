@@ -297,16 +297,120 @@ export default function StudentView({
     }
   }, [submissionHook.submitted]);
 
+  const effectiveAssignment = currentAssignment || assignment;
+
+  // Broadcast live presence on mount, reconnect, and periodic heartbeat
+  const emitPresence = useCallback(() => {
+    if (isSandbox || submissionHook.submitted) return;
+    const resolvedClassroomId =
+      (classroom?.id != null ? String(classroom.id) : null) ||
+      (classroomId !== 'none' ? classroomId : null) ||
+      (effectiveAssignment?.classroomId != null ? String(effectiveAssignment.classroomId) : null) ||
+      (effectiveAssignment?.classroom_id != null ? String(effectiveAssignment.classroom_id) : null) ||
+      'none';
+    const resolvedAssignmentId = effectiveAssignment?.id || assignmentId;
+    if (!resolvedAssignmentId || resolvedAssignmentId === 'unassigned') return;
+
+    const payload = {
+      studentId: studentActualId,
+      id: studentActualId,
+      name: studentDisplayName || safeUsername,
+      studentName: studentDisplayName || safeUsername,
+      email: currentUser?.email || '',
+      avatar: currentUser?.avatar || '',
+      code: filesHook.codeRef?.current || filesHook.code || '',
+      classroomId: resolvedClassroomId,
+      classCode: classroom?.code || classroom?.section || effectiveAssignment?.classCode || '',
+      assignmentId: resolvedAssignmentId,
+      logs: kioskHook.proctorLogs || [],
+      timestamp: Date.now()
+    };
+    compilerHook.emitToSockets('student_enter_activity', payload);
+    compilerHook.emitToSockets('student_typing', payload);
+  }, [
+    isSandbox,
+    submissionHook.submitted,
+    classroom?.id,
+    classroom?.code,
+    classroom?.section,
+    classroomId,
+    effectiveAssignment?.id,
+    effectiveAssignment?.classroomId,
+    effectiveAssignment?.classroom_id,
+    effectiveAssignment?.classCode,
+    assignmentId,
+    studentActualId,
+    studentDisplayName,
+    safeUsername,
+    currentUser?.email,
+    currentUser?.avatar,
+    filesHook.codeRef,
+    filesHook.code,
+    kioskHook.proctorLogs,
+    compilerHook.emitToSockets
+  ]);
+
+  useEffect(() => {
+    if (isSandbox || submissionHook.submitted) return;
+    emitPresence();
+
+    const locSock = compilerHook.localSocket;
+    const secSock = compilerHook.secondarySocket;
+    if (socket) socket.on('connect', emitPresence);
+    if (locSock) locSock.on('connect', emitPresence);
+    if (secSock) secSock.on('connect', emitPresence);
+
+    const presenceInterval = setInterval(emitPresence, 5000);
+    return () => {
+      if (socket) socket.off('connect', emitPresence);
+      if (locSock) locSock.off('connect', emitPresence);
+      if (secSock) secSock.off('connect', emitPresence);
+      clearInterval(presenceInterval);
+    };
+  }, [isSandbox, submissionHook.submitted, emitPresence, socket, compilerHook.localSocket, compilerHook.secondarySocket]);
+
+  const leaveInfoRef = useRef({
+    studentId: studentActualId,
+    studentName: studentDisplayName || safeUsername,
+    classroomId,
+    assignmentId: effectiveAssignment?.id || assignmentId
+  });
+  useEffect(() => {
+    const resolvedClassroomId =
+      (classroom?.id != null ? String(classroom.id) : null) ||
+      (classroomId !== 'none' ? classroomId : null) ||
+      (effectiveAssignment?.classroomId != null ? String(effectiveAssignment.classroomId) : null) ||
+      (effectiveAssignment?.classroom_id != null ? String(effectiveAssignment.classroom_id) : null) ||
+      'none';
+    leaveInfoRef.current = {
+      studentId: studentActualId,
+      studentName: studentDisplayName || safeUsername,
+      classroomId: resolvedClassroomId,
+      assignmentId: effectiveAssignment?.id || assignmentId
+    };
+  }, [studentActualId, studentDisplayName, safeUsername, classroom?.id, classroomId, effectiveAssignment?.id, effectiveAssignment?.classroomId, effectiveAssignment?.classroom_id, assignmentId]);
+
+  useEffect(() => {
+    return () => {
+      if (!isSandbox && leaveInfoRef.current) {
+        compilerHookRef.current?.emitToSockets?.('student_leave_workspace', {
+          ...leaveInfoRef.current,
+          timestamp: Date.now()
+        });
+      }
+    };
+  }, [isSandbox]);
+
   const handleSaveCode = useCallback(() => {
     if (submissionHook.submitted) return;
     try {
       localStorage.setItem(filesHook.draftKey, filesHook.code);
       setSaveStatus(true);
       setTimeout(() => setSaveStatus(false), 2000);
+      emitPresence();
     } catch {}
-  }, [submissionHook.submitted, filesHook.draftKey, filesHook.code]);
+  }, [submissionHook.submitted, filesHook.draftKey, filesHook.code, emitPresence]);
 
-  const effectiveAssignment = currentAssignment || assignment;
   const isBackStrictLock = Boolean(effectiveAssignment?.disableBack || effectiveAssignment?.disable_back);
   const isBackBlocked = !submissionHook.submitted && (Boolean(kioskHook.kioskRules?.lockdownActive) || isBackStrictLock);
 
@@ -319,8 +423,14 @@ export default function StudentView({
       }
       return;
     }
+    if (!isSandbox && leaveInfoRef.current) {
+      compilerHook.emitToSockets('student_leave_workspace', {
+        ...leaveInfoRef.current,
+        timestamp: Date.now()
+      });
+    }
     if (typeof onBack === 'function') onBack();
-  }, [isBackBlocked, isBackStrictLock, onBack]);
+  }, [isBackBlocked, isBackStrictLock, isSandbox, compilerHook.emitToSockets, onBack]);
 
   useEffect(() => {
     if (!isBackStrictLock || submissionHook.submitted) return;

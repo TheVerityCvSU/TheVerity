@@ -208,10 +208,12 @@ export default function TeacherView({
           mode={mode}
           visibleStudents={roster.visibleStudents}
           allLogs={warnings.allLogs}
+          activeStudentWarnings={warnings.activeStudentWarnings}
           students={roster.students}
           selectedStudentId={roster.selectedStudentId}
           setSelectedStudentId={roster.setSelectedStudentId}
           activeStudent={roster.activeStudent}
+          onSeekToWarning={playback.handleScrub}
         />
 
         <main
@@ -265,6 +267,7 @@ export default function TeacherView({
               timeDisplayRef={playback.timeDisplayRef}
               smoothProgressRef={playback.smoothProgressRef}
               currentAnimTimeRef={playback.currentAnimTimeRef}
+              activeStudentWarnings={warnings.activeStudentWarnings}
               theme={theme}
               isDark={isDark}
               isMobile={isMobile}

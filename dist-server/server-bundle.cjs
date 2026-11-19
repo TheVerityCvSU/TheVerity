@@ -111073,9 +111073,12 @@ function getActiveActivitiesMap(targetClassroomId = null) {
   for (const student of Object.values(activeStudents)) {
     if (!student || !student.assignmentId || student.assignmentId === "none" || student.assignmentId === "unassigned") continue;
     if (student.isLive === false || student.status === "Offline" || student.status === "Submitted") continue;
-    if (targetClassroomId && targetClassroomId !== "all" && String(student.classroomId) !== String(targetClassroomId)) continue;
     const aId = String(student.assignmentId);
     counts[aId] = (counts[aId] || 0) + 1;
+    if (student.assignmentTitle) {
+      const titleKey = `title:${String(student.assignmentTitle).trim().toLowerCase()}`;
+      counts[titleKey] = (counts[titleKey] || 0) + 1;
+    }
   }
   return counts;
 }
@@ -111098,14 +111101,8 @@ function getActiveClassroomsMap() {
   return classroomCounts;
 }
 function broadcastActiveActivities() {
-  const allCounts = {};
+  const allCounts = getActiveActivitiesMap();
   const classroomCounts = getActiveClassroomsMap();
-  for (const student of Object.values(activeStudents)) {
-    if (!student || !student.assignmentId || student.assignmentId === "none" || student.assignmentId === "unassigned") continue;
-    if (student.isLive === false || student.status === "Offline" || student.status === "Submitted") continue;
-    const aId = String(student.assignmentId);
-    allCounts[aId] = (allCounts[aId] || 0) + 1;
-  }
   io.emit("active_activities_update", { counts: allCounts, classroomCounts });
 }
 function removeStudentFromPreviousActivities(studentId, studentName, excludeKey = null) {
@@ -112037,18 +112034,27 @@ io.on("connection", (socket) => {
       } catch (_) {
       }
     }
-    let classCode = null;
-    if (classroomId && classroomId !== "none") {
+    let classCode = data.classCode ? String(data.classCode).trim() : null;
+    if (classroomId && classroomId !== "none" || classCode) {
       try {
-        const clsRow = await db.get(
-          `SELECT id, code FROM classrooms WHERE id = ? OR CAST(id AS TEXT) = ? OR LOWER(code) = ?`,
-          classroomId,
-          classroomId,
-          classroomId.toLowerCase()
-        );
+        let clsRow = null;
+        if (classCode) {
+          clsRow = await db.get(
+            `SELECT id, code FROM classrooms WHERE LOWER(code) = ?`,
+            classCode.toLowerCase()
+          );
+        }
+        if (!clsRow && classroomId && classroomId !== "none") {
+          clsRow = await db.get(
+            `SELECT id, code FROM classrooms WHERE id = ? OR CAST(id AS TEXT) = ? OR LOWER(code) = ?`,
+            classroomId,
+            classroomId,
+            classroomId.toLowerCase()
+          );
+        }
         if (clsRow) {
           classroomId = String(clsRow.id);
-          classCode = clsRow.code ? String(clsRow.code) : null;
+          classCode = clsRow.code ? String(clsRow.code) : classCode;
         }
       } catch (_) {
       }

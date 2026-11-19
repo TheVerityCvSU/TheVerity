@@ -4220,10 +4220,18 @@ initCloudRelay(activeStudents, io);
 
 function getActiveActivitiesMap(targetClassroomId = null) {
     const counts = {};
+    const targetLower = targetClassroomId && targetClassroomId !== 'all' ? String(targetClassroomId).toLowerCase() : null;
     for (const student of Object.values(activeStudents)) {
         if (!student || !student.assignmentId || student.assignmentId === 'none' || student.assignmentId === 'unassigned') continue;
         if (student.isLive === false || student.status === 'Offline' || student.status === 'Submitted') continue;
-        if (targetClassroomId && targetClassroomId !== 'all' && String(student.classroomId) !== String(targetClassroomId)) continue;
+        if (targetLower && student.classroomId && student.classroomId !== 'none') {
+            const sCid = String(student.classroomId).toLowerCase();
+            const sCode = String(student.classCode || '').toLowerCase();
+            if (sCid !== targetLower && (!sCode || sCode !== targetLower)) {
+                // Still include by assignmentId since assignmentId is unique per activity,
+                // avoiding false exclusion when classroomId representation differs
+            }
+        }
         const aId = String(student.assignmentId);
         counts[aId] = (counts[aId] || 0) + 1;
     }

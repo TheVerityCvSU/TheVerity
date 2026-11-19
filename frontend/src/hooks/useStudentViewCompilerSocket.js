@@ -4,6 +4,7 @@ import { getCompilerSocketUrl, getLocalApiUrl, getCloudUrl, getConnectionStatus 
 
 export function useStudentViewCompilerSocket({ socket, currentUser }) {
   const [localSocket, setLocalSocket] = useState(null);
+  const [secondarySocket, setSecondarySocket] = useState(null);
   const localSocketRef = useRef(null);
   const secondarySocketRef = useRef(null);
 
@@ -81,22 +82,47 @@ export function useStudentViewCompilerSocket({ socket, currentUser }) {
             cb({ token });
           }
         });
+        secSocket.on('connect', () => {
+          const token = localStorage.getItem('verity_token') || localStorage.getItem('token');
+          secSocket.emit('authenticate', { token, user: currentUser });
+          setSecondarySocket(secSocket);
+        });
+        secSocket.on('disconnect', () => {
+          setSecondarySocket(null);
+        });
         secondarySocketRef.current = secSocket;
+        setSecondarySocket(secSocket);
       }
     } catch (_) {}
 
     return () => {
+      setSecondarySocket(null);
       if (secondarySocketRef.current) {
         try { secondarySocketRef.current.disconnect(); } catch (_) {}
         secondarySocketRef.current = null;
       }
     };
-  }, [socket]);
+  }, [socket, currentUser]);
 
   const emitToSockets = useCallback((event, data) => {
-    if (socket && typeof socket.emit === 'function') socket.emit(event, data);
+    const emittedUris = new Set();
+    if (socket && typeof socket.emit === 'function') {
+      socket.emit(event, data);
+      if (socket.io?.uri) emittedUris.add(socket.io.uri);
+    }
     if (secondarySocketRef.current && typeof secondarySocketRef.current.emit === 'function') {
-      secondarySocketRef.current.emit(event, data);
+      const secUri = secondarySocketRef.current.io?.uri;
+      if (!secUri || !emittedUris.has(secUri)) {
+        secondarySocketRef.current.emit(event, data);
+        if (secUri) emittedUris.add(secUri);
+      }
+    }
+    if (localSocketRef.current && localSocketRef.current.connected && typeof localSocketRef.current.emit === 'function') {
+      const locUri = localSocketRef.current.io?.uri;
+      if (!locUri || !emittedUris.has(locUri)) {
+        localSocketRef.current.emit(event, data);
+        if (locUri) emittedUris.add(locUri);
+      }
     }
   }, [socket]);
 
@@ -106,6 +132,7 @@ export function useStudentViewCompilerSocket({ socket, currentUser }) {
 
   return {
     localSocket,
+    secondarySocket,
     emitToSockets,
     getCompilerSocket
   };

@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
-import { apiFetch } from '../data/api';
+import { io } from 'socket.io-client';
+import { apiFetch, getLocalApiUrl, getCloudUrl, getConnectionStatus } from '../data/api';
 import {
   isPhantomClassroom,
   generateClassCode,
@@ -42,35 +43,190 @@ export function useTeacherClassrooms({ currentUser, socket }) {
 
   // Real-time active activities tracking per classroom
   useEffect(() => {
-    const handleActiveUpdate = (data) => {
+    let isSubscribed = true;
+    let secSocket = null;
+    const sourceRef = { primary: {}, secondary: {}, liveStudents: {} };
+
+    const recompute = () => {
+      if (!isSubscribed) return;
+      const merged = {};
+      const keys = new Set([
+        ...Object.keys(sourceRef.primary || {}),
+        ...Object.keys(sourceRef.secondary || {})
+      ]);
+      for (const k of keys) {
+        const val = Math.max(
+          Number(sourceRef.primary?.[k] || 0),
+          Number(sourceRef.secondary?.[k] || 0)
+        );
+        if (val > 0) merged[k] = val;
+      }
+
+      const now = Date.now();
+      const liveByClass = {};
+      for (const [sKey, info] of Object.entries(sourceRef.liveStudents)) {
+        if (!info || now - info.ts > 20000) {
+          delete sourceRef.liveStudents[sKey];
+          continue;
+        }
+        if (info.classroomId && info.classroomId !== 'none') {
+          const cId = String(info.classroomId);
+          liveByClass[cId] = (liveByClass[cId] || 0) + 1;
+          liveByClass[cId.toLowerCase()] = (liveByClass[cId.toLowerCase()] || 0) + 1;
+        }
+        if (info.classCode) {
+          const code = String(info.classCode);
+          liveByClass[code] = (liveByClass[code] || 0) + 1;
+          liveByClass[code.toLowerCase()] = (liveByClass[code.toLowerCase()] || 0) + 1;
+        }
+      }
+      for (const [cId, count] of Object.entries(liveByClass)) {
+        merged[cId] = Math.max(Number(merged[cId] || 0), count);
+      }
+
+      setActiveClassroomCounts(merged);
+    };
+
+    const handlePrimaryUpdate = (data) => {
       if (data && data.classroomCounts) {
-        setActiveClassroomCounts(data.classroomCounts);
+        sourceRef.primary = data.classroomCounts;
+        recompute();
       }
     };
 
+    const handleSecondaryUpdate = (data) => {
+      if (data && data.classroomCounts) {
+        sourceRef.secondary = data.classroomCounts;
+        recompute();
+      }
+    };
+
+    const handleStudentUpdate = (data) => {
+      if (!data || !data.assignmentId || data.assignmentId === 'none' || data.assignmentId === 'unassigned') return;
+      if (data.isLive === false || data.status === 'Offline' || data.status === 'Submitted') return;
+      const sId = String(data.studentId || data.id || data.name || data.studentName || '');
+      if (!sId) return;
+      sourceRef.liveStudents[`${sId}_${data.assignmentId}`] = {
+        classroomId: String(data.classroomId || ''),
+        classCode: String(data.classCode || ''),
+        ts: Date.now()
+      };
+      recompute();
+    };
+
+    const handleStudentLeft = (data) => {
+      if (!data) return;
+      const sId = String(data.studentId || data.id || data.name || data.studentName || '');
+      if (sId) {
+        for (const key of Object.keys(sourceRef.liveStudents)) {
+          if (key.startsWith(`${sId}_`)) delete sourceRef.liveStudents[key];
+        }
+      }
+      if (socket) socket.emit('get_active_activities');
+      if (secSocket && secSocket.connected) secSocket.emit('get_active_activities');
+      recompute();
+    };
+
     if (socket) {
-      socket.on('active_activities_update', handleActiveUpdate);
+      socket.on('active_activities_update', handlePrimaryUpdate);
+      socket.on('teacher_student_update', handleStudentUpdate);
+      socket.on('teacher_student_left', handleStudentLeft);
+      socket.on('teacher_student_submitted', handleStudentLeft);
       socket.emit('get_active_activities');
     }
+
+    try {
+      const conn = getConnectionStatus();
+      const localUrl = getLocalApiUrl();
+      const cloudUrl = getCloudUrl();
+      const primaryUri = socket?.io?.uri || '';
+
+      let altTarget = null;
+      if (primaryUri.includes('localhost') || primaryUri.includes('127.0.0.1') || primaryUri.includes('192.168.')) {
+        if (conn.isOnline && cloudUrl && !cloudUrl.includes('localhost') && !cloudUrl.includes('127.0.0.1')) {
+          altTarget = cloudUrl;
+        }
+      } else {
+        if (!conn.isWebHosted && localUrl && !localUrl.includes('verity-2z4v')) {
+          altTarget = localUrl;
+        }
+      }
+
+      if (altTarget && altTarget !== primaryUri) {
+        secSocket = io(altTarget, {
+          reconnection: true,
+          reconnectionAttempts: Infinity,
+          reconnectionDelay: 2000,
+          timeout: 5000,
+          transports: ['websocket', 'polling'],
+          auth: (cb) => {
+            const token = localStorage.getItem('verity_token') || localStorage.getItem('token');
+            cb({ token });
+          }
+        });
+        secSocket.on('connect', () => {
+          const token = localStorage.getItem('verity_token') || localStorage.getItem('token');
+          secSocket.emit('authenticate', { token });
+          secSocket.emit('get_active_activities');
+        });
+        secSocket.on('active_activities_update', handleSecondaryUpdate);
+        secSocket.on('teacher_student_update', handleStudentUpdate);
+        secSocket.on('teacher_student_left', handleStudentLeft);
+        secSocket.on('teacher_student_submitted', handleStudentLeft);
+      }
+    } catch (_) {}
 
     const fetchActive = () => {
       const url = `${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/active-activities`;
       apiFetch(url)
-        .then(res => res.ok ? res.json() : null)
+        .then(res => (res && res.ok ? res.json() : null))
         .then(data => {
           if (data && data.classroomCounts) {
-            setActiveClassroomCounts(data.classroomCounts);
+            sourceRef.primary = data.classroomCounts;
+            recompute();
           }
         })
         .catch(() => {});
+
+      try {
+        const conn = getConnectionStatus();
+        const localUrl = getLocalApiUrl();
+        if (!conn.isWebHosted && localUrl && !localUrl.includes('verity-2z4v')) {
+          const token = localStorage.getItem('verity_token') || localStorage.getItem('token');
+          fetch(`${localUrl}/active-activities`, {
+            headers: token ? { Authorization: `Bearer ${token}` } : {}
+          })
+            .then(r => (r && r.ok ? r.json() : null))
+            .then(data => {
+              if (data && data.classroomCounts) {
+                sourceRef.secondary = data.classroomCounts;
+                recompute();
+              }
+            })
+            .catch(() => {});
+        }
+      } catch (_) {}
     };
 
     fetchActive();
     const activeInterval = setInterval(fetchActive, 4000);
 
     return () => {
+      isSubscribed = false;
       if (socket) {
-        socket.off('active_activities_update', handleActiveUpdate);
+        socket.off('active_activities_update', handlePrimaryUpdate);
+        socket.off('teacher_student_update', handleStudentUpdate);
+        socket.off('teacher_student_left', handleStudentLeft);
+        socket.off('teacher_student_submitted', handleStudentLeft);
+      }
+      if (secSocket) {
+        try {
+          secSocket.off('active_activities_update', handleSecondaryUpdate);
+          secSocket.off('teacher_student_update', handleStudentUpdate);
+          secSocket.off('teacher_student_left', handleStudentLeft);
+          secSocket.off('teacher_student_submitted', handleStudentLeft);
+          secSocket.disconnect();
+        } catch (_) {}
       }
       clearInterval(activeInterval);
     };

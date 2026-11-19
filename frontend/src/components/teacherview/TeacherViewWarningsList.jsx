@@ -3,6 +3,9 @@ export default function TeacherViewWarningsList({
   studentSearch,
   students,
   setSelectedStudentId,
+  mode,
+  onSeekToWarning,
+  isDark,
   theme,
   isCompact,
   setSidebarOpen
@@ -28,7 +31,9 @@ export default function TeacherViewWarningsList({
     const q = studentSearch.toLowerCase();
     return (
       (log.studentName || '').toLowerCase().includes(q) ||
-      (log.action || '').toLowerCase().includes(q)
+      (log.action || '').toLowerCase().includes(q) ||
+      (log.exactTime || log.time || '').toLowerCase().includes(q) ||
+      (log.playbackTimeFormatted || '').toLowerCase().includes(q)
     );
   });
 
@@ -43,55 +48,77 @@ export default function TeacherViewWarningsList({
         gap: '8px'
       }}
     >
-      {filteredLogs.map((log, idx) => (
-        <div
-          key={`${log.id || 'log'}-${idx}`}
-          onClick={() => {
-            const matched = Object.values(students).find(
-              (s) =>
-                s.isLive !== false &&
-                s.status !== 'Offline' &&
-                (s.id === log.studentId ||
+      {filteredLogs.map((log, idx) => {
+        const rawClockTime = log.exactTime || log.time || '';
+        const displayClockTime = rawClockTime.replace(/^(\d{1,2}:\d{2}):\d{2}(\s*[AP]M)?$/i, '$1$2');
+
+        return (
+          <div
+            key={`${log.id || 'log'}-${idx}`}
+            onClick={() => {
+              const matched = Object.values(students).find((s) => {
+                if (mode === 'live' && (s.isLive === false || s.status === 'Offline')) return false;
+                return (
+                  s.id === log.studentId ||
                   s.name === log.studentName ||
                   s.id === log.studentName ||
-                  s.name === log.studentId)
-            );
-            if (matched) setSelectedStudentId(matched.id || matched.name);
-            if (isCompact) setSidebarOpen(false);
-          }}
-          style={{
-            padding: '10px 12px',
-            borderRadius: '8px',
-            backgroundColor: theme.cardBg,
-            border: `1px solid ${theme.border}`,
-            display: 'flex',
-            flexDirection: 'column',
-            gap: '4px',
-            cursor: 'pointer',
-            transition: 'background-color 0.15s ease'
-          }}
-        >
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ fontSize: '0.82rem', fontWeight: '700', color: theme.textPrimary }}>
-              {log.studentName}
-            </span>
-            <span style={{ fontSize: '0.72rem', color: theme.textMuted }}>{log.time}</span>
+                  s.name === log.studentId
+                );
+              });
+              if (matched) setSelectedStudentId(matched.id || matched.name);
+              if (typeof onSeekToWarning === 'function' && typeof log.playbackTimeMs === 'number') {
+                setTimeout(() => onSeekToWarning(log.playbackTimeMs), 0);
+              }
+              if (isCompact) setSidebarOpen(false);
+            }}
+            title={displayClockTime}
+            style={{
+              padding: '10px 12px',
+              borderRadius: '8px',
+              backgroundColor: theme.cardBg,
+              border: `1px solid ${theme.border}`,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '6px',
+              cursor: 'pointer',
+              transition: 'background-color 0.15s ease'
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '6px' }}>
+              <span style={{ fontSize: '0.82rem', fontWeight: '700', color: theme.textPrimary }}>
+                {log.studentName}
+              </span>
+              {displayClockTime && (
+                <span
+                  style={{
+                    fontSize: '0.7rem',
+                    fontWeight: '600',
+                    color: theme.textMuted
+                  }}
+                >
+                  {displayClockTime}
+                </span>
+              )}
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '6px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <span
+                  style={{
+                    width: '6px',
+                    height: '6px',
+                    borderRadius: '50%',
+                    backgroundColor: log.color || '#ef4444',
+                    flexShrink: 0
+                  }}
+                />
+                <span style={{ fontSize: '0.78rem', color: log.color || '#ef4444', fontWeight: '600' }}>
+                  {log.action}
+                </span>
+              </div>
+            </div>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <span
-              style={{
-                width: '6px',
-                height: '6px',
-                borderRadius: '50%',
-                backgroundColor: log.color || '#ef4444'
-              }}
-            />
-            <span style={{ fontSize: '0.78rem', color: log.color || '#ef4444', fontWeight: '600' }}>
-              {log.action}
-            </span>
-          </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }

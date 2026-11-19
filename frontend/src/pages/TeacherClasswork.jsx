@@ -10,7 +10,8 @@ import {
   Paperclip, MoreHorizontal, Code2, Trash2, AlertTriangle, Lock, Unlock, ShieldAlert
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { apiFetch } from '../data/api';
+import { io } from 'socket.io-client';
+import { apiFetch, getLocalApiUrl, getCloudUrl, getConnectionStatus } from '../data/api';
 import Skeleton from '../components/Skeleton';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { useMediaQuery } from '../hooks/useMediaQuery';
@@ -374,39 +375,220 @@ export default function TeacherClasswork({
     return () => clearInterval(interval);
   }, [classroomId]);
 
-  // Real-time active students tracking per activity
+  // Real-time active students tracking per activity & classroom
   const [activeActivityCounts, setActiveActivityCounts] = useState({});
+  const [activeClassroomCounts, setActiveClassroomCounts] = useState({});
+
+  const getActiveCountForActivity = (item) => {
+    if (!item) return 0;
+    const idStr = String(item.id ?? '');
+    if (idStr && Number(activeActivityCounts[idStr]) > 0) {
+      return Number(activeActivityCounts[idStr]);
+    }
+    const altId = item.assignmentId ?? item.assignment_id ?? item._id;
+    if (altId != null && Number(activeActivityCounts[String(altId)]) > 0) {
+      return Number(activeActivityCounts[String(altId)]);
+    }
+    return 0;
+  };
 
   useEffect(() => {
-    const handleActiveUpdate = (data) => {
-      if (data && data.counts) {
-        setActiveActivityCounts(data.counts);
+    let isSubscribed = true;
+    let secSocket = null;
+    const sourceCountsRef = { primary: {}, secondary: {}, liveStudents: {} };
+    const sourceClassCountsRef = { primary: {}, secondary: {} };
+
+    const recomputeMerged = () => {
+      if (!isSubscribed) return;
+      const mergedCounts = {};
+      const allKeys = new Set([
+        ...Object.keys(sourceCountsRef.primary || {}),
+        ...Object.keys(sourceCountsRef.secondary || {})
+      ]);
+      for (const k of allKeys) {
+        const val = Math.max(
+          Number(sourceCountsRef.primary?.[k] || 0),
+          Number(sourceCountsRef.secondary?.[k] || 0)
+        );
+        if (val > 0) mergedCounts[k] = val;
       }
+
+      // Also count recently seen live student events (within last 20s) in case HTTP poll hasn't caught up
+      const now = Date.now();
+      const liveByAssignment = {};
+      for (const [sKey, info] of Object.entries(sourceCountsRef.liveStudents)) {
+        if (!info || now - info.ts > 20000) {
+          delete sourceCountsRef.liveStudents[sKey];
+          continue;
+        }
+        const aId = String(info.assignmentId);
+        liveByAssignment[aId] = (liveByAssignment[aId] || 0) + 1;
+      }
+      for (const [aId, count] of Object.entries(liveByAssignment)) {
+        mergedCounts[aId] = Math.max(Number(mergedCounts[aId] || 0), count);
+      }
+
+      setActiveActivityCounts(mergedCounts);
+
+      const mergedClassCounts = {};
+      const classKeys = new Set([
+        ...Object.keys(sourceClassCountsRef.primary || {}),
+        ...Object.keys(sourceClassCountsRef.secondary || {})
+      ]);
+      for (const k of classKeys) {
+        const val = Math.max(
+          Number(sourceClassCountsRef.primary?.[k] || 0),
+          Number(sourceClassCountsRef.secondary?.[k] || 0)
+        );
+        if (val > 0) mergedClassCounts[k] = val;
+      }
+      setActiveClassroomCounts(mergedClassCounts);
+    };
+
+    const handlePrimaryActiveUpdate = (data) => {
+      if (!data) return;
+      if (data.counts) sourceCountsRef.primary = data.counts;
+      if (data.classroomCounts) sourceClassCountsRef.primary = data.classroomCounts;
+      recomputeMerged();
+    };
+
+    const handleSecondaryActiveUpdate = (data) => {
+      if (!data) return;
+      if (data.counts) sourceCountsRef.secondary = data.counts;
+      if (data.classroomCounts) sourceClassCountsRef.secondary = data.classroomCounts;
+      recomputeMerged();
+    };
+
+    const handleStudentUpdate = (data) => {
+      if (!data || !data.assignmentId || data.assignmentId === 'none' || data.assignmentId === 'unassigned') return;
+      if (data.isLive === false || data.status === 'Offline' || data.status === 'Submitted') return;
+      const sId = String(data.studentId || data.id || data.name || data.studentName || '');
+      if (!sId) return;
+      sourceCountsRef.liveStudents[`${sId}_${data.assignmentId}`] = {
+        assignmentId: String(data.assignmentId),
+        classroomId: String(data.classroomId || ''),
+        ts: Date.now()
+      };
+      recomputeMerged();
+    };
+
+    const handleStudentLeftOrSubmitted = (data) => {
+      if (!data) return;
+      const sId = String(data.studentId || data.id || data.name || data.studentName || '');
+      if (sId) {
+        for (const key of Object.keys(sourceCountsRef.liveStudents)) {
+          if (key.startsWith(`${sId}_`)) {
+            delete sourceCountsRef.liveStudents[key];
+          }
+        }
+      }
+      if (socket) socket.emit('get_active_activities');
+      if (secSocket && secSocket.connected) secSocket.emit('get_active_activities');
+      recomputeMerged();
     };
 
     if (socket) {
-      socket.on('active_activities_update', handleActiveUpdate);
-      socket.emit('get_active_activities', { classroomId: classroom?.id });
+      socket.on('active_activities_update', handlePrimaryActiveUpdate);
+      socket.on('teacher_student_update', handleStudentUpdate);
+      socket.on('teacher_student_left', handleStudentLeftOrSubmitted);
+      socket.on('teacher_student_submitted', handleStudentLeftOrSubmitted);
+      socket.emit('get_active_activities');
     }
 
+    try {
+      const conn = getConnectionStatus();
+      const localUrl = getLocalApiUrl();
+      const cloudUrl = getCloudUrl();
+      const primaryUri = socket?.io?.uri || '';
+
+      let altTarget = null;
+      if (primaryUri.includes('localhost') || primaryUri.includes('127.0.0.1') || primaryUri.includes('192.168.')) {
+        if (conn.isOnline && cloudUrl && !cloudUrl.includes('localhost') && !cloudUrl.includes('127.0.0.1')) {
+          altTarget = cloudUrl;
+        }
+      } else {
+        if (!conn.isWebHosted && localUrl && !localUrl.includes('verity-2z4v')) {
+          altTarget = localUrl;
+        }
+      }
+
+      if (altTarget && altTarget !== primaryUri) {
+        secSocket = io(altTarget, {
+          reconnection: true,
+          reconnectionAttempts: Infinity,
+          reconnectionDelay: 2000,
+          timeout: 5000,
+          transports: ['websocket', 'polling'],
+          auth: (cb) => {
+            const token = localStorage.getItem('verity_token') || localStorage.getItem('token');
+            cb({ token });
+          }
+        });
+        secSocket.on('connect', () => {
+          const token = localStorage.getItem('verity_token') || localStorage.getItem('token');
+          secSocket.emit('authenticate', { token });
+          secSocket.emit('get_active_activities');
+        });
+        secSocket.on('active_activities_update', handleSecondaryActiveUpdate);
+        secSocket.on('teacher_student_update', handleStudentUpdate);
+        secSocket.on('teacher_student_left', handleStudentLeftOrSubmitted);
+        secSocket.on('teacher_student_submitted', handleStudentLeftOrSubmitted);
+      }
+    } catch (_) {}
+
     const fetchActive = () => {
-      const url = `${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/active-activities${classroom?.id ? `?classroomId=${classroom.id}` : ''}`;
-      apiFetch(url)
-        .then(res => res.ok ? res.json() : null)
+      const baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+      apiFetch(`${baseUrl}/active-activities`)
+        .then(res => (res && res.ok ? res.json() : null))
         .then(data => {
-          if (data && data.counts) {
-            setActiveActivityCounts(data.counts);
+          if (data) {
+            if (data.counts) sourceCountsRef.primary = data.counts;
+            if (data.classroomCounts) sourceClassCountsRef.primary = data.classroomCounts;
+            recomputeMerged();
           }
         })
         .catch(() => {});
+
+      try {
+        const conn = getConnectionStatus();
+        const localUrl = getLocalApiUrl();
+        if (!conn.isWebHosted && localUrl && !localUrl.includes('verity-2z4v')) {
+          const token = localStorage.getItem('verity_token') || localStorage.getItem('token');
+          fetch(`${localUrl}/active-activities`, {
+            headers: token ? { Authorization: `Bearer ${token}` } : {}
+          })
+            .then(r => (r && r.ok ? r.json() : null))
+            .then(data => {
+              if (data) {
+                if (data.counts) sourceCountsRef.secondary = data.counts;
+                if (data.classroomCounts) sourceClassCountsRef.secondary = data.classroomCounts;
+                recomputeMerged();
+              }
+            })
+            .catch(() => {});
+        }
+      } catch (_) {}
     };
 
     fetchActive();
-    const activeInterval = setInterval(fetchActive, 5000);
+    const activeInterval = setInterval(fetchActive, 4000);
 
     return () => {
+      isSubscribed = false;
       if (socket) {
-        socket.off('active_activities_update', handleActiveUpdate);
+        socket.off('active_activities_update', handlePrimaryActiveUpdate);
+        socket.off('teacher_student_update', handleStudentUpdate);
+        socket.off('teacher_student_left', handleStudentLeftOrSubmitted);
+        socket.off('teacher_student_submitted', handleStudentLeftOrSubmitted);
+      }
+      if (secSocket) {
+        try {
+          secSocket.off('active_activities_update', handleSecondaryActiveUpdate);
+          secSocket.off('teacher_student_update', handleStudentUpdate);
+          secSocket.off('teacher_student_left', handleStudentLeftOrSubmitted);
+          secSocket.off('teacher_student_submitted', handleStudentLeftOrSubmitted);
+          secSocket.disconnect();
+        } catch (_) {}
       }
       clearInterval(activeInterval);
     };
@@ -711,6 +893,19 @@ export default function TeacherClasswork({
   const [bulkGradeVal, setBulkGradeVal] = useState(String(maxPoints));
   const [bulkFeedbackVal, setBulkFeedbackVal] = useState('Great work!');
   const [bulkToastMsg, setBulkToastMsg] = useState('');
+  const [isGradesActivityDropdownOpen, setIsGradesActivityDropdownOpen] = useState(false);
+  const gradesActivityDropdownRef = useRef(null);
+
+  useEffect(() => {
+    if (!isGradesActivityDropdownOpen) return;
+    const handleClickOutside = (e) => {
+      if (gradesActivityDropdownRef.current && !gradesActivityDropdownRef.current.contains(e.target)) {
+        setIsGradesActivityDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [isGradesActivityDropdownOpen]);
 
   // Load ONLY students who have submitted this activity for this classroom
   useEffect(() => {
@@ -1674,6 +1869,7 @@ export default function TeacherClasswork({
             <div style={{ display: 'flex', flex: 1 }}>
               {CLASSROOM_TABS.map((tab) => {
                 const isActive = activeTab === tab.id;
+                const hasLiveClasswork = tab.id === 'classwork' && visibleClasswork.some(item => getActiveCountForActivity(item) > 0);
                 return (
                   <button
                     key={tab.id}
@@ -1681,7 +1877,7 @@ export default function TeacherClasswork({
                     onClick={() => handleTabChange(tab.id)}
                     style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', height: '38px', border: 'none', background: 'transparent', cursor: 'pointer', fontFamily: 'inherit', fontSize: '0.8rem', fontWeight: isActive ? 700 : 500, color: isActive ? ui.accentText : ui.muted, transition: 'color 0.2s ease' }}
                   >
-                    <span style={{ position: 'relative', padding: '8px 16px', borderRadius: '8px' }}>
+                    <span style={{ position: 'relative', padding: '8px 16px', borderRadius: '8px', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
                       {isActive && (
                         <motion.span
                           layoutId="teacherClassroomTabPill"
@@ -1690,6 +1886,22 @@ export default function TeacherClasswork({
                         />
                       )}
                       <span style={{ position: 'relative', zIndex: 1 }}>{tab.label}</span>
+                      {hasLiveClasswork && (
+                        <span
+                          title="Students are actively working in Classwork"
+                          style={{
+                            position: 'relative',
+                            zIndex: 1,
+                            width: '8px',
+                            height: '8px',
+                            borderRadius: '50%',
+                            backgroundColor: '#10b981',
+                            boxShadow: '0 0 8px #10b981',
+                            animation: 'live-pulse 1.8s infinite',
+                            flexShrink: 0
+                          }}
+                        />
+                      )}
                     </span>
                   </button>
                 );
@@ -1784,10 +1996,10 @@ export default function TeacherClasswork({
                       </div>
                     </div>
 
-                    {/* TEACHING LIST */}
+                    {/* CLASSROOMS LIST */}
                     <div>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0 10px', marginBottom: '10px' }}>
-                        <span style={sectionLabelStyle}>Teaching</span>
+                        <span style={sectionLabelStyle}>Classrooms</span>
                         <span style={{ ...sectionLabelStyle, color: ui.faint }}>{String(activeClassrooms.length).padStart(2, '0')}</span>
                       </div>
                       <div style={{
@@ -1844,16 +2056,6 @@ export default function TeacherClasswork({
                               <span style={{ flex: 1, fontSize: '0.82rem', fontWeight: active ? 600 : 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                                 {clsName}
                               </span>
-                              {active && (
-                                <span style={{
-                                  width: '6px',
-                                  height: '6px',
-                                  borderRadius: '50%',
-                                  background: ui.accent,
-                                  boxShadow: `0 0 8px ${ui.accent}`,
-                                  flexShrink: 0
-                                }} />
-                              )}
                             </button>
                           );
                         })}
@@ -1928,6 +2130,8 @@ export default function TeacherClasswork({
                           ? (lessonType === 'video' ? (isDark ? '#fbbf24' : '#d97706') : lessonType === 'link' ? (isDark ? '#38bdf8' : '#0284c7') : (isDark ? '#34d399' : '#059669'))
                           : ui.accentText;
 
+                        const itemActiveCount = !isMaterial ? getActiveCountForActivity(item) : 0;
+
                         return (
                           <motion.div 
                             key={item.id} 
@@ -1935,13 +2139,13 @@ export default function TeacherClasswork({
                             animate={{ opacity: 1, y: 0 }}
                             transition={{ duration: 0.3, delay: index * 0.05 }}
                             className="vt-card" style={{ background: ui.surface, border: `1px solid ${ui.border}`, borderRadius: '14px', overflow: 'visible', position: 'relative' }}>
-                            {Number(activeActivityCounts[String(item.id)]) > 0 && !isMaterial && (
+                            {itemActiveCount > 0 && (
                               <span
-                                title={`${activeActivityCounts[String(item.id)]} student${Number(activeActivityCounts[String(item.id)]) > 1 ? 's' : ''} currently working on this activity`}
+                                title={`${itemActiveCount} student${itemActiveCount > 1 ? 's' : ''} currently working on this activity`}
                                 style={{
                                   position: 'absolute',
-                                  top: '-3px',
-                                  left: '-3px',
+                                  top: '-4px',
+                                  left: '-4px',
                                   width: '14px',
                                   height: '14px',
                                   borderRadius: '50%',
@@ -2072,6 +2276,7 @@ export default function TeacherClasswork({
                         const isOpen = expandedId === item.id;
                         const due = formatShortDate(item.dueDate);
                         const posted = formatShortDate(item.posted || (typeof item.id === 'number' && item.id > 1e12 ? item.id : null));
+                        const itemActiveCount = getActiveCountForActivity(item);
                         return (
                           <motion.div 
                             key={item.id} 
@@ -2093,7 +2298,8 @@ export default function TeacherClasswork({
                                   cursor: 'pointer',
                                   userSelect: 'none',
                                   transition: 'all 0.2s ease',
-                                  position: 'relative'
+                                  position: 'relative',
+                                  overflow: 'visible'
                                 }}
                                 onClick={() => toggleExpand(item.id)}
                                 onMouseOver={(e) => {
@@ -2109,13 +2315,13 @@ export default function TeacherClasswork({
                                   }
                                 }}
                               >
-                                {Number(activeActivityCounts[String(item.id)]) > 0 && (
+                                {itemActiveCount > 0 && (
                                   <span
-                                    title={`${activeActivityCounts[String(item.id)]} student${Number(activeActivityCounts[String(item.id)]) > 1 ? 's' : ''} currently working on this activity`}
+                                    title={`${itemActiveCount} student${itemActiveCount > 1 ? 's' : ''} currently working on this activity`}
                                     style={{
                                       position: 'absolute',
-                                      top: '-3px',
-                                      left: '-3px',
+                                      top: '-4px',
+                                      left: '-4px',
                                       width: '14px',
                                       height: '14px',
                                       borderRadius: '50%',
@@ -2314,12 +2520,7 @@ export default function TeacherClasswork({
                                     <button
                                       style={{
                                         ...styles.viewGradingBtn,
-                                        backgroundColor: isDark ? 'rgba(168, 85, 247, 0.12)' : '#f5f3ff',
-                                        borderColor: isDark ? 'rgba(168, 85, 247, 0.35)' : '#ddd6fe',
                                         color: isDark ? '#c084fc' : '#7c3aed',
-                                        boxShadow: isDark
-                                          ? '0 0 12px rgba(168, 85, 247, 0.12)'
-                                          : '0 1px 3px rgba(168, 85, 247, 0.10)',
                                         width: isMobile ? '100%' : 'auto',
                                         justifyContent: 'center'
                                       }}
@@ -2334,7 +2535,7 @@ export default function TeacherClasswork({
                                       }}
                                       title="Open VCR replay & student recordings"
                                     >
-                                      <PlayCircle size={16} /> Replay Playback
+                                      Replay Playback
                                     </button>
                                     {/* Button para sa Live Monitoring */}
                                     <button
@@ -2799,64 +3000,140 @@ export default function TeacherClasswork({
                     <>
                       <div style={styles.activitySelectionRow}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
-                          <span style={{ fontSize: '0.88rem', fontWeight: '700', color: isDark ? '#E8EAED' : '#334155', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                            <FileText size={16} color="#10b981" />
+                          <span style={{ fontSize: '0.88rem', fontWeight: '700', color: isDark ? '#E8EAED' : '#334155', display: 'flex', alignItems: 'center' }}>
                             Activity:
                           </span>
                         </div>
-                        <div style={{ position: 'relative', minWidth: '260px', maxWidth: '420px', flex: '1 1 auto' }}>
-                          <select
+                        <div
+                          ref={gradesActivityDropdownRef}
+                          style={{ position: 'relative', minWidth: '260px', maxWidth: '420px', flex: '1 1 auto', zIndex: 35 }}
+                        >
+                          <button
                             id="grades-activity-dropdown"
+                            type="button"
                             aria-label="Select activity"
-                            value={String(selectedGradingActivityId ?? '')}
-                            onChange={(e) => {
-                              const rawVal = e.target.value;
-                              const matched = visibleClasswork.find(a => String(a.id) === String(rawVal));
-                              setSelectedGradingActivityId(matched ? matched.id : rawVal);
-                            }}
+                            aria-expanded={isGradesActivityDropdownOpen}
+                            onClick={() => setIsGradesActivityDropdownOpen(prev => !prev)}
                             style={{
                               width: '100%',
-                              padding: '9px 36px 9px 14px',
-                              borderRadius: '10px',
-                              border: isDark ? '1px solid #44474a' : '1px solid #cbd5e1',
-                              backgroundColor: isDark ? '#2e3032' : '#ffffff',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                              gap: '12px',
+                              padding: '9px 16px',
+                              borderRadius: '9999px',
+                              border: isGradesActivityDropdownOpen
+                                ? '1px solid #10b981'
+                                : (isDark ? '1px solid #3d4447' : '1px solid #cbd5e1'),
+                              backgroundColor: isDark ? '#242a2b' : '#ffffff',
                               color: isDark ? '#E8EAED' : '#1e293b',
-                              fontSize: '0.9rem',
-                              fontWeight: '600',
-                              appearance: 'none',
-                              WebkitAppearance: 'none',
-                              MozAppearance: 'none',
+                              fontSize: '0.88rem',
+                              fontWeight: '700',
+                              fontFamily: 'inherit',
                               cursor: 'pointer',
                               outline: 'none',
                               boxSizing: 'border-box',
-                              boxShadow: isDark ? '0 1px 3px rgba(0,0,0,0.3)' : '0 1px 2px rgba(0,0,0,0.05)',
-                              transition: 'border-color 0.15s ease, box-shadow 0.15s ease'
+                              boxShadow: isGradesActivityDropdownOpen
+                                ? '0 0 0 3px rgba(16, 185, 129, 0.16)'
+                                : (isDark ? '0 2px 8px rgba(0,0,0,0.28)' : '0 1px 3px rgba(15,23,42,0.06)'),
+                              transition: 'all 0.18s ease'
                             }}
                           >
-                            {visibleClasswork.map(act => (
-                              <option
-                                key={act.id}
-                                value={String(act.id)}
+                            <span style={{ display: 'flex', alignItems: 'center', minWidth: 0, overflow: 'hidden' }}>
+                              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                {activeGradingActivity?.title || 'Select activity'}
+                              </span>
+                            </span>
+                            <ChevronDown
+                              size={16}
+                              style={{
+                                flexShrink: 0,
+                                color: isGradesActivityDropdownOpen ? '#10b981' : (isDark ? '#a3a3a3' : '#64748b'),
+                                transform: isGradesActivityDropdownOpen ? 'rotate(180deg)' : 'rotate(0deg)',
+                                transition: 'transform 0.2s ease, color 0.2s ease'
+                              }}
+                            />
+                          </button>
+
+                          <AnimatePresence>
+                            {isGradesActivityDropdownOpen && (
+                              <motion.div
+                                initial={{ opacity: 0, y: -6, scale: 0.98 }}
+                                animate={{ opacity: 1, y: 0, scale: 1 }}
+                                exit={{ opacity: 0, y: -6, scale: 0.98 }}
+                                transition={{ duration: 0.15, ease: 'easeOut' }}
                                 style={{
-                                  backgroundColor: isDark ? '#242a2b' : '#ffffff',
-                                  color: isDark ? '#E8EAED' : '#1e293b'
+                                  position: 'absolute',
+                                  top: 'calc(100% + 8px)',
+                                  left: 0,
+                                  right: 0,
+                                  backgroundColor: isDark ? '#202526' : '#ffffff',
+                                  border: isDark ? '1px solid #383e40' : '1px solid #e2e8f0',
+                                  borderRadius: '16px',
+                                  padding: '6px',
+                                  boxShadow: isDark
+                                    ? '0 14px 32px rgba(0, 0, 0, 0.55)'
+                                    : '0 12px 28px rgba(15, 23, 42, 0.12)',
+                                  maxHeight: '280px',
+                                  overflowY: 'auto',
+                                  display: 'flex',
+                                  flexDirection: 'column',
+                                  gap: '3px',
+                                  zIndex: 50
                                 }}
                               >
-                                {act.title}
-                              </option>
-                            ))}
-                          </select>
-                          <ChevronDown
-                            size={16}
-                            style={{
-                              position: 'absolute',
-                              right: '12px',
-                              top: '50%',
-                              transform: 'translateY(-50%)',
-                              pointerEvents: 'none',
-                              color: isDark ? '#a3a3a3' : '#64748b'
-                            }}
-                          />
+                                {visibleClasswork.map(act => {
+                                  const isSelected = String(act.id) === String(activeGradingActivity?.id);
+                                  return (
+                                    <button
+                                      key={act.id}
+                                      type="button"
+                                      onClick={() => {
+                                        setSelectedGradingActivityId(act.id);
+                                        setIsGradesActivityDropdownOpen(false);
+                                      }}
+                                      style={{
+                                        width: '100%',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'space-between',
+                                        gap: '10px',
+                                        padding: '9px 14px',
+                                        borderRadius: '9999px',
+                                        border: 'none',
+                                        backgroundColor: isSelected
+                                          ? (isDark ? 'rgba(16, 185, 129, 0.15)' : '#ecfdf5')
+                                          : 'transparent',
+                                        color: isSelected
+                                          ? (isDark ? '#34d399' : '#059669')
+                                          : (isDark ? '#E8EAED' : '#1e293b'),
+                                        fontSize: '0.86rem',
+                                        fontWeight: isSelected ? '700' : '600',
+                                        fontFamily: 'inherit',
+                                        cursor: 'pointer',
+                                        textAlign: 'left',
+                                        transition: 'background-color 0.15s ease, color 0.15s ease'
+                                      }}
+                                      onMouseOver={(e) => {
+                                        if (!isSelected) {
+                                          e.currentTarget.style.backgroundColor = isDark ? 'rgba(255, 255, 255, 0.06)' : '#f1f5f9';
+                                        }
+                                      }}
+                                      onMouseOut={(e) => {
+                                        if (!isSelected) {
+                                          e.currentTarget.style.backgroundColor = 'transparent';
+                                        }
+                                      }}
+                                    >
+                                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                        {act.title}
+                                      </span>
+                                    </button>
+                                  );
+                                })}
+                              </motion.div>
+                            )}
+                          </AnimatePresence>
                         </div>
                       </div>
 
@@ -4514,18 +4791,16 @@ const getStyles = (isDark) => ({
     display: 'flex',
     alignItems: 'center',
     gap: '8px',
-    padding: '9px 20px',
-    backgroundColor: isDark ? 'rgba(16, 185, 129, 0.12)' : '#ecfdf5',
-    border: `1px solid ${isDark ? 'rgba(16, 185, 129, 0.35)' : '#a7f3d0'}`,
-    borderRadius: '50px',
+    padding: '9px 12px',
+    backgroundColor: 'transparent',
+    border: 'none',
+    borderRadius: '8px',
     color: isDark ? '#34d399' : '#059669',
     fontWeight: '700',
     fontSize: '0.88rem',
     cursor: 'pointer',
     transition: 'all 0.2s cubic-bezier(0.16, 1, 0.3, 1)',
-    boxShadow: isDark
-      ? '0 0 12px rgba(16, 185, 129, 0.12)'
-      : '0 1px 3px rgba(16, 185, 129, 0.10)'
+    boxShadow: 'none'
   },
   liveMonitorBtn: { 
     display: 'flex', 

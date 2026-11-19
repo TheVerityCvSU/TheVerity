@@ -104,39 +104,20 @@ export default function TeacherViewRosterList({
                 >
                   {sName}
                 </span>
-                <span
-                  style={{
-                    fontSize: '0.7rem',
-                    color:
-                      student.status === 'Graded'
-                        ? '#3b82f6'
-                        : student.status === 'Submitted'
-                        ? '#10b981'
-                        : isStudentLive
-                        ? '#10b981'
-                        : '#9ca3af',
-                    fontWeight: '600',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '4px'
-                  }}
-                >
-                  {isStudentLive ? (
-                    <>
-                      <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#10b981' }} />
-                      Live
-                    </>
-                  ) : student.status === 'Submitted' ? (
-                    'Submitted'
-                  ) : student.status === 'Graded' ? (
-                    'Graded'
-                  ) : (
-                    <>
-                      <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#9ca3af' }} />
-                      Offline
-                    </>
-                  )}
-                </span>
+                {!isStudentLive && mode !== 'live' && (student.status === 'Submitted' || student.status === 'Graded') && (
+                  <span
+                    style={{
+                      fontSize: '0.7rem',
+                      color: student.status === 'Graded' ? '#3b82f6' : '#10b981',
+                      fontWeight: '600',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '4px'
+                    }}
+                  >
+                    {student.status}
+                  </span>
+                )}
               </div>
             </div>
 

@@ -44,7 +44,8 @@ export function useStudentViewProctorLogs({
   const addProctorLog = useCallback(
     (message, color = '#ef4444', customDesc = null, isCrash = false) => {
       if (submitted) return;
-      const timeString = new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }).toLowerCase();
+      const nowMs = Date.now();
+      const timeString = new Date(nowMs).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true });
       const actionStr = (message || '').toLowerCase();
       const detectedCrash = isCrash || actionStr.includes('crash');
       const logColor = detectedCrash ? '#dc2626' : color;
@@ -55,7 +56,8 @@ export function useStudentViewProctorLogs({
       const sId = studentActualId || 'student';
 
       const newLogItem = {
-        id: Date.now(),
+        id: nowMs,
+        timestamp: nowMs,
         message: actionLabel,
         action: actionLabel,
         time: timeString,
@@ -78,11 +80,12 @@ export function useStudentViewProctorLogs({
         return updated;
       });
 
-      const updatedHistory = [...(codeHistoryRef.current || []), { time: Date.now(), warning: actionLabel, code: codeRef.current }];
+      const updatedHistory = [...(codeHistoryRef.current || []), { time: nowMs, warning: actionLabel, code: codeRef.current }];
       persistHistoryFn(updatedHistory, codeRef.current);
 
       emitToSockets('proctor_alert', {
         id: newLogItem.id,
+        timestamp: nowMs,
         studentId: sId,
         name: safeUsername,
         studentName: safeUsername,

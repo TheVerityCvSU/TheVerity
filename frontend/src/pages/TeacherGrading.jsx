@@ -125,7 +125,6 @@ export default function TeacherGrading({
             <button
               onClick={onBack}
               style={styles.backBtn}
-              className="btn-anim"
               title="Return to Classwork"
             >
               <ArrowLeft size={16} /> Back to Classwork

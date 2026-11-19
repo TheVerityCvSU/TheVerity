@@ -72,6 +72,7 @@ export default function GradingRosterSidebar({
           <Search size={14} color={isDark ? '#94a3b8' : '#64748b'} />
           <input
             type="text"
+            className="search-clean-input"
             placeholder="Search student name..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}

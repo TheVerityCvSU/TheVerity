@@ -1,5 +1,6 @@
+import { useState, useMemo } from 'react';
 import { Play, Pause } from 'lucide-react';
-import { formatTimeMs } from '../../utils/teacherViewUtils';
+import { formatTimeMs, formatExactClockTime } from '../../utils/teacherViewUtils';
 
 export default function TeacherViewTimelineScrubber({
   history,
@@ -17,10 +18,13 @@ export default function TeacherViewTimelineScrubber({
   timeDisplayRef,
   smoothProgressRef,
   currentAnimTimeRef,
+  activeStudentWarnings = [],
   theme,
   isDark,
   isMobile
 }) {
+  const [hoveredFlagIdx, setHoveredFlagIdx] = useState(null);
+
   const currIndex = playbackIndex < 0 ? history.length - 1 : playbackIndex;
   const progressPercent =
     playbackIndex < 0
@@ -32,6 +36,59 @@ export default function TeacherViewTimelineScrubber({
     isPlaying && typeof smoothProgressRef.current === 'number'
       ? smoothProgressRef.current
       : progressPercent;
+
+  // Build sorted timeline alert flags with playback time, percent, and exact clock time
+  const alertFlags = useMemo(() => {
+    const flags = [];
+    const seen = new Set();
+
+    // 1. From activeStudentWarnings (already merged with history warnings)
+    if (Array.isArray(activeStudentWarnings)) {
+      activeStudentWarnings.forEach((w, idx) => {
+        if (!w) return;
+        const pbMs =
+          typeof w.playbackTimeMs === 'number'
+            ? w.playbackTimeMs
+            : typeof w.historyIndex === 'number' && cumulativeTimes[w.historyIndex] != null
+            ? cumulativeTimes[w.historyIndex]
+            : null;
+        const resolvedMs =
+          pbMs != null
+            ? pbMs
+            : activeStudentWarnings.length === 1
+            ? totalPlaybackDuration * 0.5
+            : (idx / Math.max(activeStudentWarnings.length - 1, 1)) * totalPlaybackDuration;
+        const pct =
+          totalPlaybackDuration > 0
+            ? Math.min(Math.max((resolvedMs / totalPlaybackDuration) * 100, 0), 100)
+            : 0;
+        const pbFormatted = w.playbackTimeFormatted || formatTimeMs(resolvedMs);
+        const exactClock = w.exactTime || formatExactClockTime(w.epochMs || w.id, w.time) || w.time || '';
+        const key = `${w.action}-${w.historyIndex ?? idx}-${exactClock}`;
+        if (seen.has(key)) return;
+        seen.add(key);
+
+        flags.push({
+          id: w.id || `flag-${idx}`,
+          action: w.action || w.message || 'Alert',
+          color: w.color || '#ef4444',
+          playbackTimeMs: resolvedMs,
+          playbackTimeFormatted: pbFormatted,
+          exactTime: exactClock,
+          historyIndex: w.historyIndex,
+          percent: pct
+        });
+      });
+    }
+
+    return flags.sort((a, b) => a.playbackTimeMs - b.playbackTimeMs);
+  }, [activeStudentWarnings, cumulativeTimes, totalPlaybackDuration]);
+
+  const currentStepClock = useMemo(() => {
+    const step = history[currIndex];
+    if (!step?.time) return '';
+    return formatExactClockTime(step.time, '');
+  }, [history, currIndex]);
 
   return (
     <div
@@ -83,11 +140,11 @@ export default function TeacherViewTimelineScrubber({
             style={{
               display: 'flex',
               alignItems: 'center',
-              backgroundColor: isDark ? '#1f2937' : '#f1f5f9',
+              backgroundColor: isDark ? '#18181b' : '#f1f5f9',
               borderRadius: '6px',
               padding: '2px',
               gap: '2px',
-              border: isDark ? '1px solid #374151' : '1px solid #e2e8f0'
+              border: isDark ? '1px solid #3f3f46' : '1px solid #e2e8f0'
             }}
           >
             {[0.5, 1, 2, 4].map((speed) => (
@@ -98,8 +155,8 @@ export default function TeacherViewTimelineScrubber({
                   playbackSpeedRef.current = speed;
                 }}
                 style={{
-                  background: playbackSpeed === speed ? '#3b82f6' : 'transparent',
-                  color: playbackSpeed === speed ? '#ffffff' : isDark ? '#9ca3af' : '#64748b',
+                  background: playbackSpeed === speed ? (isDark ? '#3f3f46' : '#27272a') : 'transparent',
+                  color: playbackSpeed === speed ? '#ffffff' : isDark ? '#a1a1aa' : '#64748b',
                   border: 'none',
                   borderRadius: '4px',
                   padding: '2px 6px',
@@ -116,12 +173,32 @@ export default function TeacherViewTimelineScrubber({
           </div>
         </div>
 
-        <span
-          ref={timeDisplayRef}
-          style={{ color: theme.textMuted, fontWeight: '600', fontSize: '0.75rem' }}
-        >
-          Keystroke {currIndex + 1} / {history.length} ({formatTimeMs(currentAnimTimeRef.current || 0)} / {formatTimeMs(totalPlaybackDuration)})
-        </span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+          {currentStepClock && (
+            <span
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                fontSize: '0.72rem',
+                fontWeight: '600',
+                color: isDark ? '#f4f4f5' : '#0f172a',
+                backgroundColor: isDark ? '#18181b' : '#f1f5f9',
+                border: isDark ? '1px solid #3f3f46' : '1px solid #e2e8f0',
+                borderRadius: '5px',
+                padding: '2px 7px'
+              }}
+              title="Exact wall-clock time of this keystroke"
+            >
+              <span>{currentStepClock}</span>
+            </span>
+          )}
+          <span
+            ref={timeDisplayRef}
+            style={{ color: theme.textMuted, fontWeight: '600', fontSize: '0.75rem' }}
+          >
+            Keystroke {currIndex + 1} / {history.length} ({formatTimeMs(currentAnimTimeRef.current || 0)} / {formatTimeMs(totalPlaybackDuration)})
+          </span>
+        </div>
       </div>
 
       {/* Scrub Track */}
@@ -129,7 +206,7 @@ export default function TeacherViewTimelineScrubber({
         style={{
           position: 'relative',
           width: '100%',
-          height: '20px',
+          height: '24px',
           display: 'flex',
           alignItems: 'center',
           cursor: 'pointer',
@@ -161,6 +238,87 @@ export default function TeacherViewTimelineScrubber({
             }}
           />
 
+          {/* Alert Flag Markers on Timeline */}
+          {alertFlags.map((flag, fIdx) => {
+            const isHovered = hoveredFlagIdx === fIdx;
+            const isAtCurrentStep =
+              flag.historyIndex != null && Math.abs(currIndex - flag.historyIndex) <= 1;
+            const clampedLeft = Math.min(Math.max(flag.percent, 1), 99);
+
+            return (
+              <div
+                key={`timeline-flag-${flag.id}-${fIdx}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleScrub(flag.playbackTimeMs);
+                }}
+                onMouseEnter={() => setHoveredFlagIdx(fIdx)}
+                onMouseLeave={() => setHoveredFlagIdx((prev) => (prev === fIdx ? null : prev))}
+                style={{
+                  position: 'absolute',
+                  left: `${flag.percent}%`,
+                  top: '50%',
+                  transform: 'translate(-50%, -50%)',
+                  zIndex: isHovered ? 12 : 6,
+                  cursor: 'pointer',
+                  padding: '4px'
+                }}
+                title={`${flag.action} at ${flag.playbackTimeFormatted}${flag.exactTime ? ` (${flag.exactTime})` : ''}`}
+              >
+                {/* Flag Pin */}
+                <div
+                  style={{
+                    width: isHovered || isAtCurrentStep ? '11px' : '9px',
+                    height: isHovered || isAtCurrentStep ? '15px' : '13px',
+                    borderRadius: '3px',
+                    backgroundColor: flag.color,
+                    border: isDark ? '1.5px solid #18181b' : '1.5px solid #ffffff',
+                    boxShadow: isHovered || isAtCurrentStep
+                      ? `0 0 8px ${flag.color}`
+                      : '0 1px 3px rgba(0,0,0,0.4)',
+                    transition: 'all 0.15s ease'
+                  }}
+                />
+
+                {/* Hover Tooltip */}
+                {isHovered && (
+                  <div
+                    style={{
+                      position: 'absolute',
+                      bottom: '22px',
+                      left: clampedLeft < 15 ? '0' : clampedLeft > 85 ? 'auto' : '50%',
+                      right: clampedLeft > 85 ? '0' : 'auto',
+                      transform:
+                        clampedLeft >= 15 && clampedLeft <= 85 ? 'translateX(-50%)' : 'none',
+                      backgroundColor: isDark ? '#18181b' : '#0f172a',
+                      color: '#f8fafc',
+                      padding: '6px 10px',
+                      borderRadius: '6px',
+                      fontSize: '0.72rem',
+                      whiteSpace: 'nowrap',
+                      boxShadow: '0 4px 12px rgba(0,0,0,0.35)',
+                      border: `1px solid ${flag.color}`,
+                      pointerEvents: 'none',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '2px',
+                      zIndex: 20
+                    }}
+                  >
+                    <div style={{ fontWeight: '700', color: flag.color }}>
+                      <span>{flag.action}</span>
+                    </div>
+                    {flag.exactTime && (
+                      <div style={{ color: '#94a3b8', fontSize: '0.68rem' }}>
+                        Time: {flag.exactTime}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+
           {/* Circle Thumb */}
           <div
             ref={progressThumbRef}
@@ -175,7 +333,7 @@ export default function TeacherViewTimelineScrubber({
               backgroundColor: '#ef4444',
               boxShadow: '0 0 5px rgba(0,0,0,0.35)',
               pointerEvents: 'none',
-              zIndex: 2,
+              zIndex: 4,
               transition: 'none'
             }}
           />

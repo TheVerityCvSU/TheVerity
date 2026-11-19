@@ -1,6 +1,12 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { apiFetch } from '../data/api';
-import { sanitizeAction, getLogColor } from '../utils/teacherViewUtils';
+import {
+  sanitizeAction,
+  getLogColor,
+  computeCumulativeTimes,
+  resolveWarningPlaybackInfo,
+  formatExactClockTime
+} from '../utils/teacherViewUtils';
 
 export function useTeacherViewWarnings({ assignment, classroom, students, mode, selectedStudentId, activeStudent }) {
   // Persistent warning logs for this activity session
@@ -117,56 +123,103 @@ export function useTeacherViewWarnings({ assignment, classroom, students, mode, 
     const logs = [];
     const seenMap = new Map();
 
+    // Precompute student histories & cumulative times by student key
+    const studentTimelines = new Map();
+    Object.values(students).forEach((st) => {
+      if (!st) return;
+      const hist = Array.isArray(st.codeHistory) && st.codeHistory.length > 0
+        ? st.codeHistory
+        : Array.isArray(st.history) && st.history.length > 0
+        ? st.history
+        : [];
+      if (hist.length > 0) {
+        const cumTimes = computeCumulativeTimes(hist);
+        const entry = { history: hist, cumulativeTimes: cumTimes };
+        if (st.id) studentTimelines.set(String(st.id).trim().toLowerCase(), entry);
+        if (st.name) studentTimelines.set(String(st.name).trim().toLowerCase(), entry);
+      }
+    });
+
+    const getStudentTimeline = (sId, sName) => {
+      return (
+        studentTimelines.get(String(sId || '').trim().toLowerCase()) ||
+        studentTimelines.get(String(sName || '').trim().toLowerCase()) ||
+        null
+      );
+    };
+
     const addLog = (rawLog, fallbackName, fallbackId) => {
       if (!rawLog) return;
       const sName = String(rawLog.studentName || rawLog.student_name || fallbackName || 'Student').trim();
       const sId = String(rawLog.studentId || rawLog.student_id || fallbackId || sName).trim();
       const rawAction = rawLog.action || rawLog.message || 'Violation';
       const sanitizedAction = sanitizeAction(rawAction);
-      const dedupeKey = `${rawLog.id || ''}-${sName}-${sanitizedAction}-${rawLog.time || ''}`;
-      if (seenMap.has(dedupeKey)) return;
+
+      const timeline = getStudentTimeline(sId, sName);
+      const playbackInfo = resolveWarningPlaybackInfo(
+        rawLog,
+        sanitizedAction,
+        timeline?.history || null,
+        timeline?.cumulativeTimes || null
+      );
+
+      // Deduplicate by student + action + historyIndex (when matched to a history step) or id+time
+      const studentKey = sName.toLowerCase();
+      const histDedupeKey =
+        playbackInfo.historyIndex != null
+          ? `hist-${studentKey}-${sanitizedAction}-${playbackInfo.historyIndex}`
+          : null;
+      const fallbackDedupeKey = `${rawLog.id || ''}-${studentKey}-${sanitizedAction}-${rawLog.time || ''}`;
+
+      if ((histDedupeKey && seenMap.has(histDedupeKey)) || seenMap.has(fallbackDedupeKey)) {
+        const existing = (histDedupeKey && seenMap.get(histDedupeKey)) || seenMap.get(fallbackDedupeKey);
+        if (existing) {
+          if (!existing.epochMs && playbackInfo.epochMs) existing.epochMs = playbackInfo.epochMs;
+          if ((!existing.exactTime || existing.exactTime.length < (playbackInfo.exactTime || '').length) && playbackInfo.exactTime) {
+            existing.exactTime = playbackInfo.exactTime;
+          }
+          if (existing.playbackTimeMs == null && playbackInfo.playbackTimeMs != null) {
+            existing.playbackTimeMs = playbackInfo.playbackTimeMs;
+            existing.playbackTimeFormatted = playbackInfo.playbackTimeFormatted;
+            existing.historyIndex = playbackInfo.historyIndex;
+          }
+        }
+        return;
+      }
+
+      const exactClock = playbackInfo.exactTime || formatExactClockTime(rawLog.timestamp || rawLog.id, rawLog.time);
 
       const logItem = {
         ...rawLog,
-        id: rawLog.id || Date.now(),
+        id: rawLog.id || playbackInfo.epochMs || Date.now(),
+        epochMs: playbackInfo.epochMs || null,
         studentName: sName,
         studentId: sId,
         action: sanitizedAction,
         message: sanitizeAction(rawLog.message || rawAction),
         color: rawLog.color || getLogColor(sanitizedAction),
-        time: rawLog.time || ''
+        time: exactClock || rawLog.time || '',
+        exactTime: exactClock || rawLog.time || '',
+        historyIndex: playbackInfo.historyIndex,
+        playbackTimeMs: playbackInfo.playbackTimeMs,
+        playbackTimeFormatted: playbackInfo.playbackTimeFormatted
       };
-      seenMap.set(dedupeKey, logItem);
+
+      if (histDedupeKey) seenMap.set(histDedupeKey, logItem);
+      seenMap.set(fallbackDedupeKey, logItem);
       logs.push(logItem);
     };
 
     const curAId = assignment?.id != null ? String(assignment.id) : null;
 
-    if (Array.isArray(sessionWarnings)) {
-      sessionWarnings.forEach((w) => {
-        const wAId = w?.assignmentId || w?.assignment_id;
-        if (curAId && wAId && wAId !== 'none' && wAId !== 'default' && String(wAId) !== curAId) return;
-        addLog(w);
-      });
-    }
-
+    // 1. Process history warnings first (they have exact epoch ms and keystroke index)
     Object.values(students).forEach((student) => {
-      if (mode === 'playback' && student.id !== selectedStudentId && student.name !== selectedStudentId) return;
-
       const sAId = student.assignmentId || student.assignment_id;
       if (curAId && sAId && sAId !== 'none' && sAId !== 'default' && String(sAId) !== curAId) return;
 
-      if (Array.isArray(student.logs)) {
-        student.logs.forEach((log) => {
-          const lAId = log?.assignmentId || log?.assignment_id;
-          if (curAId && lAId && lAId !== 'none' && lAId !== 'default' && String(lAId) !== curAId) return;
-          addLog(log, student.name, student.id);
-        });
-      }
-
       const hist = student.codeHistory || student.history || [];
       if (Array.isArray(hist)) {
-        hist.forEach((h) => {
+        hist.forEach((h, hIdx) => {
           if (h && h.warning) {
             const hAId = h.assignmentId || h.assignment_id;
             if (curAId && hAId && hAId !== 'none' && hAId !== 'default' && String(hAId) !== curAId) return;
@@ -174,15 +227,11 @@ export function useTeacherViewWarnings({ assignment, classroom, students, mode, 
             addLog(
               {
                 id: h.time || Date.now(),
+                timestamp: h.time,
+                historyIndex: hIdx,
                 message: sanitizedWarning,
                 action: sanitizedWarning,
-                time: new Date(h.time)
-                  .toLocaleTimeString('en-US', {
-                    hour: 'numeric',
-                    minute: '2-digit',
-                    hour12: true
-                  })
-                  .toLowerCase(),
+                time: formatExactClockTime(h.time),
                 color: getLogColor(sanitizedWarning),
                 studentName: student.name,
                 studentId: student.id,
@@ -194,9 +243,30 @@ export function useTeacherViewWarnings({ assignment, classroom, students, mode, 
           }
         });
       }
+
+      if (Array.isArray(student.logs)) {
+        student.logs.forEach((log) => {
+          const lAId = log?.assignmentId || log?.assignment_id;
+          if (curAId && lAId && lAId !== 'none' && lAId !== 'default' && String(lAId) !== curAId) return;
+          addLog(log, student.name, student.id);
+        });
+      }
     });
 
-    return logs.sort((a, b) => (b.id || 0) - (a.id || 0));
+    // 2. Process session warnings
+    if (Array.isArray(sessionWarnings)) {
+      sessionWarnings.forEach((w) => {
+        const wAId = w?.assignmentId || w?.assignment_id;
+        if (curAId && wAId && wAId !== 'none' && wAId !== 'default' && String(wAId) !== curAId) return;
+        addLog(w);
+      });
+    }
+
+    return logs.sort((a, b) => {
+      const tA = a.epochMs || a.playbackTimeMs || a.id || 0;
+      const tB = b.epochMs || b.playbackTimeMs || b.id || 0;
+      return tB - tA;
+    });
   }, [students, sessionWarnings, mode, selectedStudentId, assignment?.id]);
 
   const activeStudentWarnings = useMemo(() => {

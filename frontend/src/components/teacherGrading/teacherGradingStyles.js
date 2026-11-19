@@ -80,16 +80,15 @@ export const getTeacherGradingStyles = (isDark, isMobile) => ({
     display: 'flex',
     alignItems: 'center',
     gap: '8px',
-    padding: '8px 16px',
-    borderRadius: '10px',
-    border: isDark ? '1px solid #3d3d3d' : '1px solid #cbd5e1',
-    backgroundColor: isDark ? '#262626' : '#ffffff',
+    padding: '4px 0',
+    border: 'none',
+    backgroundColor: 'transparent',
     color: isDark ? '#f1f5f9' : '#1e293b',
     fontSize: '0.88rem',
     fontWeight: '700',
     cursor: 'pointer',
-    transition: 'all 0.2s cubic-bezier(0.16, 1, 0.3, 1)',
-    boxShadow: isDark ? '0 2px 6px rgba(0,0,0,0.2)' : '0 1px 3px rgba(0,0,0,0.04)'
+    transition: 'opacity 0.2s ease',
+    boxShadow: 'none'
   },
   heroCard: {
     backgroundColor: isDark ? '#242424' : '#ffffff',
