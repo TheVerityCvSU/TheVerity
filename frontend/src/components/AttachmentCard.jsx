@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { Play, Globe, FileText, X } from 'lucide-react';
+import { resolveMediaUrl, getVideoThumbnailUrl } from '../utils/mediaUrl';
 
 /**
  * AttachmentCard
@@ -8,7 +9,7 @@ import { Play, Globe, FileText, X } from 'lucide-react';
  * - Right side: Visual preview thumbnail separated by a vertical divider
  * - Optional remove (X) button for creation/edit modals
  */
-export default function AttachmentCard({
+function AttachmentCard({
   att,
   onClick,
   onRemove,
@@ -17,20 +18,35 @@ export default function AttachmentCard({
 }) {
   const [isHovered, setIsHovered] = useState(false);
   const [mediaError, setMediaError] = useState(false);
+  const [posterError, setPosterError] = useState(false);
 
   if (!att) return null;
 
   const type = att.type || 'file';
   const name = att.name || (type === 'link' ? att.url : 'Attachment');
-  const url = att.url || '';
+  const rawUrl = att.url || '';
+  const resolvedUrl = useMemo(() => resolveMediaUrl(rawUrl), [rawUrl]);
+  const posterUrl = useMemo(() => {
+    if (type !== 'video') return null;
+    if (att.thumbnailUrl) return resolveMediaUrl(att.thumbnailUrl);
+    return getVideoThumbnailUrl(resolvedUrl);
+  }, [type, att.thumbnailUrl, resolvedUrl]);
 
   // Ensure link URLs always have http:// or https:// so they open external sites
-  const targetUrl = url ? (url.startsWith('http://') || url.startsWith('https://') ? url : `https://${url}`) : '#';
+  const targetUrl = useMemo(() => {
+    if (!resolvedUrl) return '#';
+    if (type === 'link') {
+      return (resolvedUrl.startsWith('http://') || resolvedUrl.startsWith('https://'))
+        ? resolvedUrl
+        : `https://${resolvedUrl}`;
+    }
+    return resolvedUrl;
+  }, [type, resolvedUrl]);
 
   let typeLabel = 'File';
   if (type === 'image') typeLabel = 'Image';
   else if (type === 'video') typeLabel = 'Video';
-  else if (type === 'link') typeLabel = url || 'Link';
+  else if (type === 'link') typeLabel = rawUrl || 'Link';
   else if (att.name?.includes('.')) {
     const ext = att.name.split('.').pop()?.toUpperCase();
     typeLabel = ext ? `${ext} File` : 'File';
@@ -177,23 +193,32 @@ export default function AttachmentCard({
 
       {/* Right side: Thumbnail preview */}
       <div style={rightThumbBoxStyle}>
-        {type === 'image' && url && !mediaError ? (
+        {type === 'image' && resolvedUrl && !mediaError ? (
           <img
-            src={url}
+            src={resolvedUrl}
             alt=""
             onError={() => setMediaError(true)}
             style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
           />
-        ) : type === 'video' && url && !mediaError ? (
+        ) : type === 'video' && resolvedUrl && !mediaError ? (
           <div style={{ width: '100%', height: '100%', position: 'relative', backgroundColor: '#000000', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <video
-              src={url}
-              muted
-              playsInline
-              preload="metadata"
-              onError={() => setMediaError(true)}
-              style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', opacity: 0.85 }}
-            />
+            {posterUrl && !posterError ? (
+              <img
+                src={posterUrl}
+                alt=""
+                onError={() => setPosterError(true)}
+                style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', opacity: 0.85 }}
+              />
+            ) : (
+              <video
+                src={resolvedUrl}
+                muted
+                playsInline
+                preload="none"
+                onError={() => setMediaError(true)}
+                style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', opacity: 0.85 }}
+              />
+            )}
             <div style={{
               position: 'absolute',
               width: '26px',
@@ -202,7 +227,8 @@ export default function AttachmentCard({
               backgroundColor: 'rgba(0,0,0,0.6)',
               display: 'flex',
               alignItems: 'center',
-              justifyContent: 'center'
+              justifyContent: 'center',
+              pointerEvents: 'none'
             }}>
               <Play size={13} fill="#FFFFFF" color="#FFFFFF" style={{ marginLeft: '1px' }} />
             </div>
@@ -257,3 +283,5 @@ export default function AttachmentCard({
     </div>
   );
 }
+
+export default React.memo(AttachmentCard);

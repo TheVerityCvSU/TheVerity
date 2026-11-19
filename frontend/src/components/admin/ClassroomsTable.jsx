@@ -22,18 +22,20 @@ export default function ClassroomsTable({
         borderRadius: '9999px',
         padding: '12px 24px',
         display: 'grid',
-        gridTemplateColumns: '2fr 1.5fr 1fr 1fr 1fr',
+        gridTemplateColumns: 'minmax(140px, 2fr) minmax(130px, 1.5fr) minmax(110px, 1fr) minmax(90px, 1fr) minmax(100px, 1fr)',
+        columnGap: '16px',
         alignItems: 'center',
         fontWeight: '700',
         color: headerColor,
         fontSize: '0.88rem',
-        marginBottom: '10px'
+        marginBottom: '10px',
+        minWidth: '780px'
       }}>
-        <div>Class Name</div>
-        <div>Instructor</div>
-        <div>Term / Subject</div>
-        <div>Status</div>
-        <div style={{ textAlign: 'right' }}>Action</div>
+        <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>Class Name</div>
+        <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>Instructor</div>
+        <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>Term / Subject</div>
+        <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>Status</div>
+        <div style={{ textAlign: 'right', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>Action</div>
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
@@ -54,22 +56,24 @@ export default function ClassroomsTable({
                   borderRadius: '9999px',
                   padding: '10px 24px',
                   display: 'grid',
-                  gridTemplateColumns: '2fr 1.5fr 1fr 1fr 1fr',
+                  gridTemplateColumns: 'minmax(140px, 2fr) minmax(130px, 1.5fr) minmax(110px, 1fr) minmax(90px, 1fr) minmax(100px, 1fr)',
+                  columnGap: '16px',
                   alignItems: 'center',
-                  fontSize: '0.875rem'
+                  fontSize: '0.875rem',
+                  minWidth: '780px'
                 }}
               >
-                <div style={{ fontWeight: '600', color: isDark ? '#f1f5f9' : '#1e293b' }}>
+                <div style={{ fontWeight: '600', color: isDark ? '#f1f5f9' : '#1e293b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }} title={c.name || c.className || 'Unnamed'}>
                   {c.name || c.className || 'Unnamed'}
                 </div>
-                <div style={{ color: isDark ? '#cbd5e1' : '#475569', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  <User size={14} color="#818cf8" />
-                  <span>{c.instructor || c.instructorName || 'Instructor'}</span>
+                <div style={{ color: isDark ? '#cbd5e1' : '#475569', display: 'flex', alignItems: 'center', gap: '6px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }} title={c.instructor || c.instructorName || 'Instructor'}>
+                  <User size={14} color="#818cf8" style={{ flexShrink: 0 }} />
+                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.instructor || c.instructorName || 'Instructor'}</span>
                 </div>
-                <div style={{ color: muted }}>
+                <div style={{ color: muted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }} title={c.term || (c.subject ? `${c.subject}` : 'General')}>
                   {c.term || (c.subject ? `${c.subject}` : 'General')}
                 </div>
-                <div>
+                <div style={{ minWidth: 0 }}>
                   <span style={active ? styles.statusGreenPill : styles.statusRedPill}>
                     {active ? 'Active' : 'Archived'}
                   </span>

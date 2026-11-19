@@ -24,7 +24,8 @@ export default function StudentViewModals({
   handleConfirmSubmit,
   showUnsubmitModal,
   setShowUnsubmitModal,
-  handleConfirmUnsubmit
+  handleConfirmUnsubmit,
+  activityTitle = 'this activity'
 }) {
   return (
     <>
@@ -71,6 +72,7 @@ export default function StudentViewModals({
         setShowUnsubmitModal={setShowUnsubmitModal}
         handleConfirmUnsubmit={handleConfirmUnsubmit}
         isDark={isDark}
+        activityTitle={activityTitle}
       />
     </>
   );

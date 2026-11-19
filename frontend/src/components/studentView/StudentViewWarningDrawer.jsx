@@ -11,7 +11,10 @@ export default function StudentViewWarningDrawer({
   toggleWarningMaximize,
   isResizingWarning
 }) {
-  const safeLogs = Array.isArray(proctorLogs) ? proctorLogs : [];
+  const safeLogs = (Array.isArray(proctorLogs) ? proctorLogs : []).filter((log) => {
+    const text = `${log?.action || ''} ${log?.message || ''}`.toLowerCase();
+    return !text.includes('cognitive pause') && !text.includes('inactivity');
+  });
 
   return (
     <div

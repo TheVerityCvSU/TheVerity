@@ -1,6 +1,7 @@
 import React from 'react';
 import { ArrowLeft, BookOpen, Calendar, Award, FileText, Video, Link2, ClipboardList } from 'lucide-react';
 import AttachmentCard from '../AttachmentCard';
+import RichInstruction from '../RichInstruction';
 import ActivitySubmissionSection from './ActivitySubmissionSection';
 import { formatFullDate } from '../../utils/dateUtils';
 
@@ -61,10 +62,23 @@ export default function ActivityContentCard({
 
   return (
     <div style={{ maxWidth: '1100px', width: '100%', margin: '0 auto', display: 'flex', flexDirection: 'column' }}>
-      {/* Top Navigation Row */}
+      {/* Top Navigation Row - Principle 10: 44px Touch Target & Principle 2: Optical Center */}
       <div style={{ display: 'flex', justifyContent: 'flex-start', alignItems: 'center', marginBottom: '24px' }}>
-        <button onClick={handleBackToClassroom} style={styles.backBtn}>
-          <ArrowLeft size={16} style={{ marginRight: '6px' }} /> {isMaterial ? 'Back to Materials' : 'Back to Classwork'}
+        <button
+          onClick={handleBackToClassroom}
+          style={{
+            ...styles.backBtn,
+            minHeight: '44px',
+            minWidth: '44px',
+            display: 'inline-flex',
+            alignItems: 'center',
+            padding: '10px 16px',
+            cursor: 'pointer'
+          }}
+          className="touch-target-44 clickable-affordance"
+        >
+          <ArrowLeft size={16} className="icon-optical-left" style={{ marginRight: '8px' }} />
+          <span>{isMaterial ? 'Back to Materials' : 'Back to Classwork'}</span>
         </button>
       </div>
 
@@ -102,25 +116,48 @@ export default function ActivityContentCard({
               ? (lessonType === 'video' ? (isDark ? '#fbbf24' : '#d97706') : lessonType === 'link' ? (isDark ? '#38bdf8' : '#0284c7') : '#10b981')
               : '#10b981',
             flexShrink: 0
-          }}>
+          }} className="cls-aspect-square">
             {isMaterial ? (
-              lessonType === 'video' ? <Video size={28} /> : lessonType === 'link' ? <Link2 size={28} /> : <FileText size={28} />
+              lessonType === 'video' ? <Video size={28} className="icon-optical-play" /> : lessonType === 'link' ? <Link2 size={28} /> : <FileText size={28} />
             ) : (
               <ClipboardList size={28} />
             )}
           </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-            <span style={{ fontSize: '0.7rem', fontWeight: '700', color: isDark ? '#94a3b8' : '#64748b', letterSpacing: '0.05em', textTransform: 'uppercase' }}>
+            {/* Principle 5: Tracking on ALL-CAPS eyebrow */}
+            <span
+              style={{
+                fontSize: '0.72rem',
+                fontWeight: '700',
+                color: isDark ? '#94a3b8' : '#64748b',
+                letterSpacing: '0.16em',
+                textTransform: 'uppercase'
+              }}
+              className="tracking-eyebrow"
+            >
               {isMaterial ? 'MATERIAL DETAILS' : 'ACTIVITY DETAILS'}
             </span>
-            <h1 style={{ fontSize: '2.2rem', fontWeight: 'bold', color: isDark ? 'white' : '#0f172a', margin: 0, lineHeight: 1.1, wordBreak: 'break-word' }}>
+            {/* Principle 7 & 8: Tight leading (1.16) and widow prevention (text-wrap: balance) */}
+            <h1
+              style={{
+                fontSize: '2.2rem',
+                fontWeight: 'bold',
+                color: isDark ? 'white' : '#0f172a',
+                margin: 0,
+                lineHeight: 1.16,
+                textWrap: 'balance',
+                wordBreak: 'break-word',
+                letterSpacing: '-0.022em'
+              }}
+              className="heading-balanced display-heading"
+            >
               {title}
             </h1>
           </div>
         </div>
 
-        {/* Meta Strip */}
+        {/* Meta Strip - Principle 3: Tabular Numbers */}
         <div style={{
           backgroundColor: isDark ? '#262626' : '#ffffff',
           borderBottom: isDark ? '1px solid #484848' : '1px solid #e2e8f0',
@@ -148,7 +185,9 @@ export default function ActivityContentCard({
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column' }}>
                   <span style={{ fontSize: '0.7rem', color: isDark ? '#94a3b8' : '#64748b', fontWeight: '600' }}>Posted</span>
-                  <span style={{ fontSize: '0.9rem', color: isDark ? '#e2e8f0' : '#1e293b', fontWeight: 'bold' }}>{assignment?.posted || formatFullDate(assignment?.id)}</span>
+                  <span className="tabular-nums" style={{ fontSize: '0.9rem', color: isDark ? '#e2e8f0' : '#1e293b', fontWeight: 'bold', fontVariantNumeric: 'tabular-nums' }}>
+                    {assignment?.posted || formatFullDate(assignment?.id)}
+                  </span>
                 </div>
               </div>
 
@@ -159,7 +198,7 @@ export default function ActivityContentCard({
                     <FileText size={18} color={isDark ? '#94a3b8' : '#64748b'} />
                     <div style={{ display: 'flex', flexDirection: 'column' }}>
                       <span style={{ fontSize: '0.7rem', color: isDark ? '#94a3b8' : '#64748b', fontWeight: '600' }}>Resources</span>
-                      <span style={{ fontSize: '0.9rem', color: isDark ? '#e2e8f0' : '#1e293b', fontWeight: 'bold' }}>
+                      <span className="tabular-nums" style={{ fontSize: '0.9rem', color: isDark ? '#e2e8f0' : '#1e293b', fontWeight: 'bold', fontVariantNumeric: 'tabular-nums' }}>
                         {assignment.attachments.length} attachment{assignment.attachments.length > 1 ? 's' : ''}
                       </span>
                     </div>
@@ -173,7 +212,9 @@ export default function ActivityContentCard({
                 <Award size={18} color={isDark ? '#94a3b8' : '#64748b'} />
                 <div style={{ display: 'flex', flexDirection: 'column' }}>
                   <span style={{ fontSize: '0.7rem', color: isDark ? '#94a3b8' : '#64748b', fontWeight: '600' }}>Points</span>
-                  <span style={{ fontSize: '0.9rem', color: isDark ? '#e2e8f0' : '#1e293b', fontWeight: 'bold' }}>{pointsText}</span>
+                  <span className="tabular-nums" style={{ fontSize: '0.9rem', color: isDark ? '#e2e8f0' : '#1e293b', fontWeight: 'bold', fontVariantNumeric: 'tabular-nums' }}>
+                    {pointsText}
+                  </span>
                 </div>
               </div>
 
@@ -185,31 +226,55 @@ export default function ActivityContentCard({
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column' }}>
                   <span style={{ fontSize: '0.7rem', color: isDark ? '#94a3b8' : '#64748b', fontWeight: '600' }}>Due</span>
-                  <span style={{ fontSize: '0.9rem', color: isDark ? '#e2e8f0' : '#1e293b', fontWeight: 'bold' }}>{dueDateText === 'No Due Date' ? 'No Due Date' : dueDateText}</span>
+                  <span className="tabular-nums" style={{ fontSize: '0.9rem', color: isDark ? '#e2e8f0' : '#1e293b', fontWeight: 'bold', fontVariantNumeric: 'tabular-nums' }}>
+                    {dueDateText === 'No Due Date' ? 'No Due Date' : dueDateText}
+                  </span>
                 </div>
               </div>
             </>
           )}
         </div>
 
-        {/* Instructions Area */}
+        {/* Instructions Area - Principle 9: Line Length (max-w-[65ch]) & Principle 7: Line Height (1.58) */}
         <div style={{ padding: '32px' }}>
-          <h3 style={{ fontSize: '1.05rem', fontWeight: '700', color: isDark ? 'white' : '#1e293b', margin: '0 0 16px 0' }}>
+          <h3
+            style={{
+              fontSize: '1.05rem',
+              fontWeight: '700',
+              color: isDark ? 'white' : '#1e293b',
+              margin: '0 0 16px 0',
+              lineHeight: 1.25,
+              textWrap: 'balance'
+            }}
+            className="heading-balanced"
+          >
             {isMaterial ? 'Material Overview & Resources' : 'Instructions'}
           </h3>
 
-          <div style={{
-            backgroundColor: isDark ? '#262626' : '#f8fafc',
-            borderRadius: '12px',
-            padding: '24px',
-            minHeight: '180px',
-            border: isDark ? '1px solid #444444' : '1px solid #e2e8f0'
-          }}>
-            <div
-              style={{ ...styles.instructionText, whiteSpace: 'normal', margin: 0, color: isDark ? '#d1d5db' : '#334155' }}
-              dangerouslySetInnerHTML={{ __html: details }}
-              onClick={handleInstructionClick}
-            />
+          <div
+            style={{
+              backgroundColor: isDark ? '#262626' : '#f8fafc',
+              borderRadius: '12px',
+              padding: '24px',
+              minHeight: '180px',
+              border: isDark ? '1px solid #444444' : '1px solid #e2e8f0'
+            }}
+          >
+            <div style={{ maxWidth: '65ch', width: '100%' }} className="max-w-prose">
+              <RichInstruction
+                html={details}
+                style={{
+                  ...styles.instructionText,
+                  whiteSpace: 'normal',
+                  margin: 0,
+                  color: isDark ? '#d1d5db' : '#334155',
+                  lineHeight: 1.58,
+                  textWrap: 'pretty'
+                }}
+                className="prose-pretty"
+                onClick={handleInstructionClick}
+              />
+            </div>
 
             {assignment?.attachments?.length > 0 && (
               <div style={styles.cardAttachments}>

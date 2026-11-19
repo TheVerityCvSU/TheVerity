@@ -1,8 +1,8 @@
 import React from 'react';
 import { motion } from 'framer-motion';
-import { Monitor, Sliders, KeyRound } from 'lucide-react';
+import { Monitor, KeyRound } from 'lucide-react';
 import { tabVariants } from '../../../data/adminSettings';
-import { Toggle, Slider } from './SettingControls';
+import { Toggle } from './SettingControls';
 
 export default function KioskSecurityTab({ data, onChange, direction, styles, T }) {
   const update = (key, val) => onChange({ ...data, [key]: val });
@@ -58,44 +58,6 @@ export default function KioskSecurityTab({ data, onChange, direction, styles, T 
               subtext="Detects and blocks simultaneous sessions from distinct IP addresses."
               T={T}
             />
-          </div>
-        </div>
-
-        <div style={styles.divider} />
-
-        {/* Cognitive Pause Threshold */}
-        <div>
-          <h3 style={styles.sectionTitle}><Sliders size={18} color={T.blue} /><span>Behavioral Detection Thresholds</span></h3>
-          <p style={styles.sectionSub}>Configure inactivity and session timer triggers for automatic incident logging.</p>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-            <Slider
-              label="Cognitive Pause Threshold"
-              subtext="Seconds of typing inactivity before the system records a 'Suspicious Pause' event."
-              value={data.cognitivePauseThreshold}
-              onChange={v => update('cognitivePauseThreshold', v)}
-              min={10} max={120} step={5} unit="s"
-              T={T}
-            />
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '16px' }}>
-              <div>
-                <label style={styles.label}>Violation Threshold (Lock After X Flags)</label>
-                <input
-                  type="number" min="1" max="10" value={data.violationThreshold}
-                  onChange={e => update('violationThreshold', parseInt(e.target.value) || 3)}
-                  style={styles.input}
-                />
-                <span style={{ fontSize: '0.75rem', color: T.muted, marginTop: '4px', display: 'block' }}>Account locks and notifies Admin after hitting this count.</span>
-              </div>
-              <div>
-                <label style={styles.label}>Idle Session Timeout</label>
-                <select value={data.sessionTimeout} onChange={e => update('sessionTimeout', e.target.value)} style={styles.select}>
-                  <option value="15m">15 Minutes</option>
-                  <option value="30m">30 Minutes</option>
-                  <option value="1h">1 Hour</option>
-                </select>
-                <span style={{ fontSize: '0.75rem', color: T.muted, marginTop: '4px', display: 'block' }}>Force re-authentication after inactivity.</span>
-              </div>
-            </div>
           </div>
         </div>
 

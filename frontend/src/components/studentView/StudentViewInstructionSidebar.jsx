@@ -1,5 +1,7 @@
+import React, { useMemo } from 'react';
 import { PanelLeftClose, Maximize2, Minimize2 } from 'lucide-react';
 import AttachmentCard from '../AttachmentCard';
+import RichInstruction from '../RichInstruction';
 import StudentViewInstructionRail from './StudentViewInstructionRail';
 import StudentViewWarningDrawer from './StudentViewWarningDrawer';
 import { studentViewStyles as styles } from '../../utils/studentViewStyles';
@@ -33,6 +35,14 @@ export default function StudentViewInstructionSidebar({
   const handleSidebarDividerMouseDown = props.handleSidebarDividerMouseDown ?? layout.handleSidebarDividerMouseDown;
   const setInstructionWidth = props.setInstructionWidth ?? layout.setInstructionWidth;
   const isResizingSidebar = props.isResizingSidebar ?? layout.isResizingSidebar;
+
+  const filteredProctorLogs = useMemo(() => {
+    return (Array.isArray(proctorLogs) ? proctorLogs : []).filter((l) => {
+      const text = `${l?.action || ''} ${l?.message || ''}`.toLowerCase();
+      return !text.includes('cognitive pause') && !text.includes('inactivity');
+    });
+  }, [proctorLogs]);
+
   if (isSandbox) return null;
 
   if (isInstructionCollapsed) {
@@ -40,7 +50,7 @@ export default function StudentViewInstructionSidebar({
       <StudentViewInstructionRail
         isMobile={isMobile}
         isDark={isDark}
-        proctorLogsLength={(proctorLogs || []).length}
+        proctorLogsLength={filteredProctorLogs.length}
         onExpand={toggleInstructionCollapse}
       />
     );
@@ -69,57 +79,77 @@ export default function StudentViewInstructionSidebar({
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
-            padding: '14px 18px 10px 18px',
+            padding: '10px 18px',
             borderBottom: isDark ? '1px solid #333333' : '1px solid #e5e7eb',
             flexShrink: 0
           }}
         >
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <h2 style={{ color: isDark ? '#E8EAED' : '#111827', margin: 0, fontSize: '1.05rem', fontWeight: '700' }}>
+            {/* Principle 8: Widow prevention on heading */}
+            <h2
+              style={{
+                color: isDark ? '#E8EAED' : '#111827',
+                margin: 0,
+                fontSize: '1.05rem',
+                fontWeight: '700',
+                textWrap: 'balance',
+                lineHeight: 1.2
+              }}
+              className="heading-balanced"
+            >
               Instruction
             </h2>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          {/* Principle 10: Enforce 44px x 44px touch targets on mobile toolbar buttons */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
             <button
               onClick={toggleInstructionCollapse}
               style={{
                 background: 'transparent',
                 border: 'none',
                 cursor: 'pointer',
-                padding: '5px',
-                borderRadius: '6px',
+                minWidth: '44px',
+                minHeight: '44px',
+                padding: '10px',
+                borderRadius: '8px',
                 color: isDark ? '#9ca3af' : '#6b7280',
-                display: 'flex',
+                display: 'inline-flex',
                 alignItems: 'center',
                 justifyContent: 'center',
-                transition: 'color 0.15s ease'
+                transition: 'color 0.15s ease, background-color 0.15s ease'
               }}
+              className="touch-target-44 clickable-affordance"
               title="Collapse Instructions (Ctrl+B)"
+              aria-label="Collapse Instructions"
             >
               <PanelLeftClose size={18} />
             </button>
             <button
               onClick={toggleInstructionMaximize}
               title={isInstructionMaximized ? 'Restore instructions' : 'Maximize instructions'}
+              aria-label={isInstructionMaximized ? 'Restore instructions' : 'Maximize instructions'}
               style={{
                 background: 'transparent',
                 border: 'none',
                 cursor: 'pointer',
-                padding: '5px',
-                borderRadius: '6px',
+                minWidth: '44px',
+                minHeight: '44px',
+                padding: '10px',
+                borderRadius: '8px',
                 color: isDark ? '#9ca3af' : '#6b7280',
-                display: 'flex',
+                display: 'inline-flex',
                 alignItems: 'center',
                 justifyContent: 'center',
-                transition: 'color 0.15s ease'
+                transition: 'color 0.15s ease, background-color 0.15s ease'
               }}
+              className="touch-target-44 clickable-affordance"
             >
               {isInstructionMaximized ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
             </button>
           </div>
         </div>
 
-        {/* Scrollable Instruction Body */}
+        {/* Scrollable Instruction Body - Principle 9: Line Length (max-w-[65ch]) & Principle 7: Line Height (1.58) */}
         <div
           style={{
             ...styles.instructionSection,
@@ -128,17 +158,22 @@ export default function StudentViewInstructionSidebar({
           }}
         >
           {instruction ? (
-            <div
-              style={{
-                ...styles.instructionText,
-                whiteSpace: 'normal',
-                ...(isDark ? { color: '#d1d5db' } : {})
-              }}
-              dangerouslySetInnerHTML={{ __html: instruction }}
-              onClick={handleInstructionClick}
-            />
+            <div style={{ maxWidth: '65ch', width: '100%' }} className="max-w-prose">
+              <RichInstruction
+                html={instruction}
+                style={{
+                  ...styles.instructionText,
+                  whiteSpace: 'normal',
+                  lineHeight: 1.58,
+                  textWrap: 'pretty',
+                  ...(isDark ? { color: '#d1d5db' } : {})
+                }}
+                className="prose-pretty"
+                onClick={handleInstructionClick}
+              />
+            </div>
           ) : (
-            <p style={{ color: isDark ? '#888888' : '#9ca3af', fontStyle: 'italic', fontSize: '0.9rem' }}>
+            <p style={{ color: isDark ? '#888888' : '#9ca3af', fontStyle: 'italic', fontSize: '0.9rem', maxWidth: '65ch', textWrap: 'pretty' }}>
               Waiting for instructions...
             </p>
           )}
@@ -193,7 +228,7 @@ export default function StudentViewInstructionSidebar({
         {/* Warning Section Drawer */}
         <StudentViewWarningDrawer
           isDark={isDark}
-          proctorLogs={proctorLogs}
+          proctorLogs={filteredProctorLogs}
           warningHeight={warningHeight}
           isWarningCollapsed={isWarningCollapsed}
           setIsWarningCollapsed={setIsWarningCollapsed}

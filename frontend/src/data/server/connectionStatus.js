@@ -68,10 +68,12 @@ export const getConnectionStatus = () => {
         activeMode = 'offline';
       }
     } else {
-      if (hasCloud && !isCloudDown && isNavOnline) {
-        activeMode = 'cloud';
-      } else if (isLanConnected || state.isLocalServerUp) {
+      // Desktop / Electron / Local dev / ComLab LAN:
+      // Prioritize the local/LAN server hosting the ComLab and local media uploads
+      if (isLanConnected || state.isLocalServerUp || isPrivateHost(typeof window !== 'undefined' ? window.location?.hostname : '')) {
         activeMode = 'lan';
+      } else if (hasCloud && !isCloudDown && isNavOnline) {
+        activeMode = 'cloud';
       } else {
         activeMode = 'offline';
       }

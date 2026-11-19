@@ -2,7 +2,6 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { useMediaQuery } from '../hooks/useMediaQuery';
-import ClassroomSettings from './ClassroomSettings';
 import ImagePreviewModal from '../components/ImagePreviewModal';
 import VideoPreviewModal from '../components/VideoPreviewModal';
 import IframePreviewModal from '../components/IframePreviewModal';
@@ -41,7 +40,6 @@ export default function ClassroomView({
   const [previewVideo, setPreviewVideo] = useState(null);
   const [previewIframe, setPreviewIframe] = useState(null);
   const [isFadingOut, setIsFadingOut] = useState(false);
-  const [isClassroomSettingsOpen, setIsClassroomSettingsOpen] = useState(false);
   const [isClassInfoModalOpen, setIsClassInfoModalOpen] = useState(false);
 
   useEffect(() => {
@@ -117,7 +115,13 @@ export default function ClassroomView({
         onTabChange={handleTabChange}
         onNavigateView={onNavigateView}
         onBack={onBack}
-        onOpenSettings={() => setIsClassroomSettingsOpen(true)}
+        onOpenSettings={() => {
+          if (typeof onNavigateView === 'function') {
+            onNavigateView('settings');
+          } else if (typeof onBack === 'function') {
+            onBack();
+          }
+        }}
         onLogout={onLogout}
       />
 
@@ -243,14 +247,6 @@ export default function ClassroomView({
           title={previewIframe.name}
           type={previewIframe.type}
           onClose={() => setPreviewIframe(null)}
-        />
-      )}
-
-      {isClassroomSettingsOpen && (
-        <ClassroomSettings
-          classroom={classroom}
-          onClose={() => setIsClassroomSettingsOpen(false)}
-          role="student"
         />
       )}
 

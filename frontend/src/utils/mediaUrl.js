@@ -14,12 +14,12 @@ export function getActiveUploadBaseUrl() {
     if (status.isWebHosted) {
       return (status.cloudUrl || getCloudUrl() || DEFAULT_CLOUD_API_URL).replace(/\/$/, '');
     }
-    if (status.activeMode === 'lan' || status.activeMode === 'offline') {
-      return (status.localUrl || getLocalApiUrl()).replace(/\/$/, '');
+    if (status.userPreferredMode === 'cloud' && status.isOnline && !status.isCloudDown) {
+      return (status.cloudUrl || getCloudUrl() || DEFAULT_CLOUD_API_URL).replace(/\/$/, '');
     }
-    return (status.cloudUrl || getCloudUrl() || DEFAULT_CLOUD_API_URL).replace(/\/$/, '');
+    return (status.localUrl || getLocalApiUrl()).replace(/\/$/, '');
   } catch (_) {
-    return (getCloudUrl() || DEFAULT_CLOUD_API_URL).replace(/\/$/, '');
+    return (getLocalApiUrl() || getCloudUrl() || DEFAULT_CLOUD_API_URL).replace(/\/$/, '');
   }
 }
 
@@ -52,7 +52,7 @@ export function extractUploadPath(rawUrl) {
   if (/^https?:\/\//i.test(trimmed)) {
     try {
       const parsed = new URL(trimmed);
-      if (parsed.pathname.startsWith('/uploads/') && isKnownVerityHost(parsed.hostname)) {
+      if (parsed.pathname.startsWith('/uploads/')) {
         return `${parsed.pathname}${parsed.search || ''}${parsed.hash || ''}`;
       }
     } catch (_) { }

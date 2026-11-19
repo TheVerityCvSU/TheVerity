@@ -15,7 +15,6 @@ export default function StudentCodeEditor({
   diagnosticsRef,
   updateEditorMarkers,
   handleSaveCode,
-  resetCognitivePauseTimer,
   activeFileId,
   setCode,
   codeRef,
@@ -146,7 +145,6 @@ export default function StudentCodeEditor({
       }
       return;
     }
-    if (resetCognitivePauseTimer) resetCognitivePauseTimer();
 
     if (activeFileId === 'main') {
       if (diagnosticsRef?.current?.length > 0 && updateEditorMarkers) {

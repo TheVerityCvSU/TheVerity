@@ -54,9 +54,6 @@ export const sanitizeAction = (actionStr) => {
   ) {
     return 'Alt Tab';
   }
-  if (lower.includes('cognitive pause') || lower.includes('inactivity')) {
-    return 'Cognitive Pause';
-  }
   if (lower.includes('paste') || lower.includes('clipboard') || lower.includes('copy')) {
     return 'Copy/Paste';
   }
@@ -74,9 +71,6 @@ export const getLogColor = (actionStr) => {
   }
   if (lower.includes('paste') || lower.includes('copy') || lower.includes('clipboard')) {
     return '#ef4444';
-  }
-  if (lower.includes('pause') || lower.includes('inactivity')) {
-    return '#f59e0b';
   }
   return '#ef4444';
 };

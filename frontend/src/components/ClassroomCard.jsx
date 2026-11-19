@@ -41,8 +41,9 @@ export default function ClassroomCard({
 
   return (
     <motion.div
+      layoutId={`classroom-card-${classroom.id}`}
       whileHover={{ y: -3, boxShadow: isDark ? '0 8px 24px rgba(0,0,0,0.35)' : '0 8px 24px rgba(0,0,0,0.08)' }}
-      transition={{ duration: 0.2 }}
+      transition={{ type: 'spring', stiffness: 380, damping: 25 }}
       style={{
         backgroundColor: isDark ? '#242424' : '#ffffff',
         borderRadius: '16px',
@@ -56,12 +57,14 @@ export default function ClassroomCard({
         position: 'relative',
         opacity: isArchived ? 0.75 : 1
       }}
+      className="clickable-affordance"
       onClick={() => onEnter && onEnter(classroom)}
     >
-      {/* Live activity green notification dot */}
+      {/* Live activity green notification dot - Principle 3: Tabular Numbers */}
       {Number(activeCount) > 0 && (
         <span
           title={`${activeCount} student${Number(activeCount) > 1 ? 's' : ''} currently working on an activity in this classroom`}
+          className="tabular-nums"
           style={{
             position: 'absolute',
             top: '-3px',
@@ -75,7 +78,8 @@ export default function ClassroomCard({
               : '0 0 0 2.5px #ffffff, 0 0 12px #10b981',
             animation: 'live-pulse 1.8s infinite',
             zIndex: 40,
-            pointerEvents: 'auto'
+            pointerEvents: 'auto',
+            fontVariantNumeric: 'tabular-nums'
           }}
         />
       )}
@@ -187,11 +191,13 @@ export default function ClassroomCard({
 const iconButtonStyle = {
   background: 'none',
   border: 'none',
-  padding: '6px',
+  minWidth: '44px',
+  minHeight: '44px',
+  padding: '10px',
   borderRadius: '50%',
   cursor: 'pointer',
-  display: 'flex',
+  display: 'inline-flex',
   alignItems: 'center',
   justifyContent: 'center',
-  transition: 'background-color 0.15s'
+  transition: 'background-color 0.15s, transform 0.15s ease'
 };

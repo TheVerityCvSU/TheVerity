@@ -110,6 +110,12 @@ async function syncBidirectional() {
             ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar TEXT;
         `).catch(() => { });
 
+        // Ensure local SQLite schema columns also match
+        try { sqliteDb.exec(`ALTER TABLE classrooms ADD COLUMN archived INTEGER DEFAULT 0;`); } catch (_) { }
+        try { sqliteDb.exec(`ALTER TABLE classrooms ADD COLUMN instructor_email TEXT;`); } catch (_) { }
+        try { sqliteDb.exec(`ALTER TABLE classrooms ADD COLUMN theme TEXT;`); } catch (_) { }
+        try { sqliteDb.exec(`ALTER TABLE users ADD COLUMN avatar TEXT;`); } catch (_) { }
+
         let pushedCount = 0;
         let pulledCount = 0;
 

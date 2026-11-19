@@ -111,23 +111,59 @@ function seedFromDatabaseJson(adapter, dataDir) {
 
         const classCount = adapter.prepare('SELECT count(*) as c FROM classrooms').get()?.c || 0;
         if (classCount === 0 && Array.isArray(data.classrooms) && data.classrooms.length > 0) {
-            const insertClassroom = adapter.prepare('INSERT OR IGNORE INTO classrooms (id, code, section, name, subject, instructor) VALUES (?, ?, ?, ?, ?, ?)');
+            const insertClassroom = adapter.prepare('INSERT OR IGNORE INTO classrooms (id, code, section, name, subject, instructor, instructor_email, theme, archived) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
             data.classrooms.forEach(c => {
-                insertClassroom.run(c.id, c.code || '', c.section || '', c.name || '', c.subject || '', c.instructor || '');
+                insertClassroom.run(
+                    c.id,
+                    c.code || '',
+                    c.section || '',
+                    c.name || '',
+                    c.subject || '',
+                    c.instructor || '',
+                    c.instructor_email || '',
+                    c.theme || null,
+                    c.archived || 0
+                );
             });
             console.log(`[Database] Seeded ${data.classrooms.length} classrooms into SQLite from database.json.`);
         }
 
         const cwCount = adapter.prepare('SELECT count(*) as c FROM classwork').get()?.c || 0;
         if (cwCount === 0 && data.classwork && typeof data.classwork === 'object') {
-            const insertClasswork = adapter.prepare('INSERT OR IGNORE INTO classwork (id, classroom_id, title, description, dueDate, type) VALUES (?, ?, ?, ?, ?, ?)');
+            const insertClasswork = adapter.prepare('INSERT OR IGNORE INTO classwork (id, classroom_id, title, description, dueDate, type, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)');
             for (const [classroomId, cwArray] of Object.entries(data.classwork)) {
                 if (Array.isArray(cwArray)) {
                     cwArray.forEach(cw => {
-                        insertClasswork.run(cw.id, parseInt(classroomId, 10), cw.title, cw.description, cw.dueDate, cw.type || '');
+                        insertClasswork.run(
+                            cw.id,
+                            parseInt(classroomId, 10),
+                            cw.title,
+                            cw.description,
+                            cw.dueDate,
+                            cw.type || '',
+                            cw.created_at || null
+                        );
                     });
                 }
             }
+            console.log(`[Database] Seeded classwork into SQLite from database.json.`);
+        }
+
+        const enCount = adapter.prepare('SELECT count(*) as c FROM enrollments').get()?.c || 0;
+        if (enCount === 0 && Array.isArray(data.enrollments) && data.enrollments.length > 0) {
+            const insertEn = adapter.prepare('INSERT OR IGNORE INTO enrollments (classroom_id, student_id, student_name, student_email, enrolled_at) VALUES (?, ?, ?, ?, ?)');
+            data.enrollments.forEach(en => {
+                if (en.classroom_id && en.student_email) {
+                    insertEn.run(
+                        en.classroom_id,
+                        en.student_id || null,
+                        en.student_name || '',
+                        en.student_email.trim().toLowerCase(),
+                        en.enrolled_at || null
+                    );
+                }
+            });
+            console.log(`[Database] Seeded ${data.enrollments.length} enrollments into SQLite from database.json.`);
         }
     } catch (e) {
         console.warn('[Database] Seeding notice:', e.message);
@@ -170,7 +206,8 @@ function initSqlite() {
             subject TEXT,
             instructor TEXT,
             instructor_email TEXT,
-            theme TEXT
+            theme TEXT,
+            archived INTEGER DEFAULT 0
         );
 
         CREATE TABLE IF NOT EXISTS enrollments (
@@ -306,6 +343,7 @@ function initSqlite() {
 
         try { sqliteDb.exec(`ALTER TABLE classrooms ADD COLUMN instructor_email TEXT;`); } catch (e) { }
         try { sqliteDb.exec(`ALTER TABLE classrooms ADD COLUMN theme TEXT;`); } catch (e) { }
+        try { sqliteDb.exec(`ALTER TABLE classrooms ADD COLUMN archived INTEGER DEFAULT 0;`); } catch (e) { }
         try { sqliteDb.exec(`ALTER TABLE users ADD COLUMN avatar TEXT;`); } catch (e) { }
         try { sqliteDb.exec(`ALTER TABLE security_flags ADD COLUMN alt_tab_copy_paste_count INTEGER DEFAULT 0;`); } catch (e) { }
 
@@ -386,6 +424,19 @@ function parseDatabaseUrl(raw) {
         }
     }
 
+    // 6. Fix IPv6-only db.*.supabase.co for IPv4-only cloud environments (e.g., Render, Docker)
+    if (url.includes('db.') && url.includes('.supabase.co')) {
+        const refMatch = url.match(/db\.([a-z0-9_-]+)\.supabase\.co/i);
+        if (refMatch) {
+            const projectRef = refMatch[1];
+            url = url.replace(/db\.[a-z0-9_-]+\.supabase\.co(?::5432)?/i, 'aws-0-ap-northeast-2.pooler.supabase.com:5432');
+            url = url.replace(/postgres(?:ql)?:\/\/([^:]+):/, (m, user) => {
+                if (user === 'postgres') return m.replace('postgres:', `postgres.${projectRef}:`);
+                return m;
+            });
+        }
+    }
+
     return { url, hasPlaceholder };
 }
 
@@ -405,13 +456,19 @@ async function initPostgres(connStr = cleanedUrl) {
         ssl: sslConfig,
         max: 5,
         idleTimeoutMillis: 30000,
-        connectionTimeoutMillis: 3500,
+        connectionTimeoutMillis: 10000,
         statement_timeout: 4000,
-        query_timeout: 4000,
+        query_timeout: 8000,
+    });
+
+    // Without an 'error' listener, an idle-client network error crashes the whole Node process
+    pgPool.on('error', (err) => {
+        console.warn('[Database] PostgreSQL idle client error:', err.message);
     });
 
     // Test connection
     const client = await pgPool.connect();
+    pgEverConnected = true;
     try {
         console.log('[Database] Successfully connected to PostgreSQL / Supabase!');
 
@@ -661,11 +718,60 @@ async function initPostgres(connStr = cleanedUrl) {
     }
 }
 
+// --- PostgreSQL auto-recovery ---
+// Previously, a single network hiccup (or a slow cold-start connection) flipped the provider to SQLite
+// PERMANENTLY. On Render, that SQLite file is ephemeral, so the Online server silently served stale/empty
+// data (e.g. Admin "Global Classrooms" showing nothing). We now fall back temporarily and keep retrying.
+let pgEverConnected = false;
+let reconnectTimer = null;
+const RECONNECT_INTERVAL_MS = 15000;
+
+function scheduleReconnect() {
+    if (reconnectTimer || !cleanedUrl || (parsedDb && parsedDb.hasPlaceholder)) return;
+    reconnectTimer = setInterval(async () => {
+        if (provider === 'postgres') {
+            clearInterval(reconnectTimer);
+            reconnectTimer = null;
+            return;
+        }
+        try {
+            if (!pgEverConnected || !pgPool) {
+                // Initial boot never reached Postgres: rebuild the pool and run the full initial sync
+                if (pgPool) { try { await pgPool.end(); } catch (_) { } pgPool = null; }
+                await initPostgres(cleanedUrl);
+            } else {
+                await pgPool.query('SELECT 1');
+                provider = 'postgres';
+            }
+            if (provider === 'postgres') {
+                console.log('[Database] PostgreSQL connection restored. Switched back from SQLite fallback.');
+                clearInterval(reconnectTimer);
+                reconnectTimer = null;
+                // Push any writes made while in fallback mode up to Supabase
+                try { require('./cloudSync').triggerSync(); } catch (_) { }
+            }
+        } catch (err) {
+            console.warn(`[Database] PostgreSQL reconnect attempt failed: ${err.message}`);
+        }
+    }, RECONNECT_INTERVAL_MS);
+    if (reconnectTimer.unref) reconnectTimer.unref();
+}
+
+function fallBackToSqlite(err) {
+    console.warn(`[Database] PostgreSQL connection lost (${err && err.message}). Temporarily using local SQLite; will keep retrying PostgreSQL.`);
+    if (!sqliteDb) initSqlite();
+    provider = 'sqlite';
+    scheduleReconnect();
+}
+
 function isNetworkError(err) {
     if (!err) return false;
     const msg = String(err.message || '').toLowerCase();
     const code = String(err.code || '');
+    // A single slow statement (statement_timeout) is not a lost connection
+    if (code === '57014') return false;
     return code === 'ECONNREFUSED' ||
+        code === 'ENETUNREACH' ||
         code === 'ECONNRESET' ||
         code === 'ETIMEDOUT' ||
         code === 'ENOTFOUND' ||
@@ -701,8 +807,9 @@ const readyPromise = (async () => {
                     console.warn('[Database] IPv6 Error: Render does not support direct IPv6 connections (db.*.supabase.co).');
                     console.warn('[Database] Fix: In your Supabase Dashboard, click "Connect" -> select "Connection Pooler" (pooler.supabase.com:6543 or 5432) which supports IPv4!');
                 }
-                console.warn('[Database] Falling back to local SQLite so your app stays fully functional.');
+                console.warn('[Database] Falling back to local SQLite so your app stays fully functional. Will keep retrying PostgreSQL.');
                 provider = 'sqlite';
+                scheduleReconnect();
             }
         }
     } else {
@@ -762,9 +869,7 @@ const db = {
                 return res.rows.map(normalizeRow);
             } catch (err) {
                 if (isNetworkError(err)) {
-                    console.warn(`[Database] PostgreSQL connection lost (${err.message}). Switching to local SQLite.`);
-                    provider = 'sqlite';
-                    initSqlite();
+                    fallBackToSqlite(err);
                     return sqliteDb.prepare(sql).all(...params);
                 }
                 throw err;
@@ -786,9 +891,7 @@ const db = {
                 return res.rows[0] ? normalizeRow(res.rows[0]) : undefined;
             } catch (err) {
                 if (isNetworkError(err)) {
-                    console.warn(`[Database] PostgreSQL connection lost (${err.message}). Switching to local SQLite.`);
-                    provider = 'sqlite';
-                    initSqlite();
+                    fallBackToSqlite(err);
                     return sqliteDb.prepare(sql).get(...params);
                 }
                 throw err;
@@ -845,9 +948,7 @@ const db = {
                 };
             } catch (err) {
                 if (isNetworkError(err)) {
-                    console.warn(`[Database] PostgreSQL connection lost (${err.message}). Switching to local SQLite.`);
-                    provider = 'sqlite';
-                    initSqlite();
+                    fallBackToSqlite(err);
                     return sqliteDb.prepare(sql).run(...params);
                 }
                 throw err;
@@ -889,9 +990,7 @@ const db = {
                 return await pgPool.query(sql);
             } catch (err) {
                 if (isNetworkError(err)) {
-                    console.warn(`[Database] PostgreSQL connection lost (${err.message}). Switching to local SQLite.`);
-                    provider = 'sqlite';
-                    initSqlite();
+                    fallBackToSqlite(err);
                     return sqliteDb.exec(sql);
                 }
                 throw err;
@@ -963,9 +1062,7 @@ const db = {
                 }
             } catch (connErr) {
                 if (isNetworkError(connErr)) {
-                    console.warn(`[Database] PostgreSQL connection lost (${connErr.message}). Switching to local SQLite.`);
-                    provider = 'sqlite';
-                    initSqlite();
+                    fallBackToSqlite(connErr);
                     return sqliteDb.transaction(async () => {
                         return callback(db);
                     })();

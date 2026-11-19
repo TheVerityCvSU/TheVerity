@@ -43,8 +43,6 @@ export function useStudentViewKiosk({
   const [idleWarning, setIdleWarning] = useState(false);
 
   const lastActivityRef = useRef(Date.now());
-  const cognitivePauseTimerRef = useRef(null);
-  const hasLoggedPauseRef = useRef(false);
   const isExitingCleanlyRef = useRef(false);
   const lastTabExitLogRef = useRef(0);
   const copiedInternallyRef = useRef(new Set());
@@ -247,19 +245,7 @@ export function useStudentViewKiosk({
     };
   }, [addProctorLog]);
 
-  const resetCognitivePauseTimer = useCallback(() => {
-    if (cognitivePauseTimerRef.current) clearTimeout(cognitivePauseTimerRef.current);
-    hasLoggedPauseRef.current = false;
-    const thresholdSec = Number(kioskRulesRef.current.cognitivePauseThreshold) || 45;
-    if (thresholdSec <= 0) return;
-
-    cognitivePauseTimerRef.current = setTimeout(() => {
-      if (!hasLoggedPauseRef.current) {
-        hasLoggedPauseRef.current = true;
-        addProctorLog(`Cognitive Pause (${thresholdSec}s inactivity)`, '#f59e0b');
-      }
-    }, thresholdSec * 1000);
-  }, [addProctorLog]);
+  const resetCognitivePauseTimer = useCallback(() => {}, []);
 
   // Capture internal copy/cut anywhere in the DOM
   useEffect(() => {

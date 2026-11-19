@@ -1,6 +1,6 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Eye, EyeOff, AlertCircle } from 'lucide-react';
+import { Eye, EyeOff, AlertCircle, X } from 'lucide-react';
 import PasswordRequirements from '../PasswordRequirements';
 
 export default function BulkActionModal({
@@ -34,34 +34,147 @@ export default function BulkActionModal({
       ? selectedList.map(getUserDisplayName).join(', ')
       : 'No users selected';
 
+  const modalTitle =
+    modalAction === 'reset'
+      ? 'Reset password?'
+      : modalAction === 'suspend'
+      ? 'Suspend account?'
+      : 'Delete account?';
+
+  const confirmBtnText = bulkLoading
+    ? 'Processing...'
+    : modalAction === 'reset'
+    ? 'Reset password'
+    : modalAction === 'suspend'
+    ? 'Suspend account'
+    : 'Delete account';
+
   return (
     <AnimatePresence>
       {isVisible && (
-        <motion.div style={styles.modalOverlay} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+        <motion.div
+          className="fixed inset-0 flex items-center justify-center p-5 z-[99999]"
+          style={{
+            position: 'fixed',
+            inset: 0,
+            backgroundColor: isDark ? 'rgba(17, 17, 17, 0.75)' : 'rgba(235, 235, 235, 0.75)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 99999,
+            backdropFilter: 'blur(5px)',
+            padding: '20px'
+          }}
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          onClick={onClose}
+        >
           <motion.div
-            style={{ ...styles.modalCard, maxWidth: '400px' }}
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
+            className="w-full max-w-[440px] text-left rounded-3xl p-7 shadow-2xl relative"
+            style={{
+              backgroundColor: isDark ? '#1C1C1E' : '#FFFFFF',
+              border: isDark ? '1px solid #2C2C2E' : '1px solid #E5E7EB',
+              borderRadius: '24px',
+              padding: '28px',
+              maxWidth: '440px',
+              width: '100%',
+              textAlign: 'left',
+              boxShadow: isDark
+                ? '0 25px 50px -12px rgba(0, 0, 0, 0.7)'
+                : '0 20px 40px -10px rgba(0, 0, 0, 0.12)',
+              position: 'relative'
+            }}
+            initial={{ opacity: 0, scale: 0.95, y: 15 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.95, y: 15 }}
             transition={{ type: 'spring', damping: 25, stiffness: 300 }}
+            onClick={(e) => e.stopPropagation()}
           >
-            <h2 style={{ margin: '0 0 16px', color: isDark ? '#f1f5f9' : '#1e293b' }}>
-              {modalAction === 'reset' ? 'Reset Password' : modalAction === 'suspend' ? 'Suspend Account' : 'Delete Account'}
+            {/* Top-Right Close Button */}
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Close dialog"
+              style={{
+                position: 'absolute',
+                top: '20px',
+                right: '20px',
+                background: 'none',
+                border: 'none',
+                color: isDark ? '#9CA3AF' : '#64748B',
+                cursor: 'pointer',
+                padding: '6px',
+                borderRadius: '8px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                transition: 'background-color 0.15s ease, color 0.15s ease'
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.backgroundColor = isDark ? '#2C2C2E' : '#F1F5F9';
+                e.currentTarget.style.color = isDark ? '#F3F4F6' : '#0F172A';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.backgroundColor = 'transparent';
+                e.currentTarget.style.color = isDark ? '#9CA3AF' : '#64748B';
+              }}
+            >
+              <X size={18} />
+            </button>
+
+            {/* Title */}
+            <h2
+              style={{
+                margin: '0 0 16px',
+                fontSize: '1.25rem',
+                fontWeight: '700',
+                color: isDark ? '#F9FAFB' : '#111827',
+                paddingRight: '28px',
+                textAlign: 'left'
+              }}
+            >
+              {modalTitle}
             </h2>
-            <div style={{ marginBottom: '20px', color: isDark ? '#cbd5e1' : '#334155', fontSize: '0.9rem' }}>
+
+            {/* Warning description with dynamic entity name in font-semibold */}
+            <div
+              className="text-left"
+              style={{
+                marginBottom: '20px',
+                color: isDark ? '#D1D5DB' : '#374151',
+                fontSize: '0.9rem',
+                lineHeight: '1.55',
+                textAlign: 'left'
+              }}
+            >
               {modalAction === 'reset' ? (
                 <>
-                  <p>Enter a new password for the selected user(s):</p>
-                  <p style={{ fontWeight: '700', color: '#007bff', marginBottom: '12px' }}>
-                    {selectedDisplayNames}
+                  <p style={{ margin: '0 0 12px 0' }}>
+                    Enter a new password for{' '}
+                    <span
+                      className="font-semibold"
+                      style={{ fontWeight: 600, color: isDark ? '#60A5FA' : '#2563EB' }}
+                    >
+                      {selectedDisplayNames}
+                    </span>
+                    :
                   </p>
                   <div style={{ position: 'relative' }}>
                     <input
                       type={showBulkPassword ? 'text' : 'password'}
                       placeholder="New Password"
                       value={newPassword}
-                      onChange={e => setNewPassword(e.target.value)}
-                      style={{ ...styles.inputPill, paddingRight: '40px' }}
+                      onChange={(e) => setNewPassword(e.target.value)}
+                      style={{
+                        ...styles.inputPill,
+                        width: '100%',
+                        paddingRight: '40px',
+                        backgroundColor: isDark ? '#2C2C2E' : '#F8FAFC',
+                        border: isDark ? '1px solid #3A3A3C' : '1px solid #CBD5E1',
+                        color: isDark ? '#F9FAFB' : '#0F172A',
+                        boxSizing: 'border-box'
+                      }}
                     />
                     <button
                       type="button"
@@ -78,15 +191,15 @@ export default function BulkActionModal({
                         border: 'none',
                         cursor: 'pointer',
                         padding: 0,
-                        color: isDark ? '#9ca3af' : '#64748b',
+                        color: isDark ? '#9CA3AF' : '#64748B',
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'center',
                         outline: 'none',
                         transition: 'color 0.15s ease'
                       }}
-                      onMouseEnter={e => e.currentTarget.style.color = isDark ? '#e4e4e7' : '#1f2937'}
-                      onMouseLeave={e => e.currentTarget.style.color = isDark ? '#9ca3af' : '#64748b'}
+                      onMouseEnter={(e) => (e.currentTarget.style.color = isDark ? '#E4E4E7' : '#1F2937')}
+                      onMouseLeave={(e) => (e.currentTarget.style.color = isDark ? '#9CA3AF' : '#64748B')}
                       title={showBulkPassword ? 'Hide password' : 'Show password'}
                       tabIndex={-1}
                     >
@@ -96,65 +209,120 @@ export default function BulkActionModal({
                   <PasswordRequirements password={newPassword} policies={policies} />
                 </>
               ) : (
-                <>
-                  <p>Are you sure you want to {modalAction === 'suspend' ? 'suspend' : 'delete'} this account?</p>
-                  <p style={{ fontWeight: '700', color: modalAction === 'delete' ? '#ef4444' : '#f59e0b', marginTop: '8px' }}>
+                <p style={{ margin: 0 }}>
+                  Are you sure you want to {modalAction === 'suspend' ? 'suspend' : 'permanently delete'}{' '}
+                  <span
+                    className="font-semibold"
+                    style={{
+                      fontWeight: 600,
+                      color:
+                        modalAction === 'delete'
+                          ? isDark
+                            ? '#F87171'
+                            : '#DC2626'
+                          : isDark
+                          ? '#FBBF24'
+                          : '#D97706'
+                    }}
+                  >
                     {selectedDisplayNames}
-                  </p>
-                </>
+                  </span>
+                  ?{' '}
+                  {modalAction === 'delete'
+                    ? 'This action cannot be undone.'
+                    : 'The affected user(s) will lose access until reactivated.'}
+                </p>
               )}
             </div>
+
             {bulkError && (
-              <div style={{
-                padding: '10px 14px',
-                borderRadius: '10px',
-                backgroundColor: isDark ? '#3f1d1d' : '#fee2e2',
-                color: isDark ? '#fca5a5' : '#b91c1c',
-                fontSize: '0.84rem',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-                marginBottom: '14px'
-              }}>
+              <div
+                style={{
+                  padding: '10px 14px',
+                  borderRadius: '10px',
+                  backgroundColor: isDark ? '#3F1D1D' : '#FEE2E2',
+                  color: isDark ? '#FCA5A5' : '#B91C1C',
+                  fontSize: '0.84rem',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  marginBottom: '16px'
+                }}
+              >
                 <AlertCircle size={15} style={{ flexShrink: 0 }} />
                 <span>{bulkError}</span>
               </div>
             )}
-            <div style={{ display: 'flex', gap: '10px' }}>
-              <motion.button
+
+            {/* Right-aligned footer buttons: justify-end gap-3 */}
+            <div
+              className="flex justify-end gap-3"
+              style={{
+                display: 'flex',
+                justifyContent: 'flex-end',
+                gap: '12px'
+              }}
+            >
+              <button
                 type="button"
                 disabled={bulkLoading}
-                whileHover={bulkLoading ? {} : { scale: 1.05 }}
-                whileTap={bulkLoading ? {} : { scale: 0.95 }}
                 onClick={onClose}
                 style={{
-                  ...styles.submitBlueBtn,
-                  backgroundColor: isDark ? '#374151' : '#e2e8f0',
-                  color: isDark ? '#cbd5e1' : '#475569',
-                  flex: 1,
-                  boxShadow: 'none',
+                  padding: '9px 18px',
+                  borderRadius: '10px',
+                  border: isDark ? '1px solid #3A3A3C' : '1px solid #D1D5DB',
+                  backgroundColor: isDark ? '#2C2C2E' : '#FFFFFF',
+                  color: isDark ? '#D1D5DB' : '#374151',
+                  fontWeight: '600',
+                  fontSize: '0.88rem',
+                  cursor: bulkLoading ? 'not-allowed' : 'pointer',
                   opacity: bulkLoading ? 0.6 : 1,
-                  cursor: bulkLoading ? 'not-allowed' : 'pointer'
+                  transition: 'all 0.15s ease'
+                }}
+                onMouseEnter={(e) => {
+                  if (!bulkLoading) e.currentTarget.style.backgroundColor = isDark ? '#3A3A3C' : '#F3F4F6';
+                }}
+                onMouseLeave={(e) => {
+                  if (!bulkLoading) e.currentTarget.style.backgroundColor = isDark ? '#2C2C2E' : '#FFFFFF';
                 }}
               >
                 Cancel
-              </motion.button>
-              <motion.button
+              </button>
+              <button
                 type="button"
                 disabled={bulkLoading}
-                whileHover={bulkLoading ? {} : { scale: 1.05 }}
-                whileTap={bulkLoading ? {} : { scale: 0.95 }}
                 onClick={onConfirm}
                 style={{
-                  ...styles.submitBlueBtn,
-                  flex: 1,
-                  backgroundColor: modalAction === 'delete' ? '#ef4444' : '#007bff',
+                  padding: '9px 20px',
+                  borderRadius: '10px',
+                  border: 'none',
+                  backgroundColor: modalAction === 'delete' ? '#DC2626' : '#2563EB',
+                  color: '#FFFFFF',
+                  fontWeight: '600',
+                  fontSize: '0.88rem',
+                  cursor: bulkLoading ? 'not-allowed' : 'pointer',
                   opacity: bulkLoading ? 0.7 : 1,
-                  cursor: bulkLoading ? 'not-allowed' : 'pointer'
+                  boxShadow:
+                    modalAction === 'delete'
+                      ? '0 4px 12px rgba(220, 38, 38, 0.35)'
+                      : '0 4px 12px rgba(37, 99, 235, 0.35)',
+                  transition: 'all 0.15s ease'
+                }}
+                onMouseEnter={(e) => {
+                  if (!bulkLoading) {
+                    e.currentTarget.style.backgroundColor =
+                      modalAction === 'delete' ? '#B91C1C' : '#1D4ED8';
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (!bulkLoading) {
+                    e.currentTarget.style.backgroundColor =
+                      modalAction === 'delete' ? '#DC2626' : '#2563EB';
+                  }
                 }}
               >
-                {bulkLoading ? 'Processing...' : 'Confirm'}
-              </motion.button>
+                {confirmBtnText}
+              </button>
             </div>
           </motion.div>
         </motion.div>
@@ -162,4 +330,3 @@ export default function BulkActionModal({
     </AnimatePresence>
   );
 }
-

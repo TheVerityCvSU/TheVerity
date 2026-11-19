@@ -85,6 +85,7 @@ const defaultStyles = {
   video: {
     width: '260px',
     maxWidth: '100%',
+    aspectRatio: '16 / 9', // Principle 4: Layout Shift (CLS)
     maxHeight: '160px',
     borderRadius: '8px',
     backgroundColor: '#000000',
@@ -99,9 +100,11 @@ const defaultStyles = {
     border: '1px solid rgba(255, 255, 255, 0.3)',
     borderRadius: '6px',
     color: '#FFFFFF',
-    padding: '5px',
+    minWidth: '44px', // Principle 10: 44px Touch Target
+    minHeight: '44px',
+    padding: '10px',
     cursor: 'pointer',
-    display: 'flex',
+    display: 'inline-flex',
     alignItems: 'center',
     justifyContent: 'center',
     backdropFilter: 'blur(4px)',

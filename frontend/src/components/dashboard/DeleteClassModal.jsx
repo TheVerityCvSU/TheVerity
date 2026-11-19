@@ -1,6 +1,6 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { AlertTriangle } from 'lucide-react';
+import { AlertTriangle, X } from 'lucide-react';
 
 export default function DeleteClassModal({
   confirmData,
@@ -12,10 +12,11 @@ export default function DeleteClassModal({
     <AnimatePresence>
       {confirmData && (
         <div
+          className="fixed inset-0 flex items-center justify-center p-5 z-[99999]"
           style={{
             position: 'fixed',
             inset: 0,
-            backgroundColor: 'rgba(0, 0, 0, 0.65)',
+            backgroundColor: isDark ? 'rgba(17, 17, 17, 0.75)' : 'rgba(235, 235, 235, 0.75)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
@@ -31,73 +32,143 @@ export default function DeleteClassModal({
             exit={{ opacity: 0, scale: 0.95, y: 15 }}
             transition={{ type: 'spring', damping: 25, stiffness: 300 }}
             onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-[440px] text-left rounded-3xl p-7 shadow-2xl relative"
             style={{
-              backgroundColor: isDark ? '#1e1e24' : '#ffffff',
-              border: isDark ? '1px solid #333' : '1px solid #e5e7eb',
+              backgroundColor: isDark ? '#1C1C1E' : '#FFFFFF',
+              border: isDark ? '1px solid #2C2C2E' : '1px solid #E5E7EB',
               borderRadius: '24px',
               padding: '28px',
-              maxWidth: '420px',
+              maxWidth: '440px',
               width: '100%',
-              boxShadow: isDark ? '0 20px 50px rgba(0,0,0,0.6)' : '0 20px 50px rgba(0,0,0,0.15)'
+              textAlign: 'left',
+              boxShadow: isDark
+                ? '0 25px 50px -12px rgba(0, 0, 0, 0.7)'
+                : '0 20px 40px -10px rgba(0, 0, 0, 0.12)',
+              position: 'relative'
             }}
           >
-            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
-              <div style={{
-                width: '42px',
-                height: '42px',
-                borderRadius: '50%',
-                backgroundColor: isDark ? 'rgba(239, 68, 68, 0.15)' : '#fee2e2',
+            {/* Top-Right Close Button */}
+            <button
+              type="button"
+              onClick={onCancel}
+              aria-label="Close dialog"
+              style={{
+                position: 'absolute',
+                top: '20px',
+                right: '20px',
+                background: 'none',
+                border: 'none',
+                color: isDark ? '#9CA3AF' : '#64748B',
+                cursor: 'pointer',
+                padding: '6px',
+                borderRadius: '8px',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
-                color: '#ef4444',
-                flexShrink: 0
-              }}>
+                transition: 'background-color 0.15s ease, color 0.15s ease'
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.backgroundColor = isDark ? '#2C2C2E' : '#F1F5F9';
+                e.currentTarget.style.color = isDark ? '#F3F4F6' : '#0F172A';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.backgroundColor = 'transparent';
+                e.currentTarget.style.color = isDark ? '#9CA3AF' : '#64748B';
+              }}
+            >
+              <X size={18} />
+            </button>
+
+            {/* Header */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '14px', marginBottom: '16px', paddingRight: '28px' }}>
+              <div
+                style={{
+                  width: '42px',
+                  height: '42px',
+                  borderRadius: '50%',
+                  backgroundColor: isDark ? 'rgba(239, 68, 68, 0.15)' : '#FEE2E2',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  color: isDark ? '#F87171' : '#DC2626',
+                  flexShrink: 0
+                }}
+              >
                 <AlertTriangle size={22} />
               </div>
-              <div>
-                <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: '700', color: isDark ? '#f1f5f9' : '#1e293b' }}>
-                  Delete Classroom
+              <div style={{ textAlign: 'left' }}>
+                <h3
+                  style={{
+                    margin: 0,
+                    fontSize: '1.2rem',
+                    fontWeight: '700',
+                    color: isDark ? '#F9FAFB' : '#111827',
+                    textAlign: 'left'
+                  }}
+                >
+                  Delete classroom?
                 </h3>
-                <p style={{ margin: '2px 0 0', fontSize: '0.82rem', color: isDark ? '#94a3b8' : '#64748b' }}>
+                <p style={{ margin: '2px 0 0', fontSize: '0.82rem', color: isDark ? '#9CA3AF' : '#64748B' }}>
                   Permanent removal confirmation
                 </p>
               </div>
             </div>
 
-            <div style={{ marginBottom: '22px', color: isDark ? '#cbd5e1' : '#334155', fontSize: '0.9rem', lineHeight: '1.5' }}>
-              <p style={{ margin: '0 0 10px 0' }}>
-                Are you sure you want to permanently delete this classroom? All materials, classwork, and student records inside it will be removed.
+            {/* Warning description with dynamic entity name in font-semibold */}
+            <div
+              className="text-left"
+              style={{
+                marginBottom: '24px',
+                color: isDark ? '#D1D5DB' : '#374151',
+                fontSize: '0.9rem',
+                lineHeight: '1.55',
+                textAlign: 'left'
+              }}
+            >
+              <p style={{ margin: 0 }}>
+                Are you sure you want to permanently delete{' '}
+                <span
+                  className="font-semibold"
+                  style={{
+                    fontWeight: 600,
+                    color: isDark ? '#F87171' : '#DC2626'
+                  }}
+                >
+                  {confirmData.name}
+                </span>
+                ? All materials, classwork, and student records inside it will be removed. This action cannot be undone.
               </p>
-              <div style={{
-                padding: '10px 14px',
-                borderRadius: '12px',
-                backgroundColor: isDark ? '#26262b' : '#f8fafc',
-                border: isDark ? '1px solid #3f3f46' : '1px solid #e2e8f0',
-                fontWeight: '700',
-                color: isDark ? '#f87171' : '#dc2626'
-              }}>
-                {confirmData.name}
-              </div>
             </div>
 
-            <div style={{ display: 'flex', gap: '12px' }}>
+            {/* Right-aligned footer buttons: justify-end gap-3 */}
+            <div
+              className="flex justify-end gap-3"
+              style={{
+                display: 'flex',
+                justifyContent: 'flex-end',
+                gap: '12px'
+              }}
+            >
               <button
                 type="button"
                 onClick={onCancel}
                 style={{
-                  flex: 1,
-                  padding: '12px',
-                  borderRadius: '9999px',
-                  border: 'none',
-                  backgroundColor: isDark ? '#2d2d38' : '#e2e8f0',
-                  color: isDark ? '#cbd5e1' : '#475569',
-                  fontWeight: '700',
-                  fontSize: '0.9rem',
+                  padding: '9px 18px',
+                  borderRadius: '10px',
+                  border: isDark ? '1px solid #3A3A3C' : '1px solid #D1D5DB',
+                  backgroundColor: isDark ? '#2C2C2E' : '#FFFFFF',
+                  color: isDark ? '#D1D5DB' : '#374151',
+                  fontWeight: '600',
+                  fontSize: '0.88rem',
                   cursor: 'pointer',
-                  transition: 'all 0.2s ease'
+                  transition: 'all 0.15s ease'
                 }}
-                className="btn-anim"
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.backgroundColor = isDark ? '#3A3A3C' : '#F3F4F6';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = isDark ? '#2C2C2E' : '#FFFFFF';
+                }}
               >
                 Cancel
               </button>
@@ -105,21 +176,25 @@ export default function DeleteClassModal({
                 type="button"
                 onClick={onConfirm}
                 style={{
-                  flex: 1,
-                  padding: '12px',
-                  borderRadius: '9999px',
+                  padding: '9px 20px',
+                  borderRadius: '10px',
                   border: 'none',
-                  backgroundColor: '#ef4444',
-                  color: '#ffffff',
-                  fontWeight: '700',
-                  fontSize: '0.9rem',
+                  backgroundColor: '#DC2626',
+                  color: '#FFFFFF',
+                  fontWeight: '600',
+                  fontSize: '0.88rem',
                   cursor: 'pointer',
-                  boxShadow: '0 4px 12px rgba(239, 68, 68, 0.35)',
-                  transition: 'all 0.2s ease'
+                  boxShadow: '0 4px 12px rgba(220, 38, 38, 0.35)',
+                  transition: 'all 0.15s ease'
                 }}
-                className="btn-anim"
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.backgroundColor = '#B91C1C';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = '#DC2626';
+                }}
               >
-                Delete Classroom
+                Delete classroom
               </button>
             </div>
           </motion.div>
@@ -128,4 +203,3 @@ export default function DeleteClassModal({
     </AnimatePresence>
   );
 }
-

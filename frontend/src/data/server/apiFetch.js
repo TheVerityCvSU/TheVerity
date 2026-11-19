@@ -123,31 +123,27 @@ export const apiFetch = async (url, options = {}) => {
     }
   }
 
-  // 2. Desktop / Electron / Local dev:
-  // If user explicitly switched to LAN mode, route to LAN server directly.
+  // 2. Desktop / Electron / Local dev / ComLab LAN:
   // If user explicitly switched to Cloud mode, route to Cloud server.
-  // If automatic (null), prioritize Online Cloud Server when internet is available.
-  const isOnlineCloudAvailable = Boolean(
-    cloudUrl &&
-    cloudUrl !== localUrl &&
-    !state.isCloudDown &&
-    (typeof navigator === 'undefined' || navigator.onLine)
-  );
-  const isLanMode = state.userPreferredMode === 'lan'
-    ? true
-    : (state.userPreferredMode === 'cloud' ? false : (!isOnlineCloudAvailable && (getIsLanConnected() || state.isLocalServerUp)));
-  if (isLanMode) {
+  // Otherwise (LAN mode or automatic on localhost/private network), prioritize Local/LAN server first for instant response!
+  if (state.userPreferredMode !== 'cloud') {
     try {
       const currentLocalUrl = getLocalApiUrl();
       const localRes = await fetch(`${currentLocalUrl}${pathWithQuery}`, { ...options, headers });
-      if (isMutation) pingSync(currentLocalUrl);
-      return localRes;
+      if (localRes.ok || localRes.status < 500) {
+        if (!state.isLocalServerUp) {
+          state.isLocalServerUp = true;
+          notifyListeners();
+        }
+        if (isMutation) pingSync(currentLocalUrl);
+        return localRes;
+      }
     } catch (lanErr) {
-      console.warn(`[apiFetch] Direct request to LAN server failed (${localFallbackUrl}):`, lanErr.message);
       if (state.userPreferredMode === 'lan') {
         throw new Error(`Could not connect to Local/LAN server at ${getLocalApiUrl()}. Please check that the server is running.`);
       }
-      // Fall through to try cloud if available
+      // Local server unreachable, fall through to try cloud
+      state.isLocalServerUp = false;
     }
   }
 
@@ -175,7 +171,7 @@ export const apiFetch = async (url, options = {}) => {
     }
   }
 
-  // When cloud is operational (normal state), attempt cloud server first
+  // When cloud mode is requested or local is down, attempt cloud server
   try {
     let cloudSignal = options.signal;
     let cloudTimer;
@@ -219,10 +215,7 @@ export const apiFetch = async (url, options = {}) => {
     state.lastCloudCheckTime = Date.now();
     notifyListeners();
 
-    // Discovery frequently completes while the cloud request was timing out — re-resolve the target
-    await waitForLanServer(6000);
     const resolvedLocalUrl = getLocalApiUrl();
-
     try {
       const localRes = await fetch(`${resolvedLocalUrl}${pathWithQuery}`, { ...options, headers });
       if (isMutation) pingSync(resolvedLocalUrl);

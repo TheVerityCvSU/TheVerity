@@ -11,6 +11,7 @@ export default function AdminHeader({
   onToggleNotifications,
   currentNotifications,
   onMarkAllNotificationsRead,
+  onNotificationClick,
   currentUser,
   onLogout,
   layoutStyles
@@ -121,14 +122,24 @@ export default function AdminHeader({
                   currentNotifications.map(n => (
                     <div
                       key={n.id}
+                      onClick={() => onNotificationClick && onNotificationClick(n)}
                       style={{
                         padding: '12px',
                         backgroundColor: isDark ? '#2a2a2a' : '#f8fafc',
                         borderRadius: '10px',
                         fontSize: '0.8rem',
                         color: isDark ? '#cbd5e1' : '#334155',
-                        border: isDark ? '1px solid #3a3a3a' : 'none'
+                        border: isDark ? '1px solid #3a3a3a' : 'none',
+                        cursor: 'pointer',
+                        transition: 'background-color 0.15s ease'
                       }}
+                      onMouseEnter={e => {
+                        e.currentTarget.style.backgroundColor = isDark ? '#383838' : '#edf2f7';
+                      }}
+                      onMouseLeave={e => {
+                        e.currentTarget.style.backgroundColor = isDark ? '#2a2a2a' : '#f8fafc';
+                      }}
+                      title="Click to view details"
                     >
                       <strong style={{ color: isDark ? '#f1f5f9' : '#1e293b' }}>{n.title}</strong>
                       <br />

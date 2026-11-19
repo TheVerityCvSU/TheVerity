@@ -2,6 +2,12 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { apiFetch } from '../data/api';
 import { sanitizeAction, getLogColor } from '../utils/teacherViewUtils';
 
+const isCognitivePause = (item) => {
+  if (!item) return false;
+  const str = `${item.action || ''} ${item.message || ''} ${item.warning || ''}`.toLowerCase();
+  return str.includes('cognitive pause') || str.includes('inactivity');
+};
+
 export function useTeacherViewWarnings({ assignment, classroom, students, mode, selectedStudentId, activeStudent }) {
   // Persistent warning logs for this activity session
   const [sessionWarnings, setSessionWarnings] = useState(() => {
@@ -12,6 +18,7 @@ export function useTeacherViewWarnings({ assignment, classroom, students, mode, 
       const list = cached ? JSON.parse(cached) : [];
       if (Array.isArray(list)) {
         return list.filter((l) => {
+          if (isCognitivePause(l)) return false;
           const aId = l.assignmentId || l.assignment_id;
           return !aId || aId === 'none' || String(aId) === String(assignment.id);
         });
@@ -35,6 +42,7 @@ export function useTeacherViewWarnings({ assignment, classroom, students, mode, 
       if (Array.isArray(list)) {
         setSessionWarnings(
           list.filter((l) => {
+            if (isCognitivePause(l)) return false;
             const aId = l.assignmentId || l.assignment_id;
             return !aId || aId === 'none' || String(aId) === String(assignment.id);
           })
@@ -56,7 +64,7 @@ export function useTeacherViewWarnings({ assignment, classroom, students, mode, 
       setSessionWarnings((prev) => {
         const map = new Map();
         [...incomingList, ...prev].forEach((l) => {
-          if (!l) return;
+          if (!l || isCognitivePause(l)) return;
           const logAId = l.assignmentId || l.assignment_id;
           if (curAId && logAId && logAId !== 'none' && logAId !== 'default' && String(logAId) !== curAId) {
             return;
@@ -118,7 +126,7 @@ export function useTeacherViewWarnings({ assignment, classroom, students, mode, 
     const seenMap = new Map();
 
     const addLog = (rawLog, fallbackName, fallbackId) => {
-      if (!rawLog) return;
+      if (!rawLog || isCognitivePause(rawLog)) return;
       const sName = String(rawLog.studentName || rawLog.student_name || fallbackName || 'Student').trim();
       const sId = String(rawLog.studentId || rawLog.student_id || fallbackId || sName).trim();
       const rawAction = rawLog.action || rawLog.message || 'Violation';
@@ -167,7 +175,7 @@ export function useTeacherViewWarnings({ assignment, classroom, students, mode, 
       const hist = student.codeHistory || student.history || [];
       if (Array.isArray(hist)) {
         hist.forEach((h) => {
-          if (h && h.warning) {
+          if (h && h.warning && !isCognitivePause(h)) {
             const hAId = h.assignmentId || h.assignment_id;
             if (curAId && hAId && hAId !== 'none' && hAId !== 'default' && String(hAId) !== curAId) return;
             const sanitizedWarning = sanitizeAction(h.warning);

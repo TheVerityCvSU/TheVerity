@@ -26,6 +26,12 @@ export default defineConfig(({ mode }) => {
       host: true, // Listen on all network interfaces including LAN (0.0.0.0)
       port: 5173,
       strictPort: true, // This forces Vite to fail if 5173 isn't available
+      proxy: {
+        '/uploads': {
+          target: 'http://localhost:3001',
+          changeOrigin: true,
+        },
+      },
       watch: {
         ignored: [
           '**/server/**',

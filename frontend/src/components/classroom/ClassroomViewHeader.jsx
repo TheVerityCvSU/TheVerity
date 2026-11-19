@@ -40,7 +40,8 @@ export default function ClassroomViewHeader({
     { id: 'classrooms', label: 'Home', Icon: Home },
     { id: 'calendar', label: 'Calendar', Icon: Calendar },
     { id: 'archived', label: 'Archived', Icon: Archive },
-    { id: 'compiler', label: 'Compiler', Icon: Code2 }
+    { id: 'compiler', label: 'Compiler', Icon: Code2 },
+    { id: 'settings', label: 'Settings', Icon: Settings }
   ];
 
   return (
@@ -121,8 +122,12 @@ export default function ClassroomViewHeader({
                   } else if (typeof onBack === 'function') {
                     onBack();
                   }
+                } else if (item.id === 'settings' && typeof onOpenSettings === 'function') {
+                  onOpenSettings();
                 } else if (typeof onNavigateView === 'function') {
                   onNavigateView(item.id);
+                } else if (typeof onBack === 'function') {
+                  onBack();
                 }
               }}
               style={{
@@ -147,14 +152,6 @@ export default function ClassroomViewHeader({
             </button>
           );
         })}
-
-        <button
-          onClick={onOpenSettings}
-          style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '10px', borderRadius: '50px', backgroundColor: 'transparent', color: textMuted, border: 'none', cursor: 'pointer', marginLeft: '8px' }}
-        >
-          <Settings size={20} />
-          <span style={{ marginLeft: '8px', fontWeight: '600', fontSize: '0.9rem' }}>Settings</span>
-        </button>
       </div>
 
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', flex: 1, gap: '16px', marginRight: '24px' }}>

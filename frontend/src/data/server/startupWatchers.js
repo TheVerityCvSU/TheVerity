@@ -57,20 +57,18 @@ if (typeof window !== 'undefined') {
   const hostedWeb = isHostedWebEnv();
 
   // Immediate initial health probe on app load
-  if (state.userPreferredMode === 'lan') {
-    checkLocalHealth().then(() => {
-      if (!hostedWeb) checkCloudHealth();
-    });
-  } else {
-    checkCloudHealth().then((cloudOk) => {
-      if (!hostedWeb) {
-        checkLocalHealth().then((localOk) => {
-          if (!cloudOk && !localOk) {
-            attemptAutoLanReconnect();
-          }
+  if (state.userPreferredMode === 'lan' || !hostedWeb) {
+    checkLocalHealth().then((localOk) => {
+      if (!localOk) {
+        attemptAutoLanReconnect().then((reconnected) => {
+          if (!reconnected) checkCloudHealth();
         });
+      } else {
+        checkCloudHealth();
       }
     });
+  } else {
+    checkCloudHealth();
   }
 
   // Background auto-recovery check:

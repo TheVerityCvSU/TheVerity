@@ -52,7 +52,6 @@ export default function StudentEditorWorkspace({
           diagnosticsRef={diagnosticsRef}
           updateEditorMarkers={compilerHook.updateEditorMarkers}
           handleSaveCode={handleSaveCode}
-          resetCognitivePauseTimer={kioskHook.resetCognitivePauseTimer}
           activeFileId={filesHook.activeFileId}
           setCode={filesHook.setCode}
           codeRef={filesHook.codeRef}

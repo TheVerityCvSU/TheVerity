@@ -44,7 +44,7 @@ export default function NotificationsUITab({
               on={notifData.showToastWarnings}
               onToggle={() => updateN('showToastWarnings', !notifData.showToastWarnings)}
               label="Show Toast Notifications for Minor Warnings"
-              subtext="Displays small side-panel toasts for low-severity events (e.g. long typing pause) instead of covering the full screen."
+              subtext="Displays small side-panel toasts for low-severity events (e.g. window blur) instead of covering the full screen."
               T={T}
             />
           </div>

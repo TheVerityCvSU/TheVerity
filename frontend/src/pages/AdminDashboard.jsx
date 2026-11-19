@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { BarChart3, Users, Home, Shield, Settings, ShieldAlert, X } from 'lucide-react';
+import { BarChart3, Users, Home, Shield, Settings, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import AdminLayout from './admin/AdminLayout';
 import DashboardOverview from './admin/DashboardOverview';
@@ -292,6 +292,10 @@ export default function AdminDashboard({ currentUser, onLogout, socket }) {
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: -24, scale: 0.95 }}
             transition={{ type: 'spring', stiffness: 400, damping: 25 }}
+            onClick={() => {
+              setActiveTab('security');
+              setMaliciousAlert(null);
+            }}
             style={{
               position: 'fixed',
               top: '20px',
@@ -306,10 +310,10 @@ export default function AdminDashboard({ currentUser, onLogout, socket }) {
               display: 'flex',
               alignItems: 'flex-start',
               gap: '12px',
-              maxWidth: '440px'
+              maxWidth: '440px',
+              cursor: 'pointer'
             }}
           >
-            <ShieldAlert size={22} color="#dc2626" style={{ flexShrink: 0, marginTop: '2px' }} />
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontWeight: '800', fontSize: '0.88rem', color: '#991b1b' }}>
                 Malicious Script Blocked!
@@ -317,32 +321,13 @@ export default function AdminDashboard({ currentUser, onLogout, socket }) {
               <div style={{ fontSize: '0.8rem', color: '#b91c1c', marginTop: '3px', lineHeight: 1.35, wordBreak: 'break-word' }}>
                 <strong>{maliciousAlert.user || 'Student'}</strong>: {maliciousAlert.desc || 'Attempted to run restricted script'}
               </div>
-              <div style={{ marginTop: '8px' }}>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setActiveTab('security');
-                    setMaliciousAlert(null);
-                  }}
-                  style={{
-                    backgroundColor: '#dc2626',
-                    color: 'white',
-                    border: 'none',
-                    borderRadius: '6px',
-                    padding: '4px 12px',
-                    fontSize: '0.75rem',
-                    fontWeight: '700',
-                    cursor: 'pointer',
-                    boxShadow: '0 2px 6px rgba(220, 38, 38, 0.3)'
-                  }}
-                >
-                  View in Security Logs
-                </button>
-              </div>
             </div>
             <button
               type="button"
-              onClick={() => setMaliciousAlert(null)}
+              onClick={(e) => {
+                e.stopPropagation();
+                setMaliciousAlert(null);
+              }}
               style={{
                 background: 'transparent',
                 border: 'none',
@@ -352,6 +337,7 @@ export default function AdminDashboard({ currentUser, onLogout, socket }) {
                 display: 'flex',
                 alignItems: 'center'
               }}
+              title="Close"
             >
               <X size={16} />
             </button>
