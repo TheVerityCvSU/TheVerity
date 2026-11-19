@@ -21,7 +21,6 @@ import { getClassroomTheme, saveClassroomTheme } from '../data/classroomTheme';
 import { getClassroomStorageKey, getCachedClassrooms, saveCachedClassrooms } from '../data/classroomCache';
 import { getLessonType } from '../utils/lessonType';
 import { resolveMediaUrlsInHtml, getActiveUploadBaseUrl, extractUploadPath } from '../utils/mediaUrl';
-import { getLocalApiUrl } from '../data/server/serverUrls';
 import ImagePreviewModal from '../components/ImagePreviewModal';
 import AddLinkModal from '../components/AddLinkModal';
 import VideoPreviewModal from '../components/VideoPreviewModal';
