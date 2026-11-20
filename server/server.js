@@ -361,7 +361,7 @@ function isSafeUploadBasename(rawName) {
  * so 40 ComLab students stream from the local LAN host instead of external internet.
  */
 async function pullUploadFromCloud(filename) {
-    if (IS_RENDER_CLOUD || !CLOUD_MEDIA_BASE_URL || !isSafeUploadBasename(filename)) {
+    if (IS_RENDER_CLOUD || !isSafeUploadBasename(filename)) {
         return false;
     }
     const targetPath = path.join(UPLOADS_DIR, filename);
@@ -372,6 +372,12 @@ async function pullUploadFromCloud(filename) {
     }
 
     const pullPromise = (async () => {
+        if (r2Storage.isR2Configured()) {
+            const fromR2 = await r2Storage.downloadFileFromR2(filename, targetPath).catch(() => false);
+            if (fromR2) return true;
+        }
+        if (!CLOUD_MEDIA_BASE_URL) return false;
+
         const partPath = path.join(UPLOADS_DIR, `${filename}.${Date.now()}.part`);
         const connectController = new AbortController();
         const connectTimer = setTimeout(() => connectController.abort(), 4000);
@@ -481,13 +487,17 @@ function prefetchUploadsFromClasswork(rows) {
     }
 }
 
-// Serve uploaded files statically at /uploads/<file> with pull-through cache, active stream tracking, and range headers
+// Serve uploaded files statically at /uploads/<file> with direct R2 offload on Cloud, pull-through cache, active stream tracking, and range headers
 app.use('/uploads', async (req, res, next) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', '*');
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Accept-Ranges', 'bytes');
+
+    if (req.method === 'OPTIONS') {
+        return res.status(204).end();
+    }
 
     let requestedName = '';
     try {
@@ -499,7 +509,43 @@ app.use('/uploads', async (req, res, next) => {
         return res.status(404).end();
     }
 
+    const isDownloadReq = Boolean(req.query && (req.query.download === '1' || req.query.download === 'true'));
+    const rawDownloadName = isDownloadReq
+        ? ((typeof req.query.filename === 'string' && req.query.filename.trim())
+            ? req.query.filename.trim()
+            : requestedName.replace(/^\d+_/, ''))
+        : '';
+
     const localTarget = path.join(UPLOADS_DIR, requestedName);
+
+    // On Render Cloud, offload media streaming/downloads directly to Cloudflare R2 (0 Render egress)
+    if (IS_RENDER_CLOUD && r2Storage.isR2Configured() && (req.method === 'GET' || req.method === 'HEAD') && req.query.proxy !== '1') {
+        let inR2 = await r2Storage.existsInR2Cached(requestedName).catch(() => false);
+        if (!inR2 && !fs.existsSync(localTarget)) {
+            const restored = await db.restoreUploadFromCloudDb(requestedName, localTarget).catch(() => false);
+            if (restored) {
+                const ext = path.extname(requestedName).toLowerCase();
+                const mime = UPLOAD_MIME_TYPES[ext] || 'application/octet-stream';
+                const up = await r2Storage.uploadFileToR2(requestedName, localTarget, mime).catch(() => ({ uploaded: false }));
+                inR2 = Boolean(up && up.uploaded);
+                if (inR2) {
+                    try { fs.unlinkSync(localTarget); } catch (_) { }
+                }
+            }
+        }
+        if (inR2) {
+            const direct = r2Storage.getDirectMediaUrl(requestedName, {
+                method: req.method,
+                expiresIn: 3600,
+                downloadFilename: rawDownloadName
+            });
+            if (direct && direct.url) {
+                res.setHeader('Cache-Control', direct.isPublic ? 'public, max-age=86400' : 'private, max-age=1800');
+                return res.redirect(302, direct.url);
+            }
+        }
+    }
+
     if ((req.method === 'GET' || req.method === 'HEAD') && !fs.existsSync(localTarget)) {
         // 1. Hydrate from Cloudflare R2 if configured
         let hydrated = false;
@@ -527,10 +573,7 @@ app.use('/uploads', async (req, res, next) => {
     }
 
     // Direct-to-Downloads attachment header when ?download=1 is requested
-    if (req.query && (req.query.download === '1' || req.query.download === 'true')) {
-        const rawDownloadName = (typeof req.query.filename === 'string' && req.query.filename.trim())
-            ? req.query.filename.trim()
-            : requestedName.replace(/^\d+_/, '');
+    if (isDownloadReq) {
         const safeAscii = rawDownloadName.replace(/["\\\r\n]/g, '_').replace(/[^\x20-\x7E]/g, '_') || 'download';
         const encodedUtf8 = encodeURIComponent(rawDownloadName);
         res.setHeader('Content-Disposition', `attachment; filename="${safeAscii}"; filename*=UTF-8''${encodedUtf8}`);
@@ -566,9 +609,9 @@ app.use('/uploads', async (req, res, next) => {
             res.setHeader('Content-Type', mime);
         }
         if (VIDEO_UPLOAD_EXTS.has(ext)) {
-            res.setHeader('Cache-Control', 'public, max-age=60');
+            res.setHeader('Cache-Control', 'public, max-age=3600');
         } else {
-            res.setHeader('Cache-Control', 'public, max-age=300');
+            res.setHeader('Cache-Control', 'public, max-age=86400');
         }
     }
 }));
@@ -743,6 +786,7 @@ async function processVideoJob(targetPath) {
                 const swapped = safeReplaceOrDeferSwap(targetPath, tempOptPath);
                 if (swapped) {
                     console.log(`[Video Compression] Compressed ${path.basename(targetPath)} from ${(curStats.size / 1024 / 1024).toFixed(1)}MB to ${(optStats.size / 1024 / 1024).toFixed(1)}MB`);
+                    persistUploadedFile(path.basename(targetPath), targetPath, ext).catch(() => { });
                 }
             } else {
                 try { fs.unlinkSync(tempOptPath); } catch (_) { }
@@ -7256,7 +7300,17 @@ const candidateDistDirs = [
 const frontendDistPath = candidateDistDirs.find(d => fs.existsSync(path.join(d, 'index.html')));
 
 if (frontendDistPath) {
-    app.use(express.static(frontendDistPath));
+    app.use(express.static(frontendDistPath, {
+        setHeaders: (res, filePath) => {
+            if (filePath.endsWith(`${path.sep}index.html`) || filePath.endsWith('/index.html')) {
+                res.setHeader('Cache-Control', 'no-cache');
+            } else if (filePath.includes(`${path.sep}assets${path.sep}`) || filePath.includes('/assets/')) {
+                res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+            } else {
+                res.setHeader('Cache-Control', 'public, max-age=86400');
+            }
+        }
+    }));
     app.use((req, res, next) => {
         if (req.method !== 'GET') return next();
         if (req.path.startsWith('/api') ||
@@ -7266,6 +7320,7 @@ if (frontendDistPath) {
             req.path.includes('.')) {
             return next();
         }
+        res.setHeader('Cache-Control', 'no-cache');
         res.sendFile(path.join(frontendDistPath, 'index.html'));
     });
 }
@@ -7326,6 +7381,9 @@ function start(port = process.env.PORT || 3001) {
             }
 
             reconcileDatabaseClassrooms().catch(() => { });
+            if (IS_RENDER_CLOUD && r2Storage.isR2Configured()) {
+                r2Storage.ensureBucketCors().catch(() => { });
+            }
             resolve(p);
         });
     });

@@ -16,6 +16,24 @@ import { resolveMediaUrl } from '../utils/mediaUrl';
 import { triggerDirectDownload } from '../utils/downloadFile';
 import { renderAsync } from 'docx-preview';
 
+async function fetchUploadWithProxyFallback(targetUrl) {
+  try {
+    const res = await fetch(targetUrl);
+    if (res.ok) return res;
+    throw new Error(`HTTP ${res.status}: Failed to download document`);
+  } catch (err) {
+    if (targetUrl.includes('/uploads/') && !targetUrl.includes('proxy=1')) {
+      const sep = targetUrl.includes('?') ? '&' : '?';
+      const fallbackRes = await fetch(`${targetUrl}${sep}proxy=1`);
+      if (!fallbackRes.ok) {
+        throw new Error(`HTTP ${fallbackRes.status}: Failed to download document`, { cause: err });
+      }
+      return fallbackRes;
+    }
+    throw err;
+  }
+}
+
 export default function IframePreviewModal({ url, title, type, onClose, isDark: explicitDark }) {
   const isDark = typeof explicitDark === 'boolean'
     ? explicitDark
@@ -73,9 +91,8 @@ export default function IframePreviewModal({ url, title, type, onClose, isDark: 
     setDocxLoading(true);
     setDocxError(null);
 
-    fetch(resolvedUrl)
+    fetchUploadWithProxyFallback(resolvedUrl)
       .then(async (res) => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}: Failed to download document`);
         const blob = await res.blob();
         if (isCancelled) return;
         if (docxRef.current) {
@@ -112,7 +129,7 @@ export default function IframePreviewModal({ url, title, type, onClose, isDark: 
     let isCancelled = false;
     setTextLoading(true);
 
-    fetch(resolvedUrl)
+    fetchUploadWithProxyFallback(resolvedUrl)
       .then(res => res.text())
       .then(text => {
         if (!isCancelled) setTextContent(text);

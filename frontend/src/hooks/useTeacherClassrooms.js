@@ -208,7 +208,10 @@ export function useTeacherClassrooms({ currentUser, socket }) {
     };
 
     fetchActive();
-    const activeInterval = setInterval(fetchActive, 4000);
+    const activeInterval = setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) return;
+      fetchActive();
+    }, 20000);
 
     return () => {
       isSubscribed = false;

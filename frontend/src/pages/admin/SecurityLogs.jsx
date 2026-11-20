@@ -93,8 +93,18 @@ export default function SecurityAuditLogsTab() {
 
   useEffect(() => {
     fetchLogs();
-    const interval = setInterval(fetchLogs, 3000);
-    return () => clearInterval(interval);
+    const interval = setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) return;
+      fetchLogs();
+    }, 15000);
+    const onVisible = () => {
+      if (typeof document !== 'undefined' && !document.hidden) fetchLogs();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
   }, []);
 
   const total = logs.length;
@@ -169,7 +179,7 @@ export default function SecurityAuditLogsTab() {
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: '16px' }}>
           <div>
             <h2 style={sh.cardTitle}>Live Security Audit Log</h2>
-            <p style={{ margin: '2px 0 0', fontSize: '0.8rem', color: muted }}>Real-time record of system events & sandbox violations — auto-refreshes every 3 seconds</p>
+            <p style={{ margin: '2px 0 0', fontSize: '0.8rem', color: muted }}>Real-time record of system events & sandbox violations — auto-refreshes every 15 seconds</p>
           </div>
           <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
             <div style={{ ...sh.searchPill, maxWidth: '200px' }}>

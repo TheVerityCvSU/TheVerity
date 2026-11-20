@@ -96013,6 +96013,13 @@ var require_cloudSync = __commonJS({
         console.log("[Cloud Sync] No valid PostgreSQL DATABASE_URL found. Running standalone SQLite.");
         return;
       }
+      const isRenderCloud = Boolean(
+        process.env.RENDER || process.env.RENDER_SERVICE_ID || process.env.IS_RENDER_SERVICE
+      );
+      if (isRenderCloud) {
+        console.log("[Cloud Sync] Running on Render Cloud; skipping background 15s Supabase sync polling.");
+        return;
+      }
       console.log("[Cloud Sync] Bidirectional In-Memory Cloud Sync Engine initialized.");
       setTimeout(() => {
         syncBidirectional().catch(() => {
@@ -137412,19 +137419,57 @@ var require_r2Storage = __commonJS({
   "server/r2Storage.js"(exports2, module2) {
     var fs3 = require("fs");
     var path2 = require("path");
+    var crypto3 = require("crypto");
     var { Readable: Readable8 } = require("stream");
     var { pipeline: pipeline2 } = require("stream/promises");
     var S3Client;
     var PutObjectCommand;
     var GetObjectCommand;
     var HeadObjectCommand;
+    var GetBucketCorsCommand;
+    var PutBucketCorsCommand;
     try {
-      ({ S3Client, PutObjectCommand, GetObjectCommand, HeadObjectCommand } = require_dist_cjs16());
+      ({
+        S3Client,
+        PutObjectCommand,
+        GetObjectCommand,
+        HeadObjectCommand,
+        GetBucketCorsCommand,
+        PutBucketCorsCommand
+      } = require_dist_cjs16());
     } catch (_) {
     }
     var cachedClient = null;
     var cachedConfigKey = null;
     var inFlightDownloads = /* @__PURE__ */ new Map();
+    var R2_EXISTS_CACHE_TTL_MS = 10 * 60 * 1e3;
+    var knownR2Keys = /* @__PURE__ */ new Map();
+    var corsEnsured = false;
+    function markKeyInR2(filename) {
+      if (!filename) return;
+      knownR2Keys.set(path2.basename(String(filename)), Date.now() + R2_EXISTS_CACHE_TTL_MS);
+    }
+    function invalidateR2KeyCache(filename) {
+      if (!filename) return;
+      knownR2Keys.delete(path2.basename(String(filename)));
+    }
+    function isKeyCachedInR2(filename) {
+      if (!filename) return false;
+      const key = path2.basename(String(filename));
+      const expiresAt = knownR2Keys.get(key);
+      if (!expiresAt) return false;
+      if (Date.now() > expiresAt) {
+        knownR2Keys.delete(key);
+        return false;
+      }
+      return true;
+    }
+    function encodeRfc3986(str) {
+      return encodeURIComponent(String(str)).replace(/[!'()*]/g, (c5) => `%${c5.charCodeAt(0).toString(16).toUpperCase()}`);
+    }
+    function encodeRfc3986Path(pathStr) {
+      return String(pathStr).split("/").map(encodeRfc3986).join("/");
+    }
     function getR2Config() {
       const accountId = (process.env.R2_ACCOUNT_ID || "").trim();
       const accessKeyId = (process.env.R2_ACCESS_KEY_ID || "").trim();
@@ -137476,6 +137521,7 @@ var require_r2Storage = __commonJS({
           ContentType: contentType || "application/octet-stream",
           CacheControl: "public, max-age=31536000"
         }));
+        markKeyInR2(filename);
         console.log(`[R2 Storage] Uploaded ${filename} (${stat2.size} bytes) to bucket ${cfg.bucket}`);
         return { uploaded: true, key };
       } catch (err) {
@@ -137508,6 +137554,7 @@ var require_r2Storage = __commonJS({
           const ws = fs3.createWriteStream(partPath);
           await pipeline2(bodyNodeStream, ws);
           fs3.renameSync(partPath, targetPath);
+          markKeyInR2(filename);
           console.log(`[R2 Storage] Hydrated ${filename} from R2 into local cache`);
           return true;
         } catch (err) {
@@ -137535,8 +137582,124 @@ var require_r2Storage = __commonJS({
           Bucket: cfg.bucket,
           Key: getObjectKey(filename)
         }));
+        markKeyInR2(filename);
         return true;
       } catch (_) {
+        return false;
+      }
+    }
+    async function existsInR2Cached(filename) {
+      if (isKeyCachedInR2(filename)) return true;
+      return existsInR2(filename);
+    }
+    function getPresignedR2Url(filename, { method = "GET", expiresIn = 3600, downloadFilename = "", now = /* @__PURE__ */ new Date() } = {}) {
+      if (!isR2Configured() || !filename) return null;
+      const cfg = getR2Config();
+      let parsedEndpoint;
+      try {
+        parsedEndpoint = new URL(cfg.endpoint);
+      } catch (_) {
+        return null;
+      }
+      const httpMethod = String(method || "GET").toUpperCase() === "HEAD" ? "HEAD" : "GET";
+      const ttlSeconds = Math.max(60, Math.min(604800, Number(expiresIn) || 3600));
+      const key = getObjectKey(filename);
+      const basePath = parsedEndpoint.pathname.replace(/\/$/, "");
+      const canonicalUri = encodeRfc3986Path(`${basePath}/${cfg.bucket}/${key}`);
+      const amzDate = now.toISOString().replace(/[:-]|\.\d{3}/g, "");
+      const dateStamp = amzDate.slice(0, 8);
+      const region = "auto";
+      const service = "s3";
+      const credentialScope = `${dateStamp}/${region}/${service}/aws4_request`;
+      const queryParams = {
+        "X-Amz-Algorithm": "AWS4-HMAC-SHA256",
+        "X-Amz-Credential": `${cfg.accessKeyId}/${credentialScope}`,
+        "X-Amz-Date": amzDate,
+        "X-Amz-Expires": String(ttlSeconds),
+        "X-Amz-SignedHeaders": "host"
+      };
+      if (downloadFilename) {
+        const cleanName = String(downloadFilename).trim() || path2.basename(filename).replace(/^\d+_/, "") || "download";
+        const safeAscii = cleanName.replace(/["\\\r\n]/g, "_").replace(/[^\x20-\x7E]/g, "_") || "download";
+        const encodedUtf8 = encodeURIComponent(cleanName);
+        queryParams["response-content-disposition"] = `attachment; filename="${safeAscii}"; filename*=UTF-8''${encodedUtf8}`;
+      }
+      const canonicalQueryString = Object.keys(queryParams).map((k5) => [encodeRfc3986(k5), encodeRfc3986(queryParams[k5])]).sort(([a5], [b5]) => a5 < b5 ? -1 : a5 > b5 ? 1 : 0).map(([k5, v]) => `${k5}=${v}`).join("&");
+      const host = parsedEndpoint.host;
+      const canonicalHeaders = `host:${host}
+`;
+      const canonicalRequest = [
+        httpMethod,
+        canonicalUri,
+        canonicalQueryString,
+        canonicalHeaders,
+        "host",
+        "UNSIGNED-PAYLOAD"
+      ].join("\n");
+      const hashedCanonicalRequest = crypto3.createHash("sha256").update(canonicalRequest, "utf8").digest("hex");
+      const stringToSign = [
+        "AWS4-HMAC-SHA256",
+        amzDate,
+        credentialScope,
+        hashedCanonicalRequest
+      ].join("\n");
+      const hmac = (secret, data) => crypto3.createHmac("sha256", secret).update(data, "utf8").digest();
+      const kDate = hmac(`AWS4${cfg.secretAccessKey}`, dateStamp);
+      const kRegion = hmac(kDate, region);
+      const kService = hmac(kRegion, service);
+      const kSigning = hmac(kService, "aws4_request");
+      const signature = crypto3.createHmac("sha256", kSigning).update(stringToSign, "utf8").digest("hex");
+      return `${parsedEndpoint.origin}${canonicalUri}?${canonicalQueryString}&X-Amz-Signature=${signature}`;
+    }
+    function getDirectMediaUrl(filename, { method = "GET", expiresIn = 3600, downloadFilename = "" } = {}) {
+      if (!isR2Configured() || !filename) return null;
+      const cfg = getR2Config();
+      if (!downloadFilename && cfg.publicUrl) {
+        const key = getObjectKey(filename);
+        return {
+          url: `${cfg.publicUrl}/${encodeRfc3986Path(key)}`,
+          isPublic: true
+        };
+      }
+      const signedUrl = getPresignedR2Url(filename, { method, expiresIn, downloadFilename });
+      if (!signedUrl) return null;
+      return {
+        url: signedUrl,
+        isPublic: false
+      };
+    }
+    async function ensureBucketCors() {
+      if (corsEnsured || !isR2Configured() || !GetBucketCorsCommand || !PutBucketCorsCommand) return false;
+      corsEnsured = true;
+      const client = getClient();
+      const cfg = getR2Config();
+      if (!client) return false;
+      try {
+        const existing = await client.send(new GetBucketCorsCommand({ Bucket: cfg.bucket })).catch(() => null);
+        const rules = Array.isArray(existing?.CORSRules) ? existing.CORSRules : [];
+        const hasReadCors = rules.some(
+          (r6) => Array.isArray(r6.AllowedOrigins) && r6.AllowedOrigins.includes("*") && Array.isArray(r6.AllowedMethods) && r6.AllowedMethods.includes("GET")
+        );
+        if (hasReadCors) return true;
+        await client.send(new PutBucketCorsCommand({
+          Bucket: cfg.bucket,
+          CORSConfiguration: {
+            CORSRules: [
+              ...rules,
+              {
+                AllowedOrigins: ["*"],
+                AllowedMethods: ["GET", "HEAD"],
+                AllowedHeaders: ["*"],
+                ExposeHeaders: ["Content-Length", "Content-Range", "Content-Disposition", "ETag", "Accept-Ranges"],
+                MaxAgeSeconds: 86400
+              }
+            ]
+          }
+        }));
+        console.log(`[R2 Storage] Verified/enabled public GET/HEAD CORS on bucket ${cfg.bucket}`);
+        return true;
+      } catch (err) {
+        console.log(`[R2 Storage] Bucket CORS check skipped (${err?.name || err?.message || "no permission"})`);
         return false;
       }
     }
@@ -137545,7 +137708,12 @@ var require_r2Storage = __commonJS({
       getR2Config,
       uploadFileToR2,
       downloadFileFromR2,
-      existsInR2
+      existsInR2,
+      existsInR2Cached,
+      invalidateR2KeyCache,
+      getPresignedR2Url,
+      getDirectMediaUrl,
+      ensureBucketCors
     };
   }
 });
@@ -141924,7 +142092,7 @@ function isSafeUploadBasename(rawName) {
   return path.basename(rawName) === rawName;
 }
 async function pullUploadFromCloud(filename) {
-  if (IS_RENDER_CLOUD || !CLOUD_MEDIA_BASE_URL || !isSafeUploadBasename(filename)) {
+  if (IS_RENDER_CLOUD || !isSafeUploadBasename(filename)) {
     return false;
   }
   const targetPath = path.join(UPLOADS_DIR, filename);
@@ -141933,6 +142101,11 @@ async function pullUploadFromCloud(filename) {
     return inFlightCloudPulls.get(filename);
   }
   const pullPromise = (async () => {
+    if (r2Storage.isR2Configured()) {
+      const fromR2 = await r2Storage.downloadFileFromR2(filename, targetPath).catch(() => false);
+      if (fromR2) return true;
+    }
+    if (!CLOUD_MEDIA_BASE_URL) return false;
     const partPath = path.join(UPLOADS_DIR, `${filename}.${Date.now()}.part`);
     const connectController = new AbortController();
     const connectTimer = setTimeout(() => connectController.abort(), 4e3);
@@ -142036,6 +142209,9 @@ app.use("/uploads", async (req, res, next) => {
   res.setHeader("Access-Control-Allow-Headers", "*");
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("Accept-Ranges", "bytes");
+  if (req.method === "OPTIONS") {
+    return res.status(204).end();
+  }
   let requestedName = "";
   try {
     requestedName = decodeURIComponent((req.path || "").replace(/^\/+/, ""));
@@ -142045,7 +142221,38 @@ app.use("/uploads", async (req, res, next) => {
   if (!isSafeUploadBasename(requestedName)) {
     return res.status(404).end();
   }
+  const isDownloadReq = Boolean(req.query && (req.query.download === "1" || req.query.download === "true"));
+  const rawDownloadName = isDownloadReq ? typeof req.query.filename === "string" && req.query.filename.trim() ? req.query.filename.trim() : requestedName.replace(/^\d+_/, "") : "";
   const localTarget = path.join(UPLOADS_DIR, requestedName);
+  if (IS_RENDER_CLOUD && r2Storage.isR2Configured() && (req.method === "GET" || req.method === "HEAD") && req.query.proxy !== "1") {
+    let inR2 = await r2Storage.existsInR2Cached(requestedName).catch(() => false);
+    if (!inR2 && !fs2.existsSync(localTarget)) {
+      const restored = await db.restoreUploadFromCloudDb(requestedName, localTarget).catch(() => false);
+      if (restored) {
+        const ext = path.extname(requestedName).toLowerCase();
+        const mime = UPLOAD_MIME_TYPES[ext] || "application/octet-stream";
+        const up = await r2Storage.uploadFileToR2(requestedName, localTarget, mime).catch(() => ({ uploaded: false }));
+        inR2 = Boolean(up && up.uploaded);
+        if (inR2) {
+          try {
+            fs2.unlinkSync(localTarget);
+          } catch (_) {
+          }
+        }
+      }
+    }
+    if (inR2) {
+      const direct = r2Storage.getDirectMediaUrl(requestedName, {
+        method: req.method,
+        expiresIn: 3600,
+        downloadFilename: rawDownloadName
+      });
+      if (direct && direct.url) {
+        res.setHeader("Cache-Control", direct.isPublic ? "public, max-age=86400" : "private, max-age=1800");
+        return res.redirect(302, direct.url);
+      }
+    }
+  }
   if ((req.method === "GET" || req.method === "HEAD") && !fs2.existsSync(localTarget)) {
     let hydrated = false;
     if (r2Storage.isR2Configured()) {
@@ -142070,8 +142277,7 @@ app.use("/uploads", async (req, res, next) => {
       }
     }
   }
-  if (req.query && (req.query.download === "1" || req.query.download === "true")) {
-    const rawDownloadName = typeof req.query.filename === "string" && req.query.filename.trim() ? req.query.filename.trim() : requestedName.replace(/^\d+_/, "");
+  if (isDownloadReq) {
     const safeAscii = rawDownloadName.replace(/["\\\r\n]/g, "_").replace(/[^\x20-\x7E]/g, "_") || "download";
     const encodedUtf8 = encodeURIComponent(rawDownloadName);
     res.setHeader("Content-Disposition", `attachment; filename="${safeAscii}"; filename*=UTF-8''${encodedUtf8}`);
@@ -142105,9 +142311,9 @@ app.use("/uploads", async (req, res, next) => {
       res.setHeader("Content-Type", mime);
     }
     if (VIDEO_UPLOAD_EXTS.has(ext)) {
-      res.setHeader("Cache-Control", "public, max-age=60");
+      res.setHeader("Cache-Control", "public, max-age=3600");
     } else {
-      res.setHeader("Cache-Control", "public, max-age=300");
+      res.setHeader("Cache-Control", "public, max-age=86400");
     }
   }
 }));
@@ -142300,6 +142506,8 @@ async function processVideoJob(targetPath) {
         const swapped = safeReplaceOrDeferSwap(targetPath, tempOptPath);
         if (swapped) {
           console.log(`[Video Compression] Compressed ${path.basename(targetPath)} from ${(curStats.size / 1024 / 1024).toFixed(1)}MB to ${(optStats.size / 1024 / 1024).toFixed(1)}MB`);
+          persistUploadedFile(path.basename(targetPath), targetPath, ext).catch(() => {
+          });
         }
       } else {
         try {
@@ -148361,12 +148569,23 @@ var candidateDistDirs = [
 ].filter(Boolean);
 var frontendDistPath = candidateDistDirs.find((d5) => fs2.existsSync(path.join(d5, "index.html")));
 if (frontendDistPath) {
-  app.use(express.static(frontendDistPath));
+  app.use(express.static(frontendDistPath, {
+    setHeaders: (res, filePath) => {
+      if (filePath.endsWith(`${path.sep}index.html`) || filePath.endsWith("/index.html")) {
+        res.setHeader("Cache-Control", "no-cache");
+      } else if (filePath.includes(`${path.sep}assets${path.sep}`) || filePath.includes("/assets/")) {
+        res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+      } else {
+        res.setHeader("Cache-Control", "public, max-age=86400");
+      }
+    }
+  }));
   app.use((req, res, next) => {
     if (req.method !== "GET") return next();
     if (req.path.startsWith("/api") || req.path.startsWith("/socket.io") || req.path.startsWith("/uploads") || req.path === "/health" || req.path.includes(".")) {
       return next();
     }
+    res.setHeader("Cache-Control", "no-cache");
     res.sendFile(path.join(frontendDistPath, "index.html"));
   });
 }
@@ -148414,6 +148633,10 @@ function start(port = process.env.PORT || 3001) {
       }
       reconcileDatabaseClassrooms().catch(() => {
       });
+      if (IS_RENDER_CLOUD && r2Storage.isR2Configured()) {
+        r2Storage.ensureBucketCors().catch(() => {
+        });
+      }
       resolve(p3);
     });
   });

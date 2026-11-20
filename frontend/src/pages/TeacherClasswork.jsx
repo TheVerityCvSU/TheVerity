@@ -455,7 +455,10 @@ export default function TeacherClasswork({
         .catch(() => {});
     };
     load();
-    const interval = setInterval(load, 10000);
+    const interval = setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) return;
+      load();
+    }, 30000);
     return () => clearInterval(interval);
   }, [classroomId]);
 
@@ -655,7 +658,10 @@ export default function TeacherClasswork({
     };
 
     fetchActive();
-    const activeInterval = setInterval(fetchActive, 4000);
+    const activeInterval = setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) return;
+      fetchActive();
+    }, 20000);
 
     return () => {
       isSubscribed = false;

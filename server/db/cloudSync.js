@@ -80,6 +80,16 @@ function initCloudSync(sqliteDatabase, dbUrl) {
         return;
     }
 
+    const isRenderCloud = Boolean(
+        process.env.RENDER ||
+        process.env.RENDER_SERVICE_ID ||
+        process.env.IS_RENDER_SERVICE
+    );
+    if (isRenderCloud) {
+        console.log('[Cloud Sync] Running on Render Cloud; skipping background 15s Supabase sync polling.');
+        return;
+    }
+
     console.log('[Cloud Sync] Bidirectional In-Memory Cloud Sync Engine initialized.');
 
     // Initial sync probe on startup (delayed 2s to allow server to bind)

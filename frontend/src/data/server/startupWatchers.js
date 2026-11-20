@@ -73,9 +73,11 @@ if (typeof window !== 'undefined') {
 
   // Background auto-recovery check:
   // - Prioritize checking cloud health so we stay on or recover to Online Cloud Server when internet is available
-  // - Auto-probe LAN if not on hosted web and cloud is down or user explicitly selected LAN mode
-  setInterval(() => {
-    if (state.isCloudDown || Date.now() - state.lastCloudCheckTime > 15000) {
+  // - Skip redundant polling when tab is hidden, and use 30s/60s cloud intervals to minimize Render egress
+  const runBackgroundProbe = () => {
+    if (typeof document !== 'undefined' && document.hidden) return;
+    const cloudInterval = state.isCloudDown ? 30000 : 60000;
+    if (Date.now() - state.lastCloudCheckTime > cloudInterval) {
       checkCloudHealth();
     }
 
@@ -90,7 +92,14 @@ if (typeof window !== 'undefined') {
         checkLocalHealth();
       }
     }
-  }, 2500);
+  };
+
+  setInterval(runBackgroundProbe, 5000);
+  if (typeof document !== 'undefined') {
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) runBackgroundProbe();
+    });
+  }
 
   window.addEventListener('online', () => {
     console.log('[Network] Internet connectivity restored.');
