@@ -142637,6 +142637,10 @@ app.post("/upload", (req, res, next) => {
     res.status(201).json(buildUploadResponse(req, unique, ext));
   });
 });
+function getGithubLatestReleaseUrl() {
+  const repo = (process.env.GITHUB_REPO || "TheVerityCvSU/TheVerity").trim();
+  return `https://api.github.com/repos/${repo}/releases/latest`;
+}
 app.get("/api/check-update", async (req, res) => {
   const isNewer = (latest, current) => {
     if (!latest || !current) return false;
@@ -142744,7 +142748,7 @@ app.get("/api/check-update", async (req, res) => {
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 3500);
-    const ghRes = await fetch("https://api.github.com/repos/belheroth/Verity/releases/latest", {
+    const ghRes = await fetch(getGithubLatestReleaseUrl(), {
       headers: { "User-Agent": "The-Verity-App" },
       signal: controller.signal
     });
@@ -142865,7 +142869,7 @@ app.get("/api/download-update", async (req, res) => {
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 4e3);
-    const ghRes = await fetch("https://api.github.com/repos/belheroth/Verity/releases/latest", {
+    const ghRes = await fetch(getGithubLatestReleaseUrl(), {
       headers: { "User-Agent": "The-Verity-App" },
       signal: controller.signal
     });
