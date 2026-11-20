@@ -2,7 +2,7 @@
  * Server API — the single place screens import server/network helpers from.
  *
  * Behavior (Hybrid Cloud-First with Local Offline Fallback):
- * 1. Cloud-First: Directs API requests to Cloud Server (Render / Supabase: https://verity-2z4v.onrender.com).
+ * 1. Cloud-First: Directs API requests to Cloud Server (Render / Supabase: https://the-verity.onrender.com).
  * 2. Instant Local Fallback (Desktop/Electron/Dev): If device has no internet or cloud is down,
  *    automatically reroutes to local embedded server (http://localhost:3001).
  * 3. Hosted Web Safe: On hosted web platforms (e.g. Vercel), requests always target the cloud server

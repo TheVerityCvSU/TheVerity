@@ -71,7 +71,7 @@ export function useStudentViewCompilerSocket({ socket, currentUser }) {
           altTarget = cloudUrl;
         }
       } else {
-        if (!conn.isWebHosted && localUrl && !localUrl.includes('verity-2z4v')) {
+        if (!conn.isWebHosted && localUrl && !localUrl.includes('onrender.com')) {
           altTarget = localUrl;
         }
       }

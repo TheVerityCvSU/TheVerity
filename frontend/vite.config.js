@@ -9,7 +9,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, __dirname, '');
   const isProd = mode === 'production' || process.env.NODE_ENV === 'production';
-  const defaultApi = isProd ? 'https://verity-2z4v.onrender.com' : 'http://localhost:3001';
+  const defaultApi = isProd ? 'https://the-verity.onrender.com' : 'http://localhost:3001';
   const apiUrl = (env.VITE_API_URL || process.env.VITE_API_URL || defaultApi).replace(/\/$/, '');
   const socketUrl = (env.VITE_SOCKET_URL || process.env.VITE_SOCKET_URL || apiUrl).replace(/\/$/, '');
 

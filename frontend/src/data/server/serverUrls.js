@@ -3,7 +3,7 @@
  */
 import { state } from './connectionState';
 
-export const DEFAULT_CLOUD_API_URL = 'https://verity-2z4v.onrender.com';
+export const DEFAULT_CLOUD_API_URL = 'https://the-verity.onrender.com';
 export const LOCAL_DEV_API_URL = 'http://localhost:3001';
 
 export const isPrivateHost = (hostname) => {

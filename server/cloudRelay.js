@@ -1,14 +1,14 @@
 /**
  * The Verity - Cloud Live Monitoring Socket Relay
  * 
- * Bridges local ComLab LAN Server socket events to Render Cloud (https://verity-2z4v.onrender.com).
+ * Bridges local ComLab LAN Server socket events to Render Cloud (https://the-verity.onrender.com).
  * This allows teachers accessing the LMS via Vercel (or any external web browser) to see students who are
  * participating from offline ComLab laptops connected to the local LAN Server in real-time.
  */
 
 const ioClient = require('socket.io-client');
 
-const CLOUD_URL = process.env.CLOUD_SOCKET_URL || process.env.CLOUD_API_URL || 'https://verity-2z4v.onrender.com';
+const CLOUD_URL = process.env.CLOUD_SOCKET_URL || process.env.CLOUD_API_URL || 'https://the-verity.onrender.com';
 const isRenderCloud = Boolean(
     process.env.RENDER ||
     process.env.RENDER_SERVICE_ID ||

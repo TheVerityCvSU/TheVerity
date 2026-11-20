@@ -594,7 +594,7 @@ export default function TeacherClasswork({
           altTarget = cloudUrl;
         }
       } else {
-        if (!conn.isWebHosted && localUrl && !localUrl.includes('verity-2z4v')) {
+        if (!conn.isWebHosted && localUrl && !localUrl.includes('onrender.com')) {
           altTarget = localUrl;
         }
       }
@@ -639,7 +639,7 @@ export default function TeacherClasswork({
       try {
         const conn = getConnectionStatus();
         const localUrl = getLocalApiUrl();
-        if (!conn.isWebHosted && localUrl && !localUrl.includes('verity-2z4v')) {
+        if (!conn.isWebHosted && localUrl && !localUrl.includes('onrender.com')) {
           const token = localStorage.getItem('verity_token') || localStorage.getItem('token');
           fetch(`${localUrl}/active-activities`, {
             headers: token ? { Authorization: `Bearer ${token}` } : {}

@@ -232,7 +232,7 @@ const IS_RENDER_CLOUD = Boolean(
 const CLOUD_MEDIA_BASE_URL = (
     process.env.CLOUD_API_URL ||
     process.env.CLOUD_SOCKET_URL ||
-    'https://verity-2z4v.onrender.com'
+    'https://the-verity.onrender.com'
 ).trim().replace(/\/$/, '');
 
 // Clean up stale temp artifacts left behind by interrupted uploads or transcodes

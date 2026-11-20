@@ -141450,7 +141450,7 @@ var require_cjs5 = __commonJS({
 var require_cloudRelay = __commonJS({
   "server/cloudRelay.js"(exports2, module2) {
     var ioClient = require_cjs5();
-    var CLOUD_URL = process.env.CLOUD_SOCKET_URL || process.env.CLOUD_API_URL || "https://verity-2z4v.onrender.com";
+    var CLOUD_URL = process.env.CLOUD_SOCKET_URL || process.env.CLOUD_API_URL || "https://the-verity.onrender.com";
     var isRenderCloud = Boolean(
       process.env.RENDER || process.env.RENDER_SERVICE_ID || process.env.IS_RENDER_SERVICE
     );
@@ -141958,7 +141958,7 @@ if (!fs2.existsSync(UPLOADS_DIR)) fs2.mkdirSync(UPLOADS_DIR, { recursive: true }
 var IS_RENDER_CLOUD = Boolean(
   process.env.RENDER || process.env.RENDER_SERVICE_ID || process.env.IS_RENDER_SERVICE
 );
-var CLOUD_MEDIA_BASE_URL = (process.env.CLOUD_API_URL || process.env.CLOUD_SOCKET_URL || "https://verity-2z4v.onrender.com").trim().replace(/\/$/, "");
+var CLOUD_MEDIA_BASE_URL = (process.env.CLOUD_API_URL || process.env.CLOUD_SOCKET_URL || "https://the-verity.onrender.com").trim().replace(/\/$/, "");
 try {
   for (const entry of fs2.readdirSync(UPLOADS_DIR)) {
     if (entry.endsWith(".part") || entry.endsWith("_faststart.mp4") || entry.endsWith("_opt.mp4")) {
