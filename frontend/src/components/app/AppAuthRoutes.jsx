@@ -32,6 +32,10 @@ export default function AppAuthRoutes({
     if (window.electronAPI?.localDB?.setLocal) {
       window.electronAPI.localDB.setLocal('verity_saved_session_user', user).catch(() => {});
       if (token) window.electronAPI.localDB.setLocal('verity_saved_session_token', token).catch(() => {});
+      try {
+        const tokenOrigin = localStorage.getItem('verity_token_origin');
+        if (tokenOrigin) window.electronAPI.localDB.setLocal('verity_saved_session_token_origin', tokenOrigin).catch(() => {});
+      } catch (_) {}
       window.electronAPI.localDB.setLocal('verity_saved_session_screen', 'admin_dashboard').catch(() => {});
     }
 

@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { generateClassCode } from '../../utils/classroomList';
+import { generateClassCode, isClassroomArchived } from '../../utils/classroomList';
 import { useDarkMode } from '../../hooks/useDarkMode';
 import {
   loadClassrooms as fetchClassroomsData,
   persistClassrooms,
+  toggleClassroomArchive,
   deleteClassroom as removeClassroom,
   enrollStudents as enrollStudentsApi,
   fetchClassroomRoster,
@@ -13,6 +14,7 @@ import {
 import CreateClassModal from '../../components/admin/CreateClassModal';
 import ClassDetailsModal from '../../components/admin/ClassDetailsModal';
 import DeleteClassModal from '../../components/admin/DeleteClassModal';
+import ArchiveConfirmModal from '../../components/ArchiveConfirmModal';
 import ClassroomStatsGrid from '../../components/admin/ClassroomStatsGrid';
 import ClassroomAuthErrorBanner from '../../components/admin/ClassroomAuthErrorBanner';
 import ClassroomSearchBar from '../../components/admin/ClassroomSearchBar';
@@ -41,6 +43,7 @@ export default function GlobalClassesTab() {
   const isCreatingClassRef = useRef(false);
   const [isCreatingClass, setIsCreatingClass] = useState(false);
   const [deleteConfirmClass, setDeleteConfirmClass] = useState(null);
+  const [archiveConfirmClass, setArchiveConfirmClass] = useState(null);
   const [newClass, setNewClass] = useState({ name: '', section: '', subject: '', instructor: '', code: '' });
   const [selectedCreateStudentIds, setSelectedCreateStudentIds] = useState(new Set());
   const [createStudentQuery, setCreateStudentQuery] = useState('');
@@ -94,10 +97,12 @@ export default function GlobalClassesTab() {
     };
     window.addEventListener('verity:server-changed', handleServerChanged);
     window.addEventListener('verity:classrooms-changed', handleServerChanged);
+    window.addEventListener('verity:classroom-archived', handleServerChanged);
     window.addEventListener('verity:sync-completed', handleServerChanged);
     return () => {
       window.removeEventListener('verity:server-changed', handleServerChanged);
       window.removeEventListener('verity:classrooms-changed', handleServerChanged);
+      window.removeEventListener('verity:classroom-archived', handleServerChanged);
       window.removeEventListener('verity:sync-completed', handleServerChanged);
     };
   }, []);
@@ -114,6 +119,25 @@ export default function GlobalClassesTab() {
       .then(setViewStudents)
       .finally(() => setViewLoadingStudents(false));
   }, [viewClass]);
+
+  const handleToggleArchiveClass = async (c) => {
+    if (!c?.id) return;
+    const nextArchived = !isClassroomArchived(c);
+    if (nextArchived) {
+      setArchiveConfirmClass({ id: c.id, name: c.name || c.className || 'this classroom' });
+      return;
+    }
+    const updated = await toggleClassroomArchive(c.id, false, classes);
+    setClasses(updated);
+  };
+
+  const handleExecuteArchiveClass = async () => {
+    if (!archiveConfirmClass) return;
+    const targetId = archiveConfirmClass.id;
+    setArchiveConfirmClass(null);
+    const updated = await toggleClassroomArchive(targetId, true, classes);
+    setClasses(updated);
+  };
 
   const handleDeleteClass = (c) => setDeleteConfirmClass({ id: c.id, name: c.name || c.className || 'this classroom' });
 
@@ -199,7 +223,7 @@ export default function GlobalClassesTab() {
     }
   };
 
-  const totalActive = classes.filter(c => c.status === 'Active' || c.isActive).length;
+  const totalActive = classes.filter(c => !isClassroomArchived(c) && String(c.status || '').toLowerCase() !== 'archived').length;
   const filtered = classes.filter(c => {
     const q = query.toLowerCase();
     return (c.name || c.className || '').toLowerCase().includes(q)
@@ -250,6 +274,7 @@ export default function GlobalClassesTab() {
           loading={loading}
           isDark={isDark}
           onViewClass={setViewClass}
+          onToggleArchive={handleToggleArchiveClass}
           onDeleteClass={handleDeleteClass}
           styles={sh}
           headerBg={colors.headerBg}
@@ -307,6 +332,14 @@ export default function GlobalClassesTab() {
         onClose={() => setDeleteConfirmClass(null)}
         onConfirm={handleExecuteDeleteClass}
         styles={sh}
+      />
+
+      <ArchiveConfirmModal
+        isOpen={Boolean(archiveConfirmClass)}
+        itemName={archiveConfirmClass?.name}
+        isDark={isDark}
+        onCancel={() => setArchiveConfirmClass(null)}
+        onConfirm={handleExecuteArchiveClass}
       />
     </div>
   );

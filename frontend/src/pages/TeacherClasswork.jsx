@@ -15,7 +15,7 @@ import { apiFetch, getLocalApiUrl, getCloudUrl, getConnectionStatus } from '../d
 import Skeleton from '../components/Skeleton';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { useMediaQuery } from '../hooks/useMediaQuery';
-import { isPhantomClassroom, mergeClassroomsPreservingOrder, sortClassroomsAlphabetically } from '../utils/classroomList';
+import { isPhantomClassroom, mergeClassroomsPreservingOrder, sortClassroomsAlphabetically, isClassroomArchived, normalizeClassroomSettings } from '../utils/classroomList';
 import { THEME_PRESETS } from '../utils/themePresets';
 import { getClassroomTheme, saveClassroomTheme } from '../data/classroomTheme';
 import { getClassroomStorageKey, getCachedClassrooms, saveCachedClassrooms } from '../data/classroomCache';
@@ -30,6 +30,7 @@ import PasteAsCodeModal from '../components/PasteAsCodeModal';
 import VideoAttachment from '../components/VideoAttachment';
 import AttachmentCard from '../components/AttachmentCard';
 import RichInstruction from '../components/RichInstruction';
+import ArchiveConfirmModal from '../components/ArchiveConfirmModal';
 import { getStudentGrade, isStudentGraded, formatGradeScore } from '../utils/gradeUtils';
 import { formatShortDate } from '../utils/dateUtils';
 import ClassroomBannerIllustration from '../components/ClassroomBannerIllustration';
@@ -108,33 +109,89 @@ export default function TeacherClasswork({
   const [classrooms, setClassrooms] = useState(() => {
     return sortClassroomsAlphabetically(getCachedClassrooms(currentUser, 'teacher').filter(c => !isPhantomClassroom(c)));
   });
+  const [archivedOverride, setArchivedOverride] = useState(null);
 
   useEffect(() => {
-    apiFetch(`${import.meta.env.VITE_API_URL}/classrooms`)
-      .then(res => res.ok ? res.json() : null)
-      .then(data => {
-        if (!data) return;
-        const serverList = (Array.isArray(data) ? data : (data.classrooms || [])).filter(c => !isPhantomClassroom(c));
-        if (serverList.length === 0) {
-          const cached = getCachedClassrooms(currentUser, 'teacher').filter(c => !isPhantomClassroom(c));
-          if (cached.length > 0) return;
-        }
-        const teacherClasses = serverList.filter(c => {
-          const emailStr = (c.instructor_email || c.instructorEmail || '').toLowerCase();
-          const matchesEmail = Boolean(currentUser?.email && emailStr && emailStr === currentUser.email.toLowerCase());
-          const nameStr = (c.instructor || '').trim().toLowerCase();
-          const curName = (currentUser?.name || '').trim().toLowerCase();
-          const matchesName = Boolean(curName && nameStr && nameStr === curName);
-          return matchesEmail || matchesName || (!emailStr && !nameStr);
-        });
-        const sortedTeacherClasses = sortClassroomsAlphabetically(teacherClasses);
-        if (sortedTeacherClasses.length > 0) {
-          setClassrooms(sortedTeacherClasses);
-          saveCachedClassrooms(sortedTeacherClasses, currentUser, 'teacher');
-        }
-      })
-      .catch(() => {});
-  }, [currentUser]);
+    setArchivedOverride(null);
+  }, [classroom?.id]);
+
+  useEffect(() => {
+    const loadClassroomsList = () => {
+      apiFetch(`${import.meta.env.VITE_API_URL}/classrooms`)
+        .then(res => res.ok ? res.json() : null)
+        .then(data => {
+          if (!data) return;
+          const serverList = (Array.isArray(data) ? data : (data.classrooms || [])).filter(c => !isPhantomClassroom(c));
+          if (serverList.length === 0) {
+            const cached = getCachedClassrooms(currentUser, 'teacher').filter(c => !isPhantomClassroom(c));
+            if (cached.length > 0) return;
+          }
+          const teacherClasses = serverList.filter(c => {
+            const emailStr = (c.instructor_email || c.instructorEmail || '').toLowerCase();
+            const matchesEmail = Boolean(currentUser?.email && emailStr && emailStr === currentUser.email.toLowerCase());
+            const nameStr = (c.instructor || '').trim().toLowerCase();
+            const curName = (currentUser?.name || '').trim().toLowerCase();
+            const matchesName = Boolean(curName && nameStr && nameStr === curName);
+            return matchesEmail || matchesName || (!emailStr && !nameStr);
+          });
+          const sortedTeacherClasses = sortClassroomsAlphabetically(teacherClasses);
+          if (sortedTeacherClasses.length > 0) {
+            setClassrooms(sortedTeacherClasses);
+            saveCachedClassrooms(sortedTeacherClasses, currentUser, 'teacher');
+          }
+        })
+        .catch(() => {});
+    };
+    loadClassroomsList();
+
+    const handleArchivedEvent = (e) => {
+      const detail = e?.detail;
+      if (!detail) return;
+      const targetId = detail.classroomId ?? detail.id;
+      if (targetId == null) return;
+      const nextArchived = Boolean(detail.archived);
+      setClassrooms(prev => {
+        const updated = prev.map(c => (String(c.id) === String(targetId) ? { ...c, archived: nextArchived } : c));
+        saveCachedClassrooms(updated, currentUser, 'teacher');
+        return updated;
+      });
+      if (classroom?.id != null && String(classroom.id) === String(targetId)) {
+        setArchivedOverride(nextArchived);
+      }
+    };
+
+    window.addEventListener('verity:classroom-archived', handleArchivedEvent);
+    window.addEventListener('verity:classrooms-changed', loadClassroomsList);
+    return () => {
+      window.removeEventListener('verity:classroom-archived', handleArchivedEvent);
+      window.removeEventListener('verity:classrooms-changed', loadClassroomsList);
+    };
+  }, [currentUser, classroom?.id]);
+
+  const liveClassroomObj = useMemo(
+    () => classrooms.find(c => String(c.id) === String(classroom?.id)) || classroom,
+    [classrooms, classroom]
+  );
+  const isClassroomArchivedState = archivedOverride !== null ? archivedOverride : isClassroomArchived(liveClassroomObj);
+
+  const handleUnarchiveCurrentClassroom = async () => {
+    const targetId = classroom?.id;
+    if (!targetId) return;
+    setArchivedOverride(false);
+    setClassrooms(prev => {
+      const updated = prev.map(c => (String(c.id) === String(targetId) ? { ...c, archived: false } : c));
+      saveCachedClassrooms(updated, currentUser, 'teacher');
+      return updated;
+    });
+    window.dispatchEvent(new CustomEvent('verity:classroom-archived', {
+      detail: { classroomId: targetId, archived: false }
+    }));
+    await apiFetch(`${import.meta.env.VITE_API_URL}/classrooms/${targetId}/archive`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ archived: false })
+    }).catch(() => {});
+  };
   const [isHeaderHovered, setIsHeaderHovered] = useState(false);
   const [isFadingOut, setIsFadingOut] = useState(false);
   const handleExit = (action) => {
@@ -621,14 +678,42 @@ export default function TeacherClasswork({
     };
   }, [classroom?.id, socket]);
 
+  // Modal dialog & live classroom state
+  const [isCustomizeOpen, setIsCustomizeOpen] = useState(false);
+  const [isClassCodeModalOpen, setIsClassCodeModalOpen] = useState(false);
+  const [isClassInfoModalOpen, setIsClassInfoModalOpen] = useState(false);
+  const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
+  const [currentClassroom, setCurrentClassroom] = useState(classroom);
+  useEffect(() => {
+    setCurrentClassroom(classroom);
+  }, [classroom?.id]);
+
+  useEffect(() => {
+    const handleClassroomUpdatedEvent = (e) => {
+      const incoming = e?.detail?.classroom;
+      if (!incoming || classroom?.id == null) return;
+      if (String(incoming.id) === String(classroom.id)) {
+        setCurrentClassroom(prev => ({ ...(prev || classroom), ...incoming }));
+      }
+    };
+    window.addEventListener('verity:classroom-updated', handleClassroomUpdatedEvent);
+    return () => window.removeEventListener('verity:classroom-updated', handleClassroomUpdatedEvent);
+  }, [classroom?.id]);
+
+  const displayClassroom = currentClassroom || liveClassroomObj || classroom;
+  const classSettings = useMemo(
+    () => normalizeClassroomSettings(displayClassroom?.settings),
+    [displayClassroom?.settings]
+  );
+
   // Class code & theme
-  const classCode = classroom?.code || classroom?.section || (classroom?.id ? `vji${classroom.id}ku4` : 'vji3bku4');
-  const [bannerTheme, setBannerTheme] = useState(() => getClassroomTheme(classroom));
+  const classCode = displayClassroom?.code || displayClassroom?.section || (displayClassroom?.id ? `vji${displayClassroom.id}ku4` : 'vji3bku4');
+  const [bannerTheme, setBannerTheme] = useState(() => getClassroomTheme(displayClassroom));
 
   // Reset banner theme when classroom changes
   useEffect(() => {
-    setBannerTheme(getClassroomTheme(classroom));
-  }, [classroom?.id, classroom?.code, classroom?.section, classroom?.name, classroom?.theme]);
+    setBannerTheme(getClassroomTheme(displayClassroom));
+  }, [displayClassroom?.id, displayClassroom?.code, displayClassroom?.section, displayClassroom?.name, displayClassroom?.theme]);
 
   // Real-time socket & window theme updates listener
   useEffect(() => {
@@ -636,11 +721,11 @@ export default function TeacherClasswork({
       const detail = e.detail;
       if (!detail) return;
       const matches =
-        (classroom?.id != null && String(detail.classroomId) === String(classroom.id)) ||
-        (classroom?.code && detail.code && String(detail.code).toLowerCase() === String(classroom.code).toLowerCase()) ||
-        (classroom?.section && detail.code && String(detail.code).toLowerCase() === String(classroom.section).toLowerCase()) ||
-        (classroom?.name && detail.name && String(detail.name).toLowerCase() === String(classroom.name).toLowerCase()) ||
-        (detail.keys && detail.keys.includes(`verity_classroom_theme_${classroom?.id}`));
+        (displayClassroom?.id != null && String(detail.classroomId) === String(displayClassroom.id)) ||
+        (displayClassroom?.code && detail.code && String(detail.code).toLowerCase() === String(displayClassroom.code).toLowerCase()) ||
+        (displayClassroom?.section && detail.code && String(detail.code).toLowerCase() === String(displayClassroom.section).toLowerCase()) ||
+        (displayClassroom?.name && detail.name && String(detail.name).toLowerCase() === String(displayClassroom.name).toLowerCase()) ||
+        (detail.keys && detail.keys.includes(`verity_classroom_theme_${displayClassroom?.id}`));
 
       if (matches && detail.theme) {
         setBannerTheme(detail.theme);
@@ -657,33 +742,18 @@ export default function TeacherClasswork({
         socket.off('classroom_theme_changed');
       }
     };
-  }, [classroom?.id, classroom?.code, classroom?.section, classroom?.name, classroom?.theme, socket]);
+  }, [displayClassroom?.id, displayClassroom?.code, displayClassroom?.section, displayClassroom?.name, displayClassroom?.theme, socket]);
 
-  // Modal dialog states
-  const [isCustomizeOpen, setIsCustomizeOpen] = useState(false);
-  const [isClassCodeModalOpen, setIsClassCodeModalOpen] = useState(false);
-  const [isClassInfoModalOpen, setIsClassInfoModalOpen] = useState(false);
-  const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
-  const [currentClassroom, setCurrentClassroom] = useState(classroom);
-  useEffect(() => {
-    if (classroom) setCurrentClassroom(classroom);
-  }, [classroom]);
-
-  const handleUpdateClassroom = async (updated) => {
-    const merged = { ...(currentClassroom || classroom), ...updated };
+  const handleUpdateClassroom = (updated) => {
+    const merged = { ...(displayClassroom || {}), ...updated };
     setCurrentClassroom(merged);
-    try {
-      await apiFetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/classrooms`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ classrooms: [merged] })
-      });
-      if (socket) {
-        socket.emit('classrooms_updated');
-      }
-    } catch (err) {
-      console.error('Failed to update classroom settings:', err);
-    }
+    setClassrooms(prev => {
+      const updatedList = sortClassroomsAlphabetically(
+        (prev || []).map(c => (String(c.id) === String(merged.id) ? { ...c, ...merged } : c))
+      );
+      saveCachedClassrooms(updatedList, currentUser, 'teacher');
+      return updatedList;
+    });
   };
   const [codeCopied, setCodeCopied] = useState(false);
   
@@ -877,20 +947,32 @@ export default function TeacherClasswork({
 
   const isMaterialItem = (item) => Boolean(item && (item.activityType === 'Material' || String(item.activityType || '').toLowerCase() === 'material' || String(item.type || '').toLowerCase() === 'material'));
 
-  // GRADES TAB STATE (Scoped to this classroom only)
-  const visibleClasswork = useMemo(() => classwork.filter(item => !item.archived && !isMaterialItem(item)), [classwork]);
-  const visibleMaterials = useMemo(() => classwork.filter(item => !item.archived && isMaterialItem(item)), [classwork]);
+  const showDeletedItems = Boolean(classSettings?.showDeleted);
+  const isRemovedItem = (item) => Boolean(item && (item.archived || item.deleted));
 
-  // STREAM FEED STATE: includes all active classwork and learning materials sorted newest first
+  // GRADES TAB STATE (Scoped to this classroom only)
+  const visibleClasswork = useMemo(
+    () => classwork.filter(item => !isMaterialItem(item) && (showDeletedItems || !isRemovedItem(item))),
+    [classwork, showDeletedItems]
+  );
+  const visibleMaterials = useMemo(
+    () => classwork.filter(item => isMaterialItem(item) && (showDeletedItems || !isRemovedItem(item))),
+    [classwork, showDeletedItems]
+  );
+
+  // STREAM FEED STATE: obeys Classroom Settings -> Classwork on the Stream & Show deleted items
   const visibleStreamItems = useMemo(() => {
+    if (classSettings?.classworkStream === 'Hide notifications') {
+      return [];
+    }
     return classwork
-      .filter(item => !item.archived)
+      .filter(item => showDeletedItems || !isRemovedItem(item))
       .sort((a, b) => {
         const timeA = new Date(a.posted || a.createdAt || (typeof a.id === 'number' && a.id > 1e12 ? a.id : 0)).getTime() || 0;
         const timeB = new Date(b.posted || b.createdAt || (typeof b.id === 'number' && b.id > 1e12 ? b.id : 0)).getTime() || 0;
         return timeB - timeA;
       });
-  }, [classwork]);
+  }, [classwork, classSettings?.classworkStream, showDeletedItems]);
 
   const filteredStreamItems = visibleStreamItems;
   const [selectedGradingActivityId, setSelectedGradingActivityId] = useState(() => {
@@ -1540,6 +1622,7 @@ export default function TeacherClasswork({
   };
 
   const [deleteClassworkConfirm, setDeleteClassworkConfirm] = useState(null);
+  const [archiveClassworkConfirm, setArchiveClassworkConfirm] = useState(null);
 
   const toggleMenu = (e, id) => {
     e.stopPropagation();
@@ -1559,21 +1642,36 @@ export default function TeacherClasswork({
   const handleExecuteDeleteClasswork = () => {
     if (!deleteClassworkConfirm) return;
     const toDeleteId = deleteClassworkConfirm.id;
+    const existingItem = classwork.find(c => String(c.id) === String(toDeleteId));
+    const isAlreadyRemoved = Boolean(existingItem && (existingItem.deleted || existingItem.archived));
+
     setClasswork(prev => {
-      const next = prev.filter(c => c.id !== toDeleteId);
+      const next = isAlreadyRemoved
+        ? prev.filter(c => String(c.id) !== String(toDeleteId))
+        : prev.map(c => (String(c.id) === String(toDeleteId) ? { ...c, deleted: true, deletedAt: new Date().toISOString() } : c));
       try {
         localStorage.setItem(storageKey, JSON.stringify(next));
       } catch (_) {}
       return next;
     });
-    apiFetch(`${import.meta.env.VITE_API_URL}/classwork/${classroomId}/${toDeleteId}`, {
+    apiFetch(`${import.meta.env.VITE_API_URL}/classwork/${classroomId}/${toDeleteId}${isAlreadyRemoved ? '' : '?soft=1'}`, {
       method: 'DELETE'
     }).catch(() => {});
     setDeleteClassworkConfirm(null);
   };
 
-  const openCreate = async (type = 'Activity') => {
+  const handleRestoreClasswork = (e, id) => {
+    if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
+    setClasswork(prev => prev.map(item => (
+      String(item.id) === String(id)
+        ? { ...item, deleted: false, deletedAt: null, archived: false }
+        : item
+    )));
+    setActiveMenu(null);
+  };
 
+  const openCreate = async (type = 'Activity') => {
+    if (isClassroomArchivedState) return;
     setEditingId(null);
     let defaults = { ...EMPTY_FORM, activityType: type };
     try {
@@ -1582,7 +1680,6 @@ export default function TeacherClasswork({
         const data = await res.json();
         const examDefaults = data?.settings?.global_config?.examDefaults || data?.settings?.examDefaults;
         if (examDefaults) {
-          defaults.duration = examDefaults.defaultExamTimer || 60;
           defaults.autoSaveInterval = examDefaults.autoSaveInterval || '30s';
           defaults.treatWarningsAsErrors = !!examDefaults.treatWarningsAsErrors;
         }
@@ -1657,8 +1754,20 @@ export default function TeacherClasswork({
 
   const handleArchive = (e, id) => {
     e.stopPropagation();
-    setClasswork(classwork.map(item => item.id === id ? { ...item, archived: true } : item));
+    const item = classwork.find(c => c.id === id);
+    setArchiveClassworkConfirm({
+      id,
+      title: item?.title || 'this item',
+      itemType: isMaterialItem(item) ? 'material' : 'activity'
+    });
     setActiveMenu(null);
+  };
+
+  const handleExecuteArchiveClasswork = () => {
+    if (!archiveClassworkConfirm) return;
+    const toArchiveId = archiveClassworkConfirm.id;
+    setClasswork(classwork.map(item => (item.id === toArchiveId ? { ...item, archived: true } : item)));
+    setArchiveClassworkConfirm(null);
   };
 
   const handleCopy = (e, item) => {
@@ -1775,7 +1884,10 @@ export default function TeacherClasswork({
     violet: '#8b5cf6'
   };
   const BADGE_COLORS = ['#a78bfa', '#60a5fa', '#fb7185', '#38bdf8', '#fbbf24', '#34d399'];
-  const activeClassrooms = sortClassroomsAlphabetically((classrooms || []).filter(c => !c.archived));
+  const activeClassrooms = sortClassroomsAlphabetically((classrooms || []).filter(c => !isClassroomArchived(c)));
+  const sidebarClassrooms = (liveClassroomObj && isClassroomArchivedState && !activeClassrooms.some(c => String(c.id) === String(liveClassroomObj.id)))
+    ? [{ ...liveClassroomObj, archived: true }, ...activeClassrooms]
+    : activeClassrooms;
   const teacherName = currentUser?.name || classroom?.instructor || 'Instructor';
   const teacherInitial = teacherName.charAt(0).toUpperCase();
   const CLASSROOM_TABS = [
@@ -1981,23 +2093,43 @@ export default function TeacherClasswork({
 
           {/* CLASS CODE PILL */}
           <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '16px' }}>
-            <div style={{
-              display: 'flex', alignItems: 'center', gap: '10px', padding: '6px 8px 6px 14px', borderRadius: '10px',
-              border: `1px solid ${isDark ? 'rgba(52,211,153,0.28)' : 'rgba(16,185,129,0.35)'}`,
-              background: isDark ? 'rgba(52,211,153,0.06)' : 'rgba(16,185,129,0.06)'
-            }}>
-              <span style={{ fontSize: '0.72rem', color: ui.muted }}>Class code</span>
-              <span onClick={() => setIsClassCodeModalOpen(true)} title="Click to enlarge" style={{ fontSize: '1rem', fontWeight: 800, color: ui.accentText, letterSpacing: '0.04em', cursor: 'pointer' }}>
-                {classCode}
-              </span>
-              <span style={{ width: '1px', height: '18px', background: ui.border }} />
-              <button className="vt-icon-btn" onClick={() => copyToClipboard(classCode)} title="Copy class code" style={{ ...smallIconBtnStyle, width: '26px', height: '26px', color: ui.text }}>
-                {codeCopied ? <Check size={14} color={ui.accent} /> : <Copy size={14} />}
+            {classSettings.inviteCodes === 'Turned off' ? (
+              <button
+                type="button"
+                onClick={() => setIsSettingsModalOpen(true)}
+                title="Click to manage invite codes in Class settings"
+                style={{
+                  display: 'flex', alignItems: 'center', gap: '8px', padding: '7px 14px', borderRadius: '10px',
+                  border: `1px solid ${ui.border}`,
+                  background: isDark ? 'rgba(148,163,184,0.08)' : '#f8fafc',
+                  color: ui.muted,
+                  fontSize: '0.78rem',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  fontFamily: 'inherit'
+                }}
+              >
+                <Lock size={13} /> Invite codes turned off
               </button>
-              <button className="vt-icon-btn" onClick={() => setIsClassCodeModalOpen(true)} title="Display large class code" style={{ ...smallIconBtnStyle, width: '26px', height: '26px', color: ui.text }}>
-                <Maximize2 size={14} />
-              </button>
-            </div>
+            ) : (
+              <div style={{
+                display: 'flex', alignItems: 'center', gap: '10px', padding: '6px 8px 6px 14px', borderRadius: '10px',
+                border: `1px solid ${isDark ? 'rgba(52,211,153,0.28)' : 'rgba(16,185,129,0.35)'}`,
+                background: isDark ? 'rgba(52,211,153,0.06)' : 'rgba(16,185,129,0.06)'
+              }}>
+                <span style={{ fontSize: '0.72rem', color: ui.muted }}>Class code</span>
+                <span onClick={() => setIsClassCodeModalOpen(true)} title="Click to enlarge" style={{ fontSize: '1rem', fontWeight: 800, color: ui.accentText, letterSpacing: '0.04em', cursor: 'pointer' }}>
+                  {classCode}
+                </span>
+                <span style={{ width: '1px', height: '18px', background: ui.border }} />
+                <button className="vt-icon-btn" onClick={() => copyToClipboard(classCode)} title="Copy class code" style={{ ...smallIconBtnStyle, width: '26px', height: '26px', color: ui.text }}>
+                  {codeCopied ? <Check size={14} color={ui.accent} /> : <Copy size={14} />}
+                </button>
+                <button className="vt-icon-btn" onClick={() => setIsClassCodeModalOpen(true)} title="Display large class code" style={{ ...smallIconBtnStyle, width: '26px', height: '26px', color: ui.text }}>
+                  <Maximize2 size={14} />
+                </button>
+              </div>
+            )}
           </div>
 
           {/* CLASSROOM TAB BAR */}
@@ -2083,17 +2215,54 @@ export default function TeacherClasswork({
                       padding: isMobile ? '20px' : '24px 20px',
                       minHeight: isMobile ? '200px' : '260px',
                       display: 'flex', flexDirection: 'column', boxSizing: 'border-box',
-                      background: bannerTheme?.customImageUrl
-                        ? `url(${bannerTheme.customImageUrl}) center/cover no-repeat`
-                        : `linear-gradient(150deg, ${bannerTheme?.primary || '#137333'}, ${bannerTheme?.secondary || '#1e8e3e'})`,
+                      border: isClassroomArchivedState ? '1px dashed rgba(148, 163, 184, 0.55)' : 'none',
                       boxShadow: isDark ? '0 18px 40px -18px rgba(0,0,0,0.7)' : '0 14px 30px -16px rgba(15,23,42,0.35)'
                     }}>
-                      {/* Decorative rings */}
-                      <div style={{ position: 'absolute', top: '-70px', right: '-70px', width: '210px', height: '210px', borderRadius: '50%', border: '1px solid rgba(255,255,255,0.14)', pointerEvents: 'none' }} />
-                      <div style={{ position: 'absolute', top: '-24px', right: '-24px', width: '120px', height: '120px', borderRadius: '50%', border: '1px solid rgba(255,255,255,0.12)', pointerEvents: 'none' }} />
+                      {/* Background theme layer (desaturated when archived) */}
+                      <div style={{
+                        position: 'absolute',
+                        inset: 0,
+                        background: bannerTheme?.customImageUrl
+                          ? `url(${bannerTheme.customImageUrl}) center/cover no-repeat`
+                          : `linear-gradient(150deg, ${bannerTheme?.primary || '#137333'}, ${bannerTheme?.secondary || '#1e8e3e'})`,
+                        filter: isClassroomArchivedState ? 'grayscale(65%) saturate(0.5) brightness(0.84)' : 'none',
+                        zIndex: 0
+                      }} />
+                      {isClassroomArchivedState && (
+                        <div style={{
+                          position: 'absolute',
+                          inset: 0,
+                          backgroundColor: 'rgba(15, 23, 42, 0.42)',
+                          pointerEvents: 'none',
+                          zIndex: 0
+                        }} />
+                      )}
 
-                      <div style={{ position: 'relative', zIndex: 2, fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.07em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
-                        Your classroom
+                      {/* Decorative rings */}
+                      <div style={{ position: 'absolute', top: '-70px', right: '-70px', width: '210px', height: '210px', borderRadius: '50%', border: '1px solid rgba(255,255,255,0.14)', pointerEvents: 'none', zIndex: 1 }} />
+                      <div style={{ position: 'absolute', top: '-24px', right: '-24px', width: '120px', height: '120px', borderRadius: '50%', border: '1px solid rgba(255,255,255,0.12)', pointerEvents: 'none', zIndex: 1 }} />
+
+                      <div style={{ position: 'relative', zIndex: 2, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', flexWrap: 'wrap' }}>
+                        <span style={{ fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.07em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
+                          Your classroom
+                        </span>
+                        {isClassroomArchivedState && (
+                          <span style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '4px',
+                            padding: '3px 8px',
+                            borderRadius: '9999px',
+                            backgroundColor: 'rgba(15, 23, 42, 0.65)',
+                            border: '1px solid rgba(255,255,255,0.28)',
+                            color: '#f8fafc',
+                            fontSize: '0.65rem',
+                            fontWeight: 700,
+                            letterSpacing: '0.05em'
+                          }}>
+                            <Archive size={11} /> ARCHIVED
+                          </span>
+                        )}
                       </div>
 
                       {!bannerTheme?.customImageUrl && (
@@ -2105,7 +2274,8 @@ export default function TeacherClasswork({
                           height: '165px',
                           pointerEvents: 'none',
                           zIndex: 1,
-                          overflow: 'hidden'
+                          overflow: 'hidden',
+                          filter: isClassroomArchivedState ? 'grayscale(65%)' : 'none'
                         }}>
                           <ClassroomBannerIllustration
                             themeId={bannerTheme?.id || 'emerald_books'}
@@ -2116,19 +2286,44 @@ export default function TeacherClasswork({
 
                       <div style={{ position: 'relative', zIndex: 2, marginTop: 'auto' }}>
                         <h1 style={{ fontSize: isMobile ? '1.8rem' : '2rem', fontWeight: 500, color: bannerTheme.textColor || 'white', margin: '0 0 6px', wordBreak: 'break-word', lineHeight: 1.15, letterSpacing: '-0.01em' }}>
-                          {classroom?.name || 'Verity'}
+                          {displayClassroom?.name || 'Verity'}
                         </h1>
                         <div style={{ fontSize: '0.78rem', color: bannerTheme.textColor || 'white', opacity: 0.85 }}>
-                          {classroom?.section || classroom?.subject || classroom?.name || ''}
+                          {displayClassroom?.section || displayClassroom?.subject || displayClassroom?.name || ''}
                         </div>
+                        {displayClassroom?.description && (
+                          <div style={{
+                            marginTop: '6px',
+                            fontSize: '0.74rem',
+                            color: bannerTheme.textColor || 'white',
+                            opacity: 0.78,
+                            lineHeight: 1.4,
+                            display: '-webkit-box',
+                            WebkitLineClamp: 2,
+                            WebkitBoxOrient: 'vertical',
+                            overflow: 'hidden'
+                          }}>
+                            {displayClassroom.description}
+                          </div>
+                        )}
                         <div style={{ height: '1px', background: 'rgba(255,255,255,0.22)', margin: '14px 0 12px' }} />
-                        <button
-                          className="vt-customize"
-                          onClick={() => { setOriginalBannerTheme(bannerTheme); setIsCustomizeOpen(true); }}
-                          style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'transparent', border: 'none', color: bannerTheme.textColor || 'white', cursor: 'pointer', padding: 0, fontSize: '0.78rem', fontWeight: 600, opacity: 0.92, fontFamily: 'inherit' }}
-                        >
-                          <Edit3 size={13} /> Customize
-                        </button>
+                        {isClassroomArchivedState ? (
+                          <button
+                            className="vt-customize"
+                            onClick={handleUnarchiveCurrentClassroom}
+                            style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'transparent', border: 'none', color: bannerTheme.textColor || 'white', cursor: 'pointer', padding: 0, fontSize: '0.78rem', fontWeight: 600, opacity: 0.92, fontFamily: 'inherit' }}
+                          >
+                            <RefreshCw size={13} /> Unarchive Classroom
+                          </button>
+                        ) : (
+                          <button
+                            className="vt-customize"
+                            onClick={() => { setOriginalBannerTheme(bannerTheme); setIsCustomizeOpen(true); }}
+                            style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'transparent', border: 'none', color: bannerTheme.textColor || 'white', cursor: 'pointer', padding: 0, fontSize: '0.78rem', fontWeight: 600, opacity: 0.92, fontFamily: 'inherit' }}
+                          >
+                            <Edit3 size={13} /> Customize
+                          </button>
+                        )}
                       </div>
                     </div>
 
@@ -2145,10 +2340,11 @@ export default function TeacherClasswork({
                         overflowX: isMobile ? 'auto' : 'visible',
                         paddingBottom: isMobile ? '6px' : '0'
                       }}>
-                        {activeClassrooms.map((cls, idx) => {
+                        {sidebarClassrooms.map((cls, idx) => {
                           const active = String(classroom?.id) === String(cls.id);
                           const badgeColor = BADGE_COLORS[idx % BADGE_COLORS.length];
                           const clsName = cls.name || 'Untitled';
+                          const clsArchived = isClassroomArchived(cls);
                           return (
                             <button
                               key={cls.id}
@@ -2192,6 +2388,11 @@ export default function TeacherClasswork({
                               <span style={{ flex: 1, fontSize: '0.82rem', fontWeight: active ? 600 : 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                                 {clsName}
                               </span>
+                              {clsArchived && (
+                                <span style={{ fontSize: '0.64rem', fontWeight: 700, padding: '2px 6px', borderRadius: '9999px', backgroundColor: isDark ? 'rgba(148,163,184,0.18)' : '#e2e8f0', color: isDark ? '#cbd5e1' : '#475569' }}>
+                                  Archived
+                                </span>
+                              )}
                             </button>
                           );
                         })}
@@ -2236,7 +2437,9 @@ export default function TeacherClasswork({
                       </>
                     ) : filteredStreamItems.length === 0 ? (
                       <div style={{ padding: '36px 20px', borderRadius: '14px', border: `1px dashed ${ui.border}`, textAlign: 'center', color: ui.muted, fontSize: '0.84rem' }}>
-                        This is where you'll see classwork, learning materials, and activities posted for your students.
+                        {classSettings.classworkStream === 'Hide notifications'
+                          ? 'Classwork and material notifications on the Stream are hidden in Classroom Settings.'
+                          : "This is where you'll see classwork, learning materials, and activities posted for your students."}
                       </div>
                     ) : (
                       filteredStreamItems.map((item, index) => {
@@ -2340,9 +2543,45 @@ export default function TeacherClasswork({
                                   <div style={{ fontSize: '1.25rem', fontWeight: 500, color: ui.text, margin: '4px 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                                     {item.title}
                                   </div>
-                                  <div style={{ fontSize: '0.76rem', color: ui.muted, lineHeight: 1.5, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+                                  <div style={{
+                                    fontSize: '0.76rem',
+                                    color: ui.muted,
+                                    lineHeight: 1.5,
+                                    display: '-webkit-box',
+                                    WebkitLineClamp: classSettings.classworkStream === 'Show attachments and details' ? 4 : 2,
+                                    WebkitBoxOrient: 'vertical',
+                                    overflow: 'hidden'
+                                  }}>
                                     {plain || (isMaterial ? "View learning materials, syllabus, and study references." : "View assignment instructions and manage your students' work.")}
                                   </div>
+                                  {classSettings.classworkStream === 'Show attachments and details' && item.attachments && item.attachments.length > 0 && (
+                                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '10px' }}>
+                                      {item.attachments.map((att, attIdx) => (
+                                        <span
+                                          key={attIdx}
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            openItem();
+                                          }}
+                                          style={{
+                                            display: 'inline-flex',
+                                            alignItems: 'center',
+                                            gap: '5px',
+                                            padding: '4px 10px',
+                                            borderRadius: '8px',
+                                            background: ui.surfaceAlt,
+                                            border: `1px solid ${ui.border}`,
+                                            fontSize: '0.72rem',
+                                            fontWeight: 600,
+                                            color: ui.text,
+                                            cursor: 'pointer'
+                                          }}
+                                        >
+                                          <Paperclip size={11} /> {att.name || att.title || 'Attachment'}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  )}
                                 </div>
                               </div>
                               <button
@@ -2390,11 +2629,13 @@ export default function TeacherClasswork({
                         Create and organize assignments, questions, and learning activities for this class.
                       </p>
                     </div>
-                    <div>
-                      <button onClick={() => openCreate()} style={styles.addButton} className="btn-anim">
-                        <Plus size={18} style={{ marginRight: '6px' }} /> Create
-                      </button>
-                    </div>
+                    {!isClassroomArchivedState && (
+                      <div>
+                        <button onClick={() => openCreate()} style={styles.addButton} className="btn-anim">
+                          <Plus size={18} style={{ marginRight: '6px' }} /> Create
+                        </button>
+                      </div>
+                    )}
                   </div>
 
                   {/* List of Classwork */}
@@ -2486,44 +2727,62 @@ export default function TeacherClasswork({
                                 </div>
 
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexShrink: 0 }}>
+                                  {(item.deleted || item.archived) && (
+                                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', fontSize: '0.72rem', color: isDark ? '#fca5a5' : '#b91c1c', backgroundColor: isDark ? 'rgba(239, 68, 68, 0.14)' : '#fef2f2', border: isDark ? '1px solid rgba(239, 68, 68, 0.35)' : '1px solid #fecaca', padding: '4px 10px', borderRadius: '9999px', fontWeight: '700' }}>
+                                      {item.deleted ? 'Deleted' : 'Archived'}
+                                    </span>
+                                  )}
                                   {due ? (
                                     <span style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.75rem', color: isDark ? '#a7f3d0' : '#059669', backgroundColor: isDark ? 'rgba(16, 185, 129, 0.08)' : '#ecfdf5', border: isDark ? '1px solid rgba(16, 185, 129, 0.2)' : '1px solid #d1fae5', padding: '5px 12px', borderRadius: '8px', fontWeight: '600' }}>
                                       <Calendar size={12} /> Due {due}
                                     </span>
                                   ) : null}
 
-                                  {/* Vertical Divider */}
-                                  <div style={{ width: '1px', height: '24px', backgroundColor: isDark ? '#3d4447' : '#e2e8f0' }} />
+                                  {!isClassroomArchivedState && (
+                                    <>
+                                      {/* Vertical Divider */}
+                                      <div style={{ width: '1px', height: '24px', backgroundColor: isDark ? '#3d4447' : '#e2e8f0' }} />
 
-                                  {/* 3-dots Menu Button */}
-                                  <div
-                                    style={{
-                                      ...styles.threeDots,
-                                      width: '32px',
-                                      height: '32px',
-                                      borderRadius: '8px',
-                                      display: 'flex',
-                                      alignItems: 'center',
-                                      justifyContent: 'center',
-                                      transition: 'background 0.15s ease'
-                                    }}
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      toggleMenu(e, item.id);
-                                    }}
-                                    onMouseOver={(e) => e.currentTarget.style.backgroundColor = isDark ? 'rgba(255,255,255,0.08)' : '#e2e8f0'}
-                                    onMouseOut={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
-                                  >
-                                    <MoreVertical size={18} color={isDark ? '#a3a3a3' : '#64748b'} />
-                                    {activeMenu === item.id && (
-                                      <div style={styles.dropdownMenu} onClick={(e) => e.stopPropagation()}>
-                                        <div style={styles.dropdownItem} onClick={(e) => openModify(e, item)}>Modify</div>
-                                        <div style={styles.dropdownItem} onClick={(e) => handleArchive(e, item.id)}>Archive</div>
-                                        <div style={styles.dropdownItem} onClick={(e) => handleCopy(e, item)}>Copy</div>
-                                        <div style={{ ...styles.dropdownItem, color: '#ef4444' }} onClick={(e) => { e.stopPropagation(); handleDeleteClasswork(e, item.id); }}>Delete</div>
+                                      {/* 3-dots Menu Button */}
+                                      <div
+                                        style={{
+                                          ...styles.threeDots,
+                                          width: '32px',
+                                          height: '32px',
+                                          borderRadius: '8px',
+                                          display: 'flex',
+                                          alignItems: 'center',
+                                          justifyContent: 'center',
+                                          transition: 'background 0.15s ease'
+                                        }}
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          toggleMenu(e, item.id);
+                                        }}
+                                        onMouseOver={(e) => e.currentTarget.style.backgroundColor = isDark ? 'rgba(255,255,255,0.08)' : '#e2e8f0'}
+                                        onMouseOut={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+                                      >
+                                        <MoreVertical size={18} color={isDark ? '#a3a3a3' : '#64748b'} />
+                                        {activeMenu === item.id && (
+                                          <div style={styles.dropdownMenu} onClick={(e) => e.stopPropagation()}>
+                                            {(item.deleted || item.archived) ? (
+                                              <>
+                                                <div style={styles.dropdownItem} onClick={(e) => handleRestoreClasswork(e, item.id)}>Restore</div>
+                                                <div style={{ ...styles.dropdownItem, color: '#ef4444' }} onClick={(e) => { e.stopPropagation(); handleDeleteClasswork(e, item.id); }}>Delete Forever</div>
+                                              </>
+                                            ) : (
+                                              <>
+                                                <div style={styles.dropdownItem} onClick={(e) => openModify(e, item)}>Modify</div>
+                                                <div style={styles.dropdownItem} onClick={(e) => handleArchive(e, item.id)}>Archive</div>
+                                                <div style={styles.dropdownItem} onClick={(e) => handleCopy(e, item)}>Copy</div>
+                                                <div style={{ ...styles.dropdownItem, color: '#ef4444' }} onClick={(e) => { e.stopPropagation(); handleDeleteClasswork(e, item.id); }}>Delete</div>
+                                              </>
+                                            )}
+                                          </div>
+                                        )}
                                       </div>
-                                    )}
-                                  </div>
+                                    </>
+                                  )}
                                 </div>
                               </div>
                             </div>
@@ -2694,25 +2953,27 @@ export default function TeacherClasswork({
                                       Replay Playback
                                     </span>
                                     {/* Button para sa Live Monitoring */}
-                                    <button
-                                      style={{
-                                        ...styles.liveMonitorBtn,
-                                        width: isMobile ? '100%' : 'auto',
-                                        justifyContent: 'center'
-                                      }}
-                                      className="btn-anim"
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        try {
-                                          sessionStorage.setItem(`verity_teacher_classwork_tab_${classroom?.id || 'default'}`, activeTab);
-                                          sessionStorage.setItem('verity_teacher_classwork_tab_active', activeTab);
-                                        } catch {}
-                                        onStartMonitoring && onStartMonitoring(item);
-                                      }}
-                                      title="Open live proctoring & monitoring"
-                                    >
-                                      <Monitor size={16} /> Live Monitoring
-                                    </button>
+                                    {!isClassroomArchivedState && (
+                                      <button
+                                        style={{
+                                          ...styles.liveMonitorBtn,
+                                          width: isMobile ? '100%' : 'auto',
+                                          justifyContent: 'center'
+                                        }}
+                                        className="btn-anim"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          try {
+                                            sessionStorage.setItem(`verity_teacher_classwork_tab_${classroom?.id || 'default'}`, activeTab);
+                                            sessionStorage.setItem('verity_teacher_classwork_tab_active', activeTab);
+                                          } catch {}
+                                          onStartMonitoring && onStartMonitoring(item);
+                                        }}
+                                        title="Open live proctoring & monitoring"
+                                      >
+                                        <Monitor size={16} /> Live Monitoring
+                                      </button>
+                                    )}
                                   </div>
                                 </div>
                                   </div>
@@ -2739,11 +3000,13 @@ export default function TeacherClasswork({
                         Upload and manage resources, syllabus, and study guides for this classroom.
                       </p>
                     </div>
-                    <div>
-                      <button onClick={() => openCreate('Material')} style={styles.addButton} className="btn-anim">
-                        <Plus size={18} style={{ marginRight: '6px' }} /> Create
-                      </button>
-                    </div>
+                    {!isClassroomArchivedState && (
+                      <div>
+                        <button onClick={() => openCreate('Material')} style={styles.addButton} className="btn-anim">
+                          <Plus size={18} style={{ marginRight: '6px' }} /> Create
+                        </button>
+                      </div>
+                    )}
                   </div>
                   <div style={{ ...styles.list, padding: '0 0 40px 0' }}>
                     {loadingClasswork ? (
@@ -2816,43 +3079,61 @@ export default function TeacherClasswork({
                                 </div>
 
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexShrink: 0 }}>
+                                  {(item.deleted || item.archived) && (
+                                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', fontSize: '0.72rem', color: isDark ? '#fca5a5' : '#b91c1c', backgroundColor: isDark ? 'rgba(239, 68, 68, 0.14)' : '#fef2f2', border: isDark ? '1px solid rgba(239, 68, 68, 0.35)' : '1px solid #fecaca', padding: '4px 10px', borderRadius: '9999px', fontWeight: '700' }}>
+                                      {item.deleted ? 'Deleted' : 'Archived'}
+                                    </span>
+                                  )}
                                   {posted ? (
                                     <span style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.75rem', color: isDark ? '#a7f3d0' : '#059669', backgroundColor: isDark ? 'rgba(16, 185, 129, 0.08)' : '#ecfdf5', border: isDark ? '1px solid rgba(16, 185, 129, 0.2)' : '1px solid #d1fae5', padding: '5px 12px', borderRadius: '8px', fontWeight: '600' }}>
                                       Posted {posted}
                                     </span>
                                   ) : null}
 
-                                  {/* Vertical Divider */}
-                                  <div style={{ width: '1px', height: '24px', backgroundColor: isDark ? '#3d4447' : '#e2e8f0' }} />
+                                  {!isClassroomArchivedState && (
+                                    <>
+                                      {/* Vertical Divider */}
+                                      <div style={{ width: '1px', height: '24px', backgroundColor: isDark ? '#3d4447' : '#e2e8f0' }} />
 
-                                  {/* 3-dots Menu Button */}
-                                  <div
-                                    style={{
-                                      ...styles.threeDots,
-                                      width: '32px',
-                                      height: '32px',
-                                      borderRadius: '8px',
-                                      display: 'flex',
-                                      alignItems: 'center',
-                                      justifyContent: 'center',
-                                      transition: 'background 0.15s ease'
-                                    }}
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      toggleMenu(e, item.id);
-                                    }}
-                                    onMouseOver={(e) => e.currentTarget.style.backgroundColor = isDark ? 'rgba(255,255,255,0.08)' : '#e2e8f0'}
-                                    onMouseOut={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
-                                  >
-                                    <MoreVertical size={18} color={isDark ? '#a3a3a3' : '#64748b'} />
-                                    {activeMenu === item.id && (
-                                      <div style={styles.dropdownMenu} onClick={(e) => e.stopPropagation()}>
-                                        <div style={styles.dropdownItem} onClick={(e) => openModify(e, item)}>Modify</div>
-                                        <div style={styles.dropdownItem} onClick={(e) => handleArchive(e, item.id)}>Archive</div>
-                                        <div style={{ ...styles.dropdownItem, color: '#ef4444' }} onClick={(e) => { e.stopPropagation(); handleDeleteClasswork(e, item.id); }}>Delete</div>
+                                      {/* 3-dots Menu Button */}
+                                      <div
+                                        style={{
+                                          ...styles.threeDots,
+                                          width: '32px',
+                                          height: '32px',
+                                          borderRadius: '8px',
+                                          display: 'flex',
+                                          alignItems: 'center',
+                                          justifyContent: 'center',
+                                          transition: 'background 0.15s ease'
+                                        }}
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          toggleMenu(e, item.id);
+                                        }}
+                                        onMouseOver={(e) => e.currentTarget.style.backgroundColor = isDark ? 'rgba(255,255,255,0.08)' : '#e2e8f0'}
+                                        onMouseOut={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+                                      >
+                                        <MoreVertical size={18} color={isDark ? '#a3a3a3' : '#64748b'} />
+                                        {activeMenu === item.id && (
+                                          <div style={styles.dropdownMenu} onClick={(e) => e.stopPropagation()}>
+                                            {(item.deleted || item.archived) ? (
+                                              <>
+                                                <div style={styles.dropdownItem} onClick={(e) => handleRestoreClasswork(e, item.id)}>Restore</div>
+                                                <div style={{ ...styles.dropdownItem, color: '#ef4444' }} onClick={(e) => { e.stopPropagation(); handleDeleteClasswork(e, item.id); }}>Delete Forever</div>
+                                              </>
+                                            ) : (
+                                              <>
+                                                <div style={styles.dropdownItem} onClick={(e) => openModify(e, item)}>Modify</div>
+                                                <div style={styles.dropdownItem} onClick={(e) => handleArchive(e, item.id)}>Archive</div>
+                                                <div style={{ ...styles.dropdownItem, color: '#ef4444' }} onClick={(e) => { e.stopPropagation(); handleDeleteClasswork(e, item.id); }}>Delete</div>
+                                              </>
+                                            )}
+                                          </div>
+                                        )}
                                       </div>
-                                    )}
-                                  </div>
+                                    </>
+                                  )}
                                 </div>
                               </div>
                             </div>
@@ -3039,7 +3320,7 @@ export default function TeacherClasswork({
                     <div style={styles.peopleSectionHeader}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                         <h2 style={styles.peopleSectionTitle}>Students</h2>
-                        {(currentUser?.role === 'Admin' || (currentUser?.role === 'Teacher' && allowManageStudents)) && (
+                        {!isClassroomArchivedState && (currentUser?.role === 'Admin' || (currentUser?.role === 'Teacher' && allowManageStudents)) && (
                           <motion.button 
                             whileHover={{ scale: 1.05 }} 
                             whileTap={{ scale: 0.95 }}
@@ -3116,7 +3397,7 @@ export default function TeacherClasswork({
                         Classroom Grades
                       </h2>
                       <p style={{ margin: '4px 0 0 0', color: isDark ? '#a3a3a3' : '#64748b', fontSize: '0.85rem' }}>
-                        Review and evaluate submissions for {classroom?.name || 'this class'}.
+                        Review and evaluate submissions for {displayClassroom?.name || 'this class'}.
                       </p>
                     </div>
 
@@ -3126,7 +3407,7 @@ export default function TeacherClasswork({
                           {bulkToastMsg}
                         </span>
                       )}
-                      {gradingStudents.length > 0 && (
+                      {!isClassroomArchivedState && gradingStudents.length > 0 && (
                         <button
                           onClick={() => setShowBulkGradeModal(true)}
                           style={styles.bulkGradeActionBtn}
@@ -3401,8 +3682,9 @@ export default function TeacherClasswork({
                                         min="0"
                                         max={maxPoints}
                                         value={studentGradeInput}
+                                        disabled={isClassroomArchivedState}
                                         onChange={(e) => setStudentGradeInput(e.target.value)}
-                                        style={styles.input}
+                                        style={{ ...styles.input, opacity: isClassroomArchivedState ? 0.7 : 1 }}
                                       />
                                     </div>
                                     <div style={{ flex: 1 }}>
@@ -3410,37 +3692,40 @@ export default function TeacherClasswork({
                                       <textarea
                                         rows={2}
                                         value={studentFeedbackInput}
+                                        disabled={isClassroomArchivedState}
                                         onChange={(e) => setStudentFeedbackInput(e.target.value)}
                                         placeholder="Add feedback for this student…"
-                                        style={{ ...styles.input, resize: 'vertical' }}
+                                        style={{ ...styles.input, resize: 'vertical', opacity: isClassroomArchivedState ? 0.7 : 1 }}
                                       />
                                     </div>
                                   </div>
 
-                                  <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '6px' }}>
-                                    <button
-                                      onClick={handleSaveIndividualGrade}
-                                      disabled={indivSaveStatus === 'saving'}
-                                      style={{
-                                        ...styles.saveGradeBtn,
-                                        backgroundColor: indivSaveStatus === 'saved' ? '#10b981' : (indivSaveStatus === 'error' ? '#ef4444' : styles.saveGradeBtn.backgroundColor),
-                                        cursor: indivSaveStatus === 'saving' ? 'wait' : 'pointer',
-                                        opacity: indivSaveStatus === 'saving' ? 0.75 : 1,
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        gap: '6px'
-                                      }}
-                                    >
-                                      {indivSaveStatus === 'saving' && 'Saving...'}
-                                      {indivSaveStatus === 'saved' && (
-                                        <>
-                                          <Check size={15} /> Saved
-                                        </>
-                                      )}
-                                      {indivSaveStatus === 'error' && (indivSaveError || 'Error')}
-                                      {indivSaveStatus === 'idle' && 'Save Grade'}
-                                    </button>
-                                  </div>
+                                  {!isClassroomArchivedState && (
+                                    <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '6px' }}>
+                                      <button
+                                        onClick={handleSaveIndividualGrade}
+                                        disabled={indivSaveStatus === 'saving'}
+                                        style={{
+                                          ...styles.saveGradeBtn,
+                                          backgroundColor: indivSaveStatus === 'saved' ? '#10b981' : (indivSaveStatus === 'error' ? '#ef4444' : styles.saveGradeBtn.backgroundColor),
+                                          cursor: indivSaveStatus === 'saving' ? 'wait' : 'pointer',
+                                          opacity: indivSaveStatus === 'saving' ? 0.75 : 1,
+                                          display: 'flex',
+                                          alignItems: 'center',
+                                          gap: '6px'
+                                        }}
+                                      >
+                                        {indivSaveStatus === 'saving' && 'Saving...'}
+                                        {indivSaveStatus === 'saved' && (
+                                          <>
+                                            <Check size={15} /> Saved
+                                          </>
+                                        )}
+                                        {indivSaveStatus === 'error' && (indivSaveError || 'Error')}
+                                        {indivSaveStatus === 'idle' && 'Save Grade'}
+                                      </button>
+                                    </div>
+                                  )}
                                 </div>
                               );
                             })()
@@ -3621,23 +3906,31 @@ export default function TeacherClasswork({
             <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', marginTop: '14px' }}>
               <div style={styles.infoFieldRow}>
                 <span style={styles.infoFieldLabel}>Class Name</span>
-                <span style={styles.infoFieldValue}>{classroom?.name || 'Verity'}</span>
+                <span style={styles.infoFieldValue}>{displayClassroom?.name || 'Verity'}</span>
               </div>
+              {displayClassroom?.description && (
+                <div style={styles.infoFieldRow}>
+                  <span style={styles.infoFieldLabel}>Description</span>
+                  <span style={styles.infoFieldValue}>{displayClassroom.description}</span>
+                </div>
+              )}
               <div style={styles.infoFieldRow}>
                 <span style={styles.infoFieldLabel}>Section</span>
-                <span style={styles.infoFieldValue}>{classroom?.section || '2'}</span>
+                <span style={styles.infoFieldValue}>{displayClassroom?.section || '2'}</span>
               </div>
               <div style={styles.infoFieldRow}>
                 <span style={styles.infoFieldLabel}>Subject</span>
-                <span style={styles.infoFieldValue}>{classroom?.subject || 'Computer Science'}</span>
+                <span style={styles.infoFieldValue}>{displayClassroom?.subject || 'Computer Science'}</span>
               </div>
               <div style={styles.infoFieldRow}>
                 <span style={styles.infoFieldLabel}>Class Code</span>
-                <span style={{ ...styles.infoFieldValue, color: '#10b981', fontWeight: '700' }}>{classCode}</span>
+                <span style={{ ...styles.infoFieldValue, color: classSettings.inviteCodes === 'Turned off' ? '#9ca3af' : '#10b981', fontWeight: '700' }}>
+                  {classSettings.inviteCodes === 'Turned off' ? 'Turned off' : classCode}
+                </span>
               </div>
               <div style={styles.infoFieldRow}>
                 <span style={styles.infoFieldLabel}>Instructor</span>
-                <span style={styles.infoFieldValue}>{classroom?.instructor || currentUser?.name || 'Instructor'}</span>
+                <span style={styles.infoFieldValue}>{displayClassroom?.instructor || currentUser?.name || 'Instructor'}</span>
               </div>
             </div>
 
@@ -3653,7 +3946,7 @@ export default function TeacherClasswork({
       {/* ═══ MODAL: CLASSROOM SETTINGS (Gear Icon) ═══ */}
       {isSettingsModalOpen && (
         <ClassroomSettings
-          classroom={currentClassroom || classroom}
+          classroom={displayClassroom}
           onClose={() => setIsSettingsModalOpen(false)}
           onUpdate={handleUpdateClassroom}
           role="teacher"
@@ -4309,6 +4602,26 @@ export default function TeacherClasswork({
         )}
       </AnimatePresence>
 
+      <ArchiveConfirmModal
+        isOpen={Boolean(archiveClassworkConfirm)}
+        itemName={archiveClassworkConfirm?.title}
+        title={archiveClassworkConfirm?.itemType === 'material' ? 'Archive material?' : 'Archive activity?'}
+        subtitle="Hide from active classwork and stream"
+        confirmLabel={archiveClassworkConfirm?.itemType === 'material' ? 'Archive material' : 'Archive activity'}
+        description={
+          <p style={{ margin: 0 }}>
+            Are you sure you want to archive{' '}
+            <span style={{ fontWeight: 600, color: isDark ? '#FBBF24' : '#B45309' }}>
+              {archiveClassworkConfirm?.title || 'this item'}
+            </span>
+            ? It will be hidden from the active classroom stream and classwork list.
+          </p>
+        }
+        isDark={isDark}
+        onCancel={() => setArchiveClassworkConfirm(null)}
+        onConfirm={handleExecuteArchiveClasswork}
+      />
+
       {/* ═══ MODAL: VIEW MATERIAL DETAILS ═══ */}
       <AnimatePresence>
         {viewingMaterialModal && (
@@ -4452,22 +4765,24 @@ export default function TeacherClasswork({
                 >
                   Close
                 </button>
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    const toEdit = viewingMaterialModal;
-                    setViewingMaterialModal(null);
-                    openModify(e, toEdit);
-                  }}
-                  style={{
-                    ...styles.saveGradeBtn,
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: '6px'
-                  }}
-                >
-                  <Edit3 size={15} /> Edit Material
-                </button>
+                {!isClassroomArchivedState && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      const toEdit = viewingMaterialModal;
+                      setViewingMaterialModal(null);
+                      openModify(e, toEdit);
+                    }}
+                    style={{
+                      ...styles.saveGradeBtn,
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '6px'
+                    }}
+                  >
+                    <Edit3 size={15} /> Edit Material
+                  </button>
+                )}
               </div>
             </motion.div>
           </div>

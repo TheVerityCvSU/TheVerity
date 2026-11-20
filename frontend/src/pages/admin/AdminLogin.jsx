@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Shield, Lock, Moon, Sun, KeyRound, AlertTriangle, Eye, EyeOff } from 'lucide-react';
 import { loginAdmin } from '../../data/adminAuth';
 import { useDarkMode } from '../../hooks/useDarkMode';
@@ -8,9 +8,32 @@ export default function AdminLogin({ onLogin }) {
   const { isDark, toggle } = useDarkMode();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
+  const [error, setError] = useState(() => {
+    try {
+      const notice = sessionStorage.getItem('verity_auth_notice');
+      if (notice) {
+        sessionStorage.removeItem('verity_auth_notice');
+        return notice;
+      }
+    } catch (_) {}
+    return '';
+  });
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+
+  useEffect(() => {
+    const onAuthNotice = () => {
+      try {
+        const notice = sessionStorage.getItem('verity_auth_notice');
+        if (notice) {
+          sessionStorage.removeItem('verity_auth_notice');
+          setError(notice);
+        }
+      } catch (_) {}
+    };
+    window.addEventListener('verity:auth-invalid', onAuthNotice);
+    return () => window.removeEventListener('verity:auth-invalid', onAuthNotice);
+  }, []);
 
   const handleAdminLogin = async (e) => {
     e.preventDefault();

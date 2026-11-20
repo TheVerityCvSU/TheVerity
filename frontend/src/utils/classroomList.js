@@ -86,3 +86,38 @@ export const generateClassCode = (existingListOrCodes = []) => {
 
   return code;
 };
+
+/**
+ * Normalizes the archived state of a classroom object from boolean/int/string values.
+ */
+export const isClassroomArchived = (classroom) => {
+  if (!classroom) return false;
+  const val = classroom.archived;
+  return val === true || Number(val) === 1 || String(val || '').toLowerCase() === 'true';
+};
+
+export const DEFAULT_CLASSROOM_SETTINGS = {
+  inviteCodes: 'Turned on',
+  stream: 'Students can post and comment',
+  classworkStream: 'Show condensed notifications',
+  showDeleted: false,
+};
+
+/**
+ * Normalizes general classroom settings from JSON string or partial object.
+ */
+export const normalizeClassroomSettings = (raw) => {
+  let parsed = raw;
+  if (typeof raw === 'string') {
+    try { parsed = JSON.parse(raw); } catch { parsed = null; }
+  }
+  if (!parsed || typeof parsed !== 'object') {
+    return { ...DEFAULT_CLASSROOM_SETTINGS };
+  }
+  return {
+    inviteCodes: parsed.inviteCodes === 'Turned off' ? 'Turned off' : 'Turned on',
+    stream: parsed.stream || DEFAULT_CLASSROOM_SETTINGS.stream,
+    classworkStream: parsed.classworkStream || DEFAULT_CLASSROOM_SETTINGS.classworkStream,
+    showDeleted: Boolean(parsed.showDeleted),
+  };
+};

@@ -19,6 +19,7 @@ import TeacherArchivedGrid from '../components/dashboard/TeacherArchivedGrid';
 import TeacherMobileNav from '../components/dashboard/TeacherMobileNav';
 import CreateClassModal from '../components/dashboard/CreateClassModal';
 import DeleteClassModal from '../components/dashboard/DeleteClassModal';
+import ArchiveConfirmModal from '../components/ArchiveConfirmModal';
 
 export { isPhantomClassroom, mergeClassroomsPreservingOrder, generateClassCode };
 
@@ -41,7 +42,10 @@ export default function TeacherDashboard({ currentUser, onLogout, onEnterClassro
     allowDelete,
     deleteClassConfirm,
     setDeleteClassConfirm,
+    archiveClassConfirm,
+    setArchiveClassConfirm,
     handleArchiveClass,
+    handleExecuteArchiveClass,
     handleUnarchiveClass,
     handleDeleteClass,
     handleExecuteDeleteClass,
@@ -213,6 +217,14 @@ export default function TeacherDashboard({ currentUser, onLogout, onEnterClassro
         onCancel={() => setDeleteClassConfirm(null)}
         onConfirm={handleExecuteDeleteClass}
         isDark={isDark}
+      />
+
+      <ArchiveConfirmModal
+        isOpen={Boolean(archiveClassConfirm)}
+        itemName={archiveClassConfirm?.name}
+        isDark={isDark}
+        onCancel={() => setArchiveClassConfirm(null)}
+        onConfirm={handleExecuteArchiveClass}
       />
     </motion.div>
   );

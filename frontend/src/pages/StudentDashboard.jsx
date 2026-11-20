@@ -16,6 +16,7 @@ import StudentTodoSidebar from '../components/dashboard/StudentTodoSidebar';
 import StudentArchivedGrid from '../components/dashboard/StudentArchivedGrid';
 import StudentMobileNav from '../components/dashboard/StudentMobileNav';
 import JoinClassModal from '../components/dashboard/JoinClassModal';
+import ArchiveConfirmModal from '../components/ArchiveConfirmModal';
 
 export default function StudentDashboard({
   currentUser,
@@ -52,7 +53,10 @@ export default function StudentDashboard({
     loadingClassrooms,
     activeClassrooms,
     archivedClassrooms,
+    archiveClassConfirm,
+    setArchiveClassConfirm,
     handleArchiveClass,
+    handleExecuteArchiveClass,
     handleUnarchiveClass,
     isModalOpen,
     setIsModalOpen,
@@ -285,6 +289,26 @@ export default function StudentDashboard({
         cardBg={cardBg}
         textColor={textColor}
         textMuted={textMuted}
+      />
+
+      <ArchiveConfirmModal
+        isOpen={Boolean(archiveClassConfirm)}
+        itemName={archiveClassConfirm?.name}
+        title="Archive course?"
+        subtitle="Move course to Archived Classrooms"
+        confirmLabel="Archive course"
+        description={
+          <p style={{ margin: 0 }}>
+            Are you sure you want to archive{' '}
+            <span style={{ fontWeight: 600, color: isDark ? '#FBBF24' : '#B45309' }}>
+              {archiveClassConfirm?.name || 'this course'}
+            </span>
+            ? You can still review past materials and activities in Archived Classrooms, while To-Do and Calendar updates stay hidden until you unarchive it.
+          </p>
+        }
+        isDark={isDark}
+        onCancel={() => setArchiveClassConfirm(null)}
+        onConfirm={handleExecuteArchiveClass}
       />
     </motion.div>
   );

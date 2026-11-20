@@ -1,6 +1,7 @@
 import React from 'react';
 import { ArrowLeft } from 'lucide-react';
 import ClassroomBannerIllustration from '../ClassroomBannerIllustration';
+import { isClassroomArchived, normalizeClassroomSettings } from '../../utils/classroomList';
 
 export default function ClassroomHeroBanner({
   classroom,
@@ -8,9 +9,13 @@ export default function ClassroomHeroBanner({
   activeTab,
   onTabChange,
   onNavigateBack,
-  isDark
+  isDark,
+  isArchived
 }) {
   const theme = bannerTheme || {};
+  const archivedState = Boolean(isArchived ?? isClassroomArchived(classroom));
+  const classSettings = normalizeClassroomSettings(classroom?.settings);
+  const inviteCodesOff = classSettings.inviteCodes === 'Turned off';
 
   return (
     <div style={{
@@ -23,15 +28,27 @@ export default function ClassroomHeroBanner({
       display: 'flex',
       flexDirection: 'column',
       justifyContent: 'space-between',
-      boxShadow: isDark ? '0 10px 30px rgba(0,0,0,0.5)' : '0 10px 30px rgba(0,0,0,0.1)'
+      boxShadow: isDark ? '0 10px 30px rgba(0,0,0,0.5)' : '0 10px 30px rgba(0,0,0,0.1)',
+      border: archivedState ? '1px dashed rgba(148, 163, 184, 0.55)' : 'none'
     }}>
       <div style={{
         position: 'absolute', inset: 0,
         background: theme.customImageUrl
           ? `linear-gradient(to right, rgba(15, 23, 42, 1) 0%, rgba(15, 23, 42, 0.85) 30%, rgba(15, 23, 42, 0.3) 60%, transparent 100%), url(${theme.customImageUrl}) center/cover no-repeat`
           : `linear-gradient(150deg, ${theme.primary || '#137333'}, ${theme.secondary || '#1e8e3e'})`,
+        filter: archivedState ? 'grayscale(65%) saturate(0.5) brightness(0.82)' : 'none',
         zIndex: 0
       }} />
+
+      {archivedState && (
+        <div style={{
+          position: 'absolute',
+          inset: 0,
+          backgroundColor: 'rgba(15, 23, 42, 0.42)',
+          pointerEvents: 'none',
+          zIndex: 0
+        }} />
+      )}
 
       {/* Decorative ambient rings */}
       <div style={{ position: 'absolute', top: '-70px', right: '-70px', width: '220px', height: '220px', borderRadius: '50%', border: '1px solid rgba(255,255,255,0.14)', pointerEvents: 'none', zIndex: 0 }} />
@@ -52,16 +69,18 @@ export default function ClassroomHeroBanner({
           <ArrowLeft size={18} /> All courses
         </button>
         <div style={{ display: 'flex', gap: '12px' }}>
-          <div style={{ padding: '8px 16px', borderRadius: '50px', backgroundColor: 'rgba(255,255,255,0.15)', color: 'white', fontSize: '0.85rem', fontWeight: '500', backdropFilter: 'blur(8px)' }}>
-            Class code <span style={{ fontWeight: 'bold', marginLeft: '6px' }}>{classroom?.code || 'CS101'}</span>
-          </div>
+          {!inviteCodesOff && (
+            <div style={{ padding: '8px 16px', borderRadius: '50px', backgroundColor: 'rgba(255,255,255,0.15)', color: 'white', fontSize: '0.85rem', fontWeight: '500', backdropFilter: 'blur(8px)' }}>
+              Class code <span style={{ fontWeight: 'bold', marginLeft: '6px' }}>{classroom?.code || 'CS101'}</span>
+            </div>
+          )}
         </div>
       </div>
 
       {/* Middle row */}
       <div style={{ position: 'relative', zIndex: 1, padding: '0 32px' }}>
         {(classroom?.section || classroom?.subject) && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '10px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '6px' }}>
             <span style={{ color: 'white', fontSize: '0.95rem', opacity: 0.9, fontWeight: '500' }}>
               {classroom?.section || classroom?.subject}
             </span>
@@ -70,6 +89,11 @@ export default function ClassroomHeroBanner({
         <h1 style={{ color: 'white', fontSize: '2.5rem', fontWeight: 'bold', margin: 0 }}>
           {classroom?.name || 'C# Programming'}
         </h1>
+        {classroom?.description && (
+          <p style={{ color: 'rgba(255,255,255,0.88)', fontSize: '0.9rem', margin: '6px 0 0 0', maxWidth: '680px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {classroom.description}
+          </p>
+        )}
       </div>
 
       {/* Bottom row */}

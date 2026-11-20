@@ -22,8 +22,8 @@ try {
   }
 } catch (_) { }
 
-const DEFAULT_SMTP_USER = 'kimfabie159@gmail.com';
-const DEFAULT_SMTP_PASS = 'bwuuabczntiqoqnz';
+const DEFAULT_SMTP_USER = '';
+const DEFAULT_SMTP_PASS = '';
 const DEFAULT_SMTP_SERVICE = 'gmail';
 
 function escapeHtml(str) {
@@ -132,7 +132,7 @@ async function sendViaRestApi({ email, name, otp, subject, html, text, from }) {
   const brevoKey = process.env.BREVO_API_KEY;
   if (brevoKey && brevoKey.trim()) {
     try {
-      const senderEmail = (process.env.BREVO_SENDER_EMAIL || process.env.EMAIL_USER || DEFAULT_SMTP_USER).trim();
+      const senderEmail = (process.env.BREVO_SENDER_EMAIL || process.env.EMAIL_USER || process.env.SMTP_USER || DEFAULT_SMTP_USER).trim();
       const res = await fetch('https://api.brevo.com/v3/smtp/email', {
         method: 'POST',
         headers: {
@@ -266,7 +266,7 @@ async function sendOtpEmail({ email, name, otp }) {
   console.log('========================================\n');
 
   const user = (process.env.SMTP_USER || process.env.EMAIL_USER || DEFAULT_SMTP_USER).trim();
-  const from = process.env.SMTP_FROM || process.env.EMAIL_FROM || (user ? `"The Verity Team" <${user}>` : '"The Verity Team" <kimfabie159@gmail.com>');
+  const from = process.env.SMTP_FROM || process.env.EMAIL_FROM || (user ? `"The Verity Team" <${user}>` : '"The Verity Team" <noreply@theverity.local>');
 
   // 1. Try HTTPS REST API first (port 443 - bypasses all cloud container port restrictions)
   const restResult = await sendViaRestApi({ email, name, otp, subject, html, text, from });

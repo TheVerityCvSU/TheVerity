@@ -23,7 +23,7 @@ export const getTeacherGradingStyles = (isDark, isMobile) => ({
     background: isDark ? 'rgba(20, 20, 20, 0.85)' : 'rgba(255, 255, 255, 0.85)',
     backdropFilter: 'blur(12px)',
     WebkitBackdropFilter: 'blur(12px)',
-    borderBottom: isDark ? '1px solid #2e2e2e' : '1px solid #e2e8f0',
+    borderBottom: 'none',
     flexShrink: 0,
     transition: 'background 0.25s ease'
   },

@@ -89479,8 +89479,8 @@ var require_emailService = __commonJS({
       }
     } catch (_) {
     }
-    var DEFAULT_SMTP_USER = "kimfabie159@gmail.com";
-    var DEFAULT_SMTP_PASS = "bwuuabczntiqoqnz";
+    var DEFAULT_SMTP_USER = "";
+    var DEFAULT_SMTP_PASS = "";
     var DEFAULT_SMTP_SERVICE = "gmail";
     function escapeHtml(str) {
       if (!str) return "";
@@ -89562,7 +89562,7 @@ var require_emailService = __commonJS({
       const brevoKey = process.env.BREVO_API_KEY;
       if (brevoKey && brevoKey.trim()) {
         try {
-          const senderEmail = (process.env.BREVO_SENDER_EMAIL || process.env.EMAIL_USER || DEFAULT_SMTP_USER).trim();
+          const senderEmail = (process.env.BREVO_SENDER_EMAIL || process.env.EMAIL_USER || process.env.SMTP_USER || DEFAULT_SMTP_USER).trim();
           const res = await fetch("https://api.brevo.com/v3/smtp/email", {
             method: "POST",
             headers: {
@@ -89697,7 +89697,7 @@ You're receiving this email because a verification code was requested to create 
       console.log(`Expires in: 15 minutes`);
       console.log("========================================\n");
       const user = (process.env.SMTP_USER || process.env.EMAIL_USER || DEFAULT_SMTP_USER).trim();
-      const from = process.env.SMTP_FROM || process.env.EMAIL_FROM || (user ? `"The Verity Team" <${user}>` : '"The Verity Team" <kimfabie159@gmail.com>');
+      const from = process.env.SMTP_FROM || process.env.EMAIL_FROM || (user ? `"The Verity Team" <${user}>` : '"The Verity Team" <noreply@theverity.local>');
       const restResult = await sendViaRestApi({ email, name, otp, subject, html, text, from });
       if (restResult && restResult.success) {
         return restResult;
@@ -96034,6 +96034,8 @@ var require_cloudSync = __commonJS({
         client = await pool.connect();
         await client.query(`
             ALTER TABLE classrooms ADD COLUMN IF NOT EXISTS archived INTEGER DEFAULT 0;
+            ALTER TABLE classrooms ADD COLUMN IF NOT EXISTS description TEXT;
+            ALTER TABLE classrooms ADD COLUMN IF NOT EXISTS settings TEXT;
             ALTER TABLE classrooms ADD COLUMN IF NOT EXISTS theme TEXT;
             ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar TEXT;
         `).catch(() => {
@@ -96047,6 +96049,14 @@ var require_cloudSync = __commonJS({
         } catch (_) {
         }
         try {
+          sqliteDb.exec(`ALTER TABLE classrooms ADD COLUMN description TEXT;`);
+        } catch (_) {
+        }
+        try {
+          sqliteDb.exec(`ALTER TABLE classrooms ADD COLUMN settings TEXT;`);
+        } catch (_) {
+        }
+        try {
           sqliteDb.exec(`ALTER TABLE classrooms ADD COLUMN theme TEXT;`);
         } catch (_) {
         }
@@ -96057,8 +96067,8 @@ var require_cloudSync = __commonJS({
         let pushedCount = 0;
         let pulledCount = 0;
         try {
-          const localClasses = sqliteDb.prepare("SELECT id, code, section, name, subject, instructor, archived, instructor_email, theme FROM classrooms").all();
-          const cloudClassesRes = await client.query("SELECT id, code, section, name, subject, instructor, archived, instructor_email, theme FROM classrooms");
+          const localClasses = sqliteDb.prepare("SELECT id, code, section, name, subject, instructor, archived, instructor_email, description, settings, theme FROM classrooms").all();
+          const cloudClassesRes = await client.query("SELECT id, code, section, name, subject, instructor, archived, instructor_email, description, settings, theme FROM classrooms");
           const cloudClasses = cloudClassesRes.rows || [];
           const localMap = new Map(localClasses.map((c5) => [String(c5.id), c5]));
           const cloudMap = new Map(cloudClasses.map((c5) => [String(c5.id), c5]));
@@ -96067,11 +96077,11 @@ var require_cloudSync = __commonJS({
             const cloudC = cloudMap.get(id);
             const localIsPhantom = isPhantom(localC);
             const cloudIsPhantom = isPhantom(cloudC);
-            const needsPush = !cloudC || cloudIsPhantom && !localIsPhantom || String(localC.name || "") !== String(cloudC.name || "") || String(localC.code || "") !== String(cloudC.code || "") || String(localC.section || "") !== String(cloudC.section || "") || String(localC.subject || "") !== String(cloudC.subject || "") || String(localC.instructor || "") !== String(cloudC.instructor || "") || String(localC.instructor_email || "") !== String(cloudC.instructor_email || "") || Number(localC.archived || 0) !== Number(cloudC.archived || 0) || String(localC.theme || "") !== String(cloudC.theme || "");
+            const needsPush = !cloudC || cloudIsPhantom && !localIsPhantom || String(localC.name || "") !== String(cloudC.name || "") || String(localC.code || "") !== String(cloudC.code || "") || String(localC.section || "") !== String(cloudC.section || "") || String(localC.subject || "") !== String(cloudC.subject || "") || String(localC.instructor || "") !== String(cloudC.instructor || "") || String(localC.instructor_email || "") !== String(cloudC.instructor_email || "") || String(localC.description || "") !== String(cloudC.description || "") || String(localC.settings || "") !== String(cloudC.settings || "") || Number(localC.archived || 0) !== Number(cloudC.archived || 0) || String(localC.theme || "") !== String(cloudC.theme || "");
             if (needsPush) {
               await client.query(`
-                        INSERT INTO classrooms (id, code, section, name, subject, instructor, archived, instructor_email, theme)
-                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                        INSERT INTO classrooms (id, code, section, name, subject, instructor, archived, instructor_email, description, settings, theme)
+                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
                         ON CONFLICT (id) DO UPDATE SET
                             code = CASE WHEN EXCLUDED.code != '' THEN EXCLUDED.code ELSE classrooms.code END,
                             section = CASE WHEN EXCLUDED.section != '' THEN EXCLUDED.section ELSE classrooms.section END,
@@ -96080,15 +96090,17 @@ var require_cloudSync = __commonJS({
                             instructor = CASE WHEN EXCLUDED.instructor != '' THEN EXCLUDED.instructor ELSE classrooms.instructor END,
                             archived = EXCLUDED.archived,
                             instructor_email = COALESCE(NULLIF(EXCLUDED.instructor_email, ''), classrooms.instructor_email),
+                            description = COALESCE(EXCLUDED.description, classrooms.description),
+                            settings = COALESCE(EXCLUDED.settings, classrooms.settings),
                             theme = COALESCE(EXCLUDED.theme, classrooms.theme)
-                    `, [localC.id, localC.code || "", localC.section || "", localC.name || "", localC.subject || "", localC.instructor || "", localC.archived || 0, localC.instructor_email || null, localC.theme || null]);
+                    `, [localC.id, localC.code || "", localC.section || "", localC.name || "", localC.subject || "", localC.instructor || "", localC.archived || 0, localC.instructor_email || null, localC.description || "", localC.settings || null, localC.theme || null]);
               pushedCount++;
               cloudMap.set(id, { ...localC });
             }
           }
           const upsertClassroomStmt = sqliteDb.prepare(`
-                INSERT INTO classrooms (id, code, section, name, subject, instructor, archived, instructor_email, theme)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO classrooms (id, code, section, name, subject, instructor, archived, instructor_email, description, settings, theme)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     code = CASE WHEN excluded.code != '' THEN excluded.code ELSE classrooms.code END,
                     section = CASE WHEN excluded.section != '' THEN excluded.section ELSE classrooms.section END,
@@ -96097,6 +96109,8 @@ var require_cloudSync = __commonJS({
                     instructor = CASE WHEN excluded.instructor != '' THEN excluded.instructor ELSE classrooms.instructor END,
                     archived = excluded.archived,
                     instructor_email = COALESCE(NULLIF(excluded.instructor_email, ''), classrooms.instructor_email),
+                    description = COALESCE(excluded.description, classrooms.description),
+                    settings = COALESCE(excluded.settings, classrooms.settings),
                     theme = COALESCE(excluded.theme, classrooms.theme)
             `);
           for (const [id, cloudC] of cloudMap) {
@@ -96106,9 +96120,9 @@ var require_cloudSync = __commonJS({
             if (localC && !localIsPhantom && cloudIsPhantom) {
               continue;
             }
-            const needsPull = !localC || localIsPhantom && !cloudIsPhantom || String(cloudC.name || "") !== String(localC.name || "") || String(cloudC.code || "") !== String(localC.code || "") || String(cloudC.section || "") !== String(localC.section || "") || String(cloudC.subject || "") !== String(localC.subject || "") || String(cloudC.instructor || "") !== String(localC.instructor || "") || String(cloudC.instructor_email || "") !== String(localC.instructor_email || "") || Number(cloudC.archived || 0) !== Number(localC.archived || 0) || String(cloudC.theme || "") !== String(localC.theme || "");
+            const needsPull = !localC || localIsPhantom && !cloudIsPhantom || String(cloudC.name || "") !== String(localC.name || "") || String(cloudC.code || "") !== String(localC.code || "") || String(cloudC.section || "") !== String(localC.section || "") || String(cloudC.subject || "") !== String(localC.subject || "") || String(cloudC.instructor || "") !== String(localC.instructor || "") || String(cloudC.instructor_email || "") !== String(localC.instructor_email || "") || String(cloudC.description || "") !== String(localC.description || "") || String(cloudC.settings || "") !== String(localC.settings || "") || Number(cloudC.archived || 0) !== Number(localC.archived || 0) || String(cloudC.theme || "") !== String(localC.theme || "");
             if (needsPull) {
-              upsertClassroomStmt.run(cloudC.id, cloudC.code || "", cloudC.section || "", cloudC.name || "", cloudC.subject || "", cloudC.instructor || "", cloudC.archived || 0, cloudC.instructor_email || null, cloudC.theme || null);
+              upsertClassroomStmt.run(cloudC.id, cloudC.code || "", cloudC.section || "", cloudC.name || "", cloudC.subject || "", cloudC.instructor || "", cloudC.archived || 0, cloudC.instructor_email || null, cloudC.description || "", cloudC.settings || null, cloudC.theme || null);
               pulledCount++;
             }
           }
@@ -96600,8 +96614,7 @@ var require_db4 = __commonJS({
     var provider = "sqlite";
     var pgPool = null;
     var sqliteDb = null;
-    var DEFAULT_SUPABASE_URL = "postgresql://postgres.rhswlgkcvlubrqzbnvxf:3MK%25pe6HEpB%3F4Au@aws-0-ap-northeast-2.pooler.supabase.com:5432/postgres";
-    var DATABASE_URL = process.env.DATABASE_URL || process.env.SUPABASE_DATABASE_URL || process.env.POSTGRES_URL || DEFAULT_SUPABASE_URL;
+    var DATABASE_URL = process.env.DATABASE_URL || process.env.SUPABASE_DATABASE_URL || process.env.POSTGRES_URL || "";
     function convertPlaceholders(sql) {
       let index = 1;
       let converted = sql.replace(/\?/g, () => `$${index++}`);
@@ -96672,7 +96685,7 @@ var require_db4 = __commonJS({
         }
         const classCount = adapter.prepare("SELECT count(*) as c FROM classrooms").get()?.c || 0;
         if (classCount === 0 && Array.isArray(data.classrooms) && data.classrooms.length > 0) {
-          const insertClassroom = adapter.prepare("INSERT OR IGNORE INTO classrooms (id, code, section, name, subject, instructor, instructor_email, theme, archived) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
+          const insertClassroom = adapter.prepare("INSERT OR IGNORE INTO classrooms (id, code, section, name, subject, instructor, instructor_email, description, settings, theme, archived) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
           data.classrooms.forEach((c5) => {
             insertClassroom.run(
               c5.id,
@@ -96682,6 +96695,8 @@ var require_db4 = __commonJS({
               c5.subject || "",
               c5.instructor || "",
               c5.instructor_email || "",
+              c5.description || "",
+              c5.settings ? typeof c5.settings === "string" ? c5.settings : JSON.stringify(c5.settings) : null,
               c5.theme || null,
               c5.archived || 0
             );
@@ -96772,6 +96787,8 @@ var require_db4 = __commonJS({
             subject TEXT,
             instructor TEXT,
             instructor_email TEXT,
+            description TEXT,
+            settings TEXT,
             theme TEXT,
             archived INTEGER DEFAULT 0
         );
@@ -96926,6 +96943,14 @@ var require_db4 = __commonJS({
         } catch (e6) {
         }
         try {
+          sqliteDb.exec(`ALTER TABLE classrooms ADD COLUMN description TEXT;`);
+        } catch (e6) {
+        }
+        try {
+          sqliteDb.exec(`ALTER TABLE classrooms ADD COLUMN settings TEXT;`);
+        } catch (e6) {
+        }
+        try {
           sqliteDb.exec(`ALTER TABLE classrooms ADD COLUMN theme TEXT;`);
         } catch (e6) {
         }
@@ -97049,6 +97074,12 @@ var require_db4 = __commonJS({
           }
         }
         console.log("[Database] PostgreSQL schema verified/initialized.");
+        await client.query("ALTER TABLE classrooms ADD COLUMN IF NOT EXISTS archived INTEGER DEFAULT 0;").catch(() => {
+        });
+        await client.query("ALTER TABLE classrooms ADD COLUMN IF NOT EXISTS description TEXT;").catch(() => {
+        });
+        await client.query("ALTER TABLE classrooms ADD COLUMN IF NOT EXISTS settings TEXT;").catch(() => {
+        });
         provider = "postgres";
         if (sqliteDb) {
           try {
@@ -97118,11 +97149,11 @@ var require_db4 = __commonJS({
                 }
               }
             }
-            const pgClassrooms = await client.query("SELECT id, code, section, name, subject, instructor, instructor_email, theme FROM classrooms").catch(() => ({ rows: [] }));
+            const pgClassrooms = await client.query("SELECT id, code, section, name, subject, instructor, instructor_email, description, settings, theme, archived FROM classrooms").catch(() => ({ rows: [] }));
             if (pgClassrooms.rows && pgClassrooms.rows.length > 0) {
               const upsertClassroom = sqliteDb.prepare(`
-                        INSERT INTO classrooms (id, code, section, name, subject, instructor, instructor_email, theme)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        INSERT INTO classrooms (id, code, section, name, subject, instructor, instructor_email, description, settings, theme, archived)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         ON CONFLICT(id) DO UPDATE SET
                             code = excluded.code,
                             section = excluded.section,
@@ -97130,12 +97161,15 @@ var require_db4 = __commonJS({
                             subject = excluded.subject,
                             instructor = excluded.instructor,
                             instructor_email = excluded.instructor_email,
-                            theme = excluded.theme
+                            description = excluded.description,
+                            settings = excluded.settings,
+                            theme = excluded.theme,
+                            archived = excluded.archived
                     `);
               let cCount = 0;
               for (const c5 of pgClassrooms.rows) {
                 try {
-                  upsertClassroom.run(c5.id, c5.code || "", c5.section || "", c5.name || "", c5.subject || "", c5.instructor || "", c5.instructor_email || null, c5.theme || null);
+                  upsertClassroom.run(c5.id, c5.code || "", c5.section || "", c5.name || "", c5.subject || "", c5.instructor || "", c5.instructor_email || null, c5.description || "", c5.settings || null, c5.theme || null, c5.archived ? 1 : 0);
                   cCount++;
                 } catch (_) {
                 }
@@ -141617,10 +141651,29 @@ function killProcessTree(proc) {
   }
 }
 var DATA_DIR = process.env.DATA_DIR || __dirname;
+function resolveJwtSecret(dataDir) {
+  const envSecret = (process.env.JWT_SECRET || "").trim();
+  if (envSecret) return { secret: envSecret, isShared: true };
+  try {
+    if (!fs2.existsSync(dataDir)) fs2.mkdirSync(dataDir, { recursive: true });
+    const keyFile = path.join(dataDir, ".verity-local-jwt.key");
+    if (fs2.existsSync(keyFile)) {
+      const existing = fs2.readFileSync(keyFile, "utf8").trim();
+      if (existing.length >= 32) return { secret: existing, isShared: false };
+    }
+    const generated = crypto2.randomBytes(32).toString("hex");
+    fs2.writeFileSync(keyFile, generated, { mode: 384 });
+    return { secret: generated, isShared: false };
+  } catch (_) {
+    return { secret: crypto2.randomBytes(32).toString("hex"), isShared: false };
+  }
+}
 var app = express();
 app.set("trust proxy", 1);
-var JWT_SECRET = process.env.JWT_SECRET || "c9JLTH$I6,vwWv=0tmQj6a+g|k9AwunzP#<$!@oX@Z0gpX2,De8XFYY/5A4_2-Y<u4V1QnwGV1+d34/QOJ3";
-if (process.env.NODE_ENV === "production" && JWT_SECRET === "verity_super_secret_key") {
+var { secret: JWT_SECRET, isShared: HAS_SHARED_JWT_SECRET } = resolveJwtSecret(DATA_DIR);
+if (!HAS_SHARED_JWT_SECRET && (process.env.RENDER || process.env.RENDER_SERVICE_ID || process.env.IS_RENDER_SERVICE)) {
+  console.error("[SECURITY WARNING] JWT_SECRET environment variable is missing on Cloud server! Set JWT_SECRET in Render Environment Variables.");
+} else if (process.env.NODE_ENV === "production" && JWT_SECRET === "verity_super_secret_key") {
   console.warn("[SECURITY WARNING] JWT_SECRET is using the insecure default key in production! Set JWT_SECRET in your environment.");
 }
 app.use(cors());
@@ -141683,15 +141736,39 @@ var adminLoginRateLimiter = (req, res, next) => {
   req.clientIp = clientIp;
   next();
 };
+var isLoopbackAddress = (ip) => {
+  if (!ip) return false;
+  const clean = String(ip).split(",")[0].trim().replace(/^::ffff:/i, "");
+  return clean === "127.0.0.1" || clean === "::1" || clean === "localhost";
+};
+var verifySessionToken = (token, remoteIp) => {
+  if (!token) return null;
+  try {
+    return jwt.verify(token, JWT_SECRET);
+  } catch (_) {
+    if (!HAS_SHARED_JWT_SECRET && !IS_RENDER_CLOUD && !db.isPostgres && isLoopbackAddress(remoteIp)) {
+      try {
+        const decoded = jwt.decode(token);
+        if (decoded && (decoded.id != null || decoded.email) && decoded.role) {
+          if (!decoded.exp || decoded.exp * 1e3 > Date.now()) {
+            return decoded;
+          }
+        }
+      } catch (_2) {
+      }
+    }
+    return null;
+  }
+};
 var authenticateToken = (req, res, next) => {
   const authHeader = req.headers["authorization"];
   const token = authHeader && authHeader.split(" ")[1] || req.query.token;
   if (!token) return res.status(401).json({ message: "Access denied. No token provided." });
-  jwt.verify(token, JWT_SECRET, (err, user) => {
-    if (err) return res.status(403).json({ message: "Invalid token." });
-    req.user = user;
-    next();
-  });
+  const remoteIp = req.socket?.remoteAddress || req.connection?.remoteAddress || "";
+  const user = verifySessionToken(token, remoteIp);
+  if (!user) return res.status(403).json({ message: "Invalid token." });
+  req.user = user;
+  next();
 };
 var requireRole = (...allowedRoles) => {
   return (req, res, next) => {
@@ -141976,6 +142053,12 @@ app.use("/uploads", async (req, res, next) => {
     }
     if (!hydrated) {
       hydrated = await db.restoreUploadFromCloudDb(requestedName, localTarget).catch(() => false);
+      if (hydrated && r2Storage.isR2Configured()) {
+        const ext = path.extname(requestedName).toLowerCase();
+        const mime = UPLOAD_MIME_TYPES[ext] || "application/octet-stream";
+        r2Storage.uploadFileToR2(requestedName, localTarget, mime).catch(() => {
+        });
+      }
     }
     if (!hydrated && !IS_RENDER_CLOUD) {
       try {
@@ -142630,6 +142713,7 @@ app.get("/health", async (req, res) => {
       uptime: process.uptime(),
       db: "connected",
       provider: db.providerName,
+      hasCloudDb: db.isPostgres,
       isHost,
       lanIps,
       timestamp: (/* @__PURE__ */ new Date()).toISOString()
@@ -142681,12 +142765,12 @@ try {
 io.use((socket, next) => {
   const token = socket.handshake.auth?.token || socket.handshake.query?.token;
   if (token) {
-    jwt.verify(token, JWT_SECRET, (err, user) => {
-      if (!err && user) {
-        socket.user = user;
-      }
-      next();
-    });
+    const remoteIp = socket.handshake?.address || socket.conn?.remoteAddress || "";
+    const user = verifySessionToken(token, remoteIp);
+    if (user) {
+      socket.user = user;
+    }
+    next();
   } else {
     next();
   }
@@ -143318,7 +143402,7 @@ app.get("/admin/profile", authenticateToken, adminIpWhitelist, requireRole("Admi
   }
 });
 var GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || "228468530633-cc2hnruslpc1sh0o7fd2s7hgjipsibil.apps.googleusercontent.com";
-var GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || "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";
+var GOOGLE_CLIENT_SECRET = (process.env.GOOGLE_CLIENT_SECRET || "").trim();
 var ALLOWED_GOOGLE_AUDIENCES = [
   GOOGLE_CLIENT_ID,
   process.env.VITE_GOOGLE_CLIENT_ID,
@@ -143335,6 +143419,10 @@ app.get("/auth/google/external", (req, res) => {
   const sessionId = req.query.sessionId;
   if (!sessionId) {
     return res.status(400).send("Missing sessionId");
+  }
+  if (!GOOGLE_CLIENT_SECRET) {
+    io.emit(`google-login-error-${sessionId}`, { message: "Google Sign-In requires the online Cloud server." });
+    return res.status(503).send("<h2>Google Sign-In Unavailable Locally</h2><p>Google Sign-In requires an active connection to the online Cloud server, or sign in with email and password.</p>");
   }
   const requestedRole = req.query.role === "Teacher" ? "Teacher" : "Student";
   const initialPass = req.query.initialPassword && typeof req.query.initialPassword === "string" ? req.query.initialPassword : "";
@@ -143357,6 +143445,9 @@ app.get("/auth/google/callback", async (req, res) => {
   const { code, state: state2 } = req.query;
   if (!code || !state2) {
     return res.status(400).send("Missing code or state");
+  }
+  if (!GOOGLE_CLIENT_SECRET) {
+    return res.status(503).send("<h2>Google Sign-In Unavailable Locally</h2><p>Google Sign-In requires the online Cloud server.</p>");
   }
   let sessionId = "";
   let requestedRole = "Student";
@@ -144176,6 +144267,8 @@ var getClassworkFromDb = async (classroomId) => {
       points: meta.points !== void 0 ? meta.points : "100",
       grading: meta.grading !== void 0 ? meta.grading : "On",
       archived: typeof meta.archived === "boolean" ? meta.archived : false,
+      deleted: typeof meta.deleted === "boolean" ? meta.deleted : false,
+      deletedAt: meta.deletedAt || null,
       posted: meta.posted || row.created_at,
       testCases: Array.isArray(meta.testCases) ? meta.testCases : [],
       starterCode: meta.starterCode || "",
@@ -144224,6 +144317,8 @@ var saveClassworkToDb = async (classroomId, classwork) => {
       points: cw.points !== void 0 ? cw.points : "100",
       grading: cw.grading !== void 0 ? cw.grading : "On",
       archived: !!cw.archived,
+      deleted: !!cw.deleted,
+      deletedAt: cw.deletedAt || null,
       posted: cw.posted || null,
       testCases: Array.isArray(cw.testCases) ? cw.testCases : [],
       activityType: cw.activityType || cw.type || "Assignment",
@@ -144396,8 +144491,10 @@ app.get("/classwork", authenticateToken, async (req, res) => {
     if (req.user?.role === "Admin") {
       return res.status(200).json({ classwork });
     }
+    const isStudentUser = String(req.user?.role || "").toLowerCase() === "student";
     const filtered = [];
     for (const cw of classwork) {
+      if (isStudentUser && (cw.archived || cw.deleted)) continue;
       if (await checkClassroomAccess(req, cw.classroom_id)) {
         filtered.push(cw);
       }
@@ -144413,7 +144510,9 @@ app.get("/classwork/:classroomId", authenticateToken, async (req, res) => {
     if (!await checkClassroomAccess(req, req.params.classroomId)) {
       return res.status(403).json({ message: "Access denied" });
     }
-    const classwork = await getClassworkFromDb(req.params.classroomId);
+    const isStudentUser = String(req.user?.role || "").toLowerCase() === "student";
+    const rawClasswork = await getClassworkFromDb(req.params.classroomId);
+    const classwork = isStudentUser ? rawClasswork.filter((cw) => !cw.archived && !cw.deleted) : rawClasswork;
     res.status(200).json({ classwork });
   } catch (e6) {
     console.error("Error fetching classwork:", e6);
@@ -144449,18 +144548,35 @@ app.delete("/classwork/:classroomId/:id", authenticateToken, requireRole("Teache
     if (!await checkClassroomAccess(req, classroomId)) {
       return res.status(403).json({ message: "Access denied" });
     }
-    try {
-      await db.run("DELETE FROM classwork WHERE classroom_id = ? AND (id = ? OR CAST(id AS TEXT) = ?)", classroomId, id, String(id));
-    } catch (e6) {
-      const currentItem = await db.get("SELECT description FROM classwork WHERE id = ?", id);
-      let meta = {};
-      try {
-        meta = JSON.parse(currentItem?.description || "{}");
-      } catch {
-        meta = { details: currentItem?.description };
+    const isSoftDelete = req.query?.soft === "1" || req.query?.soft === "true" || req.body?.soft === true;
+    if (isSoftDelete) {
+      const currentItem = await db.get("SELECT description FROM classwork WHERE classroom_id = ? AND (id = ? OR CAST(id AS TEXT) = ?)", classroomId, id, String(id));
+      if (currentItem) {
+        let meta = {};
+        try {
+          meta = JSON.parse(currentItem?.description || "{}");
+        } catch {
+          meta = { details: currentItem?.description };
+        }
+        meta.deleted = true;
+        meta.deletedAt = (/* @__PURE__ */ new Date()).toISOString();
+        await db.run("UPDATE classwork SET description = ? WHERE classroom_id = ? AND (id = ? OR CAST(id AS TEXT) = ?)", JSON.stringify(meta), classroomId, id, String(id));
       }
-      meta.archived = true;
-      await db.run("UPDATE classwork SET description = ? WHERE id = ?", JSON.stringify(meta), id);
+    } else {
+      try {
+        await db.run("DELETE FROM classwork WHERE classroom_id = ? AND (id = ? OR CAST(id AS TEXT) = ?)", classroomId, id, String(id));
+      } catch (e6) {
+        const currentItem = await db.get("SELECT description FROM classwork WHERE id = ?", id);
+        let meta = {};
+        try {
+          meta = JSON.parse(currentItem?.description || "{}");
+        } catch {
+          meta = { details: currentItem?.description };
+        }
+        meta.archived = true;
+        meta.deleted = true;
+        await db.run("UPDATE classwork SET description = ? WHERE id = ?", JSON.stringify(meta), id);
+      }
     }
     try {
       db.triggerSync();
@@ -144468,7 +144584,7 @@ app.delete("/classwork/:classroomId/:id", authenticateToken, requireRole("Teache
     }
     const updatedClasswork = await getClassworkFromDb(classroomId);
     io.emit("classwork_changed", { classroomId, classwork: updatedClasswork });
-    res.status(200).json({ message: "Classwork deleted", classwork: updatedClasswork });
+    res.status(200).json({ message: isSoftDelete ? "Classwork moved to deleted items" : "Classwork deleted", classwork: updatedClasswork });
   } catch (err) {
     console.error("Error deleting classwork:", err);
     res.status(500).json({ message: "Failed to delete classwork" });
@@ -144641,6 +144757,9 @@ app.get("/classrooms", authenticateToken, async (req, res) => {
       }
       return {
         ...c5,
+        archived: parseArchivedBool(c5.archived),
+        description: c5.description || "",
+        settings: parseClassroomSettings(c5.settings),
         theme: parsedTheme,
         instructor: instName || "Instructor",
         instructorEmail: instEmail,
@@ -144653,6 +144772,30 @@ app.get("/classrooms", authenticateToken, async (req, res) => {
     res.status(500).json({ message: e6.message });
   }
 });
+var DEFAULT_CLASSROOM_SETTINGS = {
+  inviteCodes: "Turned on",
+  stream: "Students can post and comment",
+  classworkStream: "Show condensed notifications",
+  showDeleted: false
+};
+function parseClassroomSettings(val) {
+  if (!val) return { ...DEFAULT_CLASSROOM_SETTINGS };
+  try {
+    const parsed = typeof val === "string" ? JSON.parse(val) : val;
+    if (!parsed || typeof parsed !== "object") return { ...DEFAULT_CLASSROOM_SETTINGS };
+    return {
+      inviteCodes: parsed.inviteCodes === "Turned off" ? "Turned off" : "Turned on",
+      stream: parsed.stream || DEFAULT_CLASSROOM_SETTINGS.stream,
+      classworkStream: parsed.classworkStream || DEFAULT_CLASSROOM_SETTINGS.classworkStream,
+      showDeleted: Boolean(parsed.showDeleted)
+    };
+  } catch (_) {
+    return { ...DEFAULT_CLASSROOM_SETTINGS };
+  }
+}
+function parseArchivedBool(val) {
+  return val === true || Number(val) === 1 || String(val || "").toLowerCase() === "true";
+}
 app.put("/classrooms", authenticateToken, requireRole("Teacher", "Admin"), async (req, res) => {
   const { classrooms } = req.body;
   if (!Array.isArray(classrooms)) return res.status(400).json({ message: "classrooms must be an array" });
@@ -144660,8 +144803,9 @@ app.put("/classrooms", authenticateToken, requireRole("Teacher", "Admin"), async
     const assignedInBatch = /* @__PURE__ */ new Set();
     const savedClassrooms = [];
     for (const c5 of classrooms) {
+      let existing = null;
       if (c5.id) {
-        const existing = await db.get("SELECT id, instructor, instructor_email, name FROM classrooms WHERE id = ? OR CAST(id AS TEXT) = ?", c5.id, String(c5.id));
+        existing = await db.get("SELECT id, instructor, instructor_email, name, archived, description, settings FROM classrooms WHERE id = ? OR CAST(id AS TEXT) = ?", c5.id, String(c5.id));
         const isPlaceholder = existing && (!existing.instructor_email || !existing.instructor || existing.instructor === "Instructor" || existing.name && /^Classroom \d+$/i.test(existing.name.trim()));
         if (existing && !isPlaceholder && !await checkClassroomAccess(req, c5.id)) continue;
       }
@@ -144672,6 +144816,11 @@ app.put("/classrooms", authenticateToken, requireRole("Teacher", "Admin"), async
       const instEmail = c5.instructorEmail || c5.instructor_email || (req.user.role === "Teacher" ? req.user.email : "");
       const themeStr = c5.theme ? typeof c5.theme === "object" ? JSON.stringify(c5.theme) : c5.theme : null;
       const classroomId = c5.id || Date.now();
+      const hasExplicitArchived = c5.archived !== void 0 && c5.archived !== null;
+      const archivedInt = hasExplicitArchived ? parseArchivedBool(c5.archived) ? 1 : 0 : existing ? parseArchivedBool(existing.archived) ? 1 : 0 : 0;
+      const descriptionVal = c5.description !== void 0 ? String(c5.description || "") : existing?.description || "";
+      const mergedSettings = c5.settings !== void 0 ? parseClassroomSettings(c5.settings) : parseClassroomSettings(existing?.settings);
+      const settingsStr = JSON.stringify(mergedSettings);
       let classCode = (c5.code || "").toString().trim().toLowerCase();
       if (!classCode) {
         const existingDbClassroom = await db.get("SELECT id, code FROM classrooms WHERE id = ?", classroomId);
@@ -144700,8 +144849,8 @@ app.put("/classrooms", authenticateToken, requireRole("Teacher", "Admin"), async
       assignedInBatch.add(classCode);
       await db.run(
         `
-                INSERT INTO classrooms (id, code, section, name, subject, instructor, instructor_email, theme) 
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO classrooms (id, code, section, name, subject, instructor, instructor_email, description, settings, theme, archived) 
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     code = excluded.code,
                     section = excluded.section,
@@ -144709,7 +144858,10 @@ app.put("/classrooms", authenticateToken, requireRole("Teacher", "Admin"), async
                     subject = excluded.subject,
                     instructor = excluded.instructor,
                     instructor_email = excluded.instructor_email,
-                    theme = COALESCE(excluded.theme, classrooms.theme)
+                    description = COALESCE(excluded.description, classrooms.description),
+                    settings = COALESCE(excluded.settings, classrooms.settings),
+                    theme = COALESCE(excluded.theme, classrooms.theme),
+                    archived = excluded.archived
             `,
         classroomId,
         classCode,
@@ -144718,12 +144870,18 @@ app.put("/classrooms", authenticateToken, requireRole("Teacher", "Admin"), async
         c5.subject || "",
         instName,
         instEmail,
-        themeStr
+        descriptionVal,
+        settingsStr,
+        themeStr,
+        archivedInt
       );
       savedClassrooms.push({
         ...c5,
         id: classroomId,
         code: classCode,
+        description: descriptionVal,
+        settings: mergedSettings,
+        archived: Boolean(archivedInt),
         instructor: instName,
         instructorEmail: instEmail
       });
@@ -144734,6 +144892,146 @@ app.put("/classrooms", authenticateToken, requireRole("Teacher", "Admin"), async
     }
     io.emit("classrooms_changed", { classrooms: savedClassrooms });
     res.status(200).json({ message: "Classrooms saved", classrooms: savedClassrooms });
+  } catch (e6) {
+    res.status(500).json({ message: e6.message });
+  }
+});
+app.patch("/classrooms/:id/archive", authenticateToken, requireRole("Teacher", "Admin"), async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!await checkClassroomAccess(req, id)) {
+      return res.status(403).json({ message: "Access denied" });
+    }
+    const classroom = await db.get("SELECT * FROM classrooms WHERE id = ? OR CAST(id AS TEXT) = ?", id, String(id));
+    if (!classroom) {
+      return res.status(404).json({ message: "Classroom not found" });
+    }
+    const hasExplicit = req.body && (req.body.archived !== void 0 && req.body.archived !== null);
+    const isArchived = hasExplicit ? parseArchivedBool(req.body.archived) : !parseArchivedBool(classroom.archived);
+    const archivedVal = isArchived ? 1 : 0;
+    await db.run("UPDATE classrooms SET archived = ? WHERE id = ?", archivedVal, classroom.id);
+    await db.run(
+      'INSERT INTO audit_logs ("user", type, severity, "desc") VALUES (?, ?, ?, ?)',
+      req.user?.name || req.user?.email || "Instructor",
+      isArchived ? "Classroom Archived" : "Classroom Unarchived",
+      "Normal",
+      `Classroom "${classroom.name || classroom.id}" was ${isArchived ? "archived" : "unarchived"}.`
+    ).catch(() => {
+    });
+    try {
+      db.triggerSync();
+    } catch (_) {
+    }
+    const payload = {
+      classroomId: classroom.id,
+      id: classroom.id,
+      code: classroom.code || classroom.section,
+      name: classroom.name,
+      archived: isArchived
+    };
+    io.emit("classroom_archived", payload);
+    io.emit("classrooms_changed", {
+      classroom: { ...classroom, archived: isArchived },
+      classroomId: classroom.id,
+      archived: isArchived
+    });
+    res.status(200).json({
+      message: isArchived ? "Classroom archived successfully" : "Classroom unarchived successfully",
+      classroomId: classroom.id,
+      archived: isArchived
+    });
+  } catch (e6) {
+    res.status(500).json({ message: e6.message });
+  }
+});
+app.patch("/classrooms/:id/settings", authenticateToken, requireRole("Teacher", "Admin"), async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!await checkClassroomAccess(req, id)) {
+      return res.status(403).json({ message: "Access denied" });
+    }
+    const existing = await db.get("SELECT * FROM classrooms WHERE id = ? OR CAST(id AS TEXT) = ?", id, String(id));
+    if (!existing) {
+      return res.status(404).json({ message: "Classroom not found" });
+    }
+    const { name, description, section, subject, code, settings } = req.body || {};
+    const nextName = name !== void 0 ? String(name).trim() : String(existing.name || "").trim();
+    if (!nextName) {
+      return res.status(400).json({ message: "Class name is required" });
+    }
+    const nextDescription = description !== void 0 ? String(description || "") : existing.description || "";
+    const nextSection = section !== void 0 ? String(section || "") : existing.section || "";
+    const nextSubject = subject !== void 0 ? String(subject || "") : existing.subject || "";
+    let nextCode = code !== void 0 ? String(code).trim().toLowerCase() : String(existing.code || "").trim().toLowerCase();
+    if (!nextCode) {
+      nextCode = db.generateClassCodeSync ? db.generateClassCodeSync() : ("v" + Date.now().toString(36) + Math.random().toString(36).substring(2, 5)).slice(0, 7);
+    }
+    const codeConflict = await db.get("SELECT id FROM classrooms WHERE LOWER(code) = ? AND id != ?", nextCode, existing.id);
+    if (codeConflict) {
+      return res.status(409).json({ message: "That class code is already in use by another classroom. Please regenerate a new code." });
+    }
+    const prevSettings = parseClassroomSettings(existing.settings);
+    const mergedSettings = parseClassroomSettings({
+      ...prevSettings,
+      ...settings && typeof settings === "object" ? settings : {}
+    });
+    const settingsStr = JSON.stringify(mergedSettings);
+    await db.run(
+      `UPDATE classrooms
+             SET name = ?, description = ?, section = ?, subject = ?, code = ?, settings = ?
+             WHERE id = ?`,
+      nextName,
+      nextDescription,
+      nextSection,
+      nextSubject,
+      nextCode,
+      settingsStr,
+      existing.id
+    );
+    await db.run(
+      'INSERT INTO audit_logs ("user", type, severity, "desc") VALUES (?, ?, ?, ?)',
+      req.user?.name || req.user?.email || "Instructor",
+      "Classroom Settings Updated",
+      "Normal",
+      `Updated settings for classroom "${nextName}" (${nextCode}).`
+    ).catch(() => {
+    });
+    try {
+      db.triggerSync();
+    } catch (_) {
+    }
+    let parsedTheme = null;
+    if (existing.theme) {
+      try {
+        parsedTheme = typeof existing.theme === "string" ? JSON.parse(existing.theme) : existing.theme;
+      } catch {
+      }
+    }
+    const updatedClassroom = {
+      ...existing,
+      id: existing.id,
+      name: nextName,
+      description: nextDescription,
+      section: nextSection,
+      subject: nextSubject,
+      code: nextCode,
+      settings: mergedSettings,
+      archived: parseArchivedBool(existing.archived),
+      theme: parsedTheme,
+      instructorEmail: existing.instructor_email || ""
+    };
+    io.emit("classroom_settings_changed", {
+      classroomId: existing.id,
+      classroom: updatedClassroom
+    });
+    io.emit("classrooms_changed", {
+      classroomId: existing.id,
+      classroom: updatedClassroom
+    });
+    res.status(200).json({
+      message: "Classroom settings updated successfully",
+      classroom: updatedClassroom
+    });
   } catch (e6) {
     res.status(500).json({ message: e6.message });
   }
@@ -144947,7 +145245,8 @@ app.get("/submissions/:assignmentId", authenticateToken, requireRole("Teacher", 
       }
     }
     const submissions = Array.from(dedupedMap.values());
-    res.status(200).json({ submissions });
+    const isOfflineFallback = !IS_RENDER_CLOUD && !db.isPostgres && process.env.IS_LAN_HOST !== "true";
+    res.status(200).json({ submissions, isOfflineFallback });
   } catch (e6) {
     res.status(500).json({ message: e6.message });
   }
@@ -145021,6 +145320,29 @@ app.post("/submissions/:assignmentId", authenticateToken, requireRole("Student")
       }
     }
     const historyStr = JSON.stringify(Array.isArray(codeHistory) && codeHistory.length > 0 ? codeHistory : [{ time: Date.now(), code: finalCode || "" }]);
+    if (!IS_RENDER_CLOUD && !db.isPostgres) {
+      try {
+        const existingCw = await db.get("SELECT classroom_id FROM classwork WHERE id = ? OR CAST(id AS TEXT) = ?", assignmentId, String(assignmentId));
+        const stubClassroomId = existingCw?.classroom_id || req.body?.classroomId || 1;
+        if (!existingCw) {
+          await db.run("INSERT OR IGNORE INTO classrooms (id, name) VALUES (?, ?)", stubClassroomId, `Classroom ${stubClassroomId}`).catch(() => {
+          });
+          await db.run("INSERT OR IGNORE INTO classwork (id, classroom_id, title) VALUES (?, ?, ?)", assignmentId, stubClassroomId, `Assignment ${assignmentId}`).catch(() => {
+          });
+        }
+        const sEmail = (req.user?.email || req.body?.studentEmail || `${name}@verity.local`).trim().toLowerCase();
+        await db.run(
+          "INSERT OR IGNORE INTO enrollments (classroom_id, student_id, student_name, student_email, enrolled_at) VALUES (?, ?, ?, ?, ?)",
+          stubClassroomId,
+          req.user?.id || null,
+          name,
+          sEmail,
+          (/* @__PURE__ */ new Date()).toISOString()
+        ).catch(() => {
+        });
+      } catch (_) {
+      }
+    }
     for (const alias of aliases) {
       await db.run(
         "DELETE FROM submissions WHERE assignment_id = ? AND LOWER(TRIM(student_name)) = LOWER(TRIM(?))",
@@ -145452,6 +145774,12 @@ app.post("/classrooms/join", authenticateToken, async (req, res) => {
     if (!classroom) {
       return res.status(404).json({ message: "No class found with that code" });
     }
+    const classSettings = parseClassroomSettings(classroom.settings);
+    if (classSettings.inviteCodes === "Turned off") {
+      return res.status(403).json({
+        message: "Invite codes are turned off for this classroom. Contact your instructor to enable invite codes."
+      });
+    }
     const studentName = req.body?.studentName || req.user?.name || (req.user?.email ? req.user.email.split("@")[0] : "Student");
     const studentEmail = (req.body?.studentEmail || req.user?.email || "").trim().toLowerCase();
     const studentId = req.user?.id || null;
@@ -145493,6 +145821,9 @@ app.post("/classrooms/join", authenticateToken, async (req, res) => {
     res.status(200).json({
       classroom: {
         ...classroom,
+        archived: parseArchivedBool(classroom.archived),
+        description: classroom.description || "",
+        settings: classSettings,
         theme: parsedTheme,
         instructor: instName || "Instructor",
         instructorEmail: instEmail,

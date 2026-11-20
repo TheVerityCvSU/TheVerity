@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useDarkMode } from '../../hooks/useDarkMode';
 import { useMediaQuery } from '../../hooks/useMediaQuery';
-import { sortClassroomsAlphabetically } from '../../utils/classroomList';
+import { sortClassroomsAlphabetically, isClassroomArchived } from '../../utils/classroomList';
 import { apiFetch } from '../../data/api';
 import { parseDueDeadline } from '../../utils/dateUtils';
 import {
@@ -53,14 +53,18 @@ export default function CalendarView({ classrooms = [], isStudent = false, curre
   const [activities, setActivities] = useState(() => getCachedActivities(classrooms));
   const [submittedIds, setSubmittedIds] = useState(() => (isStudent ? readLocalSubmittedIds() : new Set()));
 
+  const activeClassrooms = useMemo(
+    () => (Array.isArray(classrooms) ? classrooms.filter((c) => !isClassroomArchived(c)) : []),
+    [classrooms]
+  );
   const weekDays = useMemo(() => getWeekDaysFromMonday(selectedDate), [selectedDate]);
-  const sortedClassrooms = useMemo(() => sortClassroomsAlphabetically(classrooms), [classrooms]);
+  const sortedClassrooms = useMemo(() => sortClassroomsAlphabetically(activeClassrooms), [activeClassrooms]);
   const weekRangeString = useMemo(() => getWeekRangeString(weekDays), [weekDays]);
 
   useEffect(() => {
     let cancelled = false;
     fetchAllActivitiesApi(classrooms).then((valid) => {
-      if (!cancelled && valid && valid.length > 0) {
+      if (!cancelled && Array.isArray(valid)) {
         setActivities(valid);
       }
     });

@@ -1,14 +1,92 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { apiFetch } from '../data/api';
+import { apiFetch, getConnectionStatus } from '../data/api';
 import { getStudentIdentity } from '../utils/studentViewUtils';
 import {
   clearAllSubmissionStorage,
   unsubmitStudentAssignment
 } from '../data/studentSubmissionService';
 
+function readLocalSubmissionsMap({ assignments, classroomId, currentUser, studentId, safeUsername, isMaterialItem, unsubmittedIds }) {
+  const map = {};
+  const timestamps = {};
+  if (!Array.isArray(assignments) || assignments.length === 0) return { map, timestamps };
+
+  const targetEmail = (currentUser?.email || '').toLowerCase().trim();
+  const targetName = (currentUser?.name || safeUsername || '').toLowerCase().trim();
+  const targetId = (currentUser?.id != null ? String(currentUser.id) : studentId).toLowerCase().trim();
+  const kimAliases = ['kim fabie', 'kimfabie', 'mikooooo', 'kimfabie123@gmail.com', 'kimfabie159@gmail.com'];
+
+  assignments.forEach(task => {
+    if (isMaterialItem && isMaterialItem(task)) return;
+    const aId = String(task.id);
+    const cId = String(classroomId);
+
+    if (unsubmittedIds && unsubmittedIds.has(aId)) {
+      map[task.id] = false;
+      map[aId] = false;
+      return;
+    }
+
+    const specificKeys = [
+      `verity_sub_${cId}_${aId}`,
+      `verity_sub_default_${aId}`,
+      `verity_sub_${aId}`,
+      `verity_sub_${cId}_${aId}_${studentId}`,
+      `verity_sub_${cId}_${aId}_${safeUsername}`,
+      currentUser?.name ? `verity_sub_${cId}_${aId}_${currentUser.name}` : null,
+      currentUser?.email ? `verity_sub_${cId}_${aId}_${currentUser.email}` : null,
+      currentUser?.id ? `verity_sub_${cId}_${aId}_id_${currentUser.id}` : null,
+      `verity_sub_default_${aId}_${studentId}`,
+      `verity_sub_default_${aId}_${safeUsername}`,
+      currentUser?.id ? `verity_sub_default_${aId}_id_${currentUser.id}` : null
+    ].filter(Boolean);
+
+    const matchedKey = specificKeys.find(k => { try { return !!localStorage.getItem(k); } catch { return false; } });
+    if (matchedKey) {
+      map[task.id] = true;
+      map[aId] = true;
+      try {
+        const parsed = JSON.parse(localStorage.getItem(matchedKey) || '{}');
+        if (parsed?.submittedAt) {
+          timestamps[task.id] = parsed.submittedAt;
+          timestamps[aId] = parsed.submittedAt;
+        }
+      } catch {}
+      return;
+    }
+
+    try {
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (!key || !key.startsWith('verity_sub_')) continue;
+        if (
+          key.includes(`_${aId}_`) ||
+          key.endsWith(`_${aId}`) ||
+          key.includes(`_${aId}_id_`)
+        ) {
+          const kLower = key.toLowerCase();
+          if (
+            (targetId && (kLower.endsWith(`_${targetId}`) || kLower.includes(`_id_${targetId}`))) ||
+            (targetEmail && kLower.includes(targetEmail)) ||
+            (targetName && kLower.includes(targetName)) ||
+            (kimAliases.some(a => kLower.includes(a))) ||
+            key === `verity_sub_${cId}_${aId}` ||
+            key === `verity_sub_default_${aId}` ||
+            key === `verity_sub_${aId}`
+          ) {
+            map[task.id] = true;
+            map[aId] = true;
+            break;
+          }
+        }
+      }
+    } catch {}
+  });
+
+  return { map, timestamps };
+}
+
 export function useClassroomSubmissions({ assignments, classroom, currentUser, socket, isMaterialItem }) {
-  const [submittedTasks, setSubmittedTasks] = useState({});
-  const [submissionTimestamps, setSubmissionTimestamps] = useState({});
   const unsubmittedIdsRef = useRef(new Set());
 
   const identity = getStudentIdentity(currentUser, null, null, classroom);
@@ -16,96 +94,69 @@ export function useClassroomSubmissions({ assignments, classroom, currentUser, s
   const studentId = identity.studentId;
   const classroomId = identity.classroomId;
 
+  const [submittedTasks, setSubmittedTasks] = useState(() =>
+    readLocalSubmissionsMap({
+      assignments,
+      classroomId,
+      currentUser,
+      studentId,
+      safeUsername,
+      isMaterialItem,
+      unsubmittedIds: unsubmittedIdsRef.current
+    }).map
+  );
+  const [submissionTimestamps, setSubmissionTimestamps] = useState(() =>
+    readLocalSubmissionsMap({
+      assignments,
+      classroomId,
+      currentUser,
+      studentId,
+      safeUsername,
+      isMaterialItem,
+      unsubmittedIds: unsubmittedIdsRef.current
+    }).timestamps
+  );
+  const [checkedTasks, setCheckedTasks] = useState({});
+
   const checkAllSubs = useCallback(() => {
-    const map = {};
-    const targetEmail = (currentUser?.email || '').toLowerCase().trim();
-    const targetName = (currentUser?.name || safeUsername || '').toLowerCase().trim();
-    const targetId = (currentUser?.id != null ? String(currentUser.id) : studentId).toLowerCase().trim();
-    const kimAliases = ['kim fabie', 'kimfabie', 'mikooooo', 'kimfabie123@gmail.com', 'kimfabie159@gmail.com'];
-
-    assignments.forEach(task => {
-      if (isMaterialItem && isMaterialItem(task)) return;
-      const aId = String(task.id);
-      const cId = String(classroomId);
-
-      if (unsubmittedIdsRef.current.has(aId)) {
-        map[task.id] = false;
-        return;
-      }
-
-      const specificKeys = [
-        `verity_sub_${cId}_${aId}`,
-        `verity_sub_default_${aId}`,
-        `verity_sub_${aId}`,
-        `verity_sub_${cId}_${aId}_${studentId}`,
-        `verity_sub_${cId}_${aId}_${safeUsername}`,
-        currentUser?.name ? `verity_sub_${cId}_${aId}_${currentUser.name}` : null,
-        currentUser?.email ? `verity_sub_${cId}_${aId}_${currentUser.email}` : null,
-        currentUser?.id ? `verity_sub_${cId}_${aId}_id_${currentUser.id}` : null,
-        `verity_sub_default_${aId}_${studentId}`,
-        `verity_sub_default_${aId}_${safeUsername}`,
-        currentUser?.id ? `verity_sub_default_${aId}_id_${currentUser.id}` : null
-      ].filter(Boolean);
-
-      const matchedKey = specificKeys.find(k => { try { return !!localStorage.getItem(k); } catch { return false; } });
-      if (matchedKey) {
-        map[task.id] = true;
-        try {
-          const parsed = JSON.parse(localStorage.getItem(matchedKey) || '{}');
-          if (parsed?.submittedAt) {
-            setSubmissionTimestamps(prev => (prev[task.id] === parsed.submittedAt ? prev : { ...prev, [task.id]: parsed.submittedAt }));
-          }
-        } catch {}
-        return;
-      }
-
-      try {
-        for (let i = 0; i < localStorage.length; i++) {
-          const key = localStorage.key(i);
-          if (!key || !key.startsWith('verity_sub_')) continue;
-          if (
-            key.includes(`_${aId}_`) ||
-            key.endsWith(`_${aId}`) ||
-            key.includes(`_${aId}_id_`)
-          ) {
-            const kLower = key.toLowerCase();
-            if (
-              (targetId && (kLower.endsWith(`_${targetId}`) || kLower.includes(`_id_${targetId}`))) ||
-              (targetEmail && kLower.includes(targetEmail)) ||
-              (targetName && kLower.includes(targetName)) ||
-              (kimAliases.some(a => kLower.includes(a))) ||
-              key === `verity_sub_${cId}_${aId}` ||
-              key === `verity_sub_default_${aId}` ||
-              key === `verity_sub_${aId}`
-            ) {
-              map[task.id] = true;
-              break;
-            }
-          }
-        }
-      } catch {}
+    const { map, timestamps } = readLocalSubmissionsMap({
+      assignments,
+      classroomId,
+      currentUser,
+      studentId,
+      safeUsername,
+      isMaterialItem,
+      unsubmittedIds: unsubmittedIdsRef.current
     });
 
+    if (Object.keys(timestamps).length > 0) {
+      setSubmissionTimestamps(prev => ({ ...prev, ...timestamps }));
+    }
     setSubmittedTasks(prev => ({ ...prev, ...map }));
   }, [assignments, classroomId, currentUser, studentId, safeUsername, isMaterialItem]);
 
   useEffect(() => {
+    let cancelled = false;
     checkAllSubs();
 
     const baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:3001';
 
-    apiFetch(`${baseUrl}/student/submissions`)
-      .then(res => (res.ok ? res.json() : { submissions: [] }))
+    const studentSubsPromise = apiFetch(`${baseUrl}/student/submissions`)
+      .then(res => (res.ok ? res.json() : null))
       .then(data => {
+        if (cancelled || !data) return;
         if (Array.isArray(data?.submissions) && data.submissions.length > 0) {
           setSubmittedTasks(prev => {
             const next = { ...prev };
             let changed = false;
             data.submissions.forEach(s => {
               const aId = String(s.assignment_id);
-              if (s.assignment_id != null && !next[s.assignment_id] && !unsubmittedIdsRef.current.has(aId)) {
-                next[s.assignment_id] = true;
-                changed = true;
+              if (s.assignment_id != null && !unsubmittedIdsRef.current.has(aId)) {
+                if (!next[s.assignment_id] || !next[aId]) {
+                  next[s.assignment_id] = true;
+                  next[aId] = true;
+                  changed = true;
+                }
               }
             });
             return changed ? next : prev;
@@ -127,11 +178,13 @@ export function useClassroomSubmissions({ assignments, classroom, currentUser, s
       })
       .catch(() => {});
 
-    assignments.forEach(task => {
-      if (isMaterialItem && isMaterialItem(task)) return;
-      apiFetch(`${baseUrl}/submissions/${task.id}`)
-        .then(res => (res.ok ? res.json() : { submissions: [] }))
+    const nonMaterialTasks = assignments.filter(task => !(isMaterialItem && isMaterialItem(task)));
+    nonMaterialTasks.forEach(task => {
+      const aId = String(task.id);
+      const taskPromise = apiFetch(`${baseUrl}/submissions/${task.id}`)
+        .then(res => (res.ok ? res.json() : null))
         .then(data => {
+          if (cancelled || !data) return;
           if (Array.isArray(data?.submissions)) {
             const targetEmail = (currentUser?.email || '').toLowerCase().trim();
             const targetName = (currentUser?.name || safeUsername || '').toLowerCase().trim();
@@ -148,15 +201,19 @@ export function useClassroomSubmissions({ assignments, classroom, currentUser, s
               return false;
             });
 
-            const aId = String(task.id);
             if (hasSub && !unsubmittedIdsRef.current.has(aId)) {
-              setSubmittedTasks(prev => (prev[task.id] ? prev : { ...prev, [task.id]: true }));
-            } else if (data.submissions.length === 0) {
-              setSubmittedTasks(prev => (prev[task.id] ? { ...prev, [task.id]: false } : prev));
+              setSubmittedTasks(prev => (prev[task.id] && prev[aId] ? prev : { ...prev, [task.id]: true, [aId]: true }));
+            } else if (data.submissions.length === 0 && !data.isOfflineFallback && getConnectionStatus().activeMode !== 'offline') {
+              setSubmittedTasks(prev => (prev[task.id] || prev[aId] ? { ...prev, [task.id]: false, [aId]: false } : prev));
             }
           }
         })
         .catch(() => {});
+
+      Promise.allSettled([studentSubsPromise, taskPromise]).then(() => {
+        if (cancelled) return;
+        setCheckedTasks(prev => (prev[task.id] && prev[aId] ? prev : { ...prev, [task.id]: true, [aId]: true }));
+      });
     });
 
     const handleSubEvent = (e) => {
@@ -220,6 +277,7 @@ export function useClassroomSubmissions({ assignments, classroom, currentUser, s
     }
 
     return () => {
+      cancelled = true;
       window.removeEventListener('verity:submission-updated', handleSubEvent);
       window.removeEventListener('storage', onStorage);
       window.removeEventListener('focus', onStorage);
@@ -262,5 +320,5 @@ export function useClassroomSubmissions({ assignments, classroom, currentUser, s
     }));
   }, [classroom?.id, classroomId, currentUser, studentId, safeUsername, socket]);
 
-  return { submittedTasks, submissionTimestamps, handleUnsubmitAssignment };
+  return { submittedTasks, submissionTimestamps, checkedTasks, handleUnsubmitAssignment };
 }

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { useMediaQuery } from '../hooks/useMediaQuery';
+import { isClassroomArchived } from '../utils/classroomList';
 import Skeleton from '../components/Skeleton';
 import ImagePreviewModal from '../components/ImagePreviewModal';
 import VideoPreviewModal from '../components/VideoPreviewModal';
@@ -43,6 +44,7 @@ export default function StudentActivityDetail({
     submission,
     gradeData,
     isSubmitted,
+    isCheckingSubmission,
     showCodePreview,
     setShowCodePreview,
     showSubmitModal,
@@ -55,7 +57,10 @@ export default function StudentActivityDetail({
     handleConfirmUnsubmit
   } = useStudentSubmission({ classroom, assignment, currentUser, socket });
 
+  const isArchived = isClassroomArchived(classroom);
+
   const handleStartWithCheck = () => {
+    if (isArchived && !isSubmitted) return;
     const isStrictLocked = Boolean(assignment?.disableBack || assignment?.disable_back);
     if (isStrictLocked && !isSubmitted) {
       setShowStrictLockModal(true);
@@ -108,10 +113,12 @@ export default function StudentActivityDetail({
               assignment={assignment}
               classroom={classroom}
               isDark={isDark}
+              isArchived={isArchived}
               styles={styles}
               submission={submission}
               gradeData={gradeData}
               isSubmitted={isSubmitted}
+              isCheckingSubmission={isCheckingSubmission}
               onSubmit={handleSubmit}
               onUnsubmit={handleUnsubmit}
               onStartCoding={handleStartWithCheck}

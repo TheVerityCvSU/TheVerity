@@ -38,6 +38,7 @@ export function useTeacherClassrooms({ currentUser, socket }) {
   const [activeClassroomCounts, setActiveClassroomCounts] = useState({});
   const [allowDelete, setAllowDelete] = useState(false);
   const [deleteClassConfirm, setDeleteClassConfirm] = useState(null);
+  const [archiveClassConfirm, setArchiveClassConfirm] = useState(null);
 
   // Real-time active activities tracking per classroom
   useEffect(() => {
@@ -276,70 +277,72 @@ export function useTeacherClassrooms({ currentUser, socket }) {
     };
   }, [socket]);
 
+  const skipNextPutRef = useRef(false);
+
   // Fetch real classrooms from backend server strictly for this teacher
+  const fetchClassrooms = useCallback(async () => {
+    try {
+      const res = await apiFetch(`${import.meta.env.VITE_API_URL}/classrooms`);
+      if (!res.ok) return;
+      const data = await res.json();
+      const serverList = (Array.isArray(data) ? data : (data.classrooms || [])).filter(c => !isPhantomClassroom(c));
+      if (serverList.length === 0) {
+        const cached = getCachedClassrooms(currentUser, 'teacher').filter(c => !isPhantomClassroom(c));
+        if (cached.length > 0) return;
+      }
+      const userEmail = (currentUser?.email || '').trim().toLowerCase();
+      const curName = (currentUser?.name || '').trim().toLowerCase();
+      const isUserAdmin = String(currentUser?.role || '').toLowerCase() === 'admin';
+
+      const teacherClasses = serverList.filter(c => {
+        if (isUserAdmin) return true;
+        const emailStr = (c.instructor_email || c.instructorEmail || '').toLowerCase();
+        const emailList = emailStr.split(/[\s,]+/).filter(Boolean);
+        const matchesEmail = Boolean(userEmail && (emailStr === userEmail || emailList.includes(userEmail) || emailStr.includes(userEmail)));
+        const nameStr = (c.instructor || '').trim().toLowerCase();
+        const matchesName = Boolean(curName && (nameStr === curName || nameStr.includes(curName)));
+        return matchesEmail || matchesName || (!emailStr && !nameStr);
+      });
+      const sortedTeacherClasses = sortClassroomsAlphabetically(teacherClasses);
+      setClassrooms(prev => {
+        const serverIds = new Set(sortedTeacherClasses.map(c => String(c.id)));
+        const offlineClasses = (prev || []).filter(c => c && c.id && !serverIds.has(String(c.id)) && !isPhantomClassroom(c));
+
+        const normalizedServer = sortedTeacherClasses.map(c => ({
+          ...c,
+          archived: c.archived === true || Number(c.archived) === 1 || String(c.archived || '').toLowerCase() === 'true'
+        }));
+        const merged = sortClassroomsAlphabetically([...normalizedServer, ...offlineClasses]);
+
+        if (offlineClasses.length > 0) {
+          const withInstructor = merged.map(c => ({
+            ...c,
+            instructor: c.instructor || currentUser?.name || 'Instructor',
+            instructorEmail: c.instructorEmail || c.instructor_email || currentUser?.email || ''
+          }));
+          apiFetch(`${import.meta.env.VITE_API_URL}/classrooms`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ classrooms: withInstructor })
+          }).catch(() => {});
+        }
+
+        skipNextPutRef.current = true;
+        saveCachedClassrooms(merged, currentUser, 'teacher');
+        return merged;
+      });
+    } catch (_) {}
+  }, [currentUser]);
+
   useEffect(() => {
     let active = true;
-    const fetchClassrooms = async () => {
-      try {
-        const res = await apiFetch(`${import.meta.env.VITE_API_URL}/classrooms`);
-        if (res.ok && active) {
-          const data = await res.json();
-          const serverList = (Array.isArray(data) ? data : (data.classrooms || [])).filter(c => !isPhantomClassroom(c));
-          if (serverList.length === 0) {
-            const cached = getCachedClassrooms(currentUser, 'teacher').filter(c => !isPhantomClassroom(c));
-            if (cached.length > 0) return;
-          }
-          const userEmail = (currentUser?.email || '').trim().toLowerCase();
-          const curName = (currentUser?.name || '').trim().toLowerCase();
-          const isUserAdmin = String(currentUser?.role || '').toLowerCase() === 'admin';
-
-          const teacherClasses = serverList.filter(c => {
-            if (isUserAdmin) return true;
-            const emailStr = (c.instructor_email || c.instructorEmail || '').toLowerCase();
-            const emailList = emailStr.split(/[\s,]+/).filter(Boolean);
-            const matchesEmail = Boolean(userEmail && (emailStr === userEmail || emailList.includes(userEmail) || emailStr.includes(userEmail)));
-            const nameStr = (c.instructor || '').trim().toLowerCase();
-            const matchesName = Boolean(curName && (nameStr === curName || nameStr.includes(curName)));
-            return matchesEmail || matchesName || (!emailStr && !nameStr);
-          });
-          const sortedTeacherClasses = sortClassroomsAlphabetically(teacherClasses);
-          setClassrooms(prev => {
-            const serverIds = new Set(sortedTeacherClasses.map(c => String(c.id)));
-            const offlineClasses = (prev || []).filter(c => c && c.id && !serverIds.has(String(c.id)) && !isPhantomClassroom(c));
-            const archivedMap = new Map((prev || []).map(p => [String(p.id), !!p.archived]));
-
-            const merged = sortClassroomsAlphabetically([...sortedTeacherClasses, ...offlineClasses]).map(c => ({
-              ...c,
-              archived: archivedMap.has(String(c.id)) ? archivedMap.get(String(c.id)) : !!c.archived
-            }));
-
-            if (offlineClasses.length > 0) {
-              const withInstructor = merged.map(c => ({
-                ...c,
-                instructor: c.instructor || currentUser?.name || 'Instructor',
-                instructorEmail: c.instructorEmail || c.instructor_email || currentUser?.email || ''
-              }));
-              apiFetch(`${import.meta.env.VITE_API_URL}/classrooms`, {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ classrooms: withInstructor })
-              }).catch(() => {});
-            }
-
-            saveCachedClassrooms(merged, currentUser, 'teacher');
-            return merged;
-          });
-        }
-      } catch (_) {
-      } finally {
-        setTimeout(() => {
-          if (active) setLoadingClassrooms(false);
-        }, 350);
-      }
-    };
-    fetchClassrooms();
+    fetchClassrooms().finally(() => {
+      setTimeout(() => {
+        if (active) setLoadingClassrooms(false);
+      }, 350);
+    });
     return () => { active = false; };
-  }, [currentUser]);
+  }, [fetchClassrooms]);
 
   // Real-time banner updates listener
   useEffect(() => {
@@ -362,14 +365,61 @@ export function useTeacherClassrooms({ currentUser, socket }) {
       }));
     };
 
+    const handleClassroomArchived = (e) => {
+      const detail = e?.detail;
+      if (!detail) return;
+      const targetId = detail.classroomId ?? detail.id;
+      if (targetId == null) return;
+      const nextArchived = Boolean(detail.archived);
+      skipNextPutRef.current = true;
+      setClassrooms(prev => {
+        const updated = prev.map(c => (String(c.id) === String(targetId) ? { ...c, archived: nextArchived } : c));
+        saveCachedClassrooms(updated, currentUser, 'teacher');
+        return updated;
+      });
+    };
+
+    const handleClassroomUpdated = (e) => {
+      const incoming = e?.detail?.classroom;
+      if (!incoming || incoming.id == null) return;
+      if (e?.detail?.persisted !== false) {
+        skipNextPutRef.current = true;
+      }
+      setClassrooms(prev => {
+        const updated = sortClassroomsAlphabetically(
+          prev.map(c => (String(c.id) === String(incoming.id) ? { ...c, ...incoming } : c))
+        );
+        saveCachedClassrooms(updated, currentUser, 'teacher');
+        return updated;
+      });
+    };
+
+    const handleClassroomsChanged = () => {
+      fetchClassrooms();
+    };
+
     window.addEventListener('verity:banner-updated', handleBannerUpdate);
-    return () => window.removeEventListener('verity:banner-updated', handleBannerUpdate);
-  }, []);
+    window.addEventListener('verity:classroom-archived', handleClassroomArchived);
+    window.addEventListener('verity:classroom-updated', handleClassroomUpdated);
+    window.addEventListener('verity:classrooms-changed', handleClassroomsChanged);
+    window.addEventListener('verity:sync-completed', handleClassroomsChanged);
+    return () => {
+      window.removeEventListener('verity:banner-updated', handleBannerUpdate);
+      window.removeEventListener('verity:classroom-archived', handleClassroomArchived);
+      window.removeEventListener('verity:classroom-updated', handleClassroomUpdated);
+      window.removeEventListener('verity:classrooms-changed', handleClassroomsChanged);
+      window.removeEventListener('verity:sync-completed', handleClassroomsChanged);
+    };
+  }, [currentUser, fetchClassrooms]);
 
   // Persist classrooms to cache and server
   useEffect(() => {
     saveCachedClassrooms(classrooms, currentUser, 'teacher');
     if (!classrooms || classrooms.length === 0) return;
+    if (skipNextPutRef.current) {
+      skipNextPutRef.current = false;
+      return;
+    }
     const withInstructor = classrooms.map(c => ({
       ...c,
       instructor: c.instructor || currentUser?.name || 'Instructor',
@@ -382,25 +432,49 @@ export function useTeacherClassrooms({ currentUser, socket }) {
     }).catch(() => {});
   }, [classrooms, currentUser]);
 
-  const handleArchiveClass = useCallback((e, id) => {
+  const updateArchiveState = useCallback((e, id, nextArchived) => {
     if (e && e.stopPropagation) e.stopPropagation();
     const targetId = id != null ? id : (e && typeof e === 'object' && e.id != null ? e.id : e);
+    if (!targetId) return;
+
+    skipNextPutRef.current = true;
     setClassrooms(prev => {
-      const updated = prev.map(c => String(c.id) === String(targetId) ? { ...c, archived: true } : c);
+      const updated = prev.map(c => String(c.id) === String(targetId) ? { ...c, archived: nextArchived } : c);
       saveCachedClassrooms(updated, currentUser, 'teacher');
       return updated;
     });
+
+    window.dispatchEvent(new CustomEvent('verity:classroom-archived', {
+      detail: { classroomId: targetId, archived: nextArchived }
+    }));
+
+    apiFetch(`${import.meta.env.VITE_API_URL}/classrooms/${targetId}/archive`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ archived: nextArchived })
+    }).catch(() => {});
   }, [currentUser]);
 
-  const handleUnarchiveClass = useCallback((e, id) => {
-    if (e && e.stopPropagation) e.stopPropagation();
+  const handleArchiveClass = useCallback((e, id) => {
+    if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
     const targetId = id != null ? id : (e && typeof e === 'object' && e.id != null ? e.id : e);
-    setClassrooms(prev => {
-      const updated = prev.map(c => String(c.id) === String(targetId) ? { ...c, archived: false } : c);
-      saveCachedClassrooms(updated, currentUser, 'teacher');
-      return updated;
+    if (!targetId) return;
+    const target = classrooms.find(c => String(c.id) === String(targetId));
+    setArchiveClassConfirm({
+      id: targetId,
+      name: target?.name || 'this classroom'
     });
-  }, [currentUser]);
+  }, [classrooms]);
+
+  const handleExecuteArchiveClass = useCallback(() => {
+    if (!archiveClassConfirm) return;
+    updateArchiveState(null, archiveClassConfirm.id, true);
+    setArchiveClassConfirm(null);
+  }, [archiveClassConfirm, updateArchiveState]);
+
+  const handleUnarchiveClass = useCallback((e, id) => {
+    updateArchiveState(e, id, false);
+  }, [updateArchiveState]);
 
   const handleDeleteClass = useCallback((e, id) => {
     if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
@@ -467,7 +541,10 @@ export function useTeacherClassrooms({ currentUser, socket }) {
     allowDelete,
     deleteClassConfirm,
     setDeleteClassConfirm,
+    archiveClassConfirm,
+    setArchiveClassConfirm,
     handleArchiveClass,
+    handleExecuteArchiveClass,
     handleUnarchiveClass,
     handleDeleteClass,
     handleExecuteDeleteClass,

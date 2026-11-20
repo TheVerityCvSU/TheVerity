@@ -4,15 +4,18 @@ import AttachmentCard from '../AttachmentCard';
 import RichInstruction from '../RichInstruction';
 import ActivitySubmissionSection from './ActivitySubmissionSection';
 import { formatFullDate, formatDateTimeCompact } from '../../utils/dateUtils';
+import { isClassroomArchived } from '../../utils/classroomList';
 
 export default function ActivityContentCard({
   assignment,
   classroom,
   isDark,
+  isArchived,
   styles,
   submission,
   gradeData,
   isSubmitted,
+  isCheckingSubmission = false,
   onSubmit,
   onUnsubmit,
   onStartCoding,
@@ -21,6 +24,7 @@ export default function ActivityContentCard({
   onPreviewLink,
   onBack
 }) {
+  const archivedState = Boolean(isArchived ?? isClassroomArchived(classroom));
   const isMaterial = assignment?.activityType === 'Material';
   const lessonType = isMaterial ? (
     assignment?.attachments?.some(a => a?.type?.toLowerCase()?.includes('video') || a?.type === 'youtube') ? 'video' :
@@ -292,9 +296,11 @@ export default function ActivityContentCard({
 
           <ActivitySubmissionSection
             isDark={isDark}
+            isArchived={archivedState}
             styles={styles}
             isMaterial={isMaterial}
             isSubmitted={isSubmitted}
+            isCheckingSubmission={isCheckingSubmission}
             assignment={assignment}
             submission={submission}
             gradeData={gradeData}

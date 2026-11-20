@@ -29,7 +29,6 @@ export const DEFAULT_SETTINGS = {
   examDefaults: {
     treatWarningsAsErrors: false,
     autoSaveInterval: '30s',
-    defaultExamTimer: 60,
   },
   notifications: {
     soundAlerts: false,

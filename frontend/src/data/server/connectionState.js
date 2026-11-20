@@ -14,6 +14,12 @@ if (typeof window !== 'undefined') {
     if (cloud && (cloud.includes('localhost') || cloud.includes('127.0.0.1') || cloud.includes('vercel.app'))) {
       localStorage.removeItem('verity_cloud_url');
     }
+    for (const key of ['verity_lan_server', 'verity_custom_server']) {
+      const val = localStorage.getItem(key);
+      if (val && (val.includes('localhost') || val.includes('127.0.0.1') || val.includes('::1'))) {
+        localStorage.removeItem(key);
+      }
+    }
   } catch (_) {}
 }
 

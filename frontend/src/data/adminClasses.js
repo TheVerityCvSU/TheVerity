@@ -55,9 +55,13 @@ export async function loadClassrooms() {
     const d = await r.json();
     const serverList = Array.isArray(d) ? d : (d.classrooms || []);
     const mergedMap = new Map();
-    [...savedLocal, ...serverList].forEach(c => {
+    savedLocal.forEach(c => {
       const key = (c.id || c.name || c.className || '').toString();
-      if (key && !mergedMap.has(key)) mergedMap.set(key, c);
+      if (key) mergedMap.set(key, c);
+    });
+    serverList.forEach(c => {
+      const key = (c.id || c.name || c.className || '').toString();
+      if (key) mergedMap.set(key, c);
     });
     const finalClasses = Array.from(mergedMap.values());
     if (finalClasses.length > 0) {
@@ -89,6 +93,33 @@ export async function persistClassrooms(updatedClasses) {
       body: JSON.stringify({ classrooms: updatedClasses })
     });
   } catch (_) {}
+}
+
+/**
+ * Archives or unarchives a classroom on the backend and updates local fallback storage.
+ */
+export async function toggleClassroomArchive(classroomId, archived, classes = []) {
+  const nextArchived = Boolean(archived);
+  const updatedClasses = classes.map(c =>
+    String(c.id) === String(classroomId)
+      ? { ...c, archived: nextArchived, status: nextArchived ? 'Archived' : 'Active', isActive: !nextArchived }
+      : c
+  );
+
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(updatedClasses));
+    localStorage.setItem(GLOBAL_STORAGE_KEY, JSON.stringify(updatedClasses));
+  } catch (_) {}
+
+  try {
+    await apiFetch(`${API_BASE}/classrooms/${classroomId}/archive`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ archived: nextArchived })
+    });
+  } catch (_) {}
+
+  return updatedClasses;
 }
 
 /**

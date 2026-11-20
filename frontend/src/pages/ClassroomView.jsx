@@ -11,6 +11,7 @@ import { useClassroomClasswork, isMaterialItem } from '../hooks/useClassroomClas
 import { useClassroomSubmissions } from '../hooks/useClassroomSubmissions';
 import { useClassroomBannerTheme } from '../hooks/useClassroomBannerTheme';
 import { useClassroomTabs, tabSlideVariants, classroomSlideVariants } from '../hooks/useClassroomTabs';
+import { isClassroomArchived } from '../utils/classroomList';
 import ClassroomViewHeader from '../components/classroom/ClassroomViewHeader';
 import ClassroomHeroBanner from '../components/classroom/ClassroomHeroBanner';
 import ClassroomOverviewTab from '../components/classroom/ClassroomOverviewTab';
@@ -41,13 +42,51 @@ export default function ClassroomView({
   const [previewIframe, setPreviewIframe] = useState(null);
   const [isFadingOut, setIsFadingOut] = useState(false);
   const [isClassInfoModalOpen, setIsClassInfoModalOpen] = useState(false);
+  const [archivedOverride, setArchivedOverride] = useState(null);
+  const [classroomOverride, setClassroomOverride] = useState(null);
 
   useEffect(() => {
     setIsFadingOut(false);
   }, []);
 
-  const { activeTab, tabDirection, transitionMode, handleTabChange } = useClassroomTabs(classroom);
-  const { bannerTheme } = useClassroomBannerTheme({ classroom, socket });
+  useEffect(() => {
+    setArchivedOverride(null);
+    setClassroomOverride(null);
+  }, [classroom?.id]);
+
+  useEffect(() => {
+    const handleArchivedEvent = (e) => {
+      const detail = e?.detail;
+      if (!detail || classroom?.id == null) return;
+      const targetId = detail.classroomId ?? detail.id;
+      if (String(targetId) === String(classroom.id)) {
+        setArchivedOverride(Boolean(detail.archived));
+      }
+    };
+    const handleUpdatedEvent = (e) => {
+      const incoming = e?.detail?.classroom;
+      if (!incoming || classroom?.id == null) return;
+      if (String(incoming.id) === String(classroom.id)) {
+        setClassroomOverride(prev => ({ ...(prev || classroom), ...incoming }));
+      }
+    };
+    window.addEventListener('verity:classroom-archived', handleArchivedEvent);
+    window.addEventListener('verity:classroom-updated', handleUpdatedEvent);
+    return () => {
+      window.removeEventListener('verity:classroom-archived', handleArchivedEvent);
+      window.removeEventListener('verity:classroom-updated', handleUpdatedEvent);
+    };
+  }, [classroom?.id]);
+
+  const baseClassroom = classroomOverride || classroom;
+  const isArchived = archivedOverride !== null ? archivedOverride : isClassroomArchived(baseClassroom);
+  const effectiveClassroom = useMemo(
+    () => (baseClassroom ? { ...baseClassroom, archived: isArchived } : baseClassroom),
+    [baseClassroom, isArchived]
+  );
+
+  const { activeTab, tabDirection, transitionMode, handleTabChange } = useClassroomTabs(effectiveClassroom);
+  const { bannerTheme } = useClassroomBannerTheme({ classroom: effectiveClassroom, socket });
 
   const handleInstructionClick = (e) => {
     const anchor = e.target.closest('a');
@@ -73,7 +112,7 @@ export default function ClassroomView({
     markSingleMaterialAsSeen
   } = useClassroomClasswork({ classroom, currentUser, socket, activeTab });
 
-  const { submittedTasks, submissionTimestamps, handleUnsubmitAssignment } = useClassroomSubmissions({
+  const { submittedTasks, submissionTimestamps, checkedTasks, handleUnsubmitAssignment } = useClassroomSubmissions({
     assignments,
     classroom,
     currentUser,
@@ -127,7 +166,8 @@ export default function ClassroomView({
 
       <main style={{ flex: 1, padding: '24px clamp(20px, 3vw, 48px)', maxWidth: '100%', margin: 0, width: '100%', boxSizing: 'border-box', overflowX: 'hidden' }}>
         <ClassroomHeroBanner
-          classroom={classroom}
+          classroom={effectiveClassroom}
+          isArchived={isArchived}
           bannerTheme={bannerTheme}
           activeTab={activeTab}
           onTabChange={handleTabChange}
@@ -149,6 +189,8 @@ export default function ClassroomView({
               <ClassroomOverviewTab
                 isMobile={isMobile}
                 isDark={isDark}
+                isArchived={isArchived}
+                submittedTasks={submittedTasks}
                 cardBg={cardBg}
                 textMuted={textMuted}
                 loadingAssignments={loadingAssignments}
@@ -156,7 +198,7 @@ export default function ClassroomView({
                 visibleClasswork={visibleClasswork}
                 visibleMaterials={visibleMaterials}
                 unseenMaterials={unseenMaterials}
-                classroom={classroom}
+                classroom={effectiveClassroom}
                 onSelectTodo={(id) => {
                   if (id) setExpandedId(id);
                   handleTabChange('classwork');
@@ -181,6 +223,7 @@ export default function ClassroomView({
                 setExpandedId={setExpandedId}
                 submittedTasks={submittedTasks}
                 submissionTimestamps={submissionTimestamps}
+                checkedTasks={checkedTasks}
                 onOpenAssignment={onOpenAssignment}
                 onStartAssignment={onStartAssignment}
                 onUnsubmitAssignment={handleUnsubmitAssignment}
@@ -189,8 +232,9 @@ export default function ClassroomView({
                 setPreviewIframe={setPreviewIframe}
                 isDark={isDark}
                 isMobile={isMobile}
+                isArchived={isArchived}
                 styles={styles}
-                classroom={classroom}
+                classroom={effectiveClassroom}
                 currentUser={currentUser}
                 socket={socket}
               />
@@ -222,7 +266,7 @@ export default function ClassroomView({
       <ClassInfoModal
         isOpen={isClassInfoModalOpen}
         onClose={() => setIsClassInfoModalOpen(false)}
-        classroom={classroom}
+        classroom={effectiveClassroom}
         isDark={isDark}
         styles={styles}
       />

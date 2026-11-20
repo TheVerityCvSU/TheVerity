@@ -4,9 +4,11 @@ import { formatFullDate } from '../../utils/dateUtils';
 
 export default function ActivitySubmissionSection({
   isDark,
+  isArchived = false,
   styles,
   isMaterial,
   isSubmitted,
+  isCheckingSubmission = false,
   assignment,
   submission,
   gradeData,
@@ -26,6 +28,29 @@ export default function ActivitySubmissionSection({
   }
 
   if (!isSubmitted) {
+    if (isCheckingSubmission) {
+      return null;
+    }
+    if (isArchived) {
+      return (
+        <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', marginTop: '28px' }}>
+          <div style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '8px',
+            padding: '10px 20px',
+            borderRadius: '12px',
+            backgroundColor: isDark ? 'rgba(148, 163, 184, 0.14)' : '#e2e8f0',
+            border: isDark ? '1px solid rgba(148, 163, 184, 0.35)' : '1px solid #cbd5e1',
+            color: isDark ? '#cbd5e1' : '#475569',
+            fontSize: '0.88rem',
+            fontWeight: '700'
+          }}>
+            <Lock size={15} /> Classroom Archived — Submissions Closed
+          </div>
+        </div>
+      );
+    }
     return (
       <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '16px', marginTop: '32px' }}>
         <button
@@ -108,7 +133,24 @@ export default function ActivitySubmissionSection({
       )}
       
       {/* Unsubmit Option */}
-      {!(assignment?.disableBack || assignment?.disable_back) && (
+      {isArchived ? (
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '24px' }}>
+          <span style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '6px',
+            padding: '7px 14px',
+            borderRadius: '9999px',
+            backgroundColor: isDark ? 'rgba(148, 163, 184, 0.12)' : '#f1f5f9',
+            border: isDark ? '1px solid rgba(148, 163, 184, 0.28)' : '1px solid #cbd5e1',
+            color: isDark ? '#94a3b8' : '#64748b',
+            fontSize: '0.8rem',
+            fontWeight: '600'
+          }}>
+            <Lock size={13} /> Classroom Archived — Read-Only
+          </span>
+        </div>
+      ) : !(assignment?.disableBack || assignment?.disable_back) && (
         <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '32px' }}>
           <button
             onClick={onUnsubmit}

@@ -21,7 +21,7 @@ const SERVER_PRESERVED_KEYS = new Set([
 export const clearAuthStorage = (clearAllLocal = true) => {
   const sessionOnlyKeys = [
     'currentScreen', 'currentUser', 'activeClassroom', 'activeAssignment',
-    'verity_token', 'token', 'verity_user'
+    'verity_token', 'token', 'verity_token_origin', 'verity_user'
   ];
 
   if (clearAllLocal) {

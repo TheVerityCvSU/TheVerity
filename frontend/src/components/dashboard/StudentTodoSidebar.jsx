@@ -1,5 +1,5 @@
 import React from 'react';
-import { Calendar as CalendarIcon, MoreHorizontal } from 'lucide-react';
+import { Calendar as CalendarIcon } from 'lucide-react';
 import VideoLessonCard from './VideoLessonCard';
 import Skeleton from '../Skeleton';
 
@@ -118,7 +118,6 @@ export default function StudentTodoSidebar({
                     <div style={{ fontSize: '0.95rem', fontWeight: 'bold', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{act.title}</div>
                     <div style={{ fontSize: '0.75rem', color: textMuted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{courseName} - {act.points || 100} pts</div>
                   </div>
-                  <MoreHorizontal size={18} color={textMuted} style={{ cursor: 'pointer', flexShrink: 0 }} />
                 </div>
               );
             })

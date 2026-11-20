@@ -12,6 +12,7 @@ export default function ClassroomClassworkTab({
   setExpandedId,
   submittedTasks,
   submissionTimestamps = {},
+  checkedTasks = {},
   onOpenAssignment,
   onStartAssignment,
   onUnsubmitAssignment,
@@ -20,6 +21,7 @@ export default function ClassroomClassworkTab({
   setPreviewIframe,
   isDark,
   isMobile,
+  isArchived = false,
   styles
 }) {
   const [unsubmittingItem, setUnsubmittingItem] = useState(null);
@@ -27,7 +29,8 @@ export default function ClassroomClassworkTab({
 
   const handleStartWithCheck = (item) => {
     const isStrict = Boolean(item?.disableBack || item?.disable_back);
-    const isSub = submittedTasks[item?.id];
+    const isSub = Boolean(submittedTasks[item?.id] || submittedTasks[String(item?.id)]);
+    if (isArchived && !isSub) return;
     if (isStrict && !isSub) {
       setStrictLockStartItem(item);
       return;
@@ -67,25 +70,31 @@ export default function ClassroomClassworkTab({
             <p style={{ margin: '6px 0 0 0', fontSize: '0.85rem', color: isDark ? '#737373' : 'inherit' }}>Check back later once your instructor assigns new activities.</p>
           </div>
         ) : (
-          visibleClasswork.map((item) => (
-            <ClassworkItemCard
-              key={item.id}
-              item={item}
-              isOpen={expandedId === item.id}
-              onToggle={() => setExpandedId(prev => (prev === item.id ? null : item.id))}
-              isSubmitted={submittedTasks[item.id]}
-              submittedAt={submissionTimestamps[item.id] || submissionTimestamps[String(item.id)] || null}
-              onOpenAssignment={onOpenAssignment}
-              onStartAssignment={handleStartWithCheck}
-              onRequestUnsubmit={setUnsubmittingItem}
-              setPreviewImage={setPreviewImage}
-              setPreviewVideo={setPreviewVideo}
-              setPreviewIframe={setPreviewIframe}
-              isDark={isDark}
-              isMobile={isMobile}
-              styles={styles}
-            />
-          ))
+          visibleClasswork.map((item) => {
+            const isItemSubmitted = Boolean(submittedTasks[item.id] || submittedTasks[String(item.id)]);
+            const isSubmissionLoading = !isItemSubmitted && !checkedTasks[item.id] && !checkedTasks[String(item.id)];
+            return (
+              <ClassworkItemCard
+                key={item.id}
+                item={item}
+                isOpen={expandedId === item.id}
+                onToggle={() => setExpandedId(prev => (prev === item.id ? null : item.id))}
+                isSubmitted={isItemSubmitted}
+                isSubmissionLoading={isSubmissionLoading}
+                submittedAt={submissionTimestamps[item.id] || submissionTimestamps[String(item.id)] || null}
+                onOpenAssignment={onOpenAssignment}
+                onStartAssignment={handleStartWithCheck}
+                onRequestUnsubmit={setUnsubmittingItem}
+                setPreviewImage={setPreviewImage}
+                setPreviewVideo={setPreviewVideo}
+                setPreviewIframe={setPreviewIframe}
+                isDark={isDark}
+                isMobile={isMobile}
+                isArchived={isArchived}
+                styles={styles}
+              />
+            );
+          })
         )}
       </div>
 

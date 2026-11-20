@@ -4,13 +4,60 @@
  */
 import { state } from './connectionState';
 import { DEFAULT_CLOUD_API_URL, getCloudUrl, getLocalApiUrl, isHostedWebEnv } from './serverUrls';
-import { notifyListeners, getIsLanConnected } from './connectionStatus';
+import { notifyListeners, getIsLanConnected, hasDedicatedLanOrLocalDb } from './connectionStatus';
 import { waitForLanServer } from './lanDiscovery';
 import { buildRequestPath } from './buildRequestPath';
 import { fetchBestUpdateInfo } from './updateCheck';
 import { queueOfflineMutation } from './offlineQueue';
 
 const MUTATION_METHODS = ['POST', 'PUT', 'DELETE', 'PATCH'];
+
+const isAuthTokenPath = (pathWithQuery) =>
+  Boolean(pathWithQuery) && (
+    pathWithQuery.startsWith('/admin/login') ||
+    pathWithQuery.startsWith('/login') ||
+    pathWithQuery.startsWith('/register') ||
+    pathWithQuery.startsWith('/verify-otp') ||
+    pathWithQuery.startsWith('/auth/google')
+  );
+
+const recordAuthOrigin = (pathWithQuery, response, origin) => {
+  if (!response || !response.ok || !isAuthTokenPath(pathWithQuery)) return;
+  try {
+    localStorage.setItem('verity_token_origin', origin);
+    if (window.electronAPI?.localDB?.setLocal) {
+      window.electronAPI.localDB.setLocal('verity_saved_session_token_origin', origin).catch(() => {});
+    }
+  } catch (_) {}
+};
+
+const handleServerResponse = async (response, { pathWithQuery, origin, hadAuthHeader }) => {
+  recordAuthOrigin(pathWithQuery, response, origin);
+  if (hadAuthHeader && response && (response.status === 401 || response.status === 403) && !isAuthTokenPath(pathWithQuery)) {
+    try {
+      const body = await response.clone().json().catch(() => null);
+      const msg = String(body?.message || '').toLowerCase();
+      if (msg.includes('invalid token') && typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('verity:auth-invalid', {
+          detail: {
+            origin,
+            message: 'Your session was signed by a different server or expired. Please sign in again.'
+          }
+        }));
+      }
+    } catch (_) {}
+  }
+  return response;
+};
+
+const shouldQueueClientOfflineMutation = (pathWithQuery, method) => {
+  if (!MUTATION_METHODS.includes(method)) return false;
+  if (!pathWithQuery) return false;
+  if (pathWithQuery.startsWith('/api/sync')) return false;
+  if (pathWithQuery.startsWith('/upload')) return false;
+  if (pathWithQuery.startsWith('/login') || pathWithQuery.startsWith('/admin/login') || pathWithQuery.startsWith('/auth/')) return false;
+  return true;
+};
 
 // Asks the local server to sync with the cloud (fire-and-forget)
 const pingSync = (baseUrl) => {
@@ -57,7 +104,7 @@ const fetchHostedWeb = async ({ cloudUrl, primaryCloudUrl, pathWithQuery, option
   try {
     const response = await fetchWithTimeout(primaryCloudUrl, 15000);
     markCloudUp();
-    return response;
+    return handleServerResponse(response, { pathWithQuery, origin: 'cloud', hadAuthHeader: Boolean(headers['Authorization']) });
   } catch (err) {
     // If a custom cloud URL in localStorage failed, reset to DEFAULT_CLOUD_API_URL and retry immediately
     const defaultTargetUrl = `${DEFAULT_CLOUD_API_URL}${pathWithQuery}`;
@@ -67,7 +114,7 @@ const fetchHostedWeb = async ({ cloudUrl, primaryCloudUrl, pathWithQuery, option
     try {
       const retryResponse = await fetchWithTimeout(defaultTargetUrl, 20000);
       markCloudUp();
-      return retryResponse;
+      return handleServerResponse(retryResponse, { pathWithQuery, origin: 'cloud', hadAuthHeader: Boolean(headers['Authorization']) });
     } catch (retryErr) {
       state.isCloudDown = true;
       notifyListeners();
@@ -88,6 +135,7 @@ export const apiFetch = async (url, options = {}) => {
   if (token && !headers['Authorization']) {
     headers['Authorization'] = `Bearer ${token}`;
   }
+  const hadAuthHeader = Boolean(headers['Authorization']);
 
   await refreshDiscoveredLanServer();
 
@@ -108,106 +156,141 @@ export const apiFetch = async (url, options = {}) => {
     if (updateResponse) return updateResponse;
   }
 
+  const { cloudOnly, timeoutMs, ...fetchOptions } = options;
+  const requestTimeoutMs = Number(timeoutMs) > 0 ? Number(timeoutMs) : 15000;
+
   // 1. Hosted Web (e.g. Vercel): Pure cloud mode (no local fallback server)
   if (isWebHosted) {
-    return fetchHostedWeb({ cloudUrl, primaryCloudUrl, pathWithQuery, options, headers });
+    return fetchHostedWeb({ cloudUrl, primaryCloudUrl, pathWithQuery, options: fetchOptions, headers });
+  }
+
+  // Force strict cloud-only attempt (used by background sync queue or explicit cloud-mode Admin auth)
+  if (cloudOnly) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), requestTimeoutMs);
+    try {
+      const response = await fetch(primaryCloudUrl, { ...fetchOptions, headers, signal: fetchOptions.signal || controller.signal });
+      if (response.ok) markCloudUp();
+      return handleServerResponse(response, { pathWithQuery, origin: 'cloud', hadAuthHeader });
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   // When targeting a local dev URL directly as cloud, bypass cloud logic
   if (cloudUrl === localUrl) {
     try {
-      return await fetch(localFallbackUrl, { ...options, headers });
+      const res = await fetch(localFallbackUrl, { ...fetchOptions, headers });
+      return handleServerResponse(res, { pathWithQuery, origin: 'lan', hadAuthHeader });
     } catch (localErr) {
       console.warn(`[apiFetch] Request to local/LAN server failed: ${localFallbackUrl}`, localErr.message);
       throw localErr;
     }
   }
 
-  // 2. Desktop / Electron / Local dev / ComLab LAN:
-  // If user explicitly switched to Cloud mode, route to Cloud server.
-  // Otherwise (LAN mode or automatic on localhost/private network), prioritize Local/LAN server first for instant response!
-  if (state.userPreferredMode !== 'cloud') {
+  let tokenOrigin = null;
+  try {
+    tokenOrigin = localStorage.getItem('verity_token_origin');
+  } catch (_) {}
+
+  const preferLanOrDevDb =
+    state.userPreferredMode === 'lan' ||
+    (state.userPreferredMode !== 'cloud' && hasDedicatedLanOrLocalDb()) ||
+    (state.userPreferredMode !== 'cloud' && tokenOrigin === 'lan' && hadAuthHeader && !isAuthTokenPath(pathWithQuery));
+
+  // 2. Local Dev DB / Explicit or Auto-Discovered ComLab LAN Host:
+  // Prioritize Local/LAN server first for instant response!
+  if (preferLanOrDevDb) {
     try {
       const currentLocalUrl = getLocalApiUrl();
-      const localRes = await fetch(`${currentLocalUrl}${pathWithQuery}`, { ...options, headers });
+      const localRes = await fetch(`${currentLocalUrl}${pathWithQuery}`, { ...fetchOptions, headers });
       if (localRes.ok || localRes.status < 500) {
         if (!state.isLocalServerUp) {
           state.isLocalServerUp = true;
           notifyListeners();
         }
-        if (isMutation) pingSync(currentLocalUrl);
-        return localRes;
+        if (isMutation && state.localHealthData?.hasCloudDb) pingSync(currentLocalUrl);
+        return handleServerResponse(localRes, { pathWithQuery, origin: 'lan', hadAuthHeader });
       }
     } catch (lanErr) {
       if (state.userPreferredMode === 'lan') {
         throw new Error(`Could not connect to Local/LAN server at ${getLocalApiUrl()}. Please check that the server is running.`);
       }
-      // Local server unreachable, fall through to try cloud
       state.isLocalServerUp = false;
     }
   }
 
-  // When cloud is marked down (e.g. offline ComLab), route directly to local/LAN server for instant response
-  if (state.isCloudDown) {
+  const isNavOffline = typeof navigator !== 'undefined' && navigator.onLine === false;
+  const shouldBypassCloudProbe = isNavOffline || (state.isCloudDown && Date.now() - state.lastCloudCheckTime < 8000);
+
+  // When offline / cloud recently down, route to embedded local fallback immediately
+  if (shouldBypassCloudProbe) {
     try {
-      const localRes = await fetch(localFallbackUrl, { ...options, headers });
-      if (isMutation) pingSync(localUrl);
-      return localRes;
+      const localRes = await fetch(localFallbackUrl, { ...fetchOptions, headers });
+      if (localRes.ok && shouldQueueClientOfflineMutation(pathWithQuery, method) && !state.localHealthData?.hasCloudDb) {
+        queueOfflineMutation(pathWithQuery, method, fetchOptions.body);
+      } else if (isMutation && state.localHealthData?.hasCloudDb) {
+        pingSync(localUrl);
+      }
+      return handleServerResponse(localRes, { pathWithQuery, origin: 'lan', hadAuthHeader });
     } catch (localErr) {
-      // If local server also fails, try cloud as last resort
-      try {
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 6000);
-        const res = await fetch(primaryCloudUrl, { ...options, headers, signal: controller.signal });
-        clearTimeout(timer);
-        if (res.ok) {
-          state.isCloudDown = false;
-          notifyListeners();
-          return res;
-        }
-      } catch (_) {}
-      if (isMutation) queueOfflineMutation(pathWithQuery, method, options.body);
+      if (!isNavOffline) {
+        try {
+          const controller = new AbortController();
+          const timer = setTimeout(() => controller.abort(), 8000);
+          const res = await fetch(primaryCloudUrl, { ...fetchOptions, headers, signal: controller.signal });
+          clearTimeout(timer);
+          if (res.ok) markCloudUp();
+          return handleServerResponse(res, { pathWithQuery, origin: 'cloud', hadAuthHeader });
+        } catch (_) {}
+      }
+      if (shouldQueueClientOfflineMutation(pathWithQuery, method)) {
+        queueOfflineMutation(pathWithQuery, method, fetchOptions.body);
+      }
       throw localErr;
     }
   }
 
-  // When cloud mode is requested or local is down, attempt cloud server
+  // Standalone desktop client (or Cloud Mode): route to Cloud server first, falling back to local offline server on failure
   try {
-    let cloudSignal = options.signal;
+    let cloudSignal = fetchOptions.signal;
     let cloudTimer;
     if (!cloudSignal) {
       const controller = new AbortController();
-      cloudTimer = setTimeout(() => controller.abort(), 5500);
+      cloudTimer = setTimeout(() => controller.abort(), requestTimeoutMs);
       cloudSignal = controller.signal;
     }
 
     let response;
     try {
-      response = await fetch(primaryCloudUrl, { ...options, headers, signal: cloudSignal });
+      response = await fetch(primaryCloudUrl, { ...fetchOptions, headers, signal: cloudSignal });
     } finally {
       if (cloudTimer) clearTimeout(cloudTimer);
     }
 
     if (response.ok) {
       markCloudUp();
-      // If mutation, ping local server in background to sync immediately from Supabase
-      if (isMutation && !isWebHosted) pingSync(localUrl);
-      return response;
+      if (isMutation && !isWebHosted && state.localHealthData?.hasCloudDb) pingSync(localUrl);
+      return handleServerResponse(response, { pathWithQuery, origin: 'cloud', hadAuthHeader });
     }
 
     // If cloud returns 5xx (server error / cold start timeout), try local fallback
     if (response.status >= 500) {
       console.warn(`[apiFetch] Cloud returned HTTP ${response.status}. Attempting local fallback: ${localFallbackUrl}`);
       try {
-        const localRes = await fetch(localFallbackUrl, { ...options, headers });
+        const localRes = await fetch(localFallbackUrl, { ...fetchOptions, headers });
         if (localRes.ok || localRes.status < 500) {
-          if (isMutation) pingSync(localUrl);
-          return localRes;
+          if (localRes.ok && shouldQueueClientOfflineMutation(pathWithQuery, method) && !state.localHealthData?.hasCloudDb) {
+            queueOfflineMutation(pathWithQuery, method, fetchOptions.body);
+          } else if (isMutation && state.localHealthData?.hasCloudDb) {
+            pingSync(localUrl);
+          }
+          return handleServerResponse(localRes, { pathWithQuery, origin: 'lan', hadAuthHeader });
         }
       } catch (_) {}
     }
 
-    return response;
+    return handleServerResponse(response, { pathWithQuery, origin: 'cloud', hadAuthHeader });
   } catch (err) {
     // Cloud request failed (network error, timeout, DNS failure)
     console.warn(`[apiFetch] Cloud server unreachable (${err.message}). Seamlessly falling back to local server: ${localFallbackUrl}`);
@@ -217,12 +300,18 @@ export const apiFetch = async (url, options = {}) => {
 
     const resolvedLocalUrl = getLocalApiUrl();
     try {
-      const localRes = await fetch(`${resolvedLocalUrl}${pathWithQuery}`, { ...options, headers });
-      if (isMutation) pingSync(resolvedLocalUrl);
-      return localRes;
+      const localRes = await fetch(`${resolvedLocalUrl}${pathWithQuery}`, { ...fetchOptions, headers });
+      if (localRes.ok && shouldQueueClientOfflineMutation(pathWithQuery, method) && !state.localHealthData?.hasCloudDb) {
+        queueOfflineMutation(pathWithQuery, method, fetchOptions.body);
+      } else if (isMutation && state.localHealthData?.hasCloudDb) {
+        pingSync(resolvedLocalUrl);
+      }
+      return handleServerResponse(localRes, { pathWithQuery, origin: 'lan', hadAuthHeader });
     } catch (localErr) {
       console.error('[apiFetch] Both cloud and local server failed:', localErr.message);
-      if (isMutation) queueOfflineMutation(pathWithQuery, method, options.body);
+      if (shouldQueueClientOfflineMutation(pathWithQuery, method)) {
+        queueOfflineMutation(pathWithQuery, method, fetchOptions.body);
+      }
       throw err;
     }
   }

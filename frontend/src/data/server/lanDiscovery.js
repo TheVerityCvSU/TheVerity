@@ -2,7 +2,15 @@
  * LAN discovery: finds a Verity Host server on the local network (ComLab).
  */
 import { state } from './connectionState';
-import { isElectronApp, isHostedWebEnv, isPrivateHost } from './serverUrls';
+import {
+  isElectronApp,
+  isHostedWebEnv,
+  isPrivateHost,
+  normalizeHttpUrl,
+  isLoopbackUrl,
+  probeVerityHealth,
+  promoteLoopbackToLan
+} from './serverUrls';
 import { notifyListeners } from './connectionStatus';
 import { checkLocalHealth } from './healthChecks';
 
@@ -19,7 +27,7 @@ export const waitForLanServer = async (timeoutMs = 6000) => {
       const found = await window.electronAPI.getDiscoveredServer();
       if (found) {
         state.autoDiscoveredLanServer = found;
-        try { localStorage.setItem('verity_lan_server', found); } catch (_) {}
+        try { localStorage.setItem('verity_lan_server', found); } catch (_) { }
         notifyListeners();
         return found;
       }
@@ -44,7 +52,10 @@ export const attemptAutoLanReconnect = async () => {
 
   let saved = null;
   if (typeof window !== 'undefined') {
-    try { saved = localStorage.getItem('verity_lan_server') || localStorage.getItem('verity_custom_server'); } catch (_) {}
+    try { saved = localStorage.getItem('verity_lan_server') || localStorage.getItem('verity_custom_server'); } catch (_) { }
+  }
+  if (saved && isLoopbackUrl(saved)) {
+    saved = null;
   }
 
   const currentHost = (typeof window !== 'undefined' && window.location) ? window.location.hostname : '';
@@ -59,46 +70,42 @@ export const attemptAutoLanReconnect = async () => {
   const uniqueCandidates = [...new Set(candidates)];
 
   for (const cand of uniqueCandidates) {
-    let clean = cand.trim().replace(/\/$/, '');
-    if (!clean.startsWith('http://') && !clean.startsWith('https://')) {
-      clean = `http://${clean}`;
+    const clean = normalizeHttpUrl(cand);
+    const data = await probeVerityHealth(clean, 1000);
+    if (!data) continue;
+
+    const { targetUrl, healthData } = await promoteLoopbackToLan(clean, data, 1000);
+    const targetIsLoopback = isLoopbackUrl(targetUrl);
+    const isRealLanOrDevHost = !targetIsLoopback || healthData.isHost === true || healthData.hasCloudDb === true;
+
+    state.localHealthData = healthData;
+    state.isLocalServerUp = true;
+
+    if (!targetIsLoopback) {
+      state.autoDiscoveredLanServer = targetUrl;
+      try { localStorage.setItem('verity_lan_server', targetUrl); } catch (_) {}
+      if (window.electronAPI?.setLanServer) {
+        window.electronAPI.setLanServer(targetUrl).catch(() => {});
+      }
+      console.log('[Network] Auto-connected to LAN Host:', targetUrl);
     }
 
-    try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 1000);
-      const res = await fetch(`${clean}/health`, { signal: controller.signal, cache: 'no-store' });
-      clearTimeout(timer);
-      if (res.ok) {
-        const data = await res.json().catch(() => null);
-        if (data && data.app === 'the-verity') {
-          state.autoDiscoveredLanServer = clean;
-          state.localHealthData = data;
-          state.isLocalServerUp = true;
-          try { localStorage.setItem('verity_lan_server', clean); } catch (_) {}
-          if (window.electronAPI?.setLanServer) {
-            window.electronAPI.setLanServer(clean).catch(() => {});
-          }
-          notifyListeners();
-          console.log('[Network] Auto-connected to LAN Host:', clean);
-          return true;
-        }
-      }
-    } catch (_) {}
+    notifyListeners();
+    return isRealLanOrDevHost;
   }
 
   // Trigger Electron discovery scanner if available
   if (window.electronAPI?.scanLanServers) {
     try {
       const found = await window.electronAPI.scanLanServers();
-      if (found) {
+      if (found && !isLoopbackUrl(found)) {
         state.autoDiscoveredLanServer = found;
-        try { localStorage.setItem('verity_lan_server', found); } catch (_) {}
+        try { localStorage.setItem('verity_lan_server', found); } catch (_) { }
         await checkLocalHealth();
         notifyListeners();
         return true;
       }
-    } catch (_) {}
+    } catch (_) { }
   }
 
   return false;

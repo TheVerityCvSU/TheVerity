@@ -48,7 +48,8 @@ export default class ErrorBoundary extends React.Component {
       sessionStorage.removeItem('verity_playback_student');
       sessionStorage.removeItem('verity_teacher_classwork_tab_active');
       sessionStorage.removeItem('verity_student_classroom_tab_active');
-      if (window.electronAPI?.disableLockdown) {
+      // Students must stay in kiosk lockdown; only release it for non-student roles.
+      if (target !== 'student_dashboard' && window.electronAPI?.disableLockdown) {
         window.electronAPI.disableLockdown();
       }
     } catch {}

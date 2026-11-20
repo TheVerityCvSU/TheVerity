@@ -7,6 +7,11 @@ import { DEFAULT_CLOUD_API_URL, isPrivateHost, getCloudUrl, getLocalApiUrl } fro
 
 const statusListeners = new Set();
 
+const isLoopbackUrl = (raw) => {
+  if (!raw) return false;
+  return raw.includes('localhost') || raw.includes('127.0.0.1') || raw.includes('::1');
+};
+
 export const getHasExplicitLanServer = () => {
   const lan = state.autoDiscoveredLanServer || (typeof window !== 'undefined' ? (localStorage.getItem('verity_lan_server') || localStorage.getItem('verity_custom_server')) : null);
   return Boolean(
@@ -15,15 +20,35 @@ export const getHasExplicitLanServer = () => {
   );
 };
 
+export const hasDedicatedLanOrLocalDb = () => {
+  if (state.autoDiscoveredLanServer && !isLoopbackUrl(state.autoDiscoveredLanServer)) {
+    return true;
+  }
+  if (typeof window !== 'undefined') {
+    try {
+      const savedLan = (localStorage.getItem('verity_lan_server') || localStorage.getItem('verity_custom_server') || '').trim();
+      if (savedLan && !isLoopbackUrl(savedLan)) return true;
+    } catch (_) {}
+    if (
+      window.location &&
+      isPrivateHost(window.location.hostname) &&
+      window.location.hostname !== 'localhost' &&
+      window.location.hostname !== '127.0.0.1' &&
+      window.location.hostname !== '::1'
+    ) {
+      return true;
+    }
+  }
+  return Boolean(state.localHealthData && (state.localHealthData.hasCloudDb === true || state.localHealthData.isHost === true));
+};
+
 export const getIsLanConnected = () => {
   if (state.userPreferredMode === 'cloud') return false;
   // If local server or LAN endpoint is down, we are NOT connected to LAN!
   if (!state.isLocalServerUp) return false;
   // If the user explicitly chose LAN mode, and local server is reachable, we are connected!
   if (state.userPreferredMode === 'lan') return true;
-  const hasExplicitLanServer = getHasExplicitLanServer();
-  const isHost = Boolean(state.localHealthData && state.localHealthData.isHost === true);
-  return hasExplicitLanServer || isHost;
+  return hasDedicatedLanOrLocalDb();
 };
 
 export const getConnectionStatus = () => {
@@ -58,25 +83,24 @@ export const getConnectionStatus = () => {
       activeMode = 'offline';
     }
   } else {
-    // Default automatic mode: ALWAYS prioritize the Online Cloud Server when internet is available!
+    // Automatic mode:
+    // - Use Cloud when internet is available, unless connected to a ComLab Teacher LAN Host or local DB dev server.
     if (isWebHosted) {
       if (!isCloudDown && isNavOnline) {
         activeMode = 'cloud';
-      } else if (isLanConnected || state.isLocalServerUp) {
+      } else if (isLanConnected) {
         activeMode = 'lan';
       } else {
         activeMode = 'offline';
       }
+    } else if (isLanConnected && hasDedicatedLanOrLocalDb()) {
+      activeMode = 'lan';
+    } else if (hasCloud && !isCloudDown && isNavOnline) {
+      activeMode = 'cloud';
+    } else if (hasDedicatedLanOrLocalDb() && state.isLocalServerUp) {
+      activeMode = 'lan';
     } else {
-      // Desktop / Electron / Local dev / ComLab LAN:
-      // Prioritize the local/LAN server hosting the ComLab and local media uploads
-      if (isLanConnected || state.isLocalServerUp || isPrivateHost(typeof window !== 'undefined' ? window.location?.hostname : '')) {
-        activeMode = 'lan';
-      } else if (hasCloud && !isCloudDown && isNavOnline) {
-        activeMode = 'cloud';
-      } else {
-        activeMode = 'offline';
-      }
+      activeMode = 'offline';
     }
   }
 
@@ -90,7 +114,7 @@ export const getConnectionStatus = () => {
   }
 
   return {
-    isOnline: (!isCloudDown && isNavOnline) || isLanConnected || state.isLocalServerUp,
+    isOnline: (!isCloudDown && isNavOnline) || isLanConnected,
     isCloudDown,
     isNavOnline,
     activeMode, // 'cloud' | 'lan' | 'offline'

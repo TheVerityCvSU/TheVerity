@@ -47,12 +47,14 @@ export function useAppAuth({
 
       let savedUser = null;
       let savedToken = null;
+      let savedTokenOrigin = null;
       let savedScreen = null;
 
       if (window.electronAPI?.localDB?.getLocal) {
         try {
           savedUser = await window.electronAPI.localDB.getLocal('verity_saved_session_user');
           savedToken = await window.electronAPI.localDB.getLocal('verity_saved_session_token');
+          savedTokenOrigin = await window.electronAPI.localDB.getLocal('verity_saved_session_token_origin');
           savedScreen = await window.electronAPI.localDB.getLocal('verity_saved_session_screen');
         } catch (err) {
           console.warn('[App] Electron localDB session check failed:', err);
@@ -70,6 +72,9 @@ export function useAppAuth({
         localStorage.setItem('verity_token', savedToken);
         localStorage.setItem('token', savedToken);
       }
+      if (savedTokenOrigin) {
+        localStorage.setItem('verity_token_origin', savedTokenOrigin);
+      }
 
       setCurrentUser(savedUser);
       notifyUserListeners(savedUser);
@@ -83,10 +88,6 @@ export function useAppAuth({
         } else {
           destScreen = 'student_dashboard';
         }
-      }
-
-      if (savedUser.role === 'Student' && destScreen !== 'student_workspace') {
-        if (typeof releaseLockdown === 'function') releaseLockdown();
       }
 
       if (typeof setCurrentScreen === 'function') {
@@ -154,10 +155,12 @@ export function useAppAuth({
     localStorage.removeItem('activeAssignment');
     localStorage.removeItem('verity_token');
     localStorage.removeItem('token');
+    localStorage.removeItem('verity_token_origin');
 
     if (window.electronAPI?.localDB?.setLocal) {
       window.electronAPI.localDB.setLocal('verity_saved_session_user', null).catch(() => {});
       window.electronAPI.localDB.setLocal('verity_saved_session_token', null).catch(() => {});
+      window.electronAPI.localDB.setLocal('verity_saved_session_token_origin', null).catch(() => {});
       window.electronAPI.localDB.setLocal('verity_saved_session_screen', null).catch(() => {});
     }
 
@@ -178,6 +181,22 @@ export function useAppAuth({
       window.dispatchEvent(new CustomEvent('verity:user-updated', { detail: null }));
     }
   }, [currentUser, currentScreen, socket, getSocket, releaseLockdown, isAdminApp, setCurrentScreen, setActiveClassroom, setActiveAssignment, getCurrentScreen]);
+
+  useEffect(() => {
+    const onAuthInvalid = (e) => {
+      if (!isAdminApp && currentUser?.role !== 'Admin') return;
+      if (!localStorage.getItem('verity_token') && !localStorage.getItem('token')) return;
+      try {
+        sessionStorage.setItem(
+          'verity_auth_notice',
+          e?.detail?.message || 'Your session was signed by a different server or expired. Please sign in again.'
+        );
+      } catch (_) {}
+      handleLogout();
+    };
+    window.addEventListener('verity:auth-invalid', onAuthInvalid);
+    return () => window.removeEventListener('verity:auth-invalid', onAuthInvalid);
+  }, [isAdminApp, currentUser?.role, handleLogout]);
 
   useEffect(() => {
     const checkMaintenance = async () => {
@@ -280,6 +299,10 @@ export function useAppAuth({
         if (token) {
           window.electronAPI.localDB.setLocal('verity_saved_session_token', token).catch(() => {});
         }
+        try {
+          const origin = localStorage.getItem('verity_token_origin');
+          if (origin) window.electronAPI.localDB.setLocal('verity_saved_session_token_origin', origin).catch(() => {});
+        } catch (_) {}
         if (currentScreen && !['login', 'admin_login'].includes(currentScreen)) {
           window.electronAPI.localDB.setLocal('verity_saved_session_screen', currentScreen).catch(() => {});
         }
@@ -292,6 +315,7 @@ export function useAppAuth({
       if (window.electronAPI?.localDB?.setLocal) {
         window.electronAPI.localDB.setLocal('verity_saved_session_user', null).catch(() => {});
         window.electronAPI.localDB.setLocal('verity_saved_session_token', null).catch(() => {});
+        window.electronAPI.localDB.setLocal('verity_saved_session_token_origin', null).catch(() => {});
         window.electronAPI.localDB.setLocal('verity_saved_session_screen', null).catch(() => {});
       }
     }
@@ -324,6 +348,10 @@ export function useAppAuth({
     if (window.electronAPI?.localDB?.setLocal) {
       window.electronAPI.localDB.setLocal('verity_saved_session_user', normalized).catch(() => {});
       if (token) window.electronAPI.localDB.setLocal('verity_saved_session_token', token).catch(() => {});
+      try {
+        const origin = localStorage.getItem('verity_token_origin');
+        if (origin) window.electronAPI.localDB.setLocal('verity_saved_session_token_origin', origin).catch(() => {});
+      } catch (_) {}
       window.electronAPI.localDB.setLocal('verity_saved_session_screen', targetScreen).catch(() => {});
     }
 
@@ -338,7 +366,6 @@ export function useAppAuth({
     } else if (normalized?.role === 'Teacher') {
       if (typeof setCurrentScreen === 'function') setCurrentScreen('teacher_dashboard');
     } else {
-      if (typeof releaseLockdown === 'function') releaseLockdown();
       if (typeof setCurrentScreen === 'function') setCurrentScreen('student_dashboard');
     }
   };

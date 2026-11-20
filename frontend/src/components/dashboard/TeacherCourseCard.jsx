@@ -1,8 +1,9 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { MoreVertical, Copy, Check } from 'lucide-react';
+import { MoreVertical, Copy, Check, Archive } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { useDarkMode } from '../../hooks/useDarkMode';
 import { getClassroomTheme } from '../../data/classroomTheme';
+import { isClassroomArchived } from '../../utils/classroomList';
 import ClassroomBannerIllustration from '../ClassroomBannerIllustration';
 import { cardThemes } from '../../data/teacherDashboardConstants';
 import CourseCardMenu from './CourseCardMenu';
@@ -26,7 +27,7 @@ export default function TeacherCourseCard({
   const [menuOpen, setMenuOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const menuRef = useRef(null);
-  const isArchivedCard = Boolean(isArchived ?? classroom?.archived);
+  const isArchivedCard = Boolean(isArchived ?? isClassroomArchived(classroom));
   const classTheme = (classroom.theme && (classroom.theme.primary || classroom.theme.id))
     ? classroom.theme
     : getClassroomTheme(classroom);
@@ -91,9 +92,22 @@ export default function TeacherCourseCard({
         gridColumn: `span ${finalSpan}`,
         width: '100%',
         boxSizing: 'border-box',
-        opacity: isArchived ? 0.75 : 1
+        filter: isArchivedCard ? 'grayscale(55%) saturate(0.6)' : 'none',
+        opacity: isArchivedCard ? 0.88 : 1,
+        border: isArchivedCard ? '1px dashed rgba(148, 163, 184, 0.6)' : undefined
       }}
     >
+      {/* Muted slate scrim for archived state */}
+      {isArchivedCard && (
+        <div style={{
+          position: 'absolute',
+          inset: 0,
+          borderRadius: '20px',
+          backgroundColor: 'rgba(15, 23, 42, 0.42)',
+          pointerEvents: 'none',
+          zIndex: 2
+        }} />
+      )}
       {/* Live activity green notification dot */}
       {Number(activeCount) > 0 && (
         <span
@@ -145,14 +159,14 @@ export default function TeacherCourseCard({
 
       <div style={{ position: 'relative', zIndex: 10 }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', minWidth: 0, flex: 1, marginRight: '8px' }}>
             <button
               type="button"
               onClick={handleCopyCode}
               title="Click to copy class code"
               style={{
-                backgroundColor: theme.pillBg,
-                color: theme.pillText,
+                backgroundColor: isArchivedCard ? 'rgba(255, 255, 255, 0.2)' : theme.pillBg,
+                color: isArchivedCard ? '#ffffff' : theme.pillText,
                 padding: '4px 10px',
                 borderRadius: '20px',
                 fontSize: '0.75rem',
@@ -171,6 +185,25 @@ export default function TeacherCourseCard({
               <span>{classroom.code || `C${classroom.id}`}</span>
               {copied ? <Check size={12} strokeWidth={2.8} /> : <Copy size={11} strokeWidth={2} />}
             </button>
+            {isArchivedCard && (
+              <span style={{
+                backgroundColor: 'rgba(0, 0, 0, 0.5)',
+                color: '#f8fafc',
+                border: '1px solid rgba(255, 255, 255, 0.25)',
+                backdropFilter: 'blur(8px)',
+                padding: '3px 8px',
+                borderRadius: '20px',
+                fontSize: '0.7rem',
+                fontWeight: '700',
+                letterSpacing: '0.04em',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '4px'
+              }}>
+                <Archive size={11} />
+                ARCHIVED
+              </span>
+            )}
           </div>
 
           <div ref={menuRef} style={{ position: 'relative' }}>
@@ -233,9 +266,9 @@ export default function TeacherCourseCard({
 
       <div style={{ position: 'relative', zIndex: 10, display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between' }}>
         <div>
-          {isArchived && (
-            <p style={{ margin: 0, fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: theme.statusColor, marginBottom: '4px', fontWeight: '700' }}>
-              ARCHIVED
+          {isArchivedCard && (
+            <p style={{ margin: 0, fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: '#cbd5e1', marginBottom: '4px', fontWeight: '700' }}>
+              ARCHIVED • READ-ONLY
             </p>
           )}
           <p style={{ margin: 0, fontSize: '0.95rem', fontWeight: '600', color: theme.textColor }}>

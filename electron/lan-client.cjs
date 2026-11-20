@@ -16,7 +16,7 @@ let discoveredServer = null;
 let mainWindowGetter = null;
 let localDb = null;
 
-// Collect all local IP addresses of this machine to prevent client from locking onto itself
+// Collect all local IP addresses of this machine to prevent client from locking onto its own non-host engine
 function getMyIps() {
     const interfaces = os.networkInterfaces();
     const ips = new Set(['127.0.0.1', 'localhost', '::1']);
@@ -29,6 +29,21 @@ function getMyIps() {
         }
     }
     return ips;
+}
+
+function isLoopbackHost(hostname) {
+    const h = String(hostname || '').toLowerCase();
+    return h === 'localhost' || h === '127.0.0.1' || h === '::1' || h === '[::1]';
+}
+
+function parseHostname(url) {
+    if (!url) return '';
+    try {
+        const clean = url.startsWith('http://') || url.startsWith('https://') ? url : `http://${url}`;
+        return new URL(clean).hostname;
+    } catch (_) {
+        return '';
+    }
 }
 
 function getBroadcastAddresses() {
@@ -104,21 +119,19 @@ function getArpIps() {
     }
 }
 
-// Verify that a given URL is a real Verity Server and NOT ourselves (unless testing as host)
-async function verifyHttpServer(url, timeoutMs = 1500, allowSelfIfHost = true) {
-    if (!url) return false;
-    let cleanUrl = url.trim().replace(/\/$/, '');
+function normalizeHttpUrl(url) {
+    if (!url) return '';
+    let cleanUrl = String(url).trim().replace(/\/$/, '');
+    if (!cleanUrl) return '';
     if (!cleanUrl.startsWith('http://') && !cleanUrl.startsWith('https://')) {
         cleanUrl = `http://${cleanUrl}`;
     }
+    return cleanUrl;
+}
 
-    try {
-        const parsedUrl = new URL(cleanUrl);
-        const host = parsedUrl.hostname;
-        const myIps = getMyIps();
-        const isSelf = myIps.has(host);
-
-        return await new Promise((resolve) => {
+function fetchServerHealth(cleanUrl, timeoutMs = 1500) {
+    return new Promise((resolve) => {
+        try {
             let finished = false;
             const done = (res) => {
                 if (finished) return;
@@ -130,42 +143,101 @@ async function verifyHttpServer(url, timeoutMs = 1500, allowSelfIfHost = true) {
                 let data = '';
                 res.on('data', chunk => data += chunk);
                 res.on('end', () => {
+                    let parsed = null;
                     try {
-                        const parsed = JSON.parse(data);
-                        if (parsed && (parsed.app === APP_TAG || parsed.status === 'operational')) {
-                            // If testing on self, only accept if running as designated host
-                            if (isSelf && !allowSelfIfHost) return done(false);
-                            if (isSelf && parsed.isHost !== true) return done(false);
-                            return done(true);
-                        }
+                        parsed = JSON.parse(data);
                     } catch (_) {}
-                    if (isSelf) return done(false);
-                    done(res.statusCode >= 200 && res.statusCode < 400);
+                    done({ statusCode: res.statusCode, parsed });
                 });
             });
 
             const timer = setTimeout(() => {
                 try { req.destroy(); } catch (_) {}
-                done(false);
+                done(null);
             }, timeoutMs);
 
             req.on('error', () => {
                 clearTimeout(timer);
-                done(false);
+                done(null);
             });
             req.on('timeout', () => {
                 clearTimeout(timer);
                 try { req.destroy(); } catch (_) {}
-                done(false);
+                done(null);
             });
-        });
+        } catch (_) {
+            resolve(null);
+        }
+    });
+}
+
+// Verify that a given URL is a real Verity Server and NOT ourselves (unless testing as host)
+async function verifyHttpServer(url, timeoutMs = 1500, allowSelfIfHost = true) {
+    const cleanUrl = normalizeHttpUrl(url);
+    if (!cleanUrl) return false;
+
+    try {
+        const parsedUrl = new URL(cleanUrl);
+        const host = parsedUrl.hostname;
+        const myIps = getMyIps();
+        const isSelf = myIps.has(host);
+
+        const health = await fetchServerHealth(cleanUrl, timeoutMs);
+        if (!health) return false;
+
+        const { statusCode, parsed } = health;
+        if (parsed && (parsed.app === APP_TAG || parsed.status === 'operational')) {
+            // If testing on self, only accept if running as designated host
+            if (isSelf && !allowSelfIfHost) return false;
+            if (isSelf && parsed.isHost !== true) return false;
+            return true;
+        }
+        if (isSelf) return false;
+        return statusCode >= 200 && statusCode < 400;
     } catch (_) {
         return false;
     }
 }
 
+// Resolve a requested server URL to a reachable LAN IP URL when loopback points to a local Host
+async function resolveLanHostUrl(url, timeoutMs = 2000) {
+    const cleanUrl = normalizeHttpUrl(url);
+    if (!cleanUrl) return null;
+
+    if (!isLoopbackHost(parseHostname(cleanUrl))) {
+        const ok = await verifyHttpServer(cleanUrl, timeoutMs);
+        return ok ? cleanUrl : null;
+    }
+
+    const health = await fetchServerHealth(cleanUrl, timeoutMs);
+    const parsed = health?.parsed;
+    if (!parsed || (parsed.app !== APP_TAG && parsed.status !== 'operational')) {
+        return null;
+    }
+
+    let port = '3001';
+    try {
+        port = new URL(cleanUrl).port || '3001';
+    } catch (_) {}
+
+    const lanIps = Array.isArray(parsed.lanIps) ? parsed.lanIps : [];
+    for (const ip of lanIps) {
+        if (!ip || isLoopbackHost(ip)) continue;
+        const lanUrl = `http://${ip}:${port}`;
+        if (await verifyHttpServer(lanUrl, timeoutMs, true)) {
+            return lanUrl;
+        }
+    }
+    return null;
+}
+
 async function setDiscoveredServer(url) {
     if (!url) {
+        if (localDb && typeof localDb.setLocal === 'function') {
+            try {
+                await Promise.resolve(localDb.setLocal('verity_lan_server', null));
+            } catch (_) {}
+        }
         if (discoveredServer !== null) {
             console.log('📡 [LAN Client] Disconnected from Verity Host Server');
             discoveredServer = null;
@@ -180,13 +252,16 @@ async function setDiscoveredServer(url) {
         }
         return;
     }
-    const cleanUrl = url.replace(/\/$/, '');
+    const cleanUrl = normalizeHttpUrl(url);
+    if (!cleanUrl || isLoopbackHost(parseHostname(cleanUrl))) {
+        return;
+    }
     discoveredServer = cleanUrl;
     console.log(`🎯 [LAN Client] Locked onto Verity Host Server: ${cleanUrl}`);
 
     if (localDb && typeof localDb.setLocal === 'function') {
         try {
-            await localDb.setLocal('verity_lan_server', cleanUrl);
+            await Promise.resolve(localDb.setLocal('verity_lan_server', cleanUrl));
         } catch (_) {}
     }
 
@@ -220,15 +295,12 @@ function sendDiscoveryQuery() {
 }
 
 async function tryCandidates(candidateList) {
-    const myIps = getMyIps();
     for (const cand of candidateList) {
         if (discoveredServer) return true;
         if (!cand) continue;
         const testUrl = cand.startsWith('http') ? cand : `http://${cand}:3001`;
-        try {
-            const u = new URL(testUrl);
-            if (myIps.has(u.hostname)) continue;
-        } catch (_) {}
+        const hostname = parseHostname(testUrl);
+        if (!hostname || isLoopbackHost(hostname)) continue;
 
         const ok = await verifyHttpServer(testUrl, 1000);
         if (ok) {
@@ -251,12 +323,13 @@ async function runDiscoveryScan(force = false) {
         // 0. High priority: check previously saved host from local SQLite
         if (localDb && typeof localDb.getLocal === 'function') {
             try {
-                const cached = await localDb.getLocal('verity_lan_server');
-                if (cached) {
-                    const clean = cached.trim().replace(/\/$/, '');
-                    let hostname = '';
-                    try { hostname = new URL(clean).hostname; } catch (_) {}
-                    if (hostname && !myIps.has(hostname)) {
+                const cached = await Promise.resolve(localDb.getLocal('verity_lan_server'));
+                if (typeof cached === 'string' && cached.trim()) {
+                    const clean = normalizeHttpUrl(cached);
+                    const hostname = parseHostname(clean);
+                    if (hostname && isLoopbackHost(hostname)) {
+                        await Promise.resolve(localDb.setLocal('verity_lan_server', null));
+                    } else if (hostname) {
                         const ok = await verifyHttpServer(clean, 700);
                         if (ok) {
                             await setDiscoveredServer(clean);
@@ -366,6 +439,19 @@ async function runDiscoveryScan(force = false) {
                 }));
             }
         }
+
+        // 5. Fallback for single-PC Host testing: check this machine's own non-loopback LAN IPs (accepted only if isHost === true)
+        if (!discoveredServer) {
+            for (const myIp of activeSubnets) {
+                if (discoveredServer) break;
+                const testUrl = `http://${myIp}:3001`;
+                const ok = await verifyHttpServer(testUrl, 500, true);
+                if (ok) {
+                    await setDiscoveredServer(testUrl);
+                    return;
+                }
+            }
+        }
     } finally {
         isScanning = false;
     }
@@ -375,17 +461,27 @@ function initLanClient(getWin, dbAPI) {
     mainWindowGetter = getWin;
     localDb = dbAPI;
 
-    // Load previously cached LAN server if any
+    // Load previously cached LAN server if any (localDb.getLocal is synchronous, guard with Promise.resolve)
     if (localDb && typeof localDb.getLocal === 'function') {
-        localDb.getLocal('verity_lan_server').then((cached) => {
-            if (cached && !discoveredServer) {
-                verifyHttpServer(cached, 1000).then((ok) => {
-                    if (ok && !discoveredServer) {
-                        setDiscoveredServer(cached);
+        Promise.resolve()
+            .then(() => localDb.getLocal('verity_lan_server'))
+            .then((cached) => {
+                if (!cached || typeof cached !== 'string') return;
+                if (isLoopbackHost(parseHostname(cached))) {
+                    if (typeof localDb.setLocal === 'function') {
+                        Promise.resolve(localDb.setLocal('verity_lan_server', null)).catch(() => {});
                     }
-                });
-            }
-        }).catch(() => {});
+                    return;
+                }
+                if (!discoveredServer) {
+                    verifyHttpServer(cached, 1000).then((ok) => {
+                        if (ok && !discoveredServer) {
+                            setDiscoveredServer(cached);
+                        }
+                    }).catch(() => {});
+                }
+            })
+            .catch(() => {});
     }
 
     try {
@@ -511,6 +607,7 @@ module.exports = {
     getDiscoveredServer,
     setDiscoveredServer,
     verifyHttpServer,
+    resolveLanHostUrl,
     runDiscoveryScan,
     stopLanClient
 };

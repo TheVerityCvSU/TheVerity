@@ -6,7 +6,7 @@ const { pathToFileURL } = require('url');
 const { fork, spawn } = require('child_process');
 const { initLocalDb, localDbAPI } = require('./local-db.cjs');
 const { initStartupVmDetection, getVmStatus, getCachedVmStatusSync } = require('./vm-detect.cjs');
-const { initLanClient, getDiscoveredServer, setDiscoveredServer, verifyHttpServer, runDiscoveryScan, stopLanClient } = require('./lan-client.cjs');
+const { initLanClient, getDiscoveredServer, setDiscoveredServer, verifyHttpServer, resolveLanHostUrl, runDiscoveryScan, stopLanClient } = require('./lan-client.cjs');
 
 // Persistent diagnostic and startup logging
 const logFile = path.join(os.tmpdir(), 'the-verity-startup.log');
@@ -322,6 +322,9 @@ function createWindow() {
       contextIsolation: true,
       sandbox: true,
       devTools: !app.isPackaged,
+      // Keep sockets, presence heartbeats and live monitoring streaming at full speed
+      // even when the kiosk window is momentarily blurred/occluded.
+      backgroundThrottling: false,
     },
   });
 
@@ -357,6 +360,16 @@ function createWindow() {
       const isClipboardHistory =
         (input.meta || input.super) && ['v', 'V'].includes(input.key);
       if (isClipboardHistory) {
+        event.preventDefault();
+        return;
+      }
+
+      // Window-close / escape shortcuts (defense in depth alongside globalShortcut + native hook)
+      const isCloseShortcut =
+        (input.alt && input.key === 'F4') ||
+        ((input.control || input.meta) && ['w', 'W', 'q', 'Q'].includes(input.key)) ||
+        input.key === 'F11';
+      if (isCloseShortcut) {
         event.preventDefault();
         return;
       }
@@ -523,8 +536,9 @@ function createWindow() {
 
 function enableLockdown(options = {}) {
   if (!mainWindow || mainWindow.isDestroyed()) return;
+  const alreadyLocked = lockdownActive && mainWindow.isKiosk();
   lockdownActive = true;
-  logStartup('[lockdown] enableLockdown engaged');
+  logStartup(`[lockdown] enableLockdown engaged (alreadyLocked: ${alreadyLocked})`);
 
   try {
     if (mainWindow.webContents && mainWindow.webContents.isDevToolsOpened()) {
@@ -532,9 +546,13 @@ function enableLockdown(options = {}) {
     }
   } catch (_) {}
 
-  mainWindow.setFullScreen(true);
-  mainWindow.setKiosk(true);
-  mainWindow.setVisibleOnAllWorkspaces(true);
+  if (!alreadyLocked) {
+    mainWindow.setFullScreen(true);
+    mainWindow.setKiosk(true);
+    mainWindow.setVisibleOnAllWorkspaces(true);
+  }
+  try { mainWindow.setMinimizable(false); } catch (_) {}
+  try { mainWindow.setClosable(false); } catch (_) {}
 
   if (mainWindow.isMinimized()) mainWindow.restore();
   mainWindow.setAlwaysOnTop(false);
@@ -606,6 +624,8 @@ function disableLockdown() {
     mainWindow.setVisibleOnAllWorkspaces(false);
     mainWindow.setKiosk(false);
     mainWindow.setFullScreen(false);
+    try { mainWindow.setMinimizable(true); } catch (_) {}
+    try { mainWindow.setClosable(true); } catch (_) {}
   }
   setLockedFile(false);
   killKeyboardHook();
@@ -809,11 +829,14 @@ ipcMain.handle('get-discovered-server', () =>
   getDiscoveredServer());
 ipcMain.handle('set-lan-server', async (_, serverUrl) => {
   logStartup(`[main] set-lan-server requested: ${serverUrl}`);
-  if (!serverUrl) return { success: false, error: 'Empty URL provided' };
-  const ok = await verifyHttpServer(serverUrl, 2500);
-  if (ok) {
-    await setDiscoveredServer(serverUrl);
-    return { success: true, url: serverUrl };
+  if (!serverUrl) {
+    await setDiscoveredServer(null);
+    return { success: true, url: null };
+  }
+  const resolvedUrl = await resolveLanHostUrl(serverUrl, 2500);
+  if (resolvedUrl) {
+    await setDiscoveredServer(resolvedUrl);
+    return { success: true, url: resolvedUrl };
   }
   return { success: false, error: 'Could not connect to Verity server at this address' };
 });

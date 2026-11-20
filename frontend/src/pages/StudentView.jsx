@@ -438,46 +438,6 @@ export default function StudentView({
     return () => clearInterval(timer);
   }, [submissionHook.submitted, effectiveAssignment?.autoSaveInterval, kioskHook.examDefaults?.autoSaveInterval, filesHook.draftKey, filesHook.codeRef, emitPresence]);
 
-  // Honor Admin Setting: examDefaults.defaultExamTimer (and per-assignment duration in minutes)
-  const [examRemainingSeconds, setExamRemainingSeconds] = useState(null);
-  const timerExpiredLoggedRef = useRef(false);
-  useEffect(() => {
-    if (isSandbox || submissionHook.submitted) {
-      setExamRemainingSeconds(null);
-      return;
-    }
-    const rawMinutes = Number(effectiveAssignment?.duration || kioskHook.examDefaults?.defaultExamTimer || 0);
-    if (!rawMinutes || rawMinutes <= 0) {
-      setExamRemainingSeconds(null);
-      return;
-    }
-    const totalMs = rawMinutes * 60 * 1000;
-    const startKey = `verity_exam_timer_start_${classroomId}_${assignmentId}_${studentActualId}`;
-    let startTime = Date.now();
-    try {
-      const saved = Number(localStorage.getItem(startKey));
-      if (saved && !isNaN(saved) && saved > 0) {
-        startTime = saved;
-      } else {
-        localStorage.setItem(startKey, String(startTime));
-      }
-    } catch (_) {}
-
-    const tick = () => {
-      const remaining = Math.max(0, Math.ceil((startTime + totalMs - Date.now()) / 1000));
-      setExamRemainingSeconds(remaining);
-      if (remaining === 0 && !timerExpiredLoggedRef.current) {
-        timerExpiredLoggedRef.current = true;
-        if (typeof kioskHook.addProctorLog === 'function') {
-          kioskHook.addProctorLog('Exam Timer Expired', '#ef4444');
-        }
-      }
-    };
-    tick();
-    const interval = setInterval(tick, 1000);
-    return () => clearInterval(interval);
-  }, [isSandbox, submissionHook.submitted, effectiveAssignment?.duration, kioskHook.examDefaults?.defaultExamTimer, classroomId, assignmentId, studentActualId, kioskHook.addProctorLog]);
-
   const isBackStrictLock = Boolean(effectiveAssignment?.disableBack || effectiveAssignment?.disable_back);
   const isBackBlocked = !submissionHook.submitted && (Boolean(kioskHook.kioskRules?.lockdownActive) || isBackStrictLock);
 
@@ -563,7 +523,6 @@ export default function StudentView({
             isRunning={compilerHook.isRunning}
             isRunningTests={testCasesHook.isRunningTests}
             strictCompiler={strictCompiler}
-            examRemainingSeconds={examRemainingSeconds}
             handleBackClick={handleBackClick}
             handleSaveCode={handleSaveCode}
             handleRunCode={compilerHook.handleRunCode}

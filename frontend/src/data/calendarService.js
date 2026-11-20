@@ -1,4 +1,5 @@
 import { apiFetch } from './api';
+import { isClassroomArchived } from '../utils/classroomList';
 
 export const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
@@ -153,8 +154,10 @@ export const getWeekRangeString = (weekDays) => {
 
 export const getCachedActivities = (classrooms = []) => {
   const all = [];
-  const classList = Array.isArray(classrooms) ? classrooms : [];
-  classList.forEach((c) => {
+  const rawClasses = Array.isArray(classrooms) ? classrooms : [];
+  const hasKnownClasses = rawClasses.length > 0;
+  const activeClasses = rawClasses.filter((c) => !isClassroomArchived(c));
+  activeClasses.forEach((c) => {
     try {
       const raw = localStorage.getItem(`verity_classwork_${c.id}`);
       if (raw) {
@@ -176,48 +179,49 @@ export const getCachedActivities = (classrooms = []) => {
   return all.filter((item) => {
     if (!item || !item.id || seen.has(item.id)) return false;
     seen.add(item.id);
-    const inClass = classList.some((c) => String(c.id) === String(item.classroom_id || item.classId));
-    return !item.archived && !isLegacyHardcoded(item) && !!item.dueDate && inClass;
+    const inClass = activeClasses.some((c) => String(c.id) === String(item.classroom_id || item.classId));
+    return !item.archived && !isLegacyHardcoded(item) && !!item.dueDate && (hasKnownClasses ? inClass : true);
   });
 };
 
 export const fetchAllActivitiesApi = async (classrooms = []) => {
+  const rawClasses = Array.isArray(classrooms) ? classrooms : [];
+  const hasKnownClasses = rawClasses.length > 0;
+  const activeClasses = rawClasses.filter((c) => !isClassroomArchived(c));
+
   try {
     const res = await apiFetch(`${import.meta.env.VITE_API_URL}/classwork`);
     if (res.ok) {
       const data = await res.json();
-      if (data && Array.isArray(data.classwork) && data.classwork.length > 0) {
-        const classList = Array.isArray(classrooms) ? classrooms : [];
-        const valid = data.classwork.filter(
-          (item) =>
-            !item.archived &&
-            !isLegacyHardcoded(item) &&
-            !!item.dueDate &&
-            (classList.length === 0 || classList.some((c) => String(c.id) === String(item.classroom_id || item.classId)))
-        );
-        if (valid.length > 0) {
-          try {
-            localStorage.setItem('verity_cached_classwork', JSON.stringify(valid));
-          } catch {}
-          return valid;
-        }
-      }
+      const serverClasswork = (data && Array.isArray(data.classwork)) ? data.classwork : [];
+      const valid = serverClasswork.filter(
+        (item) =>
+          !item.archived &&
+          !isLegacyHardcoded(item) &&
+          !!item.dueDate &&
+          (!hasKnownClasses || activeClasses.some((c) => String(c.id) === String(item.classroom_id || item.classId)))
+      );
+      try {
+        localStorage.setItem('verity_cached_classwork', JSON.stringify(valid));
+      } catch {}
+      return valid;
     }
   } catch {
-    if (Array.isArray(classrooms) && classrooms.length > 0) {
+    if (activeClasses.length > 0) {
       try {
-        const promises = classrooms.map((c) =>
+        const promises = activeClasses.map((c) =>
           apiFetch(`${import.meta.env.VITE_API_URL}/classwork/${c.id}`)
             .then((r) => (r.ok ? r.json() : null))
             .then((d) => (d && Array.isArray(d.classwork) ? d.classwork.map((item) => ({ ...item, classroom_id: c.id })) : []))
             .catch(() => [])
         );
         const results = await Promise.all(promises);
-        const merged = results.flat().filter(
+        return results.flat().filter(
           (item) => !item.archived && !isLegacyHardcoded(item) && !!item.dueDate
         );
-        if (merged.length > 0) return merged;
       } catch {}
+    } else if (hasKnownClasses) {
+      return [];
     }
   }
   return null;

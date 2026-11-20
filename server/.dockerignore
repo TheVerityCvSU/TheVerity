@@ -6,3 +6,5 @@ database.sqlite*
 uploads/*
 .git
 .env
+.env.production
+.env.development

@@ -126,9 +126,104 @@ export function useAppSocket({ currentUser, setCurrentUser, normalizeSavedUser, 
       });
     };
 
+    const handleClassroomArchived = (data) => {
+      if (!data) return;
+      const isArchived = Boolean(data.archived);
+      setActiveClassroom(prev => {
+        if (!prev) return prev;
+        const matches =
+          (data.classroomId != null && String(prev.id) === String(data.classroomId)) ||
+          (data.id != null && String(prev.id) === String(data.id)) ||
+          (data.code && prev.code && String(prev.code).toLowerCase() === String(data.code).toLowerCase()) ||
+          (data.name && prev.name && String(prev.name).toLowerCase() === String(data.name).toLowerCase());
+
+        if (matches) {
+          const updated = { ...prev, archived: isArchived, archivedByTeacher: isArchived };
+          try { localStorage.setItem('activeClassroom', JSON.stringify(updated)); } catch (_) {}
+          return updated;
+        }
+        return prev;
+      });
+      window.dispatchEvent(new CustomEvent('verity:classroom-archived', { detail: { ...data, archived: isArchived } }));
+      window.dispatchEvent(new CustomEvent('verity:classrooms-changed'));
+    };
+
+    const handleClassroomsChanged = (payload) => {
+      if (payload?.classrooms && Array.isArray(payload.classrooms)) {
+        setActiveClassroom(prev => {
+          if (!prev) return prev;
+          const match = payload.classrooms.find(c => String(c.id) === String(prev.id));
+          if (!match) return prev;
+          const updated = { ...prev, ...match, archived: Boolean(match.archived || prev.localStudentArchived), archivedByTeacher: Boolean(match.archived) };
+          try { localStorage.setItem('activeClassroom', JSON.stringify(updated)); } catch (_) {}
+          return updated;
+        });
+      } else if (payload?.classroom) {
+        setActiveClassroom(prev => {
+          if (!prev || String(prev.id) !== String(payload.classroom.id)) return prev;
+          const updated = { ...prev, ...payload.classroom, archived: Boolean(payload.classroom.archived || prev.localStudentArchived), archivedByTeacher: Boolean(payload.classroom.archived) };
+          try { localStorage.setItem('activeClassroom', JSON.stringify(updated)); } catch (_) {}
+          return updated;
+        });
+      }
+      window.dispatchEvent(new CustomEvent('verity:classrooms-changed', { detail: payload }));
+    };
+
+    const handleClassroomSettingsChanged = (data) => {
+      if (!data?.classroom) return;
+      const incoming = data.classroom;
+      setActiveClassroom(prev => {
+        if (!prev || String(prev.id) !== String(incoming.id)) return prev;
+        const updated = { ...prev, ...incoming };
+        try { localStorage.setItem('activeClassroom', JSON.stringify(updated)); } catch (_) {}
+        return updated;
+      });
+      window.dispatchEvent(new CustomEvent('verity:classroom-updated', { detail: { classroom: incoming } }));
+    };
+
     socket.on('classroom_theme_changed', handleThemeChanged);
-    return () => socket.off('classroom_theme_changed', handleThemeChanged);
+    socket.on('classroom_archived', handleClassroomArchived);
+    socket.on('classrooms_changed', handleClassroomsChanged);
+    socket.on('classroom_settings_changed', handleClassroomSettingsChanged);
+    return () => {
+      socket.off('classroom_theme_changed', handleThemeChanged);
+      socket.off('classroom_archived', handleClassroomArchived);
+      socket.off('classrooms_changed', handleClassroomsChanged);
+      socket.off('classroom_settings_changed', handleClassroomSettingsChanged);
+    };
   }, [socket, setActiveClassroom]);
+
+  useEffect(() => {
+    const handleLocalArchiveEvent = (e) => {
+      const detail = e?.detail;
+      if (!detail) return;
+      const targetId = detail.classroomId ?? detail.id;
+      if (targetId == null) return;
+      setActiveClassroom(prev => {
+        if (!prev || String(prev.id) !== String(targetId)) return prev;
+        const isArchived = Boolean(detail.archived);
+        const updated = { ...prev, archived: isArchived, archivedByTeacher: isArchived };
+        try { localStorage.setItem('activeClassroom', JSON.stringify(updated)); } catch (_) {}
+        return updated;
+      });
+    };
+    const handleLocalUpdatedEvent = (e) => {
+      const incoming = e?.detail?.classroom;
+      if (!incoming || incoming.id == null) return;
+      setActiveClassroom(prev => {
+        if (!prev || String(prev.id) !== String(incoming.id)) return prev;
+        const updated = { ...prev, ...incoming };
+        try { localStorage.setItem('activeClassroom', JSON.stringify(updated)); } catch (_) {}
+        return updated;
+      });
+    };
+    window.addEventListener('verity:classroom-archived', handleLocalArchiveEvent);
+    window.addEventListener('verity:classroom-updated', handleLocalUpdatedEvent);
+    return () => {
+      window.removeEventListener('verity:classroom-archived', handleLocalArchiveEvent);
+      window.removeEventListener('verity:classroom-updated', handleLocalUpdatedEvent);
+    };
+  }, [setActiveClassroom]);
 
   useEffect(() => {
     if (!socket) return;

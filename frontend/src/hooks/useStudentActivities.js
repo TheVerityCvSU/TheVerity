@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { apiFetch } from '../data/api';
 import { getCachedClassrooms } from '../data/classroomCache';
-import { isPhantomClassroom } from '../utils/classroomList';
+import { isPhantomClassroom, isClassroomArchived } from '../utils/classroomList';
 import { getLessonType } from '../utils/lessonType';
 import { extractVideoTitle } from '../utils/videoTitle';
 import { formatVideoTimestamp } from '../utils/videoTimestamp';
@@ -122,32 +122,38 @@ export function useStudentActivities({ currentUser, classrooms, activeClassrooms
     } catch (_) {}
   }, [currentUser, getActivitiesStorageKey, getClassworkStorageKey]);
 
+  const effectiveActiveClassrooms = useMemo(() => {
+    if (Array.isArray(activeClassrooms)) return activeClassrooms.filter(c => !isClassroomArchived(c));
+    if (Array.isArray(classrooms)) return classrooms.filter(c => !isClassroomArchived(c));
+    return [];
+  }, [activeClassrooms, classrooms]);
+
   const displayedUpcomingActivities = useMemo(() => {
     if (!Array.isArray(upcomingActivities) || upcomingActivities.length === 0) return [];
     const nonMaterials = upcomingActivities.filter(act => !isMaterialActivity(act));
-    if (!Array.isArray(classrooms) || classrooms.length === 0) return nonMaterials;
-    const filtered = nonMaterials.filter(act => classrooms.some(c => String(c.id) === String(act.classroom_id || act.classId)));
-    return filtered.length > 0 ? filtered : nonMaterials;
-  }, [upcomingActivities, classrooms]);
+    const hasKnownClasses = Array.isArray(classrooms) && classrooms.length > 0;
+    if (!hasKnownClasses) return nonMaterials;
+    return nonMaterials.filter(act =>
+      effectiveActiveClassrooms.some(c => String(c.id) === String(act.classroom_id || act.classId))
+    );
+  }, [upcomingActivities, classrooms, effectiveActiveClassrooms]);
 
   const dashboardStats = useMemo(() => {
-    const classList = (Array.isArray(classrooms) && classrooms.length > 0)
-      ? classrooms
-      : getCachedClassrooms(currentUser, 'student').filter(c => !isPhantomClassroom(c));
+    const cachedClasses = getCachedClassrooms(currentUser, 'student').filter(c => !isPhantomClassroom(c));
+    const hasKnownClasses = (Array.isArray(classrooms) && classrooms.length > 0) || cachedClasses.length > 0;
+    const activeClassList = (Array.isArray(classrooms) && classrooms.length > 0)
+      ? effectiveActiveClassrooms
+      : cachedClasses.filter(c => !isClassroomArchived(c));
 
     const sourceList = (Array.isArray(allClasswork) && allClasswork.length > 0)
       ? allClasswork
       : (Array.isArray(upcomingActivities) ? upcomingActivities : []);
 
-    const enrolledActivities = sourceList.filter((cw) => {
+    const listToCount = sourceList.filter((cw) => {
       if (!cw || cw.archived || isMaterialActivity(cw)) return false;
-      if (classList.length === 0) return true;
-      return classList.some(c => String(c.id) === String(cw.classroom_id || cw.classId));
+      if (!hasKnownClasses) return true;
+      return activeClassList.some(c => String(c.id) === String(cw.classroom_id || cw.classId));
     });
-
-    const listToCount = enrolledActivities.length > 0
-      ? enrolledActivities
-      : sourceList.filter(cw => cw && !cw.archived && !isMaterialActivity(cw));
 
     let done = 0;
     let dueSoon = 0;
@@ -170,7 +176,7 @@ export function useStudentActivities({ currentUser, classrooms, activeClassrooms
     });
 
     return { done, dueSoon, miss };
-  }, [allClasswork, upcomingActivities, classrooms, currentUser, submittedAssignmentIds]);
+  }, [allClasswork, upcomingActivities, classrooms, effectiveActiveClassrooms, currentUser, submittedAssignmentIds]);
 
   // Keep submittedAssignmentIds synced with backend + live submission events
   useEffect(() => {

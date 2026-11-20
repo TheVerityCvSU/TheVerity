@@ -109,11 +109,13 @@ export function useAppSecurity({ currentUser, currentScreen, socket }) {
   }, []);
 
   useEffect(() => {
-    // Only engage lockdown during active student workspace exam
-    if (currentUser?.role === 'Student' && currentScreen === 'student_workspace') {
+    // Students on the desktop app stay in kiosk lockdown for their entire signed-in session
+    // (dashboard, classroom, activity detail, and workspace). Lockdown is only released on logout.
+    if (isAdminApp) return;
+    if (currentUser?.role === 'Student' && currentScreen && currentScreen !== 'login' && currentScreen !== 'admin_login') {
       lockDown();
     }
-  }, [currentUser, currentScreen]);
+  }, [currentUser, currentScreen, isAdminApp]);
 
   useEffect(() => {
     // Proctor violations and tab-exit alerts apply strictly during workspace activity

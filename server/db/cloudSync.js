@@ -108,9 +108,11 @@ async function syncBidirectional() {
     try {
         client = await pool.connect();
 
-        // Ensure schema columns match (e.g. archived in classrooms)
+        // Ensure schema columns match (e.g. archived, description, settings in classrooms)
         await client.query(`
             ALTER TABLE classrooms ADD COLUMN IF NOT EXISTS archived INTEGER DEFAULT 0;
+            ALTER TABLE classrooms ADD COLUMN IF NOT EXISTS description TEXT;
+            ALTER TABLE classrooms ADD COLUMN IF NOT EXISTS settings TEXT;
             ALTER TABLE classrooms ADD COLUMN IF NOT EXISTS theme TEXT;
             ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar TEXT;
         `).catch(() => { });
@@ -118,6 +120,8 @@ async function syncBidirectional() {
         // Ensure local SQLite schema columns also match
         try { sqliteDb.exec(`ALTER TABLE classrooms ADD COLUMN archived INTEGER DEFAULT 0;`); } catch (_) { }
         try { sqliteDb.exec(`ALTER TABLE classrooms ADD COLUMN instructor_email TEXT;`); } catch (_) { }
+        try { sqliteDb.exec(`ALTER TABLE classrooms ADD COLUMN description TEXT;`); } catch (_) { }
+        try { sqliteDb.exec(`ALTER TABLE classrooms ADD COLUMN settings TEXT;`); } catch (_) { }
         try { sqliteDb.exec(`ALTER TABLE classrooms ADD COLUMN theme TEXT;`); } catch (_) { }
         try { sqliteDb.exec(`ALTER TABLE users ADD COLUMN avatar TEXT;`); } catch (_) { }
 
@@ -128,8 +132,8 @@ async function syncBidirectional() {
         // 1. CLASSROOMS DIFFERENTIAL SYNC
         // ----------------------------------------------------
         try {
-            const localClasses = sqliteDb.prepare('SELECT id, code, section, name, subject, instructor, archived, instructor_email, theme FROM classrooms').all();
-            const cloudClassesRes = await client.query('SELECT id, code, section, name, subject, instructor, archived, instructor_email, theme FROM classrooms');
+            const localClasses = sqliteDb.prepare('SELECT id, code, section, name, subject, instructor, archived, instructor_email, description, settings, theme FROM classrooms').all();
+            const cloudClassesRes = await client.query('SELECT id, code, section, name, subject, instructor, archived, instructor_email, description, settings, theme FROM classrooms');
             const cloudClasses = cloudClassesRes.rows || [];
 
             const localMap = new Map(localClasses.map(c => [String(c.id), c]));
@@ -151,13 +155,15 @@ async function syncBidirectional() {
                     String(localC.subject || '') !== String(cloudC.subject || '') ||
                     String(localC.instructor || '') !== String(cloudC.instructor || '') ||
                     String(localC.instructor_email || '') !== String(cloudC.instructor_email || '') ||
+                    String(localC.description || '') !== String(cloudC.description || '') ||
+                    String(localC.settings || '') !== String(cloudC.settings || '') ||
                     Number(localC.archived || 0) !== Number(cloudC.archived || 0) ||
                     String(localC.theme || '') !== String(cloudC.theme || '');
 
                 if (needsPush) {
                     await client.query(`
-                        INSERT INTO classrooms (id, code, section, name, subject, instructor, archived, instructor_email, theme)
-                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                        INSERT INTO classrooms (id, code, section, name, subject, instructor, archived, instructor_email, description, settings, theme)
+                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
                         ON CONFLICT (id) DO UPDATE SET
                             code = CASE WHEN EXCLUDED.code != '' THEN EXCLUDED.code ELSE classrooms.code END,
                             section = CASE WHEN EXCLUDED.section != '' THEN EXCLUDED.section ELSE classrooms.section END,
@@ -166,8 +172,10 @@ async function syncBidirectional() {
                             instructor = CASE WHEN EXCLUDED.instructor != '' THEN EXCLUDED.instructor ELSE classrooms.instructor END,
                             archived = EXCLUDED.archived,
                             instructor_email = COALESCE(NULLIF(EXCLUDED.instructor_email, ''), classrooms.instructor_email),
+                            description = COALESCE(EXCLUDED.description, classrooms.description),
+                            settings = COALESCE(EXCLUDED.settings, classrooms.settings),
                             theme = COALESCE(EXCLUDED.theme, classrooms.theme)
-                    `, [localC.id, localC.code || '', localC.section || '', localC.name || '', localC.subject || '', localC.instructor || '', localC.archived || 0, localC.instructor_email || null, localC.theme || null]);
+                    `, [localC.id, localC.code || '', localC.section || '', localC.name || '', localC.subject || '', localC.instructor || '', localC.archived || 0, localC.instructor_email || null, localC.description || '', localC.settings || null, localC.theme || null]);
                     pushedCount++;
                     cloudMap.set(id, { ...localC });
                 }
@@ -175,8 +183,8 @@ async function syncBidirectional() {
 
             // PULL to Local: classrooms in cloud missing or modified in local
             const upsertClassroomStmt = sqliteDb.prepare(`
-                INSERT INTO classrooms (id, code, section, name, subject, instructor, archived, instructor_email, theme)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO classrooms (id, code, section, name, subject, instructor, archived, instructor_email, description, settings, theme)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     code = CASE WHEN excluded.code != '' THEN excluded.code ELSE classrooms.code END,
                     section = CASE WHEN excluded.section != '' THEN excluded.section ELSE classrooms.section END,
@@ -185,6 +193,8 @@ async function syncBidirectional() {
                     instructor = CASE WHEN excluded.instructor != '' THEN excluded.instructor ELSE classrooms.instructor END,
                     archived = excluded.archived,
                     instructor_email = COALESCE(NULLIF(excluded.instructor_email, ''), classrooms.instructor_email),
+                    description = COALESCE(excluded.description, classrooms.description),
+                    settings = COALESCE(excluded.settings, classrooms.settings),
                     theme = COALESCE(excluded.theme, classrooms.theme)
             `);
 
@@ -206,11 +216,13 @@ async function syncBidirectional() {
                     String(cloudC.subject || '') !== String(localC.subject || '') ||
                     String(cloudC.instructor || '') !== String(localC.instructor || '') ||
                     String(cloudC.instructor_email || '') !== String(localC.instructor_email || '') ||
+                    String(cloudC.description || '') !== String(localC.description || '') ||
+                    String(cloudC.settings || '') !== String(localC.settings || '') ||
                     Number(cloudC.archived || 0) !== Number(localC.archived || 0) ||
                     String(cloudC.theme || '') !== String(localC.theme || '');
 
                 if (needsPull) {
-                    upsertClassroomStmt.run(cloudC.id, cloudC.code || '', cloudC.section || '', cloudC.name || '', cloudC.subject || '', cloudC.instructor || '', cloudC.archived || 0, cloudC.instructor_email || null, cloudC.theme || null);
+                    upsertClassroomStmt.run(cloudC.id, cloudC.code || '', cloudC.section || '', cloudC.name || '', cloudC.subject || '', cloudC.instructor || '', cloudC.archived || 0, cloudC.instructor_email || null, cloudC.description || '', cloudC.settings || null, cloudC.theme || null);
                     pulledCount++;
                 }
             }

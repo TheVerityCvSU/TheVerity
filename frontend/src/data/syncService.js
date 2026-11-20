@@ -1,5 +1,5 @@
 import localStore from './localStore';
-import { apiFetch } from './api';
+import { apiFetch, getConnectionStatus } from './api';
 
 /**
  * Offline Sync Service
@@ -18,6 +18,13 @@ export const syncService = {
         const queue = await localStore.getSyncQueue();
         if (!queue || queue.length === 0) return { synced: 0, status: 'empty' };
 
+        const status = getConnectionStatus();
+        // Skip flushing while completely offline (never clear queue against embedded loopback SQLite)
+        if (!status.isOnline && typeof navigator !== 'undefined' && navigator.onLine === false) {
+            return { synced: 0, status: 'offline' };
+        }
+        const useCloudOnly = status.activeMode !== 'lan';
+
         isSyncing = true;
         let syncedCount = 0;
 
@@ -35,19 +42,20 @@ export const syncService = {
                 const res = await apiFetch(item.url, {
                     method: item.method || 'POST',
                     headers,
-                    body: typeof item.body === 'object' ? JSON.stringify(item.body) : item.body
+                    body: typeof item.body === 'object' ? JSON.stringify(item.body) : item.body,
+                    cloudOnly: useCloudOnly
                 });
 
                 if (res.ok) {
                     await localStore.removeFromSyncQueue(item.id);
                     syncedCount++;
-                } else if (res.status >= 400 && res.status < 500) {
-                    // Client error (e.g. invalid format or duplicate), remove from queue so it doesn't block forever
+                } else if (res.status >= 400 && res.status < 500 && ![401, 408, 429].includes(res.status)) {
+                    // Permanent client error (e.g. invalid format), remove from queue so it doesn't block forever
                     console.warn(`[SyncService] Item ${item.id} returned HTTP ${res.status}. Dropping from queue.`);
                     await localStore.removeFromSyncQueue(item.id);
                 } else {
-                    // Server error (5xx or temporary network blip) — pause and retry next cycle
-                    console.warn(`[SyncService] Server error HTTP ${res.status} on sync. Will retry later.`);
+                    // Transient/auth error — pause and retry next cycle
+                    console.warn(`[SyncService] HTTP ${res.status} on sync. Will retry later.`);
                     break;
                 }
             } catch (err) {

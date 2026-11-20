@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback } from 'react';
-import { apiFetch } from '../data/api';
+import { useState, useEffect, useCallback, useMemo } from 'react';
+import { apiFetch, getConnectionStatus } from '../data/api';
 import { localStore } from '../data/localStore';
 import { getStudentGrade } from '../utils/gradeUtils';
 import { getStudentIdentity } from '../utils/studentViewUtils';
@@ -25,12 +25,19 @@ export function useStudentSubmission({ classroom, assignment, currentUser, socke
   const gradesKey = `verity_grades_${assignmentId}`;
   const draftCodeKey = `verity_code_${assignmentId}_${studentId}`;
 
-  const allKeys = getSubmissionStorageKeys(classroomId, assignmentId, currentUser, studentId, safeUsername);
-  const hKeys = getHistoryStorageKeys(classroomId, assignmentId, currentUser, studentId, safeUsername);
+  const allKeys = useMemo(
+    () => getSubmissionStorageKeys(classroomId, assignmentId, currentUser, studentId, safeUsername),
+    [classroomId, assignmentId, currentUser, studentId, safeUsername]
+  );
+  const hKeys = useMemo(
+    () => getHistoryStorageKeys(classroomId, assignmentId, currentUser, studentId, safeUsername),
+    [classroomId, assignmentId, currentUser, studentId, safeUsername]
+  );
 
   const [submission, setSubmission] = useState(() =>
     getInitialSavedSubmission(submissionKey, allKeys)
   );
+  const [checkedAssignmentId, setCheckedAssignmentId] = useState(null);
 
   const [gradeData, setGradeData] = useState(() =>
     getInitialSavedGrade(gradesKey, currentUser, studentId, safeUsername)
@@ -40,14 +47,19 @@ export function useStudentSubmission({ classroom, assignment, currentUser, socke
   const [showSubmitModal, setShowSubmitModal] = useState(false);
   const [showUnsubmitModal, setShowUnsubmitModal] = useState(false);
 
+  const hasValidAssignmentId = Boolean(assignmentId && assignmentId !== 'none' && assignmentId !== 'default');
+  const isCheckingSubmission = !submission && hasValidAssignmentId && checkedAssignmentId !== String(assignmentId);
+
   const fetchAssignmentData = useCallback(() => {
     if (!assignmentId || assignmentId === 'none' || assignmentId === 'default') return;
 
+    const currentAId = String(assignmentId);
+
     // Fetch submissions for this assignment
     apiFetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/submissions/${assignmentId}`)
-      .then(res => (res.ok ? res.json() : { submissions: [] }))
+      .then(res => (res.ok ? res.json() : null))
       .then(data => {
-        if (Array.isArray(data?.submissions)) {
+        if (data && Array.isArray(data.submissions)) {
           const targetName = String(safeUsername || '').toLowerCase().trim();
           const targetId = String(studentId || '').toLowerCase().trim();
           const targetEmail = String(currentUser?.email || '').toLowerCase().trim();
@@ -75,13 +87,16 @@ export function useStudentSubmission({ classroom, assignment, currentUser, socke
           if (mySub) {
             setSubmission(mySub);
             try { localStorage.setItem(submissionKey, JSON.stringify(mySub)); } catch {}
-          } else if (data.submissions.length === 0) {
+          } else if (data.submissions.length === 0 && !data.isOfflineFallback && getConnectionStatus().activeMode !== 'offline') {
             setSubmission(null);
             clearAllSubmissionStorage(assignmentId, classroomId, currentUser, studentId, safeUsername);
           }
         }
       })
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => {
+        setCheckedAssignmentId(currentAId);
+      });
 
     // Fetch grades
     apiFetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/grades/${assignmentId}`)
@@ -294,6 +309,7 @@ export function useStudentSubmission({ classroom, assignment, currentUser, socke
     submission,
     gradeData,
     isSubmitted: !!submission,
+    isCheckingSubmission,
     showCodePreview,
     setShowCodePreview,
     showSubmitModal,

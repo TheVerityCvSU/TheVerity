@@ -2,12 +2,14 @@ import React from 'react';
 import { motion } from 'framer-motion';
 import { User } from 'lucide-react';
 import Skeleton from '../Skeleton';
+import { isClassroomArchived } from '../../utils/classroomList';
 
 export default function ClassroomsTable({
   classes,
   loading,
   isDark,
   onViewClass,
+  onToggleArchive,
   onDeleteClass,
   styles,
   headerBg,
@@ -47,20 +49,22 @@ export default function ClassroomsTable({
           </div>
         ) : (
           classes.map((c, i) => {
-            const active = c.status === 'Active' || c.isActive || true;
+            const isArchived = isClassroomArchived(c) || String(c.status || '').toLowerCase() === 'archived';
+            const active = !isArchived;
             return (
               <div
-                key={i}
+                key={c.id || i}
                 style={{
                   backgroundColor: rowBg,
                   borderRadius: '9999px',
                   padding: '10px 24px',
                   display: 'grid',
-                  gridTemplateColumns: 'minmax(140px, 2fr) minmax(130px, 1.5fr) minmax(110px, 1fr) minmax(90px, 1fr) minmax(100px, 1fr)',
+                  gridTemplateColumns: 'minmax(140px, 2fr) minmax(130px, 1.5fr) minmax(110px, 1fr) minmax(90px, 1fr) minmax(160px, 1.2fr)',
                   columnGap: '16px',
                   alignItems: 'center',
                   fontSize: '0.875rem',
-                  minWidth: '780px'
+                  minWidth: '780px',
+                  opacity: isArchived ? 0.85 : 1
                 }}
               >
                 <div style={{ fontWeight: '600', color: isDark ? '#f1f5f9' : '#1e293b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }} title={c.name || c.className || 'Unnamed'}>
@@ -87,6 +91,16 @@ export default function ClassroomsTable({
                   >
                     View
                   </motion.button>
+                  {onToggleArchive && (
+                    <motion.button
+                      whileHover={{ scale: 1.05 }}
+                      whileTap={{ scale: 0.95 }}
+                      onClick={() => onToggleArchive(c)}
+                      style={{ ...styles.actionTextLink, color: isArchived ? '#10b981' : '#f59e0b' }}
+                    >
+                      {isArchived ? 'Unarchive' : 'Archive'}
+                    </motion.button>
+                  )}
                   <motion.button
                     whileHover={{ scale: 1.05 }}
                     whileTap={{ scale: 0.95 }}

@@ -25,8 +25,7 @@ let provider = 'sqlite';
 let pgPool = null;
 let sqliteDb = null;
 
-const DEFAULT_SUPABASE_URL = 'postgresql://postgres.rhswlgkcvlubrqzbnvxf:3MK%25pe6HEpB%3F4Au@aws-0-ap-northeast-2.pooler.supabase.com:5432/postgres';
-const DATABASE_URL = process.env.DATABASE_URL || process.env.SUPABASE_DATABASE_URL || process.env.POSTGRES_URL || DEFAULT_SUPABASE_URL;
+const DATABASE_URL = process.env.DATABASE_URL || process.env.SUPABASE_DATABASE_URL || process.env.POSTGRES_URL || '';
 
 // Helper to convert '?' placeholders to PostgreSQL '$1, $2, ...' placeholders
 function convertPlaceholders(sql) {
@@ -111,7 +110,7 @@ function seedFromDatabaseJson(adapter, dataDir) {
 
         const classCount = adapter.prepare('SELECT count(*) as c FROM classrooms').get()?.c || 0;
         if (classCount === 0 && Array.isArray(data.classrooms) && data.classrooms.length > 0) {
-            const insertClassroom = adapter.prepare('INSERT OR IGNORE INTO classrooms (id, code, section, name, subject, instructor, instructor_email, theme, archived) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
+            const insertClassroom = adapter.prepare('INSERT OR IGNORE INTO classrooms (id, code, section, name, subject, instructor, instructor_email, description, settings, theme, archived) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
             data.classrooms.forEach(c => {
                 insertClassroom.run(
                     c.id,
@@ -121,6 +120,8 @@ function seedFromDatabaseJson(adapter, dataDir) {
                     c.subject || '',
                     c.instructor || '',
                     c.instructor_email || '',
+                    c.description || '',
+                    c.settings ? (typeof c.settings === 'string' ? c.settings : JSON.stringify(c.settings)) : null,
                     c.theme || null,
                     c.archived || 0
                 );
@@ -206,6 +207,8 @@ function initSqlite() {
             subject TEXT,
             instructor TEXT,
             instructor_email TEXT,
+            description TEXT,
+            settings TEXT,
             theme TEXT,
             archived INTEGER DEFAULT 0
         );
@@ -357,6 +360,8 @@ function initSqlite() {
     `);
 
         try { sqliteDb.exec(`ALTER TABLE classrooms ADD COLUMN instructor_email TEXT;`); } catch (e) { }
+        try { sqliteDb.exec(`ALTER TABLE classrooms ADD COLUMN description TEXT;`); } catch (e) { }
+        try { sqliteDb.exec(`ALTER TABLE classrooms ADD COLUMN settings TEXT;`); } catch (e) { }
         try { sqliteDb.exec(`ALTER TABLE classrooms ADD COLUMN theme TEXT;`); } catch (e) { }
         try { sqliteDb.exec(`ALTER TABLE classrooms ADD COLUMN archived INTEGER DEFAULT 0;`); } catch (e) { }
         try { sqliteDb.exec(`ALTER TABLE users ADD COLUMN avatar TEXT;`); } catch (e) { }
@@ -504,6 +509,9 @@ async function initPostgres(connStr = cleanedUrl) {
         }
 
         console.log('[Database] PostgreSQL schema verified/initialized.');
+        await client.query('ALTER TABLE classrooms ADD COLUMN IF NOT EXISTS archived INTEGER DEFAULT 0;').catch(() => {});
+        await client.query('ALTER TABLE classrooms ADD COLUMN IF NOT EXISTS description TEXT;').catch(() => {});
+        await client.query('ALTER TABLE classrooms ADD COLUMN IF NOT EXISTS settings TEXT;').catch(() => {});
         provider = 'postgres';
 
         // Synchronize active Postgres users with local SQLite so offline cache matches the primary database
@@ -578,11 +586,11 @@ async function initPostgres(connStr = cleanedUrl) {
                 }
 
                 // 3. Sync classrooms
-                const pgClassrooms = await client.query('SELECT id, code, section, name, subject, instructor, instructor_email, theme FROM classrooms').catch(() => ({ rows: [] }));
+                const pgClassrooms = await client.query('SELECT id, code, section, name, subject, instructor, instructor_email, description, settings, theme, archived FROM classrooms').catch(() => ({ rows: [] }));
                 if (pgClassrooms.rows && pgClassrooms.rows.length > 0) {
                     const upsertClassroom = sqliteDb.prepare(`
-                        INSERT INTO classrooms (id, code, section, name, subject, instructor, instructor_email, theme)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        INSERT INTO classrooms (id, code, section, name, subject, instructor, instructor_email, description, settings, theme, archived)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         ON CONFLICT(id) DO UPDATE SET
                             code = excluded.code,
                             section = excluded.section,
@@ -590,12 +598,15 @@ async function initPostgres(connStr = cleanedUrl) {
                             subject = excluded.subject,
                             instructor = excluded.instructor,
                             instructor_email = excluded.instructor_email,
-                            theme = excluded.theme
+                            description = excluded.description,
+                            settings = excluded.settings,
+                            theme = excluded.theme,
+                            archived = excluded.archived
                     `);
                     let cCount = 0;
                     for (const c of pgClassrooms.rows) {
                         try {
-                            upsertClassroom.run(c.id, c.code || '', c.section || '', c.name || '', c.subject || '', c.instructor || '', c.instructor_email || null, c.theme || null);
+                            upsertClassroom.run(c.id, c.code || '', c.section || '', c.name || '', c.subject || '', c.instructor || '', c.instructor_email || null, c.description || '', c.settings || null, c.theme || null, c.archived ? 1 : 0);
                             cCount++;
                         } catch (_) { }
                     }

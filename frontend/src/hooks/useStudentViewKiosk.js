@@ -38,8 +38,7 @@ export function useStudentViewKiosk({
 
   const [examDefaults, setExamDefaults] = useState({
     treatWarningsAsErrors: false,
-    autoSaveInterval: '30s',
-    defaultExamTimer: 60
+    autoSaveInterval: '30s'
   });
   const [multiMonitorDetected, setMultiMonitorDetected] = useState(false);
   const [vmDetected, setVmDetected] = useState(false);

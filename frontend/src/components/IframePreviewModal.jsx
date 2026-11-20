@@ -141,7 +141,8 @@ export default function IframePreviewModal({ url, title, type, onClose, isDark: 
     return () => { document.body.style.overflow = orig; };
   }, []);
 
-  const isDownloadable = !(type === 'link' && !isPdf && !isOffice && !isText && !isImage);
+  const isUploadedFile = cleanUrl.includes('/uploads/');
+  const isDownloadable = isPdf || isOffice || isText || isImage || isUploadedFile || type !== 'link';
 
   const handleDownload = (e) => {
     if (e && e.stopPropagation) e.stopPropagation();
@@ -219,30 +220,32 @@ export default function IframePreviewModal({ url, title, type, onClose, isDark: 
             </button>
           )}
 
-          <button 
-            onClick={handleOpenExternal}
-            style={{
-              background: 'rgba(255,255,255,0.12)',
-              border: '1px solid rgba(255,255,255,0.2)',
-              borderRadius: '8px',
-              padding: '10px 14px',
-              color: 'white',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
-              fontSize: '0.88rem',
-              fontWeight: '500',
-              backdropFilter: 'blur(8px)',
-              transition: 'all 0.2s'
-            }}
-            title="Open in new tab"
-            onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.25)'}
-            onMouseLeave={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.12)'}
-          >
-            <ExternalLink size={18} />
-            <span>Open in Tab</span>
-          </button>
+          {!isDownloadable && (
+            <button
+              onClick={handleOpenExternal}
+              style={{
+                background: 'rgba(255,255,255,0.12)',
+                border: '1px solid rgba(255,255,255,0.2)',
+                borderRadius: '8px',
+                padding: '10px 14px',
+                color: 'white',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                fontSize: '0.88rem',
+                fontWeight: '500',
+                backdropFilter: 'blur(8px)',
+                transition: 'all 0.2s'
+              }}
+              title="Open in new tab"
+              onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.25)'}
+              onMouseLeave={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.12)'}
+            >
+              <ExternalLink size={18} />
+              <span>Open in Tab</span>
+            </button>
+          )}
           
           <button 
             onClick={onClose}
@@ -383,14 +386,11 @@ export default function IframePreviewModal({ url, title, type, onClose, isDark: 
                       {title || 'Word Document'}
                     </h4>
                     <p style={{ margin: '0 0 20px 0', fontSize: '0.88rem', color: isDark ? '#94a3b8' : '#64748b' }}>
-                      This document cannot be parsed in the inline viewer. You can open or download it to view in Microsoft Word.
+                      This document cannot be parsed in the inline viewer. You can download it to view in Microsoft Word.
                     </p>
                     <div style={{ display: 'flex', gap: '12px' }}>
                       <button onClick={handleDownload} style={{ padding: '8px 16px', borderRadius: '8px', background: '#2563eb', color: 'white', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}>
                         <Download size={16} /> Download .docx
-                      </button>
-                      <button onClick={handleOpenExternal} style={{ padding: '8px 16px', borderRadius: '8px', background: isDark ? '#334155' : '#e2e8f0', color: isDark ? '#f1f5f9' : '#1e293b', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <ExternalLink size={16} /> Open in New Tab
                       </button>
                     </div>
                   </div>
@@ -485,7 +485,7 @@ export default function IframePreviewModal({ url, title, type, onClose, isDark: 
                       {title || cleanName.split('/').pop()}
                     </h4>
                     <p style={{ margin: '0 0 24px 0', fontSize: '0.88rem', color: isDark ? '#94a3b8' : '#64748b' }}>
-                      {badgeLabel} is ready to view. Download the file or open it in your local application.
+                      {badgeLabel} is ready to view. Download the file to open it in your local application.
                     </p>
 
                     <div style={{ display: 'flex', gap: '12px', width: '100%' }}>
@@ -508,26 +508,6 @@ export default function IframePreviewModal({ url, title, type, onClose, isDark: 
                         }}
                       >
                         <Download size={18} /> Download
-                      </button>
-                      <button 
-                        onClick={handleOpenExternal} 
-                        style={{
-                          flex: 1,
-                          padding: '11px 16px',
-                          borderRadius: '8px',
-                          background: isDark ? '#334155' : '#e2e8f0',
-                          color: isDark ? '#f1f5f9' : '#1e293b',
-                          border: 'none',
-                          cursor: 'pointer',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          gap: '8px',
-                          fontWeight: '600',
-                          fontSize: '0.9rem'
-                        }}
-                      >
-                        <ExternalLink size={18} /> Open in Tab
                       </button>
                     </div>
                   </div>

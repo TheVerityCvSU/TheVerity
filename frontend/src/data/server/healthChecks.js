@@ -2,7 +2,7 @@
  * Health checks: pings the cloud and local servers to see if they are reachable.
  */
 import { state } from './connectionState';
-import { getCloudUrl, getLocalApiUrl, isHostedWebEnv } from './serverUrls';
+import { getCloudUrl, getLocalApiUrl, isHostedWebEnv, isLoopbackUrl, probeVerityHealth, promoteLoopbackToLan } from './serverUrls';
 import { notifyListeners } from './connectionStatus';
 
 let healthCheckPromise = null;
@@ -19,24 +19,26 @@ export const checkLocalHealth = async () => {
   if (localHealthPromise) return localHealthPromise;
   const localUrl = getLocalApiUrl();
   localHealthPromise = (async () => {
-    try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 2000);
-      const res = await fetch(`${localUrl}/health`, {
-        signal: controller.signal,
-        cache: 'no-store'
-      });
-      clearTimeout(timer);
-      if (res.ok) {
-        const data = await res.json().catch(() => null);
-        if (data && data.app === 'the-verity') {
-          state.localHealthData = data;
-          state.isLocalServerUp = true;
-          notifyListeners();
-          return true;
+    const data = await probeVerityHealth(localUrl, 2000);
+    if (data) {
+      let finalData = data;
+      // If localhost is running as a Host or Cloud-backed server, promote to its real LAN IP
+      if (isLoopbackUrl(localUrl) && (data.isHost === true || data.hasCloudDb === true)) {
+        const promoted = await promoteLoopbackToLan(localUrl, data, 1000);
+        if (promoted.targetUrl && !isLoopbackUrl(promoted.targetUrl)) {
+          finalData = promoted.healthData;
+          state.autoDiscoveredLanServer = promoted.targetUrl;
+          try { localStorage.setItem('verity_lan_server', promoted.targetUrl); } catch (_) {}
+          if (typeof window !== 'undefined' && window.electronAPI?.setLanServer) {
+            window.electronAPI.setLanServer(promoted.targetUrl).catch(() => {});
+          }
         }
       }
-    } catch (_) {}
+      state.localHealthData = finalData;
+      state.isLocalServerUp = true;
+      notifyListeners();
+      return true;
+    }
 
     // If localUrl was autoDiscoveredLanServer and unreachable, clear it immediately
     if (state.autoDiscoveredLanServer && localUrl === state.autoDiscoveredLanServer) {

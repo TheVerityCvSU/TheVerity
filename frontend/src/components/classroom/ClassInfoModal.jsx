@@ -29,6 +29,12 @@ export default function ClassInfoModal({
             <label style={styles.infoFieldLabel}>Subject / Course</label>
             <div style={styles.infoFieldValue}>{classroom?.subject || classroom?.name || 'General Studies'}</div>
           </div>
+          {classroom?.description && (
+            <div>
+              <label style={styles.infoFieldLabel}>Description</label>
+              <div style={styles.infoFieldValue}>{classroom.description}</div>
+            </div>
+          )}
           <div>
             <label style={styles.infoFieldLabel}>Section</label>
             <div style={styles.infoFieldValue}>{classroom?.section || 'Section 1'}</div>

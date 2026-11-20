@@ -8,6 +8,8 @@ import { getLessonType } from '../../utils/lessonType';
 export default function ClassroomOverviewTab({
   isMobile,
   isDark,
+  isArchived = false,
+  submittedTasks = {},
   cardBg,
   textMuted,
   loadingAssignments = false,
@@ -24,6 +26,8 @@ export default function ClassroomOverviewTab({
   const safeClasswork = Array.isArray(visibleClasswork) ? visibleClasswork : [];
   const safeMaterials = Array.isArray(visibleMaterials) ? visibleMaterials : [];
   const safeUnseen = Array.isArray(unseenMaterials) ? unseenMaterials : [];
+  const displayActivities = isArchived ? safeClasswork : safeUpcoming;
+  const displayMaterials = isArchived ? safeMaterials : safeUnseen.slice(0, 6);
 
   const todoScrollRef = useRef(null);
   const isDraggingTodoRef = useRef(false);
@@ -72,13 +76,15 @@ export default function ClassroomOverviewTab({
       {/* LEFT COLUMN */}
       <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: '28px' }}>
         
-        {/* To Do (Unsubmitted Work) */}
+        {/* To Do / Past Activities */}
         <div>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '16px' }}>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: '12px' }}>
-              <h2 style={{ fontSize: '1.25rem', fontWeight: 'bold', margin: 0 }}>To Do</h2>
+              <h2 style={{ fontSize: '1.25rem', fontWeight: 'bold', margin: 0 }}>
+                {isArchived ? 'Past Activities' : 'To Do'}
+              </h2>
               <span style={{ fontSize: '0.85rem', color: textMuted }}>
-                {safeUpcoming.length} item{safeUpcoming.length !== 1 && 's'}
+                {displayActivities.length} item{displayActivities.length !== 1 && 's'}
               </span>
             </div>
             <button
@@ -135,15 +141,17 @@ export default function ClassroomOverviewTab({
                   </div>
                 ))}
               </div>
-            ) : safeUpcoming.length === 0 ? (
+            ) : displayActivities.length === 0 ? (
               <div style={{ width: '100%', display: 'flex', alignItems: 'center', gap: '10px', color: isDark ? '#34d399' : '#059669', padding: '4px 0' }}>
                 <CheckCircle2 size={20} color={isDark ? '#34d399' : '#10b981'} />
                 <span style={{ fontWeight: '600', color: isDark ? '#f5f5f5' : '#1e293b', fontSize: '0.95rem' }}>
-                  {safeClasswork.length > 0 ? "You're all caught up!" : "No pending work"}
+                  {safeClasswork.length > 0 ? "You're all caught up!" : (isArchived ? "No past activities recorded" : "No pending work")}
                 </span>
               </div>
             ) : (
-              safeUpcoming.map(item => (
+              displayActivities.map(item => {
+                const isItemSub = Boolean(submittedTasks && (submittedTasks[item.id] || submittedTasks[String(item.id)]));
+                return (
                 <div
                   key={item.id}
                   onClick={() => {
@@ -175,8 +183,10 @@ export default function ClassroomOverviewTab({
                       <div style={{ width: '32px', height: '32px', borderRadius: '50%', backgroundColor: '#10b981', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', flexShrink: 0 }}>
                         <ClipboardList size={16} />
                       </div>
-                      <span style={{ fontSize: '0.74rem', fontWeight: 'bold', color: textMuted }}>
-                        {item.dueDate ? formatShortDate(item.dueDate) : 'No due date'}
+                      <span style={{ fontSize: '0.74rem', fontWeight: 'bold', color: isArchived && isItemSub ? '#10b981' : textMuted }}>
+                        {isArchived && isItemSub
+                          ? 'Turned in'
+                          : (item.dueDate ? formatShortDate(item.dueDate) : 'No due date')}
                       </span>
                     </div>
                     <div style={{ fontSize: '0.68rem', fontWeight: 'bold', color: '#10b981', letterSpacing: '0.05em', marginBottom: '4px' }}>ACTIVITY</div>
@@ -190,7 +200,8 @@ export default function ClassroomOverviewTab({
                     })()}
                   </div>
                 </div>
-              ))
+                );
+              })
             )}
           </div>
         </div>
@@ -200,8 +211,10 @@ export default function ClassroomOverviewTab({
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '16px' }}>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: '12px' }}>
               <h2 style={{ fontSize: '1.25rem', fontWeight: 'bold', margin: 0 }}>Learning materials</h2>
-              <span style={{ fontSize: '0.85rem', color: safeUnseen.length > 0 ? textMuted : '#10b981', fontWeight: safeUnseen.length > 0 ? 'normal' : '600' }}>
-                {safeUnseen.length > 0 ? `${safeUnseen.length} new` : (safeMaterials.length > 0 ? 'All viewed' : '0 items')}
+              <span style={{ fontSize: '0.85rem', color: isArchived ? textMuted : (safeUnseen.length > 0 ? textMuted : '#10b981'), fontWeight: (!isArchived && safeUnseen.length === 0) ? '600' : 'normal' }}>
+                {isArchived
+                  ? `${safeMaterials.length} item${safeMaterials.length !== 1 ? 's' : ''}`
+                  : (safeUnseen.length > 0 ? `${safeUnseen.length} new` : (safeMaterials.length > 0 ? 'All viewed' : '0 items'))}
               </span>
             </div>
             <button
@@ -237,7 +250,7 @@ export default function ClassroomOverviewTab({
                 <FileText size={20} color={textMuted} />
                 <span>No learning materials uploaded yet for this class.</span>
               </div>
-            ) : safeUnseen.length === 0 ? (
+            ) : !isArchived && safeUnseen.length === 0 ? (
               <div style={{ gridColumn: '1 / -1', display: 'flex', alignItems: 'center', gap: '10px', color: isDark ? '#34d399' : '#059669', padding: '4px 0' }}>
                 <CheckCircle2 size={20} color={isDark ? '#34d399' : '#10b981'} />
                 <span style={{ fontWeight: '600', color: isDark ? '#f5f5f5' : '#1e293b', fontSize: '0.95rem' }}>
@@ -245,7 +258,7 @@ export default function ClassroomOverviewTab({
                 </span>
               </div>
             ) : (
-              safeUnseen.slice(0, 6).map((item) => {
+              displayMaterials.map((item) => {
                 const lessonType = getLessonType(item);
                 let iconNode = <FileText size={20} />;
                 let iconBg = isDark ? 'rgba(16, 185, 129, 0.15)' : '#dcfce7';

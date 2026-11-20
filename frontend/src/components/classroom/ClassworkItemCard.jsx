@@ -1,6 +1,6 @@
 import React from 'react';
 import { 
-  ClipboardList, CheckCircle2, Calendar, Award, Clock, ArrowUpRight, ArrowRight, AlertCircle
+  ClipboardList, CheckCircle2, Calendar, Award, Clock, ArrowUpRight, ArrowRight, AlertCircle, Lock
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import AttachmentCard from '../AttachmentCard';
@@ -11,6 +11,7 @@ export default function ClassworkItemCard({
   isOpen,
   onToggle,
   isSubmitted,
+  isSubmissionLoading = false,
   submittedAt = null,
   onOpenAssignment,
   onStartAssignment,
@@ -20,6 +21,7 @@ export default function ClassworkItemCard({
   setPreviewIframe,
   isDark,
   isMobile,
+  isArchived = false,
   styles
 }) {
   const due = formatShortDate(item.dueDate);
@@ -256,7 +258,25 @@ export default function ClassworkItemCard({
 
                 <div style={{ marginTop: '36px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
                   {isSubmitted ? (
-                    !(item?.disableBack || item?.disable_back) && (
+                    isArchived ? (
+                      <div style={{
+                        width: '100%',
+                        boxSizing: 'border-box',
+                        display: 'flex',
+                        justifyContent: 'center',
+                        alignItems: 'center',
+                        gap: '8px',
+                        padding: '11px 16px',
+                        backgroundColor: isDark ? 'rgba(148, 163, 184, 0.12)' : '#e2e8f0',
+                        border: isDark ? '1px solid rgba(148, 163, 184, 0.3)' : '1px solid #cbd5e1',
+                        borderRadius: '10px',
+                        color: isDark ? '#cbd5e1' : '#475569',
+                        fontWeight: '600',
+                        fontSize: '0.84rem'
+                      }}>
+                        <Lock size={14} /> Archived • Read-Only
+                      </div>
+                    ) : !(item?.disableBack || item?.disable_back) && (
                       <button
                         onClick={() => onRequestUnsubmit(item)}
                         style={{
@@ -285,6 +305,24 @@ export default function ClassworkItemCard({
                         Unsubmit
                       </button>
                     )
+                  ) : isSubmissionLoading ? null : isArchived ? (
+                    <div style={{
+                      width: '100%',
+                      boxSizing: 'border-box',
+                      display: 'flex',
+                      justifyContent: 'center',
+                      alignItems: 'center',
+                      gap: '8px',
+                      padding: '12px 16px',
+                      backgroundColor: isDark ? 'rgba(148, 163, 184, 0.12)' : '#e2e8f0',
+                      border: isDark ? '1px solid rgba(148, 163, 184, 0.3)' : '1px solid #cbd5e1',
+                      borderRadius: '12px',
+                      color: isDark ? '#94a3b8' : '#475569',
+                      fontWeight: '700',
+                      fontSize: '0.86rem'
+                    }}>
+                      <Lock size={15} /> Classroom Archived
+                    </div>
                   ) : (
                     <>
                       <button

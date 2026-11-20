@@ -318,8 +318,14 @@ const localDbAPI = {
     // Add mutation to offline sync queue
     addToSyncQueue(action, url, method, body) {
         const now = new Date().toISOString();
-        const bodyStr = typeof body === 'object' ? JSON.stringify(body) : String(body || '');
+        const bodyStr = body === null || body === undefined
+            ? ''
+            : (typeof body === 'object' ? JSON.stringify(body) : String(body));
         if (db && !useJsonFallback) {
+            const latest = db.prepare("SELECT id, url, method, body FROM sync_queue WHERE status = 'pending' ORDER BY id DESC LIMIT 1").get();
+            if (latest && latest.url === url && latest.method === method && (latest.body || '') === bodyStr) {
+                return { id: latest.id, status: 'pending', deduplicated: true };
+            }
             const stmt = db.prepare(`
                 INSERT INTO sync_queue (action, url, method, body, created_at, status)
                 VALUES (?, ?, ?, ?, ?, 'pending')
@@ -327,6 +333,11 @@ const localDbAPI = {
             const info = stmt.run(action, url, method, bodyStr, now);
             return { id: info.lastInsertRowid, status: 'pending' };
         } else {
+            const pending = (fallbackData.sync_queue || []).filter(q => q.status === 'pending');
+            const latest = pending[pending.length - 1];
+            if (latest && latest.url === url && latest.method === method && (latest.body || '') === bodyStr) {
+                return latest;
+            }
             const id = Date.now();
             const item = { id, action, url, method, body: bodyStr, created_at: now, status: 'pending' };
             fallbackData.sync_queue.push(item);

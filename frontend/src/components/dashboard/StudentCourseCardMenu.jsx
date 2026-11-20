@@ -60,7 +60,25 @@ export default function StudentCourseCardMenu({
         </button>
       )}
 
-      {isArchivedCard && (
+      {isArchivedCard && classroom?.archivedByTeacher && !classroom?.localStudentArchived && (
+        <div
+          style={{
+            padding: '10px 14px',
+            color: isDark ? '#9ca3af' : '#64748b',
+            fontSize: '0.8rem',
+            fontWeight: '600',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            cursor: 'default'
+          }}
+        >
+          <Archive size={15} />
+          Archived by Instructor
+        </div>
+      )}
+
+      {isArchivedCard && !(classroom?.archivedByTeacher && !classroom?.localStudentArchived) && (
         <button
           type="button"
           onClick={(e) => {

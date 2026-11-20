@@ -23,8 +23,7 @@
       "from": "server",
       "to": ".",
       "filter": [
-        "database.json",
-        ".env"
+        "database.json"
       ]
     }
   ],

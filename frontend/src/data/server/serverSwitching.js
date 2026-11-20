@@ -2,7 +2,7 @@
  * Server switching: lets the user pick a server (custom URL, cloud, or LAN).
  */
 import { state } from './connectionState';
-import { DEFAULT_CLOUD_API_URL, isPrivateHost, getCloudUrl, getLocalApiUrl } from './serverUrls';
+import { DEFAULT_CLOUD_API_URL, isPrivateHost, getCloudUrl, getLocalApiUrl, promoteLoopbackToLan } from './serverUrls';
 import { notifyListeners } from './connectionStatus';
 import { checkCloudHealth, checkLocalHealth } from './healthChecks';
 
@@ -95,26 +95,28 @@ export const setCustomLanServer = async (url) => {
     return { success: true, url: clean, mode: 'cloud' };
   }
 
-  // Otherwise, connect in LAN Mode
+  // Otherwise, connect in LAN Mode (preferring the host's advertised LAN IP over loopback if reachable)
+  const { targetUrl: finalClean, healthData: finalHealth } = await promoteLoopbackToLan(clean, healthData, 1200);
+
   state.userPreferredMode = 'lan';
-  state.autoDiscoveredLanServer = clean;
-  state.localHealthData = healthData;
+  state.autoDiscoveredLanServer = finalClean;
+  state.localHealthData = finalHealth;
   state.isLocalServerUp = true;
   try {
     localStorage.setItem('verity_preferred_mode', 'lan');
-    localStorage.setItem('verity_lan_server', clean);
+    localStorage.setItem('verity_lan_server', finalClean);
     if (window.electronAPI?.localDB?.setLocal) {
-      await window.electronAPI.localDB.setLocal('verity_lan_server', clean);
+      await window.electronAPI.localDB.setLocal('verity_lan_server', finalClean);
     }
     if (window.electronAPI?.setLanServer) {
-      await window.electronAPI.setLanServer(clean).catch(() => {});
+      await window.electronAPI.setLanServer(finalClean).catch(() => {});
     }
   } catch (_) {}
 
-  announceServerChange(clean, { lan: true });
+  announceServerChange(finalClean, { lan: true });
   checkLocalHealth();
   notifyListeners();
-  return { success: true, url: clean, mode: 'lan' };
+  return { success: true, url: finalClean, mode: 'lan' };
 };
 
 export const switchToCloudMode = () => {

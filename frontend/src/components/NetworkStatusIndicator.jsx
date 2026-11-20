@@ -9,6 +9,7 @@ import {
   getCloudUrl,
   apiFetch
 } from '../data/api';
+import syncService from '../data/syncService';
 import { useDarkMode } from '../hooks/useDarkMode';
 import NetworkStatusDot from './networkStatus/NetworkStatusDot';
 import NetworkConfigPopover from './networkStatus/NetworkConfigPopover';
@@ -34,18 +35,23 @@ export default function NetworkStatusIndicator({ hidden = false, position = 'rig
     return () => unsub();
   }, []);
 
-  // Pre-fill input with discovered or cached LAN server
+  // Pre-fill input with discovered or cached non-loopback LAN server (unless actively connected in LAN mode)
   useEffect(() => {
-    let currentLan = getLocalApiUrl();
-    if (!currentLan) {
-      try {
-        currentLan = localStorage.getItem('verity_lan_server') || '';
-      } catch (_) {}
+    let currentLan = '';
+    try {
+      const savedLan = localStorage.getItem('verity_lan_server') || '';
+      if (savedLan && !savedLan.includes('localhost') && !savedLan.includes('127.0.0.1')) {
+        currentLan = savedLan;
+      }
+    } catch (_) {}
+    if (!currentLan && status.activeMode === 'lan' && status.localUrl && !status.localUrl.includes('localhost') && !status.localUrl.includes('127.0.0.1')) {
+      currentLan = status.localUrl;
     }
-    if (currentLan) {
-      setCustomIp(currentLan);
+    if (!currentLan && status.activeMode === 'lan') {
+      currentLan = status.localUrl || getLocalApiUrl();
     }
-  }, [status.localUrl, isOpen]);
+    setCustomIp(currentLan);
+  }, [status.activeMode, status.localUrl, isOpen]);
 
   // Close popover when clicking outside
   useEffect(() => {
@@ -173,6 +179,8 @@ export default function NetworkStatusIndicator({ hidden = false, position = 'rig
     setSyncCompleted(false);
     setFeedback(null);
     try {
+      const token = localStorage.getItem('verity_token') || localStorage.getItem('token');
+      await syncService.syncOfflineQueue(token).catch(() => {});
       const res = await apiFetch('/api/sync', { method: 'POST' });
       if (res.ok) {
         setSyncCompleted(true);

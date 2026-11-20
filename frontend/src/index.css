@@ -552,8 +552,10 @@ textarea {
 }
 
 .skeleton-shimmer {
-  background: linear-gradient(90deg, #d4dae3 25%, #e8ecf1 50%, #d4dae3 75%);
+  background-color: #d4dae3;
+  background-image: linear-gradient(90deg, #d4dae3 25%, #e8ecf1 50%, #d4dae3 75%);
   background-size: 200% 100%;
+  background-position: 200% 0;
   animation: shimmer 1.5s infinite linear;
   border-radius: 8px;
 }
@@ -718,12 +720,13 @@ body.dark .skeleton-calendar-col,
   border-right-color: #4A4A4A !important;
 }
 
-/* Dark mode skeleton base overrides */
+/* Dark mode skeleton base overrides (use background-image/size so background-position animation is never overridden by !important) */
 html.dark .skeleton-shimmer,
 .dark .skeleton-shimmer,
 body.dark .skeleton-shimmer,
 [data-theme='dark'] .skeleton-shimmer {
-  background: linear-gradient(90deg, #2a2a2a 25%, #3d3d3d 50%, #2a2a2a 75%) !important;
+  background-color: #2a2a2a !important;
+  background-image: linear-gradient(90deg, #2a2a2a 25%, #424242 50%, #2a2a2a 75%) !important;
   background-size: 200% 100% !important;
 }
 

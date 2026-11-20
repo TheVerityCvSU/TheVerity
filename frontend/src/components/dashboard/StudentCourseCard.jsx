@@ -71,7 +71,9 @@ export default function StudentCourseCard({
         gridColumn: `span ${finalSpan}`,
         width: '100%',
         boxSizing: 'border-box',
-        filter: isArchived ? 'grayscale(20%)' : 'none'
+        filter: isArchivedCard ? 'grayscale(55%) saturate(0.6)' : 'none',
+        opacity: isArchivedCard ? 0.88 : 1,
+        border: isArchivedCard ? '1px dashed rgba(148, 163, 184, 0.6)' : undefined
       }}
     >
       {/* Background banner illustration layer */}
@@ -102,12 +104,12 @@ export default function StudentCourseCard({
       </div>
 
       {/* Subtle overlay for archived state */}
-      {isArchived && (
+      {isArchivedCard && (
         <div style={{
           position: 'absolute',
           inset: 0,
           borderRadius: '20px',
-          backgroundColor: 'rgba(15, 23, 42, 0.35)',
+          backgroundColor: 'rgba(15, 23, 42, 0.42)',
           pointerEvents: 'none',
           zIndex: 2
         }} />
@@ -117,17 +119,17 @@ export default function StudentCourseCard({
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', minWidth: 0, flex: 1, marginRight: '8px' }}>
             <span style={{
-              backgroundColor: isArchived ? 'rgba(255, 255, 255, 0.2)' : theme.pillBg,
-              color: isArchived ? '#ffffff' : theme.pillText,
+              backgroundColor: isArchivedCard ? 'rgba(255, 255, 255, 0.2)' : theme.pillBg,
+              color: isArchivedCard ? '#ffffff' : theme.pillText,
               padding: '4px 10px',
               borderRadius: '20px',
               fontSize: '0.75rem',
               fontWeight: 'bold',
-              backdropFilter: isArchived ? 'blur(6px)' : 'none'
+              backdropFilter: isArchivedCard ? 'blur(6px)' : 'none'
             }}>
               {classroom.code || `C${classroom.id}`}
             </span>
-            {isArchived && (
+            {isArchivedCard && (
               <span style={{
                 backgroundColor: 'rgba(0, 0, 0, 0.5)',
                 color: '#f8fafc',
@@ -207,9 +209,9 @@ export default function StudentCourseCard({
       </div>
 
       <div style={{ position: 'relative', zIndex: 10 }}>
-        {isArchived && (
-          <p style={{ margin: 0, fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: '#cbd5e1', marginBottom: '4px' }}>
-            COMPLETED / READ-ONLY
+        {isArchivedCard && (
+          <p style={{ margin: 0, fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: '#cbd5e1', marginBottom: '4px', fontWeight: '700' }}>
+            ARCHIVED • READ-ONLY
           </p>
         )}
         <p style={{ margin: 0, fontSize: '0.95rem', fontWeight: '600', color: theme.textColor, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>

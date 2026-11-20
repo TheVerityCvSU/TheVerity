@@ -17,6 +17,61 @@ export const isPrivateHost = (hostname) => {
   return false;
 };
 
+export const normalizeHttpUrl = (raw) => {
+  const clean = String(raw || '').trim().replace(/\/$/, '');
+  if (!clean) return '';
+  return (clean.startsWith('http://') || clean.startsWith('https://')) ? clean : `http://${clean}`;
+};
+
+export const isLoopbackUrl = (raw) => {
+  const clean = normalizeHttpUrl(raw);
+  if (!clean) return false;
+  try {
+    const host = new URL(clean).hostname.toLowerCase();
+    return host === 'localhost' || host === '127.0.0.1' || host === '::1';
+  } catch (_) {
+    return clean.includes('localhost') || clean.includes('127.0.0.1');
+  }
+};
+
+export const probeVerityHealth = async (url, timeoutMs = 1200) => {
+  const clean = normalizeHttpUrl(url);
+  if (!clean) return null;
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const res = await fetch(`${clean}/health`, { signal: controller.signal, cache: 'no-store' });
+    clearTimeout(timer);
+    if (!res.ok) return null;
+    const data = await res.json().catch(() => null);
+    return (data && data.app === 'the-verity') ? data : null;
+  } catch (_) {
+    return null;
+  }
+};
+
+export const promoteLoopbackToLan = async (url, healthData, timeoutMs = 1000) => {
+  const clean = normalizeHttpUrl(url);
+  if (!clean || !isLoopbackUrl(clean)) {
+    return { targetUrl: clean, healthData };
+  }
+  const lanIps = Array.isArray(healthData?.lanIps) ? healthData.lanIps : [];
+  let port = '3001';
+  try {
+    port = new URL(clean).port || '3001';
+  } catch (_) {}
+
+  for (const ip of lanIps) {
+    if (!ip || isLoopbackUrl(`http://${ip}`)) continue;
+    const lanUrl = `http://${ip}:${port}`;
+    const lanHealth = await probeVerityHealth(lanUrl, timeoutMs);
+    if (lanHealth) {
+      return { targetUrl: lanUrl, healthData: lanHealth };
+    }
+  }
+  return { targetUrl: clean, healthData };
+};
+
 export const isElectronApp = () => typeof window !== 'undefined' && Boolean(window.electronAPI?.getDiscoveredServer);
 
 // True on public hosted web (e.g. Vercel): not Electron and not on a private/LAN address

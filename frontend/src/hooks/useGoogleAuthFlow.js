@@ -67,6 +67,7 @@ export function useGoogleAuthFlow({ onSuccess, onError }) {
     const sessionId = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
     const activeCloud = getCloudUrl() || 'https://verity-2z4v.onrender.com';
     const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
+    const authOrigin = isOnline ? 'cloud' : 'lan';
     const backendUrl = isOnline ? activeCloud : getLocalApiUrl();
     let completed = false;
 
@@ -75,6 +76,12 @@ export function useGoogleAuthFlow({ onSuccess, onError }) {
       completed = true;
       cleanupAuth();
       if (data && data.token && data.user) {
+        try {
+          localStorage.setItem('verity_token_origin', authOrigin);
+          if (window.electronAPI?.localDB?.setLocal) {
+            window.electronAPI.localDB.setLocal('verity_saved_session_token_origin', authOrigin).catch(() => {});
+          }
+        } catch (_) {}
         setIsGoogleLoading(false);
         onSuccess(data.user, data.token, data);
       } else {

@@ -14,7 +14,7 @@ export function getActiveUploadBaseUrl() {
     if (status.isWebHosted) {
       return (status.cloudUrl || getCloudUrl() || DEFAULT_CLOUD_API_URL).replace(/\/$/, '');
     }
-    if (status.userPreferredMode === 'cloud' && status.isOnline && !status.isCloudDown) {
+    if ((status.activeMode === 'cloud' || status.userPreferredMode === 'cloud') && !status.isCloudDown) {
       return (status.cloudUrl || getCloudUrl() || DEFAULT_CLOUD_API_URL).replace(/\/$/, '');
     }
     return (status.localUrl || getLocalApiUrl()).replace(/\/$/, '');
