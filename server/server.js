@@ -2013,13 +2013,12 @@ app.get('/admin/profile', authenticateToken, adminIpWhitelist, requireRole('Admi
     }
 });
 
-const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '228468530633-cc2hnruslpc1sh0o7fd2s7hgjipsibil.apps.googleusercontent.com';
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '224892595118-lbmp59pc67u3e7968qhi78qdluvqt8kr.apps.googleusercontent.com';
 const GOOGLE_CLIENT_SECRET = (process.env.GOOGLE_CLIENT_SECRET || '').trim();
 const ALLOWED_GOOGLE_AUDIENCES = [
     GOOGLE_CLIENT_ID,
     process.env.VITE_GOOGLE_CLIENT_ID,
-    '6514928694-2rd8cu7b67o4f2jqtuv5hk1d51s97lcc.apps.googleusercontent.com',
-    '228468530633-cc2hnruslpc1sh0o7fd2s7hgjipsibil.apps.googleusercontent.com'
+    '224892595118-lbmp59pc67u3e7968qhi78qdluvqt8kr.apps.googleusercontent.com'
 ].filter(Boolean);
 
 const googleClient = new OAuth2Client(
