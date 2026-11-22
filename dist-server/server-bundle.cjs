@@ -141459,6 +141459,7 @@ var require_cloudRelay = __commonJS({
     var activeStudentsRef = null;
     var localIoRef = null;
     var heartbeatTimer = null;
+    var relayedStudentAvatars = /* @__PURE__ */ new Map();
     function initCloudRelay2(activeStudents2, localIo) {
       if (isRenderCloud) {
         console.log("[Cloud Relay] Running directly on Render Cloud. Outbound relay disabled.");
@@ -141478,6 +141479,7 @@ var require_cloudRelay = __commonJS({
         });
         cloudSocket.on("connect", () => {
           isConnected = true;
+          relayedStudentAvatars.clear();
           console.log(`[Cloud Relay] Successfully connected LAN Server to Cloud at ${CLOUD_URL}`);
           syncAllToCloud();
         });
@@ -141507,7 +141509,7 @@ var require_cloudRelay = __commonJS({
             if (isConnected && activeStudentsRef) {
               syncAllToCloud();
             }
-          }, 3e3);
+          }, 8e3);
         }
       } catch (err) {
         console.warn("[Cloud Relay] Error starting cloud relay:", err.message);
@@ -141515,11 +141517,19 @@ var require_cloudRelay = __commonJS({
     }
     function syncAllToCloud() {
       if (!cloudSocket || !isConnected || !activeStudentsRef) return;
-      for (const student of Object.values(activeStudentsRef)) {
+      for (const [key, student] of Object.entries(activeStudentsRef)) {
         if (!student || student.isLive === false || student.status === "Offline" || student.status === "Submitted" || student.submitted) {
+          relayedStudentAvatars.delete(key);
           continue;
         }
-        cloudSocket.emit("student_typing", student);
+        const curAvatar = student.avatar || "";
+        if (relayedStudentAvatars.get(key) === curAvatar) {
+          const { avatar: _omitAvatar, logs: _omitLogs, ...slimStudent } = student;
+          cloudSocket.emit("student_typing", slimStudent);
+        } else {
+          relayedStudentAvatars.set(key, curAvatar);
+          cloudSocket.emit("student_typing", student);
+        }
       }
     }
     function relayStudentActivity2(data) {
@@ -146688,6 +146698,7 @@ function getActiveClassroomsMap() {
   }
   return classroomCounts;
 }
+var lastActiveBroadcastSignature = "";
 function broadcastActiveActivities() {
   const allCounts = {};
   const classroomCounts = getActiveClassroomsMap();
@@ -146697,7 +146708,11 @@ function broadcastActiveActivities() {
     const aId = String(student.assignmentId);
     allCounts[aId] = (allCounts[aId] || 0) + 1;
   }
-  io.emit("active_activities_update", { counts: allCounts, classroomCounts });
+  const payload = { counts: allCounts, classroomCounts };
+  const signature = JSON.stringify(payload);
+  if (signature === lastActiveBroadcastSignature) return;
+  lastActiveBroadcastSignature = signature;
+  io.emit("active_activities_update", payload);
 }
 function removeStudentFromPreviousActivities(studentId, studentName, excludeKey = null) {
   const sIdStr = String(studentId || "");
@@ -147662,7 +147677,7 @@ io.on("connection", (socket) => {
       socket.emit("test_cases_results", { results: [] });
     }
   });
-  const handleStudentActivity = async (data) => {
+  const handleStudentActivity = async (data, isExplicitEnter = false) => {
     if (!data || !data.studentId && !data.name) return;
     if (data.submitted) return;
     const studentId = String(data.studentId || data.name);
@@ -147721,7 +147736,8 @@ io.on("connection", (socket) => {
     const existing = activeStudents[studentKey] || {};
     const existingLogs = Array.isArray(existing.logs) ? existing.logs : [];
     let mergedLogs = existingLogs;
-    if (Array.isArray(data.logs) && data.logs.length > 0) {
+    const hasIncomingLogs = Array.isArray(data.logs) && data.logs.length > 0;
+    if (hasIncomingLogs) {
       const map3 = /* @__PURE__ */ new Map();
       [...existingLogs, ...data.logs].forEach((l3) => {
         if (!l3) return;
@@ -147740,9 +147756,12 @@ io.on("connection", (socket) => {
       });
       mergedLogs = Array.from(map3.values()).sort((a5, b5) => (b5.id || 0) - (a5.id || 0));
     }
+    const resolvedAvatar = data.avatar && String(data.avatar).trim() ? data.avatar : existing.avatar || "";
+    const isNewOrSwitched = !existing.studentId || existing.classroomId !== classroomId || existing.assignmentId !== assignmentId;
     const updated = {
       ...existing,
       ...data,
+      avatar: resolvedAvatar,
       studentId,
       id: studentId,
       name: studentName,
@@ -147763,15 +147782,20 @@ io.on("connection", (socket) => {
     socket.data.assignmentId = assignmentId;
     socket.data.roomName = roomName;
     socket.join(roomName);
-    io.to(roomName).emit("teacher_update_code", updated);
-    if (assignmentId && assignmentId !== "none") {
-      io.to(`assignment:${assignmentId}`).emit("teacher_update_code", updated);
+    let emitPayload = updated;
+    if (!isExplicitEnter && !isNewOrSwitched) {
+      const { avatar: _omitAvatar, logs: _omitLogs, ...slimBase } = updated;
+      emitPayload = hasIncomingLogs ? { ...slimBase, logs: mergedLogs } : slimBase;
     }
-    relayStudentActivity(updated);
+    io.to(roomName).emit("teacher_update_code", emitPayload);
+    if (assignmentId && assignmentId !== "none") {
+      io.to(`assignment:${assignmentId}`).emit("teacher_update_code", emitPayload);
+    }
+    relayStudentActivity(emitPayload);
     broadcastActiveActivities();
   };
-  socket.on("student_enter_activity", handleStudentActivity);
-  socket.on("student_typing", handleStudentActivity);
+  socket.on("student_enter_activity", (data) => handleStudentActivity(data, true));
+  socket.on("student_typing", (data) => handleStudentActivity(data, false));
   socket.on("proctor_alert", async (data) => {
     if (data && (data.studentId || data.id || data.name || data.studentName || socket.data?.studentId)) {
       const studentId = String(data.studentId || data.id || data.name || socket.data?.studentId || "student");

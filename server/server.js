@@ -5283,6 +5283,8 @@ function getActiveClassroomsMap() {
     return classroomCounts;
 }
 
+let lastActiveBroadcastSignature = '';
+
 function broadcastActiveActivities() {
     const allCounts = {};
     const classroomCounts = getActiveClassroomsMap();
@@ -5292,7 +5294,11 @@ function broadcastActiveActivities() {
         const aId = String(student.assignmentId);
         allCounts[aId] = (allCounts[aId] || 0) + 1;
     }
-    io.emit('active_activities_update', { counts: allCounts, classroomCounts });
+    const payload = { counts: allCounts, classroomCounts };
+    const signature = JSON.stringify(payload);
+    if (signature === lastActiveBroadcastSignature) return;
+    lastActiveBroadcastSignature = signature;
+    io.emit('active_activities_update', payload);
 }
 
 function removeStudentFromPreviousActivities(studentId, studentName, excludeKey = null) {
@@ -6334,7 +6340,7 @@ io.on('connection', (socket) => {
         }
     });
 
-    const handleStudentActivity = async (data) => {
+    const handleStudentActivity = async (data, isExplicitEnter = false) => {
         if (!data || (!data.studentId && !data.name)) return;
         if (data.submitted) return;
         const studentId = String(data.studentId || data.name);
@@ -6395,7 +6401,8 @@ io.on('connection', (socket) => {
 
         // Merge any client-supplied logs
         let mergedLogs = existingLogs;
-        if (Array.isArray(data.logs) && data.logs.length > 0) {
+        const hasIncomingLogs = Array.isArray(data.logs) && data.logs.length > 0;
+        if (hasIncomingLogs) {
             const map = new Map();
             [...existingLogs, ...data.logs].forEach(l => {
                 if (!l) return;
@@ -6415,9 +6422,13 @@ io.on('connection', (socket) => {
             mergedLogs = Array.from(map.values()).sort((a, b) => (b.id || 0) - (a.id || 0));
         }
 
+        const resolvedAvatar = (data.avatar && String(data.avatar).trim()) ? data.avatar : (existing.avatar || '');
+        const isNewOrSwitched = !existing.studentId || existing.classroomId !== classroomId || existing.assignmentId !== assignmentId;
+
         const updated = {
             ...existing,
             ...data,
+            avatar: resolvedAvatar,
             studentId,
             id: studentId,
             name: studentName,
@@ -6441,21 +6452,28 @@ io.on('connection', (socket) => {
 
         socket.join(roomName);
 
+        // Omit static avatar & unchanged logs on high-frequency typing packets to save Render egress
+        let emitPayload = updated;
+        if (!isExplicitEnter && !isNewOrSwitched) {
+            const { avatar: _omitAvatar, logs: _omitLogs, ...slimBase } = updated;
+            emitPayload = hasIncomingLogs ? { ...slimBase, logs: mergedLogs } : slimBase;
+        }
+
         // Broadcast to monitoring teachers in this specific activity room and assignment room
-        io.to(roomName).emit('teacher_update_code', updated);
+        io.to(roomName).emit('teacher_update_code', emitPayload);
         if (assignmentId && assignmentId !== 'none') {
-            io.to(`assignment:${assignmentId}`).emit('teacher_update_code', updated);
+            io.to(`assignment:${assignmentId}`).emit('teacher_update_code', emitPayload);
         }
 
         // Relay to Render Cloud so teachers on Vercel see real-time updates!
-        relayStudentActivity(updated);
+        relayStudentActivity(emitPayload);
 
-        // Real-time update activity indicator dots for instructors
+        // Real-time update activity indicator dots only when counts actually change
         broadcastActiveActivities();
     };
 
-    socket.on('student_enter_activity', handleStudentActivity);
-    socket.on('student_typing', handleStudentActivity);
+    socket.on('student_enter_activity', (data) => handleStudentActivity(data, true));
+    socket.on('student_typing', (data) => handleStudentActivity(data, false));
 
     socket.on('proctor_alert', async (data) => {
         if (data && (data.studentId || data.id || data.name || data.studentName || socket.data?.studentId)) {

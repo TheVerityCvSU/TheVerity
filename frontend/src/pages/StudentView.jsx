@@ -300,7 +300,7 @@ export default function StudentView({
   const effectiveAssignment = currentAssignment || assignment;
 
   // Broadcast live presence on mount, reconnect, and periodic heartbeat
-  const emitPresence = useCallback(() => {
+  const emitPresence = useCallback((isInitialOrReconnect = false) => {
     if (isSandbox || submissionHook.submitted) return;
     const resolvedClassroomId =
       (classroom?.id != null ? String(classroom.id) : null) ||
@@ -311,22 +311,28 @@ export default function StudentView({
     const resolvedAssignmentId = effectiveAssignment?.id || assignmentId;
     if (!resolvedAssignmentId || resolvedAssignmentId === 'unassigned') return;
 
-    const payload = {
+    const basePayload = {
       studentId: studentActualId,
       id: studentActualId,
       name: studentDisplayName || safeUsername,
       studentName: studentDisplayName || safeUsername,
       email: currentUser?.email || '',
-      avatar: currentUser?.avatar || '',
       code: filesHook.codeRef?.current || filesHook.code || '',
       classroomId: resolvedClassroomId,
       classCode: classroom?.code || classroom?.section || effectiveAssignment?.classCode || '',
       assignmentId: resolvedAssignmentId,
-      logs: kioskHook.proctorLogs || [],
       timestamp: Date.now()
     };
-    compilerHook.emitToSockets('student_enter_activity', payload);
-    compilerHook.emitToSockets('student_typing', payload);
+
+    if (isInitialOrReconnect) {
+      compilerHook.emitToSockets('student_enter_activity', {
+        ...basePayload,
+        avatar: currentUser?.avatar || '',
+        logs: kioskHook.proctorLogs || []
+      });
+    } else {
+      compilerHook.emitToSockets('student_typing', basePayload);
+    }
   }, [
     isSandbox,
     submissionHook.submitted,
@@ -352,19 +358,20 @@ export default function StudentView({
 
   useEffect(() => {
     if (isSandbox || submissionHook.submitted) return;
-    emitPresence();
+    emitPresence(true);
 
+    const handleConnectPresence = () => emitPresence(true);
     const locSock = compilerHook.localSocket;
     const secSock = compilerHook.secondarySocket;
-    if (socket) socket.on('connect', emitPresence);
-    if (locSock) locSock.on('connect', emitPresence);
-    if (secSock) secSock.on('connect', emitPresence);
+    if (socket) socket.on('connect', handleConnectPresence);
+    if (locSock) locSock.on('connect', handleConnectPresence);
+    if (secSock) secSock.on('connect', handleConnectPresence);
 
-    const presenceInterval = setInterval(emitPresence, 5000);
+    const presenceInterval = setInterval(() => emitPresence(false), 10000);
     return () => {
-      if (socket) socket.off('connect', emitPresence);
-      if (locSock) locSock.off('connect', emitPresence);
-      if (secSock) secSock.off('connect', emitPresence);
+      if (socket) socket.off('connect', handleConnectPresence);
+      if (locSock) locSock.off('connect', handleConnectPresence);
+      if (secSock) secSock.off('connect', handleConnectPresence);
       clearInterval(presenceInterval);
     };
   }, [isSandbox, submissionHook.submitted, emitPresence, socket, compilerHook.localSocket, compilerHook.secondarySocket]);

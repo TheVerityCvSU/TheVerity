@@ -20,6 +20,7 @@ let isConnected = false;
 let activeStudentsRef = null;
 let localIoRef = null;
 let heartbeatTimer = null;
+const relayedStudentAvatars = new Map();
 
 function initCloudRelay(activeStudents, localIo) {
     if (isRenderCloud) {
@@ -43,6 +44,7 @@ function initCloudRelay(activeStudents, localIo) {
 
         cloudSocket.on('connect', () => {
             isConnected = true;
+            relayedStudentAvatars.clear();
             console.log(`[Cloud Relay] Successfully connected LAN Server to Cloud at ${CLOUD_URL}`);
             syncAllToCloud();
         });
@@ -75,13 +77,13 @@ function initCloudRelay(activeStudents, localIo) {
             }
         });
 
-        // Start 3-second heartbeat to ensure Vercel always has live active students
+        // Start 8-second heartbeat to ensure Vercel always has live active students
         if (!heartbeatTimer) {
             heartbeatTimer = setInterval(() => {
                 if (isConnected && activeStudentsRef) {
                     syncAllToCloud();
                 }
-            }, 3000);
+            }, 8000);
         }
 
     } catch (err) {
@@ -91,11 +93,19 @@ function initCloudRelay(activeStudents, localIo) {
 
 function syncAllToCloud() {
     if (!cloudSocket || !isConnected || !activeStudentsRef) return;
-    for (const student of Object.values(activeStudentsRef)) {
+    for (const [key, student] of Object.entries(activeStudentsRef)) {
         if (!student || student.isLive === false || student.status === 'Offline' || student.status === 'Submitted' || student.submitted) {
+            relayedStudentAvatars.delete(key);
             continue;
         }
-        cloudSocket.emit('student_typing', student);
+        const curAvatar = student.avatar || '';
+        if (relayedStudentAvatars.get(key) === curAvatar) {
+            const { avatar: _omitAvatar, logs: _omitLogs, ...slimStudent } = student;
+            cloudSocket.emit('student_typing', slimStudent);
+        } else {
+            relayedStudentAvatars.set(key, curAvatar);
+            cloudSocket.emit('student_typing', student);
+        }
     }
 }
 

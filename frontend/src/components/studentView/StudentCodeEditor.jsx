@@ -31,8 +31,8 @@ export default function StudentCodeEditor({
   classroom,
   classroomId,
   assignment,
-  proctorLogsRef,
-  proctorLogs,
+  proctorLogsRef: _proctorLogsRef,
+  proctorLogs: _proctorLogs,
   handleExtraFileCodeChange,
   copiedInternallyRef,
   addProctorLog,
@@ -44,6 +44,38 @@ export default function StudentCodeEditor({
   useEffect(() => {
     strictClipboardRef.current = strictClipboardBlocking;
   }, [strictClipboardBlocking]);
+
+  const TYPING_THROTTLE_MS = 500;
+  const typingTimerRef = useRef(null);
+  const lastTypingEmitRef = useRef(0);
+  const latestEmitDataRef = useRef(null);
+
+  const flushTypingEmit = () => {
+    if (typingTimerRef.current) {
+      clearTimeout(typingTimerRef.current);
+      typingTimerRef.current = null;
+    }
+    const pending = latestEmitDataRef.current;
+    latestEmitDataRef.current = null;
+    if (pending && typeof pending.emit === 'function') {
+      lastTypingEmitRef.current = Date.now();
+      pending.emit('student_typing', pending.payload);
+    }
+  };
+
+  useEffect(() => {
+    return () => {
+      if (typingTimerRef.current) {
+        clearTimeout(typingTimerRef.current);
+        typingTimerRef.current = null;
+      }
+      const pending = latestEmitDataRef.current;
+      latestEmitDataRef.current = null;
+      if (pending && typeof pending.emit === 'function') {
+        pending.emit('student_typing', pending.payload);
+      }
+    };
+  }, []);
 
   const handleEditorDidMount = (editor, monaco) => {
     editorRef.current = editor;
@@ -178,18 +210,23 @@ export default function StudentCodeEditor({
       }
 
       if (emitToSockets) {
-        emitToSockets('student_typing', {
+        const payload = {
           studentId: studentActualId,
           id: studentActualId,
           name: studentDisplayName,
           studentName: studentDisplayName,
           email: currentUser?.email || '',
-          avatar: currentUser?.avatar || '',
           code: newCode,
           classroomId: (classroom?.id != null ? String(classroom.id) : null) || (classroomId !== 'none' ? classroomId : null) || 'none',
-          assignmentId: assignment?.id || assignmentId,
-          logs: proctorLogsRef?.current || proctorLogs || []
-        });
+          assignmentId: assignment?.id || assignmentId
+        };
+        latestEmitDataRef.current = { emit: emitToSockets, payload };
+        const elapsed = Date.now() - lastTypingEmitRef.current;
+        if (elapsed >= TYPING_THROTTLE_MS) {
+          flushTypingEmit();
+        } else if (!typingTimerRef.current) {
+          typingTimerRef.current = setTimeout(flushTypingEmit, TYPING_THROTTLE_MS - elapsed);
+        }
       }
     } else if (handleExtraFileCodeChange) {
       handleExtraFileCodeChange(activeFileId, newCode);
