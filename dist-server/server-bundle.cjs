@@ -89467,11 +89467,14 @@ var require_emailService = __commonJS({
     var fs3 = require("fs");
     try {
       const envCandidates2 = [
+        process.env.ENV_FILE_PATH,
+        process.resourcesPath ? path2.join(process.resourcesPath, ".env") : null,
         path2.resolve(__dirname, "../.env"),
         path2.resolve(__dirname, "../../.env"),
+        path2.resolve(__dirname, "../server/.env"),
         path2.resolve(process.cwd(), "server/.env"),
         path2.resolve(process.cwd(), ".env")
-      ];
+      ].filter(Boolean);
       for (const envPath of envCandidates2) {
         if (fs3.existsSync(envPath)) {
           require_dist().config({ path: envPath });
@@ -89482,16 +89485,27 @@ var require_emailService = __commonJS({
     var DEFAULT_SMTP_USER = "";
     var DEFAULT_SMTP_PASS = "";
     var DEFAULT_SMTP_SERVICE = "gmail";
+    function stripQuotes(value) {
+      return String(value || "").trim().replace(/^["']|["']$/g, "").trim();
+    }
+    function extractEmailAddress(raw) {
+      const clean = stripQuotes(raw);
+      if (!clean) return "";
+      const angleMatch = clean.match(/<([^<>\s]+@[^<>\s]+)>/);
+      return (angleMatch ? angleMatch[1] : clean).trim();
+    }
     function escapeHtml(str) {
       if (!str) return "";
       return String(str).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
     }
     var cachedTransporter = null;
     function createTransporter(useFallbackPort = false) {
-      const host = process.env.SMTP_HOST;
-      const user = (process.env.SMTP_USER || process.env.EMAIL_USER || DEFAULT_SMTP_USER).trim();
-      const pass2 = (process.env.SMTP_PASS || process.env.EMAIL_PASS || DEFAULT_SMTP_PASS).trim().replace(/\s+/g, "");
-      const service = (process.env.SMTP_SERVICE || process.env.EMAIL_SERVICE || DEFAULT_SMTP_SERVICE).trim().toLowerCase();
+      const host = stripQuotes(process.env.SMTP_HOST);
+      const user = extractEmailAddress(process.env.SMTP_USER || process.env.EMAIL_USER || DEFAULT_SMTP_USER);
+      const pass2 = stripQuotes(process.env.SMTP_PASS || process.env.EMAIL_PASS || DEFAULT_SMTP_PASS).replace(/\s+/g, "");
+      const service = stripQuotes(process.env.SMTP_SERVICE || process.env.EMAIL_SERVICE || DEFAULT_SMTP_SERVICE).toLowerCase();
+      const customPort = Number(process.env.SMTP_PORT || 0);
+      const hasCustomPort = Number.isInteger(customPort) && customPort > 0;
       if (!user || !pass2) {
         return null;
       }
@@ -89508,11 +89522,13 @@ var require_emailService = __commonJS({
           auth: { user, pass: pass2 }
         });
       }
+      const port = hasCustomPort ? customPort : 587;
+      const secure = process.env.SMTP_SECURE === "true" || port === 465;
       return nodemailer.createTransport({
         host: host || "smtp.gmail.com",
-        port: 587,
-        secure: false,
-        requireTLS: true,
+        port,
+        secure,
+        requireTLS: !secure,
         family: 4,
         connectionTimeout: 4e3,
         greetingTimeout: 4e3,
@@ -89530,64 +89546,100 @@ var require_emailService = __commonJS({
       }
       return cachedTransporter;
     }
+    async function parseRestError(res, providerName) {
+      let rawText = "";
+      try {
+        rawText = await res.text();
+      } catch (_) {
+      }
+      try {
+        const parsed = rawText ? JSON.parse(rawText) : null;
+        const detail = parsed?.message || parsed?.error?.message || parsed?.error || parsed?.code || rawText;
+        return `${providerName} API HTTP ${res.status}: ${detail || "request rejected"}`;
+      } catch (_) {
+        return `${providerName} API HTTP ${res.status}: ${(rawText || "request rejected").slice(0, 180)}`;
+      }
+    }
     async function sendViaRestApi({ email, name, otp, subject, html, text, from }) {
-      const resendKey = process.env.RESEND_API_KEY;
-      if (resendKey && resendKey.trim()) {
+      let attempted = false;
+      let lastProvider = null;
+      let lastError = null;
+      const resendKey = stripQuotes(process.env.RESEND_API_KEY);
+      if (resendKey) {
+        attempted = true;
+        lastProvider = "resend";
         try {
           const res = await fetch("https://api.resend.com/emails", {
             method: "POST",
             headers: {
-              "Authorization": `Bearer ${resendKey.trim()}`,
+              "Authorization": `Bearer ${resendKey}`,
               "Content-Type": "application/json"
             },
             body: JSON.stringify({
-              from: process.env.RESEND_FROM || "The Verity Team <onboarding@resend.dev>",
+              from: stripQuotes(process.env.RESEND_FROM) || "The Verity Team <onboarding@resend.dev>",
               to: [email],
               subject,
               html,
               text
-            })
+            }),
+            signal: AbortSignal.timeout(8e3)
           });
-          const data = await res.json();
           if (res.ok) {
-            console.log(`[EMAIL SERVICE] Email sent via Resend REST API to ${email} (ID: ${data.id})`);
-            return { success: true, messageId: data.id, otp };
-          } else {
-            console.warn(`[EMAIL SERVICE] Resend API error:`, data);
+            const data = await res.json().catch(() => ({}));
+            console.log(`[EMAIL SERVICE] Email sent via Resend REST API to ${email} (ID: ${data.id || "ok"})`);
+            return { attempted: true, success: true, provider: "resend", messageId: data.id, otp };
           }
+          lastError = await parseRestError(res, "Resend");
+          console.warn(`[EMAIL SERVICE] ${lastError}`);
         } catch (e6) {
-          console.warn(`[EMAIL SERVICE] Resend fetch failed:`, e6.message);
+          lastError = `Resend request failed: ${e6.message}`;
+          console.warn(`[EMAIL SERVICE] ${lastError}`);
         }
       }
-      const brevoKey = process.env.BREVO_API_KEY;
-      if (brevoKey && brevoKey.trim()) {
-        try {
-          const senderEmail = (process.env.BREVO_SENDER_EMAIL || process.env.EMAIL_USER || process.env.SMTP_USER || DEFAULT_SMTP_USER).trim();
-          const res = await fetch("https://api.brevo.com/v3/smtp/email", {
-            method: "POST",
-            headers: {
-              "api-key": brevoKey.trim(),
-              "Content-Type": "application/json"
-            },
-            body: JSON.stringify({
-              sender: { name: "The Verity Team", email: senderEmail },
-              to: [{ email, name: name || "User" }],
-              subject,
-              htmlContent: html
-            })
-          });
-          const data = await res.json();
-          if (res.ok) {
-            console.log(`[EMAIL SERVICE] Email sent via Brevo REST API to ${email} (ID: ${data.messageId})`);
-            return { success: true, messageId: data.messageId, otp };
-          } else {
-            console.warn(`[EMAIL SERVICE] Brevo API error:`, data);
+      const brevoKey = stripQuotes(process.env.BREVO_API_KEY);
+      if (brevoKey) {
+        attempted = true;
+        lastProvider = "brevo";
+        const senderEmail = extractEmailAddress(
+          process.env.BREVO_SENDER_EMAIL || process.env.EMAIL_FROM || process.env.SMTP_FROM || process.env.EMAIL_USER || process.env.SMTP_USER || DEFAULT_SMTP_USER
+        );
+        if (brevoKey.startsWith("xsmtpsib-")) {
+          lastError = "BREVO_API_KEY is an SMTP relay key (xsmtpsib-...); Brevo REST API requires a v3 API key (xkeysib-...).";
+          console.warn(`[EMAIL SERVICE] ${lastError}`);
+        } else if (!senderEmail) {
+          lastError = "Brevo sender email is missing (set BREVO_SENDER_EMAIL or EMAIL_USER to a verified Brevo sender).";
+          console.warn(`[EMAIL SERVICE] ${lastError}`);
+        } else {
+          try {
+            const res = await fetch("https://api.brevo.com/v3/smtp/email", {
+              method: "POST",
+              headers: {
+                "api-key": brevoKey,
+                "Content-Type": "application/json"
+              },
+              body: JSON.stringify({
+                sender: { name: "The Verity Team", email: senderEmail },
+                to: [{ email, name: name || "User" }],
+                subject,
+                htmlContent: html,
+                textContent: text
+              }),
+              signal: AbortSignal.timeout(8e3)
+            });
+            if (res.ok) {
+              const data = await res.json().catch(() => ({}));
+              console.log(`[EMAIL SERVICE] Email sent via Brevo REST API to ${email} (ID: ${data.messageId || "ok"})`);
+              return { attempted: true, success: true, provider: "brevo", messageId: data.messageId, otp };
+            }
+            lastError = await parseRestError(res, "Brevo");
+            console.warn(`[EMAIL SERVICE] ${lastError}`);
+          } catch (e6) {
+            lastError = `Brevo request failed: ${e6.message}`;
+            console.warn(`[EMAIL SERVICE] ${lastError}`);
           }
-        } catch (e6) {
-          console.warn(`[EMAIL SERVICE] Brevo fetch failed:`, e6.message);
         }
       }
-      return null;
+      return attempted ? { attempted: true, success: false, provider: lastProvider, error: lastError || "REST email delivery failed" } : null;
     }
     function generateOtpEmailHtml({ name, otp }) {
       const safeName = escapeHtml(name || "there");
@@ -89696,21 +89748,27 @@ You're receiving this email because a verification code was requested to create 
       console.log(`CODE: ${otp}`);
       console.log(`Expires in: 15 minutes`);
       console.log("========================================\n");
-      const user = (process.env.SMTP_USER || process.env.EMAIL_USER || DEFAULT_SMTP_USER).trim();
-      const from = process.env.SMTP_FROM || process.env.EMAIL_FROM || (user ? `"The Verity Team" <${user}>` : '"The Verity Team" <noreply@theverity.local>');
+      const user = extractEmailAddress(process.env.SMTP_USER || process.env.EMAIL_USER || DEFAULT_SMTP_USER);
+      const from = stripQuotes(process.env.SMTP_FROM || process.env.EMAIL_FROM) || (user ? `"The Verity Team" <${user}>` : '"The Verity Team" <noreply@theverity.local>');
       const restResult = await sendViaRestApi({ email, name, otp, subject, html, text, from });
       if (restResult && restResult.success) {
         return restResult;
       }
-      const isRenderFree = Boolean(process.env.RENDER && !process.env.RENDER_SMTP_ENABLED && !process.env.RESEND_API_KEY && !process.env.BREVO_API_KEY);
-      if (isRenderFree) {
-        console.warn(`[EMAIL SERVICE] Running on Render Free Tier container. Outbound raw SMTP ports (25, 465, 587) are restricted by host policy. Code logged above.`);
-        return { success: false, error: "Raw SMTP ports restricted by cloud container (Render Free Tier)", simulated: false, otp };
+      const isRenderWithoutSmtp = Boolean(process.env.RENDER && process.env.RENDER_SMTP_ENABLED !== "true");
+      if (isRenderWithoutSmtp) {
+        const reason = restResult?.error || "Email REST provider not configured on Render (set BREVO_API_KEY + verified BREVO_SENDER_EMAIL, or RESEND_API_KEY).";
+        console.warn(`[EMAIL SERVICE] Render delivery stopped without raw SMTP retry: ${reason}`);
+        return { success: false, provider: restResult?.provider || "render", error: reason, simulated: false, otp };
       }
       const primaryTransporter = getTransporter();
       if (!primaryTransporter) {
         console.log(`[EMAIL SERVICE] SMTP not configured. OTP logged above for development.`);
-        return { success: false, simulated: true, otp, error: "SMTP not configured" };
+        return {
+          success: false,
+          simulated: !restResult?.attempted,
+          otp,
+          error: restResult?.error || "SMTP not configured"
+        };
       }
       try {
         const info = await primaryTransporter.sendMail({
@@ -89721,7 +89779,7 @@ You're receiving this email because a verification code was requested to create 
           html
         });
         console.log(`[EMAIL SERVICE] Email sent successfully to ${email}. MessageId: ${info.messageId}`);
-        return { success: true, messageId: info.messageId, otp };
+        return { success: true, provider: "smtp", messageId: info.messageId, otp };
       } catch (error2) {
         console.warn(`[EMAIL SERVICE] Primary send to ${email} failed: ${error2.message}. Retrying via fallback port 465...`);
         try {
@@ -89737,10 +89795,11 @@ You're receiving this email because a verification code was requested to create 
             html
           });
           console.log(`[EMAIL SERVICE] Email sent successfully via fallback port 465 to ${email}. MessageId: ${fallbackInfo.messageId}`);
-          return { success: true, messageId: fallbackInfo.messageId, otp };
+          return { success: true, provider: "smtp", messageId: fallbackInfo.messageId, otp };
         } catch (fallbackError) {
           console.error(`[EMAIL SERVICE] All email attempts failed for ${email}:`, fallbackError.message);
-          return { success: false, error: fallbackError.message, simulated: false, otp };
+          const combinedError = restResult?.error ? `${restResult.error}; SMTP fallback failed: ${fallbackError.message}` : fallbackError.message;
+          return { success: false, error: combinedError, simulated: false, otp };
         }
       }
     }
@@ -143128,6 +143187,23 @@ app.get("/kiosk-settings", async (req, res) => {
   const settings = await getKioskSettings();
   res.status(200).json({ settings });
 });
+var EMAIL_FORMAT_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+var CVSU_EMAIL_DOMAIN = "@cvsu.edu.ph";
+var CVSU_EMAIL_ERROR_MSG = "Access restricted: Only official @cvsu.edu.ph email accounts can register.";
+function isValidCvsuEmail(email) {
+  const clean = String(email || "").trim().toLowerCase();
+  return EMAIL_FORMAT_REGEX.test(clean) && clean.endsWith(CVSU_EMAIL_DOMAIN);
+}
+function sendEmailDeliveryError(res, cleanEmail, emailResult) {
+  const detail = emailResult?.error || "Email provider delivery failed.";
+  console.warn(`[AUTH] Email delivery failed for ${cleanEmail}: ${detail}`);
+  const userMessage = emailResult?.simulated ? "Email verification is not configured on this local server. Please connect to the online server or configure SMTP/Brevo." : `Could not send verification code to ${cleanEmail}. ${detail}`;
+  return res.status(502).json({
+    message: userMessage,
+    emailDeliveryFailed: true,
+    error: detail
+  });
+}
 app.post("/auth/send-otp", async (req, res) => {
   try {
     const maintenance = await getMaintenanceStatus();
@@ -143140,9 +143216,11 @@ app.post("/auth/send-otp", async (req, res) => {
     }
     const cleanEmail = (email || "").trim().toLowerCase();
     const trimmedName = (name || "").trim();
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(cleanEmail)) {
+    if (!EMAIL_FORMAT_REGEX.test(cleanEmail)) {
       return res.status(400).json({ message: "Please enter a valid email address" });
+    }
+    if (!isValidCvsuEmail(cleanEmail)) {
+      return res.status(400).json({ message: CVSU_EMAIL_ERROR_MSG });
     }
     const passwordError = await validatePassword(password);
     if (passwordError) {
@@ -143174,13 +143252,10 @@ app.post("/auth/send-otp", async (req, res) => {
       name: trimmedName,
       otp: otpCode
     });
-    if (!emailResult.success) {
-      console.warn(`[AUTH] Email delivery notice for ${cleanEmail}: ${emailResult.error || "delivery issue"}`);
-      return res.status(200).json({
-        message: `A 6-digit verification code has been sent to ${cleanEmail}. Please check your email inbox (and spam folder).`,
-        email: cleanEmail,
-        expiresInMinutes: 15
+    if (!emailResult || !emailResult.success) {
+      await db.run("DELETE FROM otp_verifications WHERE LOWER(email) = ?", cleanEmail).catch(() => {
       });
+      return sendEmailDeliveryError(res, cleanEmail, emailResult);
     }
     res.status(200).json({
       message: `A 6-digit verification code has been sent to ${cleanEmail}.`,
@@ -143204,6 +143279,11 @@ app.post("/auth/verify-otp", async (req, res) => {
     }
     const cleanEmail = (email || "").trim().toLowerCase();
     const cleanOtp = (otp || "").trim();
+    if (!isValidCvsuEmail(cleanEmail)) {
+      await db.run("DELETE FROM otp_verifications WHERE LOWER(email) = ?", cleanEmail).catch(() => {
+      });
+      return res.status(400).json({ message: CVSU_EMAIL_ERROR_MSG });
+    }
     const record = await db.get(
       "SELECT * FROM otp_verifications WHERE LOWER(email) = ? ORDER BY id DESC LIMIT 1",
       cleanEmail
@@ -143311,6 +143391,9 @@ app.post("/auth/resend-otp", async (req, res) => {
       return res.status(400).json({ message: "Email is required" });
     }
     const cleanEmail = email.trim().toLowerCase();
+    if (!isValidCvsuEmail(cleanEmail)) {
+      return res.status(400).json({ message: CVSU_EMAIL_ERROR_MSG });
+    }
     const record = await db.get(
       "SELECT * FROM otp_verifications WHERE LOWER(email) = ? ORDER BY id DESC LIMIT 1",
       cleanEmail
@@ -143337,11 +143420,8 @@ app.post("/auth/resend-otp", async (req, res) => {
       name: userData && userData.name || "User",
       otp: otpCode
     });
-    if (!emailResult.success) {
-      console.warn(`[AUTH] Email resend notice for ${cleanEmail}: ${emailResult.error || "resend issue"}`);
-      return res.status(200).json({
-        message: `A new 6-digit verification code has been sent to ${cleanEmail}. Please check your email inbox (and spam folder).`
-      });
+    if (!emailResult || !emailResult.success) {
+      return sendEmailDeliveryError(res, cleanEmail, emailResult);
     }
     res.status(200).json({ message: `A new 6-digit verification code has been sent to ${cleanEmail}.` });
   } catch (e6) {
@@ -143350,37 +143430,6 @@ app.post("/auth/resend-otp", async (req, res) => {
 });
 app.post("/register", async (req, res) => {
   try {
-    const maintenance = await getMaintenanceStatus();
-    if (maintenance.enabled) {
-      const authHeader2 = req.headers["authorization"];
-      const token2 = authHeader2 && authHeader2.split(" ")[1];
-      let isAdmin = false;
-      if (token2) {
-        try {
-          const d5 = jwt.verify(token2, JWT_SECRET);
-          if (d5 && d5.role === "Admin") isAdmin = true;
-        } catch (_) {
-        }
-      }
-      if (!isAdmin) {
-        return res.status(503).json({ message: maintenance.message, maintenance: true });
-      }
-    }
-    const { name, email, password, role } = req.body;
-    if (!email || !password || !name) {
-      return res.status(400).json({ message: "Name, email, and password are required" });
-    }
-    const cleanEmail = (email || "").trim().toLowerCase();
-    const cleanName = (name || "").trim().toLowerCase();
-    const passwordError = await validatePassword(password);
-    if (passwordError) {
-      return res.status(400).json({ message: passwordError });
-    }
-    const existingUserEmail = await db.get("SELECT id FROM users WHERE LOWER(email) = ?", cleanEmail);
-    const existingAdminEmail = await db.get("SELECT id FROM admin_users WHERE LOWER(email) = ?", cleanEmail);
-    if (existingUserEmail || existingAdminEmail) {
-      return res.status(400).json({ message: "Email is already in use" });
-    }
     const authHeader = req.headers["authorization"];
     const token = authHeader && authHeader.split(" ")[1];
     let requesterIsAdmin = false;
@@ -143392,6 +143441,30 @@ app.post("/register", async (req, res) => {
         }
       } catch (_) {
       }
+    }
+    const maintenance = await getMaintenanceStatus();
+    if (maintenance.enabled && !requesterIsAdmin) {
+      return res.status(503).json({ message: maintenance.message, maintenance: true });
+    }
+    const { name, email, password, role } = req.body;
+    if (!email || !password || !name) {
+      return res.status(400).json({ message: "Name, email, and password are required" });
+    }
+    const cleanEmail = (email || "").trim().toLowerCase();
+    if (!EMAIL_FORMAT_REGEX.test(cleanEmail)) {
+      return res.status(400).json({ message: "Please enter a valid email address" });
+    }
+    if (!requesterIsAdmin && !isValidCvsuEmail(cleanEmail)) {
+      return res.status(400).json({ message: CVSU_EMAIL_ERROR_MSG });
+    }
+    const passwordError = await validatePassword(password);
+    if (passwordError) {
+      return res.status(400).json({ message: passwordError });
+    }
+    const existingUserEmail = await db.get("SELECT id FROM users WHERE LOWER(email) = ?", cleanEmail);
+    const existingAdminEmail = await db.get("SELECT id FROM admin_users WHERE LOWER(email) = ?", cleanEmail);
+    if (existingUserEmail || existingAdminEmail) {
+      return res.status(400).json({ message: "Email is already in use" });
     }
     let userRole = "Student";
     let status = "Active";
@@ -143419,12 +143492,12 @@ app.post("/register", async (req, res) => {
     const info = await db.run(
       "INSERT INTO users (name, email, password, role, status) VALUES (?, ?, ?, ?, ?)",
       name,
-      email,
+      cleanEmail,
       password,
       userRole,
       status
     );
-    const user = { id: info.lastInsertRowid, name, email, password, role: userRole, status };
+    const user = { id: info.lastInsertRowid, name, email: cleanEmail, password, role: userRole, status };
     const userToken = jwt.sign({ id: user.id, email: user.email, role: user.role, name: user.name }, JWT_SECRET);
     try {
       io.emit("users_updated");
@@ -143441,7 +143514,7 @@ app.post("/register", async (req, res) => {
           name,
           "Teacher Registration",
           status === "Pending" ? "Warning" : "Normal",
-          status === "Pending" ? `New instructor account registered and pending admin approval (${email})` : `New instructor account registered (${email})`
+          status === "Pending" ? `New instructor account registered and pending admin approval (${cleanEmail})` : `New instructor account registered (${cleanEmail})`
         ).catch(() => {
         });
       } else if (userRole === "Student") {
@@ -143451,7 +143524,7 @@ app.post("/register", async (req, res) => {
           name,
           "User Registration",
           "Normal",
-          `New student account registered (${email})`
+          `New student account registered (${cleanEmail})`
         ).catch(() => {
         });
       }
@@ -144297,13 +144370,10 @@ app.post("/users/send-email-change-otp", authenticateToken, async (req, res) => 
       name: req.user.name || "User",
       otp: otpCode
     });
-    if (!emailResult.success) {
-      console.warn(`[AUTH] Email change OTP delivery notice for ${cleanEmail}: ${emailResult.error || "delivery issue"}`);
-      return res.status(200).json({
-        message: `A 6-digit verification code has been sent to ${cleanEmail}. Please check your inbox and spam folder.`,
-        email: cleanEmail,
-        expiresInMinutes: 15
+    if (!emailResult || !emailResult.success) {
+      await db.run("DELETE FROM otp_verifications WHERE LOWER(email) = ?", cleanEmail).catch(() => {
       });
+      return sendEmailDeliveryError(res, cleanEmail, emailResult);
     }
     res.status(200).json({
       message: `Verification code sent to ${cleanEmail}`,

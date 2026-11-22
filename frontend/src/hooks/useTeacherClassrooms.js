@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { io } from 'socket.io-client';
 import { apiFetch, getLocalApiUrl, getCloudUrl, getConnectionStatus } from '../data/api';
 import {

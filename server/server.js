@@ -1474,6 +1474,28 @@ app.get('/kiosk-settings', async (req, res) => {
 
 // --- AUTHENTICATION ROUTES & OTP VERIFICATION ---
 
+const EMAIL_FORMAT_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const CVSU_EMAIL_DOMAIN = '@cvsu.edu.ph';
+const CVSU_EMAIL_ERROR_MSG = 'Access restricted: Only official @cvsu.edu.ph email accounts can register.';
+
+function isValidCvsuEmail(email) {
+    const clean = String(email || '').trim().toLowerCase();
+    return EMAIL_FORMAT_REGEX.test(clean) && clean.endsWith(CVSU_EMAIL_DOMAIN);
+}
+
+function sendEmailDeliveryError(res, cleanEmail, emailResult) {
+    const detail = emailResult?.error || 'Email provider delivery failed.';
+    console.warn(`[AUTH] Email delivery failed for ${cleanEmail}: ${detail}`);
+    const userMessage = emailResult?.simulated
+        ? 'Email verification is not configured on this local server. Please connect to the online server or configure SMTP/Brevo.'
+        : `Could not send verification code to ${cleanEmail}. ${detail}`;
+    return res.status(502).json({
+        message: userMessage,
+        emailDeliveryFailed: true,
+        error: detail
+    });
+}
+
 app.post('/auth/send-otp', async (req, res) => {
     try {
         const maintenance = await getMaintenanceStatus();
@@ -1489,10 +1511,12 @@ app.post('/auth/send-otp', async (req, res) => {
         const cleanEmail = (email || '').trim().toLowerCase();
         const trimmedName = (name || '').trim();
 
-        // Email format check
-        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-        if (!emailRegex.test(cleanEmail)) {
+        // Email format and @cvsu.edu.ph institutional domain enforcement
+        if (!EMAIL_FORMAT_REGEX.test(cleanEmail)) {
             return res.status(400).json({ message: 'Please enter a valid email address' });
+        }
+        if (!isValidCvsuEmail(cleanEmail)) {
+            return res.status(400).json({ message: CVSU_EMAIL_ERROR_MSG });
         }
 
         const passwordError = await validatePassword(password);
@@ -1534,13 +1558,10 @@ app.post('/auth/send-otp', async (req, res) => {
             otp: otpCode
         });
 
-        if (!emailResult.success) {
-            console.warn(`[AUTH] Email delivery notice for ${cleanEmail}: ${emailResult.error || 'delivery issue'}`);
-            return res.status(200).json({
-                message: `A 6-digit verification code has been sent to ${cleanEmail}. Please check your email inbox (and spam folder).`,
-                email: cleanEmail,
-                expiresInMinutes: 15
-            });
+        if (!emailResult || !emailResult.success) {
+            // Do not leave undelivered OTP rows behind when no code was sent
+            await db.run('DELETE FROM otp_verifications WHERE LOWER(email) = ?', cleanEmail).catch(() => { });
+            return sendEmailDeliveryError(res, cleanEmail, emailResult);
         }
 
         res.status(200).json({
@@ -1568,6 +1589,11 @@ app.post('/auth/verify-otp', async (req, res) => {
 
         const cleanEmail = (email || '').trim().toLowerCase();
         const cleanOtp = (otp || '').trim();
+
+        if (!isValidCvsuEmail(cleanEmail)) {
+            await db.run('DELETE FROM otp_verifications WHERE LOWER(email) = ?', cleanEmail).catch(() => { });
+            return res.status(400).json({ message: CVSU_EMAIL_ERROR_MSG });
+        }
 
         // 1. Fetch latest OTP verification record for this email
         const record = await db.get(
@@ -1683,6 +1709,9 @@ app.post('/auth/resend-otp', async (req, res) => {
             return res.status(400).json({ message: 'Email is required' });
         }
         const cleanEmail = email.trim().toLowerCase();
+        if (!isValidCvsuEmail(cleanEmail)) {
+            return res.status(400).json({ message: CVSU_EMAIL_ERROR_MSG });
+        }
 
         const record = await db.get(
             'SELECT * FROM otp_verifications WHERE LOWER(email) = ? ORDER BY id DESC LIMIT 1',
@@ -1714,11 +1743,8 @@ app.post('/auth/resend-otp', async (req, res) => {
             otp: otpCode
         });
 
-        if (!emailResult.success) {
-            console.warn(`[AUTH] Email resend notice for ${cleanEmail}: ${emailResult.error || 'resend issue'}`);
-            return res.status(200).json({
-                message: `A new 6-digit verification code has been sent to ${cleanEmail}. Please check your email inbox (and spam folder).`
-            });
+        if (!emailResult || !emailResult.success) {
+            return sendEmailDeliveryError(res, cleanEmail, emailResult);
         }
 
         res.status(200).json({ message: `A new 6-digit verification code has been sent to ${cleanEmail}.` });
@@ -1729,18 +1755,22 @@ app.post('/auth/resend-otp', async (req, res) => {
 
 app.post('/register', async (req, res) => {
     try {
+        const authHeader = req.headers['authorization'];
+        const token = authHeader && authHeader.split(' ')[1];
+        let requesterIsAdmin = false;
+        if (token) {
+            try {
+                const decoded = jwt.verify(token, JWT_SECRET);
+                if (decoded && decoded.role === 'Admin') {
+                    requesterIsAdmin = true;
+                }
+            } catch (_) { }
+        }
+
         // Block registration during maintenance mode (unless requester is admin)
         const maintenance = await getMaintenanceStatus();
-        if (maintenance.enabled) {
-            const authHeader = req.headers['authorization'];
-            const token = authHeader && authHeader.split(' ')[1];
-            let isAdmin = false;
-            if (token) {
-                try { const d = jwt.verify(token, JWT_SECRET); if (d && d.role === 'Admin') isAdmin = true; } catch (_) { }
-            }
-            if (!isAdmin) {
-                return res.status(503).json({ message: maintenance.message, maintenance: true });
-            }
+        if (maintenance.enabled && !requesterIsAdmin) {
+            return res.status(503).json({ message: maintenance.message, maintenance: true });
         }
 
         const { name, email, password, role } = req.body;
@@ -1749,7 +1779,12 @@ app.post('/register', async (req, res) => {
         }
 
         const cleanEmail = (email || '').trim().toLowerCase();
-        const cleanName = (name || '').trim().toLowerCase();
+        if (!EMAIL_FORMAT_REGEX.test(cleanEmail)) {
+            return res.status(400).json({ message: 'Please enter a valid email address' });
+        }
+        if (!requesterIsAdmin && !isValidCvsuEmail(cleanEmail)) {
+            return res.status(400).json({ message: CVSU_EMAIL_ERROR_MSG });
+        }
 
         const passwordError = await validatePassword(password);
         if (passwordError) {
@@ -1761,19 +1796,6 @@ app.post('/register', async (req, res) => {
         const existingAdminEmail = await db.get('SELECT id FROM admin_users WHERE LOWER(email) = ?', cleanEmail);
         if (existingUserEmail || existingAdminEmail) {
             return res.status(400).json({ message: 'Email is already in use' });
-        }
-
-        // Check if an existing Admin is creating this account
-        const authHeader = req.headers['authorization'];
-        const token = authHeader && authHeader.split(' ')[1];
-        let requesterIsAdmin = false;
-        if (token) {
-            try {
-                const decoded = jwt.verify(token, JWT_SECRET);
-                if (decoded && decoded.role === 'Admin') {
-                    requesterIsAdmin = true;
-                }
-            } catch (_) { }
         }
 
         let userRole = 'Student';
@@ -1804,9 +1826,9 @@ app.post('/register', async (req, res) => {
 
         const info = await db.run(
             'INSERT INTO users (name, email, password, role, status) VALUES (?, ?, ?, ?, ?)',
-            name, email, password, userRole, status
+            name, cleanEmail, password, userRole, status
         );
-        const user = { id: info.lastInsertRowid, name, email, password, role: userRole, status };
+        const user = { id: info.lastInsertRowid, name, email: cleanEmail, password, role: userRole, status };
         const userToken = jwt.sign({ id: user.id, email: user.email, role: user.role, name: user.name }, JWT_SECRET);
 
         // Emit real-time socket events so admin sees new user/instructor immediately
@@ -1823,12 +1845,12 @@ app.post('/register', async (req, res) => {
                 await db.run(
                     'INSERT INTO audit_logs (timestamp, "user", type, severity, "desc") VALUES (?, ?, ?, ?, ?)',
                     nowIso, name, 'Teacher Registration', status === 'Pending' ? 'Warning' : 'Normal',
-                    status === 'Pending' ? `New instructor account registered and pending admin approval (${email})` : `New instructor account registered (${email})`
+                    status === 'Pending' ? `New instructor account registered and pending admin approval (${cleanEmail})` : `New instructor account registered (${cleanEmail})`
                 ).catch(() => { });
             } else if (userRole === 'Student') {
                 await db.run(
                     'INSERT INTO audit_logs (timestamp, "user", type, severity, "desc") VALUES (?, ?, ?, ?, ?)',
-                    nowIso, name, 'User Registration', 'Normal', `New student account registered (${email})`
+                    nowIso, name, 'User Registration', 'Normal', `New student account registered (${cleanEmail})`
                 ).catch(() => { });
             }
         } catch (_) { }
@@ -2716,13 +2738,9 @@ app.post('/users/send-email-change-otp', authenticateToken, async (req, res) => 
             otp: otpCode
         });
 
-        if (!emailResult.success) {
-            console.warn(`[AUTH] Email change OTP delivery notice for ${cleanEmail}: ${emailResult.error || 'delivery issue'}`);
-            return res.status(200).json({
-                message: `A 6-digit verification code has been sent to ${cleanEmail}. Please check your inbox and spam folder.`,
-                email: cleanEmail,
-                expiresInMinutes: 15
-            });
+        if (!emailResult || !emailResult.success) {
+            await db.run('DELETE FROM otp_verifications WHERE LOWER(email) = ?', cleanEmail).catch(() => { });
+            return sendEmailDeliveryError(res, cleanEmail, emailResult);
         }
 
         res.status(200).json({

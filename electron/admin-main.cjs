@@ -277,7 +277,7 @@ function createWindow() {
     try {
       const parsedUrl = new URL(navigationUrl);
       if (parsedUrl.protocol === 'http:' || parsedUrl.protocol === 'https:') {
-        if (!app.isPackaged && parsedUrl.host === 'localhost:5173') {
+        if (parsedUrl.host === 'localhost:5173') {
           return;
         }
         event.preventDefault();

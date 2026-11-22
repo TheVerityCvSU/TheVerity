@@ -418,7 +418,9 @@ function createWindow() {
     try {
       const parsedUrl = new URL(navigationUrl);
       if (parsedUrl.protocol === 'http:' || parsedUrl.protocol === 'https:') {
-        if (!app.isPackaged && parsedUrl.host === 'localhost:5173') {
+        // Packaged Electron serves dist/ on http://localhost:5173 via protocol.handle('http', ...),
+        // so in-app navigation/reloads on localhost:5173 must stay inside Electron rather than opening a browser.
+        if (parsedUrl.host === 'localhost:5173') {
           return;
         }
         event.preventDefault();
@@ -660,7 +662,7 @@ app.whenReady().then(() => {
           if (reqPath === '/' || reqPath === '') reqPath = '/index.html';
           
           let file = path.join(__dirname, '../dist', reqPath);
-          if (!fs.existsSync(file)) {
+          if (!fs.existsSync(file) || fs.statSync(file).isDirectory()) {
             file = path.join(__dirname, '../dist/index.html');
           }
           

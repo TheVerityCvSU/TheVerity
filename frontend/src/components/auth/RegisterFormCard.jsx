@@ -1,6 +1,7 @@
 import React from 'react';
 import { Eye, EyeOff, Loader2 } from 'lucide-react';
 import PasswordRequirements from '../PasswordRequirements';
+import { isValidCvsuEmail } from '../../data/registerService';
 import { styles } from '../../pages/registerStyles';
 
 export default function RegisterFormCard({
@@ -18,6 +19,10 @@ export default function RegisterFormCard({
   onGoogleClick,
   onBackToLogin,
 }) {
+  const trimmedEmail = (formData.email || '').trim().toLowerCase();
+  const domainPart = trimmedEmail.split('@')[1] || '';
+  const hasInvalidDomain = trimmedEmail.includes('@') && domainPart.includes('.') && !isValidCvsuEmail(trimmedEmail);
+
   return (
     <form onSubmit={onSubmit} style={styles.form}>
       {/* Name Fields */}
@@ -52,19 +57,33 @@ export default function RegisterFormCard({
         />
       </div>
 
-      <input
-        type="email"
-        placeholder="Email"
-        required
-        value={formData.email}
-        onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-        style={{
-          ...styles.input,
-          backgroundColor: isDark ? '#333338' : '#f9fafb',
-          borderColor: isDark ? '#4a4a52' : '#e5e7eb',
-          color: isDark ? '#f4f4f5' : '#4b5563',
-        }}
-      />
+      <div>
+        <input
+          type="email"
+          placeholder="CvSU Email (@cvsu.edu.ph)"
+          required
+          value={formData.email}
+          onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+          style={{
+            ...styles.input,
+            backgroundColor: isDark ? '#333338' : '#f9fafb',
+            borderColor: hasInvalidDomain ? '#ef4444' : (isDark ? '#4a4a52' : '#e5e7eb'),
+            color: isDark ? '#f4f4f5' : '#4b5563',
+          }}
+        />
+        <div
+          style={{
+            marginTop: '6px',
+            paddingLeft: '4px',
+            fontSize: '0.78rem',
+            color: hasInvalidDomain ? '#ef4444' : (isDark ? '#a1a1aa' : '#6b7280'),
+          }}
+        >
+          {hasInvalidDomain
+            ? 'Please enter an official @cvsu.edu.ph email address.'
+            : 'Only official @cvsu.edu.ph email accounts can register.'}
+        </div>
+      </div>
 
       <div style={{ position: 'relative' }}>
         <input
