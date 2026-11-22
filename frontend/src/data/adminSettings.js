@@ -22,7 +22,7 @@ export const DEFAULT_SETTINGS = {
     passwordPolicies: { specialChars: true, numbers: true, minLength8: true },
     cognitivePauseThreshold: 45,
     strictClipboardBlocking: true,
-    enforceSingleMonitor: false,
+    enforceSingleMonitor: true,
     disableWindowsKeyAltTab: true,
     blockVirtualMachine: true,
   },

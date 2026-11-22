@@ -146650,7 +146650,7 @@ async function getKioskSettings() {
     sessionTimeout: "30m",
     cognitivePauseThreshold: 45,
     strictClipboardBlocking: true,
-    enforceSingleMonitor: false,
+    enforceSingleMonitor: true,
     disableWindowsKeyAltTab: true,
     blockVirtualMachine: true,
     passwordPolicies: { ...DEFAULT_PASSWORD_POLICIES }
