@@ -5,6 +5,7 @@ import { getStyles } from './pendingApprovals/pendingApprovalStyles';
 import InstructorPillRow from './pendingApprovals/InstructorPillRow';
 import SeeAllInstructorsModal from './pendingApprovals/SeeAllInstructorsModal';
 import InstructorActionPopup from './pendingApprovals/InstructorActionPopup';
+import InstructorDetailsModal from './pendingApprovals/InstructorDetailsModal';
 
 export default function PendingInstructorApproval({ users = [], onActionLogged, onUpdateUser }) {
   const { isDark } = useDarkMode();
@@ -15,6 +16,7 @@ export default function PendingInstructorApproval({ users = [], onActionLogged, 
   const [error, setError] = useState(null);
   const [actionPopup, setActionPopup] = useState(null); // { name: string, type: 'approve' | 'decline' }
   const [isSeeAllOpen, setIsSeeAllOpen] = useState(false);
+  const [selectedInstructor, setSelectedInstructor] = useState(null);
 
   useEffect(() => {
     const filterPendingInstructors = () => {
@@ -41,14 +43,15 @@ export default function PendingInstructorApproval({ users = [], onActionLogged, 
   }, [users]);
 
   const handleApprove = async (email) => {
+    const instructor = pendingInstructors.find(i => (i.emailAddress || i.email) === email);
     setPendingInstructors(prev => prev.filter(i => (i.emailAddress || i.email) !== email));
     try {
       await approveInstructor(email);
 
-      const instructor = pendingInstructors.find(i => (i.emailAddress || i.email) === email);
       const name = instructor?.name || instructor?.fullName || email.split('@')[0];
       setActionPopup({ name, type: 'approve' });
       setTimeout(() => setActionPopup(null), 2500);
+      setSelectedInstructor(prev => ((prev?.emailAddress || prev?.email) === email ? null : prev));
 
       if (onUpdateUser) {
         onUpdateUser(email, { status: 'Active' });
@@ -62,21 +65,29 @@ export default function PendingInstructorApproval({ users = [], onActionLogged, 
           message: 'Instructor approved and set to Active status'
         });
       }
+      return true;
     } catch (err) {
       console.error('Error approving instructor:', err);
-      throw err;
+      if (instructor) {
+        setPendingInstructors(prev => {
+          const exists = prev.some(i => (i.emailAddress || i.email) === email);
+          return exists ? prev : [instructor, ...prev];
+        });
+      }
+      return false;
     }
   };
 
   const handleReject = async (email) => {
+    const instructor = pendingInstructors.find(i => (i.emailAddress || i.email) === email);
     setPendingInstructors(prev => prev.filter(i => (i.emailAddress || i.email) !== email));
     try {
       await rejectInstructor(email);
 
-      const instructor = pendingInstructors.find(i => (i.emailAddress || i.email) === email);
       const name = instructor?.name || instructor?.fullName || email.split('@')[0];
       setActionPopup({ name, type: 'decline' });
       setTimeout(() => setActionPopup(null), 2500);
+      setSelectedInstructor(prev => ((prev?.emailAddress || prev?.email) === email ? null : prev));
 
       if (onActionLogged) {
         onActionLogged({
@@ -86,9 +97,16 @@ export default function PendingInstructorApproval({ users = [], onActionLogged, 
           message: 'Instructor rejected and account deleted'
         });
       }
+      return true;
     } catch (err) {
       console.error('Error rejecting instructor:', err);
-      throw err;
+      if (instructor) {
+        setPendingInstructors(prev => {
+          const exists = prev.some(i => (i.emailAddress || i.email) === email);
+          return exists ? prev : [instructor, ...prev];
+        });
+      }
+      return false;
     }
   };
 
@@ -118,7 +136,9 @@ export default function PendingInstructorApproval({ users = [], onActionLogged, 
         instructor={instructor}
         onApprove={handleApprove}
         onReject={handleReject}
+        onSelect={setSelectedInstructor}
         styles={styles}
+        isDark={isDark}
       />
     );
   };
@@ -165,6 +185,15 @@ export default function PendingInstructorApproval({ users = [], onActionLogged, 
         onClose={() => setIsSeeAllOpen(false)}
         pendingInstructors={pendingInstructors}
         renderInstructor={renderInstructor}
+        styles={styles}
+        isDark={isDark}
+      />
+
+      <InstructorDetailsModal
+        instructor={selectedInstructor}
+        onClose={() => setSelectedInstructor(null)}
+        onApprove={handleApprove}
+        onReject={handleReject}
         styles={styles}
         isDark={isDark}
       />
