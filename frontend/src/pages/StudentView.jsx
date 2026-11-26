@@ -71,7 +71,7 @@ export default function StudentView({
           if (parsed.instruction) return parsed.instruction;
           if (parsed.instructions) return parsed.instructions;
           if (parsed.description) return parsed.description;
-        } catch (_) {}
+        } catch (_) { }
       }
       return raw;
     }
@@ -111,7 +111,7 @@ export default function StudentView({
               return;
             }
           }
-        } catch (_) {}
+        } catch (_) { }
       }
 
       // 2. Scan all localStorage keys for classwork
@@ -130,7 +130,7 @@ export default function StudentView({
             }
           }
         }
-      } catch (_) {}
+      } catch (_) { }
 
       // 3. Fetch from API (/classwork/:classroomId or /classwork)
       const baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:3001';
@@ -146,7 +146,7 @@ export default function StudentView({
             const extracted = extractInstructionText(match);
             setCurrentAssignment((prev) => {
               const updated = { ...(prev || {}), ...match, details: extracted };
-              try { localStorage.setItem('activeAssignment', JSON.stringify(updated)); } catch (_) {}
+              try { localStorage.setItem('activeAssignment', JSON.stringify(updated)); } catch (_) { }
               return updated;
             });
           } else if (cId) {
@@ -160,15 +160,15 @@ export default function StudentView({
                   const ex = extractInstructionText(m);
                   setCurrentAssignment((prev) => {
                     const updated = { ...(prev || {}), ...m, details: ex };
-                    try { localStorage.setItem('activeAssignment', JSON.stringify(updated)); } catch (_) {}
+                    try { localStorage.setItem('activeAssignment', JSON.stringify(updated)); } catch (_) { }
                     return updated;
                   });
                 }
               })
-              .catch(() => {});
+              .catch(() => { });
           }
         })
-        .catch(() => {});
+        .catch(() => { });
     });
 
     return () => { cancelled = true; };
@@ -236,7 +236,7 @@ export default function StudentView({
     try {
       const saved = localStorage.getItem('verity_editor_font_size');
       if (saved) return parseInt(saved, 10);
-    } catch {}
+    } catch { }
     return 14;
   });
   const [showSettingsModal, setShowSettingsModal] = useState(false);
@@ -325,13 +325,8 @@ export default function StudentView({
   const proctorLogs = kioskHook.proctorLogs;
 
   // Broadcast live presence on mount, reconnect, and periodic heartbeat
-<<<<<<< HEAD
-  const emitPresence = useCallback(() => {
-    if (isSandbox || isSubmitted) return;
-=======
   const emitPresence = useCallback((isInitialOrReconnect = false) => {
-    if (isSandbox || submissionHook.submitted) return;
->>>>>>> 3b82a0e04c7a495c9e05ceca4205e12acdacce60
+    if (isSandbox || isSubmitted) return;
     const resolvedClassroomId =
       (clsId != null ? String(clsId) : null) ||
       (classroomId !== 'none' ? classroomId : null) ||
@@ -346,37 +341,23 @@ export default function StudentView({
       id: studentActualId,
       name: studentDisplayName || safeUsername,
       studentName: studentDisplayName || safeUsername,
-<<<<<<< HEAD
       email: userEmail,
-      avatar: userAvatar,
       code: latestCodeRef.current || '',
-=======
-      email: currentUser?.email || '',
-      code: filesHook.codeRef?.current || filesHook.code || '',
->>>>>>> 3b82a0e04c7a495c9e05ceca4205e12acdacce60
       classroomId: resolvedClassroomId,
       classCode: clsCode || clsSection || effAssignClassCode || '',
       assignmentId: resolvedAssignmentId,
-<<<<<<< HEAD
-      logs: proctorLogs || [],
-      timestamp: Date.now()
-    };
-    emitToSockets('student_enter_activity', payload);
-    emitToSockets('student_typing', payload);
-=======
       timestamp: Date.now()
     };
 
     if (isInitialOrReconnect) {
-      compilerHook.emitToSockets('student_enter_activity', {
+      emitToSockets('student_enter_activity', {
         ...basePayload,
-        avatar: currentUser?.avatar || '',
-        logs: kioskHook.proctorLogs || []
+        avatar: userAvatar,
+        logs: proctorLogs || []
       });
     } else {
-      compilerHook.emitToSockets('student_typing', basePayload);
+      emitToSockets('student_typing', basePayload);
     }
->>>>>>> 3b82a0e04c7a495c9e05ceca4205e12acdacce60
   }, [
     isSandbox,
     isSubmitted,
@@ -399,7 +380,7 @@ export default function StudentView({
   ]);
 
   useEffect(() => {
-    if (isSandbox || submissionHook.submitted) return;
+    if (isSandbox || isSubmitted) return;
     emitPresence(true);
 
     const handleConnectPresence = () => emitPresence(true);
@@ -416,7 +397,7 @@ export default function StudentView({
       if (secSock) secSock.off('connect', handleConnectPresence);
       clearInterval(presenceInterval);
     };
-  }, [isSandbox, submissionHook.submitted, emitPresence, socket, compilerHook.localSocket, compilerHook.secondarySocket]);
+  }, [isSandbox, isSubmitted, emitPresence, socket, compilerHook.localSocket, compilerHook.secondarySocket]);
 
   const leaveInfoRef = useRef({
     studentId: studentActualId,
@@ -457,7 +438,7 @@ export default function StudentView({
       setSaveStatus(true);
       setTimeout(() => setSaveStatus(false), 2000);
       emitPresence();
-    } catch {}
+    } catch { }
   }, [submissionHook.submitted, filesHook.draftKey, filesHook.code, emitPresence]);
 
   // Honor Admin Setting: examDefaults.autoSaveInterval (and per-assignment autoSaveInterval)
@@ -482,7 +463,7 @@ export default function StudentView({
           localStorage.setItem(filesHook.draftKey, latestCode);
           emitPresence();
         }
-      } catch (_) {}
+      } catch (_) { }
     }, ms);
     return () => clearInterval(timer);
   }, [submissionHook.submitted, effectiveAssignment?.autoSaveInterval, kioskHook.examDefaults?.autoSaveInterval, filesHook.draftKey, filesHook.codeRef, emitPresence]);

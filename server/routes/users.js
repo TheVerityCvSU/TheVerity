@@ -2,6 +2,7 @@ const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 const { sendOtpEmail } = require('../utils/emailService');
 const { hashPassword, verifyPassword, sanitizeUser } = require('../utils/passwordHash');
+const { sendEmailDeliveryError } = require('../utils/serverHelpers');
 
 /**
  * Registers user directory management, profile updates, OTP email changes,
@@ -283,6 +284,9 @@ function registerUserRoutes(app, { db, io, JWT_SECRET, authMiddleware, settingsS
             if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
                 return res.status(400).json({ message: 'Please enter a valid email address' });
             }
+            if (String(req.user?.role || '').toLowerCase() !== 'admin' && !cleanEmail.endsWith('@cvsu.edu.ph')) {
+                return res.status(400).json({ message: 'Access restricted: Only official @cvsu.edu.ph email accounts are permitted.' });
+            }
 
             const currentEmail = (req.user.email || '').trim().toLowerCase();
             if (cleanEmail === currentEmail) {
@@ -315,13 +319,9 @@ function registerUserRoutes(app, { db, io, JWT_SECRET, authMiddleware, settingsS
                 name: req.user.name || 'User',
                 otp: otpCode
             });
-            if (!emailResult.success) {
-                console.warn(`[AUTH] Email change OTP delivery notice for ${cleanEmail}: ${emailResult.error || 'delivery issue'}`);
-                return res.status(200).json({
-                    message: `A 6-digit verification code has been sent to ${cleanEmail}. Please check your inbox and spam folder.`,
-                    email: cleanEmail,
-                    expiresInMinutes: 15
-                });
+            if (!emailResult || !emailResult.success) {
+                await db.run('DELETE FROM otp_verifications WHERE LOWER(email) = ?', cleanEmail).catch(() => { });
+                return sendEmailDeliveryError(res, cleanEmail, emailResult);
             }
 
             res.status(200).json({ message: `Verification code sent to ${cleanEmail}`, email: cleanEmail, expiresInMinutes: 15 });
@@ -402,7 +402,8 @@ function registerUserRoutes(app, { db, io, JWT_SECRET, authMiddleware, settingsS
                 const updatedUser = sanitizeUser({ ...adminCurrent, email: cleanEmail });
                 const token = jwt.sign(
                     { id: updatedUser.id, email: cleanEmail, role: 'Admin', name: updatedUser.name, isAdmin: true },
-                    JWT_SECRET
+                    JWT_SECRET,
+                    { expiresIn: '24h' }
                 );
                 return res.status(200).json({ message: 'Email address updated successfully', user: updatedUser, token });
             }
@@ -440,7 +441,8 @@ function registerUserRoutes(app, { db, io, JWT_SECRET, authMiddleware, settingsS
             };
             const token = jwt.sign(
                 { id: updatedUser.id, email: cleanEmail, role: updatedUser.role, name: updatedUser.name },
-                JWT_SECRET
+                JWT_SECRET,
+                { expiresIn: '7d' }
             );
             io.emit('user_avatar_updated', {
                 userId: updatedUser.id, name: updatedUser.name, email: cleanEmail,

@@ -847,7 +847,7 @@ function registerSocketHandlers(io, {
         const activityClassCache = new Map();
         const ACTIVITY_META_TTL_MS = 30000;
 
-        const handleStudentActivity = async (data) => {
+        const handleStudentActivity = async (data, isExplicitEnter = false) => {
             if (!ensureSocketAuthOrRelay(socket, data)) {
                 return socket.emit('error', { message: 'Authentication required.' });
             }
@@ -915,7 +915,8 @@ function registerSocketHandlers(io, {
             const existing = activeStudents[studentKey] || {};
             const existingLogs = Array.isArray(existing.logs) ? existing.logs : [];
             let mergedLogs = existingLogs;
-            if (Array.isArray(data.logs) && data.logs.length > 0) {
+            const hasIncomingLogs = Array.isArray(data.logs) && data.logs.length > 0;
+            if (hasIncomingLogs) {
                 const map = new Map();
                 [...existingLogs, ...data.logs].forEach(l => {
                     if (!l) return;
@@ -931,8 +932,11 @@ function registerSocketHandlers(io, {
                 mergedLogs = Array.from(map.values()).sort((a, b) => (b.id || 0) - (a.id || 0));
             }
 
+            const resolvedAvatar = (data.avatar && String(data.avatar).trim()) ? data.avatar : (existing.avatar || '');
+            const isNewOrSwitched = !existing.studentId || existing.classroomId !== classroomId || existing.assignmentId !== assignmentId;
+
             const updated = {
-                ...existing, ...data, studentId, id: studentId, name: studentName, studentName,
+                ...existing, ...data, avatar: resolvedAvatar, studentId, id: studentId, name: studentName, studentName,
                 classroomId, classCode: classCode || existing.classCode || null, assignmentId,
                 logs: mergedLogs, status: 'Live', isLive: true, lastActive: Date.now()
             };
@@ -944,14 +948,21 @@ function registerSocketHandlers(io, {
             socket.data.classroomId = classroomId;
             socket.data.assignmentId = assignmentId;
 
-            io.to(roomName).emit('teacher_update_code', updated);
-            if (assignmentId && assignmentId !== 'none') io.to(`assignment:${assignmentId}`).emit('teacher_update_code', updated);
-            relayStudentActivity(updated);
+            // Omit static avatar & unchanged logs on high-frequency typing packets to save Render egress
+            let emitPayload = updated;
+            if (!isExplicitEnter && !isNewOrSwitched) {
+                const { avatar: _omitAvatar, logs: _omitLogs, ...slimBase } = updated;
+                emitPayload = hasIncomingLogs ? { ...slimBase, logs: mergedLogs } : slimBase;
+            }
+
+            io.to(roomName).emit('teacher_update_code', emitPayload);
+            if (assignmentId && assignmentId !== 'none') io.to(`assignment:${assignmentId}`).emit('teacher_update_code', emitPayload);
+            relayStudentActivity(emitPayload);
             broadcastActiveActivities();
         };
 
-        socket.on('student_enter_activity', handleStudentActivity);
-        socket.on('student_typing', handleStudentActivity);
+        socket.on('student_enter_activity', (data) => handleStudentActivity(data, true));
+        socket.on('student_typing', (data) => handleStudentActivity(data, false));
 
         socket.on('proctor_alert', async (data) => {
             if (!ensureSocketAuthOrRelay(socket, data)) {

@@ -6,6 +6,7 @@ const http = require('http');
 const https = require('https');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
+const { isAuthorizedIpcSender } = require('./security-utils.cjs');
 
 let downloadedUpdatePath = null;
 let currentDownloadReq = null;
@@ -317,6 +318,7 @@ function installDownloadedUpdate(cleanupLockdownFn) {
 
 function registerUpdateIpc(getMainWindowFn, cleanupLockdownFn) {
   ipcMain.handle('start-app-update', async (event, downloadUrl) => {
+    if (!isAuthorizedIpcSender(event)) return { success: false, error: 'Unauthorized IPC sender.' };
     const win = getMainWindowFn ? getMainWindowFn() : null;
     try {
       if (!downloadUrl) throw new Error('No download URL provided.');
@@ -337,7 +339,8 @@ function registerUpdateIpc(getMainWindowFn, cleanupLockdownFn) {
     }
   });
 
-  ipcMain.handle('install-app-update', () => {
+  ipcMain.handle('install-app-update', (event) => {
+    if (!isAuthorizedIpcSender(event)) return { success: false, error: 'Unauthorized IPC sender.' };
     try {
       installDownloadedUpdate(cleanupLockdownFn);
       return { success: true };

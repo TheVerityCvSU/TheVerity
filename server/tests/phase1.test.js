@@ -77,6 +77,7 @@ test('server Phase 1 HTTP RBAC, lazy scrypt login, Teacher->Student->Admin workf
       DATA_DIR: tempDataDir,
       IS_LAN_HOST: 'false',
       VERITY_SKIP_DOTENV: '1',
+      VERITY_SKIP_SEED: '1',
       DATABASE_URL: '',
       JWT_SECRET: 'phase1_test_secret_at_least_32_chars_long_123',
       VERITY_BOOTSTRAP_ADMIN_EMAIL: 'admin@testverity.local',

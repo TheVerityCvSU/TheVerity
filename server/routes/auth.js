@@ -3,6 +3,16 @@ const jwt = require('jsonwebtoken');
 const { OAuth2Client } = require('google-auth-library');
 const { sendOtpEmail } = require('../utils/emailService');
 const { hashPassword, verifyPassword, sanitizeUser } = require('../utils/passwordHash');
+const { sendEmailDeliveryError, isAllowedCorsOrigin } = require('../utils/serverHelpers');
+
+const EMAIL_FORMAT_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const CVSU_EMAIL_DOMAIN = '@cvsu.edu.ph';
+const CVSU_EMAIL_ERROR_MSG = 'Access restricted: Only official @cvsu.edu.ph email accounts can register.';
+
+function isValidCvsuEmail(email) {
+    const clean = String(email || '').trim().toLowerCase();
+    return EMAIL_FORMAT_REGEX.test(clean) && clean.endsWith(CVSU_EMAIL_DOMAIN);
+}
 
 /**
  * Registers OTP registration, standard/admin login, and Google SSO authentication routes.
@@ -19,13 +29,12 @@ function registerAuthRoutes(app, { db, io, JWT_SECRET, authMiddleware, settingsS
     } = authMiddleware;
     const { validatePassword, getMaintenanceStatus, checkAndFlagMultipleLogins } = settingsService;
 
-    const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '228468530633-cc2hnruslpc1sh0o7fd2s7hgjipsibil.apps.googleusercontent.com';
+    const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '224892595118-lbmp59pc67u3e7968qhi78qdluvqt8kr.apps.googleusercontent.com';
     const GOOGLE_CLIENT_SECRET = (process.env.GOOGLE_CLIENT_SECRET || '').trim();
     const ALLOWED_GOOGLE_AUDIENCES = [
         GOOGLE_CLIENT_ID,
         process.env.VITE_GOOGLE_CLIENT_ID,
-        '6514928694-2rd8cu7b67o4f2jqtuv5hk1d51s97lcc.apps.googleusercontent.com',
-        '228468530633-cc2hnruslpc1sh0o7fd2s7hgjipsibil.apps.googleusercontent.com'
+        '224892595118-lbmp59pc67u3e7968qhi78qdluvqt8kr.apps.googleusercontent.com'
     ].filter(Boolean);
 
     const googleClient = new OAuth2Client(
@@ -52,8 +61,11 @@ function registerAuthRoutes(app, { db, io, JWT_SECRET, authMiddleware, settingsS
                 return res.status(429).json({ message: 'Too many OTP requests. Please wait before requesting another code.' });
             }
 
-            if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+            if (!EMAIL_FORMAT_REGEX.test(cleanEmail)) {
                 return res.status(400).json({ message: 'Please enter a valid email address' });
+            }
+            if (!isValidCvsuEmail(cleanEmail)) {
+                return res.status(400).json({ message: CVSU_EMAIL_ERROR_MSG });
             }
 
             const passwordError = await validatePassword(password);
@@ -82,13 +94,9 @@ function registerAuthRoutes(app, { db, io, JWT_SECRET, authMiddleware, settingsS
             );
 
             const emailResult = await sendOtpEmail({ email: cleanEmail, name: trimmedName, otp: otpCode });
-            if (!emailResult.success) {
-                console.warn(`[AUTH] Email delivery notice for ${cleanEmail}: ${emailResult.error || 'delivery issue'}`);
-                return res.status(200).json({
-                    message: `A 6-digit verification code has been sent to ${cleanEmail}. Please check your email inbox (and spam folder).`,
-                    email: cleanEmail,
-                    expiresInMinutes: 15
-                });
+            if (!emailResult || !emailResult.success) {
+                await db.run('DELETE FROM otp_verifications WHERE LOWER(email) = ?', cleanEmail).catch(() => { });
+                return sendEmailDeliveryError(res, cleanEmail, emailResult);
             }
 
             res.status(200).json({
@@ -116,6 +124,11 @@ function registerAuthRoutes(app, { db, io, JWT_SECRET, authMiddleware, settingsS
 
             const cleanEmail = (email || '').trim().toLowerCase();
             const cleanOtp = (otp || '').trim();
+
+            if (!isValidCvsuEmail(cleanEmail)) {
+                await db.run('DELETE FROM otp_verifications WHERE LOWER(email) = ?', cleanEmail).catch(() => { });
+                return res.status(400).json({ message: CVSU_EMAIL_ERROR_MSG });
+            }
 
             const record = await db.get(
                 'SELECT * FROM otp_verifications WHERE LOWER(email) = ? ORDER BY id DESC LIMIT 1',
@@ -181,7 +194,7 @@ function registerAuthRoutes(app, { db, io, JWT_SECRET, authMiddleware, settingsS
             await db.run('DELETE FROM otp_verifications WHERE LOWER(email) = ?', cleanEmail);
 
             const user = sanitizeUser({ id: info.lastInsertRowid, name, email: cleanEmail, role: userRole, status });
-            const userToken = jwt.sign({ id: user.id, email: user.email, role: user.role, name: user.name }, JWT_SECRET);
+            const userToken = jwt.sign({ id: user.id, email: user.email, role: user.role, name: user.name }, JWT_SECRET, { expiresIn: '7d' });
 
             try {
                 io.emit('users_updated');
@@ -223,6 +236,9 @@ function registerAuthRoutes(app, { db, io, JWT_SECRET, authMiddleware, settingsS
             if (!email) return res.status(400).json({ message: 'Email is required' });
 
             const cleanEmail = email.trim().toLowerCase();
+            if (!isValidCvsuEmail(cleanEmail)) {
+                return res.status(400).json({ message: CVSU_EMAIL_ERROR_MSG });
+            }
             if (!checkOtpSendRateLimit(`send:${cleanEmail}`)) {
                 return res.status(429).json({ message: 'Too many OTP resend requests. Please wait before trying again.' });
             }
@@ -252,11 +268,8 @@ function registerAuthRoutes(app, { db, io, JWT_SECRET, authMiddleware, settingsS
                 otp: otpCode
             });
 
-            if (!emailResult.success) {
-                console.warn(`[AUTH] Email resend notice for ${cleanEmail}: ${emailResult.error || 'resend issue'}`);
-                return res.status(200).json({
-                    message: `A new 6-digit verification code has been sent to ${cleanEmail}. Please check your email inbox (and spam folder).`
-                });
+            if (!emailResult || !emailResult.success) {
+                return sendEmailDeliveryError(res, cleanEmail, emailResult);
             }
 
             res.status(200).json({ message: `A new 6-digit verification code has been sent to ${cleanEmail}.` });
@@ -316,7 +329,7 @@ function registerAuthRoutes(app, { db, io, JWT_SECRET, authMiddleware, settingsS
             try { db.triggerSync(); } catch (_) { }
 
             const user = sanitizeUser({ id: info.lastInsertRowid, name, email: cleanEmail, role: userRole, status });
-            const userToken = jwt.sign({ id: user.id, email: user.email, role: user.role, name: user.name }, JWT_SECRET);
+            const userToken = jwt.sign({ id: user.id, email: user.email, role: user.role, name: user.name }, JWT_SECRET, { expiresIn: '7d' });
 
             try {
                 io.emit('users_updated');
@@ -358,40 +371,43 @@ function registerAuthRoutes(app, { db, io, JWT_SECRET, authMiddleware, settingsS
             const cleanIdentifier = rawIdentifier.toLowerCase();
             const rawPassword = password !== undefined ? String(password) : '';
             const cleanPassword = rawPassword.trim();
-            const emailLike = `${cleanIdentifier}@%`;
+            const safeLocalPart = !cleanIdentifier.includes('@') && /^[a-z0-9._+-]+$/i.test(cleanIdentifier);
+            const emailLike = safeLocalPart ? `${cleanIdentifier}@%` : '';
 
             if (!cleanIdentifier) {
                 return res.status(400).json({ message: 'Username or email is required' });
             }
 
             const isAdminAcc = await db.get(
-                `SELECT id FROM admin_users WHERE LOWER(email) = ? OR LOWER(name) = ? OR LOWER(email) LIKE ?`,
-                cleanIdentifier, cleanIdentifier, emailLike
+                `SELECT id, email, name FROM admin_users WHERE LOWER(email) = ? OR LOWER(name) = ? OR (? != '' AND LOWER(email) LIKE ?)`,
+                cleanIdentifier, cleanIdentifier, emailLike, emailLike
             );
-            if (isAdminAcc) {
+            if (isAdminAcc && (
+                String(isAdminAcc.email || '').toLowerCase() === cleanIdentifier ||
+                String(isAdminAcc.name || '').toLowerCase() === cleanIdentifier ||
+                (safeLocalPart && String(isAdminAcc.email || '').split('@')[0].toLowerCase() === cleanIdentifier)
+            )) {
                 return res.status(401).json({ message: 'Invalid credentials. No account found with this email or username.' });
             }
 
-            const userExists = await db.get(
+            const userCandidate = await db.get(
                 `SELECT * FROM users 
-                 WHERE LOWER(email) = ? OR LOWER(name) = ? OR LOWER(email) LIKE ? 
+                 WHERE LOWER(email) = ? OR LOWER(name) = ? OR (? != '' AND LOWER(email) LIKE ?) 
                  ORDER BY CASE WHEN LOWER(email) = ? THEN 1 WHEN LOWER(name) = ? THEN 2 ELSE 3 END LIMIT 1`,
-                cleanIdentifier, cleanIdentifier, emailLike, cleanIdentifier, cleanIdentifier
+                cleanIdentifier, cleanIdentifier, emailLike, emailLike, cleanIdentifier, cleanIdentifier
             );
+            const userExists = userCandidate && (
+                String(userCandidate.email || '').toLowerCase() === cleanIdentifier ||
+                String(userCandidate.name || '').toLowerCase() === cleanIdentifier ||
+                (safeLocalPart && String(userCandidate.email || '').split('@')[0].toLowerCase() === cleanIdentifier)
+            ) ? userCandidate : null;
             if (!userExists) {
                 return res.status(401).json({ message: 'Invalid credentials. No account found with this username or email address.' });
             }
 
             let user = null;
             if (userExists.password === 'google_sso_user') {
-                if (!cleanPassword) {
-                    return res.status(401).json({ message: 'Please enter a password to sign in to your account.' });
-                }
-                const hashedInit = hashPassword(cleanPassword);
-                await db.run('UPDATE users SET password = ? WHERE id = ?', hashedInit, userExists.id);
-                userExists.password = hashedInit;
-                user = userExists;
-                console.log(`[Auth] Google SSO account (${userExists.email}) initialized password during login.`);
+                return res.status(401).json({ message: 'This account uses Google Sign-In. Please sign in with Google.' });
             } else {
                 const check = verifyPassword(rawPassword, userExists.password);
                 if (!check.valid) {
@@ -412,13 +428,16 @@ function registerAuthRoutes(app, { db, io, JWT_SECRET, authMiddleware, settingsS
             if (user.status === 'Pending') {
                 return res.status(403).json({ message: 'Your account is pending admin approval' });
             }
+            if (user.status === 'Disabled' || user.status === 'Suspended') {
+                return res.status(403).json({ message: `Your account is ${String(user.status).toLowerCase()}. Please contact an administrator.` });
+            }
 
             user.lastLogin = new Date().toISOString();
             db.run('UPDATE users SET lastLogin = ? WHERE id = ?', user.lastLogin, user.id).catch(() => { });
             checkAndFlagMultipleLogins(user, req).catch(() => { });
 
             const safeUser = sanitizeUser(user);
-            const token = jwt.sign({ id: safeUser.id, email: safeUser.email, role: safeUser.role, name: safeUser.name }, JWT_SECRET);
+            const token = jwt.sign({ id: safeUser.id, email: safeUser.email, role: safeUser.role, name: safeUser.name }, JWT_SECRET, { expiresIn: '7d' });
             res.status(200).json({ message: 'Login successful', user: safeUser, token });
         } catch (e) {
             res.status(500).json({ message: e.message });
@@ -432,18 +451,24 @@ function registerAuthRoutes(app, { db, io, JWT_SECRET, authMiddleware, settingsS
             const cleanIdentifier = rawIdentifier.toLowerCase();
             const rawPassword = password !== undefined ? String(password) : '';
             const cleanPassword = rawPassword.trim();
-            const emailLike = `${cleanIdentifier}@%`;
+            const safeLocalPart = !cleanIdentifier.includes('@') && /^[a-z0-9._+-]+$/i.test(cleanIdentifier);
+            const emailLike = safeLocalPart ? `${cleanIdentifier}@%` : '';
 
             if (!cleanIdentifier || !rawPassword) {
                 return res.status(400).json({ message: 'Username/Email and password are required' });
             }
 
-            const adminCandidate = await db.get(
+            const rawAdminCandidate = await db.get(
                 `SELECT * FROM admin_users 
-                 WHERE (LOWER(email) = ? OR LOWER(name) = ? OR LOWER(email) LIKE ?)
+                 WHERE (LOWER(email) = ? OR LOWER(name) = ? OR (? != '' AND LOWER(email) LIKE ?))
                  ORDER BY CASE WHEN LOWER(email) = ? THEN 1 WHEN LOWER(name) = ? THEN 2 ELSE 3 END LIMIT 1`,
-                cleanIdentifier, cleanIdentifier, emailLike, cleanIdentifier, cleanIdentifier
+                cleanIdentifier, cleanIdentifier, emailLike, emailLike, cleanIdentifier, cleanIdentifier
             );
+            const adminCandidate = rawAdminCandidate && (
+                String(rawAdminCandidate.email || '').toLowerCase() === cleanIdentifier ||
+                String(rawAdminCandidate.name || '').toLowerCase() === cleanIdentifier ||
+                (safeLocalPart && String(rawAdminCandidate.email || '').split('@')[0].toLowerCase() === cleanIdentifier)
+            ) ? rawAdminCandidate : null;
 
             const passCheck = adminCandidate ? verifyPassword(rawPassword, adminCandidate.password) : { valid: false, needsUpgrade: false };
             const adminUser = passCheck.valid ? adminCandidate : null;
@@ -513,11 +538,16 @@ function registerAuthRoutes(app, { db, io, JWT_SECRET, authMiddleware, settingsS
         }
         const requestedRole = req.query.role === 'Teacher' ? 'Teacher' : 'Student';
         const initialPass = (req.query.initialPassword && typeof req.query.initialPassword === 'string') ? req.query.initialPassword : '';
+        const rawOrigin = typeof req.query.origin === 'string' ? req.query.origin.trim() : '';
+        let openerOrigin = '';
+        if (/^https?:\/\//i.test(rawOrigin) && isAllowedCorsOrigin(rawOrigin)) {
+            try { openerOrigin = new URL(rawOrigin).origin; } catch (_) { openerOrigin = ''; }
+        }
         const host = req.headers['x-forwarded-host'] || req.get('host');
         const isLocal = host.includes('localhost') || host.includes('127.0.0.1');
         const protocol = isLocal ? (req.protocol || 'http') : (req.headers['x-forwarded-proto'] || 'https');
         const redirectUri = `${protocol}://${host}/auth/google/callback`;
-        const statePayload = Buffer.from(JSON.stringify({ sessionId, role: requestedRole, pass: initialPass })).toString('base64url');
+        const statePayload = Buffer.from(JSON.stringify({ sessionId, role: requestedRole, pass: initialPass, openerOrigin })).toString('base64url');
         const authorizeUrl = googleClient.generateAuthUrl({
             access_type: 'offline',
             scope: ['email', 'profile'],
@@ -539,11 +569,15 @@ function registerAuthRoutes(app, { db, io, JWT_SECRET, authMiddleware, settingsS
         let sessionId = '';
         let requestedRole = 'Student';
         let initialPass = '';
+        let openerOrigin = '';
         try {
             const parsed = JSON.parse(Buffer.from(state, 'base64url').toString('utf8'));
             sessionId = parsed.sessionId || '';
             requestedRole = parsed.role === 'Teacher' ? 'Teacher' : 'Student';
             initialPass = parsed.pass || '';
+            if (typeof parsed.openerOrigin === 'string' && /^https?:\/\//i.test(parsed.openerOrigin) && isAllowedCorsOrigin(parsed.openerOrigin)) {
+                openerOrigin = new URL(parsed.openerOrigin).origin;
+            }
         } catch (_) {
             const stateParts = String(state).split(':');
             sessionId = stateParts[0];
@@ -661,11 +695,13 @@ function registerAuthRoutes(app, { db, io, JWT_SECRET, authMiddleware, settingsS
             }
 
             const safeUser = sanitizeUser(user);
-            const token = jwt.sign({ id: safeUser.id, email: safeUser.email, role: safeUser.role, name: safeUser.name }, JWT_SECRET);
+            const token = jwt.sign({ id: safeUser.id, email: safeUser.email, role: safeUser.role, name: safeUser.name }, JWT_SECRET, { expiresIn: '7d' });
             io.emit(`google-login-success-${sessionId}`, { user: safeUser, token });
             const safePayload = JSON.stringify({
                 type: 'verity-google-auth-success', sessionId, user: safeUser, token
             }).replace(/</g, '\\u003c');
+            const targetOrigin = openerOrigin || `${protocol}://${host}`;
+            const safeTargetOrigin = JSON.stringify(targetOrigin).replace(/</g, '\\u003c');
 
             res.send(`
                 <html>
@@ -676,7 +712,7 @@ function registerAuthRoutes(app, { db, io, JWT_SECRET, authMiddleware, settingsS
                             <script>
                                 try {
                                     if (window.opener && !window.opener.closed) {
-                                        window.opener.postMessage(${safePayload}, '*');
+                                        window.opener.postMessage(${safePayload}, ${safeTargetOrigin});
                                     }
                                 } catch (e) {}
                                 setTimeout(() => window.close(), 1200);
@@ -785,7 +821,7 @@ function registerAuthRoutes(app, { db, io, JWT_SECRET, authMiddleware, settingsS
             res.status(200).json({
                 message: 'Google login successful',
                 user: safeUser,
-                token: jwt.sign({ id: safeUser.id, email: safeUser.email, role: safeUser.role, name: safeUser.name }, JWT_SECRET)
+                token: jwt.sign({ id: safeUser.id, email: safeUser.email, role: safeUser.role, name: safeUser.name }, JWT_SECRET, { expiresIn: '7d' })
             });
         } catch (error) {
             console.error('Google Auth Error:', error);

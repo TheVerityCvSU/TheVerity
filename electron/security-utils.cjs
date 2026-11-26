@@ -46,7 +46,7 @@ function isAllowedGoogleAuthUrl(rawUrl) {
     }
 
     const isTrustedAppOrigin =
-      isPrivateOrLocalHostname(host) || host === 'verity-2z4v.onrender.com';
+      isPrivateOrLocalHostname(host) || host === 'the-verity.onrender.com' || host === 'verity-2z4v.onrender.com';
 
     if (isTrustedAppOrigin && (parsed.pathname.startsWith('/auth/google') || parsed.pathname.startsWith('/google-login'))) {
       return parsed.protocol === 'https:' || isPrivateOrLocalHostname(host);
@@ -95,9 +95,23 @@ function resolveSafeDistFile(distDir, reqPathname) {
   return { safe: true, filePath: candidate };
 }
 
+/**
+ * Registers IPC `handle` channels gated by `isAuthorizedIpcSender(event)`.
+ * Keeps Electron IPC authorization uniform across main and admin processes.
+ */
+function registerAuthorizedIpcHandlers(ipcMain, specs) {
+  for (const [channel, handler, fallback = null] of specs) {
+    ipcMain.handle(channel, (event, ...args) => {
+      if (!isAuthorizedIpcSender(event)) return fallback;
+      return handler(event, ...args);
+    });
+  }
+}
+
 module.exports = {
   isAllowedExternalUrl,
   isAllowedGoogleAuthUrl,
   isAuthorizedIpcSender,
+  registerAuthorizedIpcHandlers,
   resolveSafeDistFile,
 };

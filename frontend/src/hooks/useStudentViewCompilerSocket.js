@@ -45,13 +45,13 @@ export function useStudentViewCompilerSocket({ socket, currentUser }) {
         if (isSubscribed) setLocalSocket(null);
       });
       localSocketRef.current = local;
-    } catch (_) {}
+    } catch (_) { }
 
     return () => {
       isSubscribed = false;
       setLocalSocket(null);
       if (localSocketRef.current) {
-        try { localSocketRef.current.disconnect(); } catch (_) {}
+        try { localSocketRef.current.disconnect(); } catch (_) { }
         localSocketRef.current = null;
       }
     };
@@ -71,13 +71,8 @@ export function useStudentViewCompilerSocket({ socket, currentUser }) {
           altTarget = String(cloudUrl).replace(/\/+$/, '');
         }
       } else {
-<<<<<<< HEAD
-        if (!conn.isWebHosted && localUrl && !localUrl.includes('verity-2z4v')) {
-          altTarget = String(localUrl).replace(/\/+$/, '');
-=======
         if (!conn.isWebHosted && localUrl && !localUrl.includes('onrender.com')) {
-          altTarget = localUrl;
->>>>>>> 3b82a0e04c7a495c9e05ceca4205e12acdacce60
+          altTarget = String(localUrl).replace(/\/+$/, '');
         }
       }
 
@@ -103,12 +98,12 @@ export function useStudentViewCompilerSocket({ socket, currentUser }) {
         });
         secondarySocketRef.current = secSocket;
       }
-    } catch (_) {}
+    } catch (_) { }
 
     return () => {
       setSecondarySocket(null);
       if (secondarySocketRef.current) {
-        try { secondarySocketRef.current.disconnect(); } catch (_) {}
+        try { secondarySocketRef.current.disconnect(); } catch (_) { }
         secondarySocketRef.current = null;
       }
     };

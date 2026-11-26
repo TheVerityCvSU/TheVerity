@@ -9,6 +9,7 @@ const jwt = require('jsonwebtoken');
 
 const tempDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'verity_p3_test_'));
 process.env.VERITY_SKIP_DOTENV = '1';
+process.env.VERITY_SKIP_SEED = '1';
 process.env.DATABASE_URL = '';
 process.env.DATA_DIR = tempDataDir;
 process.env.IS_LAN_HOST = 'false';
@@ -65,6 +66,7 @@ test('serverHelpers: date key, persistent JWT key, CORS policy, IP normalization
   assert.equal(isAllowedCorsOrigin('http://localhost:5173'), true);
   assert.equal(isAllowedCorsOrigin('http://192.168.10.25:3001'), true);
   assert.equal(isAllowedCorsOrigin('https://verity-preview.vercel.app'), true);
+  assert.equal(isAllowedCorsOrigin('https://evil-student.vercel.app'), false);
   assert.equal(isAllowedCorsOrigin('https://evil.example.com'), false);
   assert.equal(isAllowedCorsOrigin('not a url'), false);
 
@@ -549,6 +551,95 @@ test('Socket.IO hardening: blocks unauthenticated student/proctor events and acc
   } finally {
     if (prevRelaySecret === undefined) delete process.env.CLOUD_RELAY_SECRET;
     else process.env.CLOUD_RELAY_SECRET = prevRelaySecret;
+    await stop();
+  }
+});
+
+test('security hardening: blocks google_sso_user takeover, wildcard login, numeric classroom join, suspended JWT, and C# scanner bypasses', async () => {
+  const { scanCSharpCode } = require('../csharpSecurityScanner');
+  assert.equal(scanCSharpCode('System.IO.Fil\\u0065.ReadAllText("x");').isSafe, false);
+  assert.equal(scanCSharpCode('var t = typeof(object).Assembly.GetType("System.IO.File");').isSafe, false);
+  assert.equal(scanCSharpCode('var m = obj.GetType().GetMethod("Foo");').isSafe, false);
+  assert.equal(scanCSharpCode('var p = "file:///C:/Windows/System32";').isSafe, false);
+  assert.equal(scanCSharpCode('using System;\nclass P { static void Main() { Console.WriteLine("ok"); } }').isSafe, true);
+
+  const db = require('../db/index.js');
+  const boundPort = await start(0);
+  const baseUrl = `http://127.0.0.1:${boundPort}`;
+  try {
+    await db.run(
+      'INSERT OR REPLACE INTO users (id, name, email, password, role, status) VALUES (?, ?, ?, ?, ?, ?)',
+      9101, 'Google Teacher', 'gteacher@cvsu.edu.ph', 'google_sso_user', 'Teacher', 'Active'
+    );
+    await db.run(
+      'INSERT OR REPLACE INTO users (id, name, email, password, role, status) VALUES (?, ?, ?, ?, ?, ?)',
+      9102, 'Suspended Student', 'susp@cvsu.edu.ph', 'x', 'Student', 'Suspended'
+    );
+    await db.run(
+      'INSERT OR REPLACE INTO users (id, name, email, password, role, status) VALUES (?, ?, ?, ?, ?, ?)',
+      9103, 'Active Student', 'active@cvsu.edu.ph', 'x', 'Student', 'Active'
+    );
+    await db.run(
+      'INSERT OR REPLACE INTO classrooms (id, code, section, name, instructor, instructor_email) VALUES (?, ?, ?, ?, ?, ?)',
+      910999, 'exact99', 'SEC-99', 'Secret Class', 'Google Teacher', 'gteacher@cvsu.edu.ph'
+    );
+
+    // 1. Cannot hijack google_sso_user via /login
+    const ssoTakeover = await fetch(`${baseUrl}/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'gteacher@cvsu.edu.ph', password: 'AttackerPass123!' }),
+    });
+    assert.equal(ssoTakeover.status, 401);
+    const afterSsoRow = await db.get('SELECT password FROM users WHERE id = 9101');
+    assert.equal(afterSsoRow.password, 'google_sso_user');
+
+    // 2. Wildcard '%' login does not match arbitrary users
+    const wildcardLogin = await fetch(`${baseUrl}/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: '%', password: 'x' }),
+    });
+    assert.equal(wildcardLogin.status, 401);
+
+    // 3. Suspended user JWT is rejected by authenticateToken
+    const suspendedToken = jwt.sign(
+      { id: 9102, email: 'susp@cvsu.edu.ph', role: 'Student', name: 'Suspended Student' },
+      process.env.JWT_SECRET,
+      { expiresIn: '5m' }
+    );
+    const suspRes = await fetch(`${baseUrl}/classrooms`, {
+      headers: { Authorization: `Bearer ${suspendedToken}` },
+    });
+    assert.equal(suspRes.status, 403);
+
+    // 4. Student cannot join classroom by numeric ID or section name; exact code works
+    const studentToken = jwt.sign(
+      { id: 9103, email: 'active@cvsu.edu.ph', role: 'Student', name: 'Active Student' },
+      process.env.JWT_SECRET,
+      { expiresIn: '5m' }
+    );
+    const joinById = await fetch(`${baseUrl}/classrooms/join`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${studentToken}` },
+      body: JSON.stringify({ code: '910999' }),
+    });
+    assert.equal(joinById.status, 404);
+
+    const joinBySection = await fetch(`${baseUrl}/classrooms/join`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${studentToken}` },
+      body: JSON.stringify({ code: 'SEC-99' }),
+    });
+    assert.equal(joinBySection.status, 404);
+
+    const joinByCode = await fetch(`${baseUrl}/classrooms/join`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${studentToken}` },
+      body: JSON.stringify({ code: 'EXACT99' }),
+    });
+    assert.equal(joinByCode.status, 200);
+  } finally {
     await stop();
   }
 });

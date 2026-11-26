@@ -127,23 +127,60 @@ function registerAdminRoutes(app, { db, io, DATA_DIR, authMiddleware, settingsSe
         }
     });
 
+    const clientAuditRateMap = new Map();
+    const ALLOWED_CLIENT_AUDIT_TYPES = new Set([
+        'Exit Tab Violation',
+        'System Exit Violation',
+        'Copy/Paste Violation',
+        'Copy-Paste Violation',
+        'Alt-Tab Violation',
+        'System Crash Violation',
+        'Security Flag Alert',
+        'System Event',
+        'Kiosk Violation',
+        'Event'
+    ]);
+
     app.post('/audit-logs', authenticateToken, async (req, res) => {
         try {
             const { user: requestedUser = 'System', type = 'Event', severity = 'Normal', desc = '' } = req.body || {};
             const roleLower = String(req.user?.role || '').toLowerCase();
+            const isPrivileged = roleLower === 'admin' || roleLower === 'teacher' || roleLower === 'instructor';
             const user = roleLower === 'admin'
                 ? (requestedUser || req.user?.name || req.user?.email || 'Admin')
                 : (req.user?.name || req.user?.email || 'Student');
+
+            if (!isPrivileged) {
+                const rateKey = String(req.user?.id || req.user?.email || user).toLowerCase();
+                const now = Date.now();
+                const rec = clientAuditRateMap.get(rateKey) || { count: 0, resetAt: now + 60000 };
+                if (now > rec.resetAt) {
+                    rec.count = 0;
+                    rec.resetAt = now + 60000;
+                }
+                if (rec.count >= 30) {
+                    return res.status(429).json({ message: 'Too many audit events submitted. Please wait.' });
+                }
+                rec.count += 1;
+                clientAuditRateMap.set(rateKey, rec);
+            }
+
+            const safeType = isPrivileged
+                ? String(type || 'Event').slice(0, 80)
+                : (ALLOWED_CLIENT_AUDIT_TYPES.has(String(type || '')) ? String(type) : 'Security Flag Alert');
+            const allowedSeverities = new Set(['Normal', 'Warning', 'High']);
+            const safeSeverity = allowedSeverities.has(String(severity)) ? String(severity) : 'Normal';
+            const safeDesc = String(desc || '').slice(0, 500);
             const timestamp = new Date().toISOString();
             await db.run(
                 'INSERT INTO audit_logs (timestamp, "user", type, severity, "desc") VALUES (?, ?, ?, ?, ?)',
-                timestamp, user, type, severity, desc
+                timestamp, user, safeType, safeSeverity, safeDesc
             );
 
-            if (severity === 'High' || severity === 'Warning') {
+            if (safeSeverity === 'High' || safeSeverity === 'Warning') {
                 const key = todayKey();
-                const descLower = (desc || '').toLowerCase();
-                const typeLower = (type || '').toLowerCase();
+                const descLower = safeDesc.toLowerCase();
+                const typeLower = safeType.toLowerCase();
                 const isCrash = typeLower.includes('crash') || descLower.includes('crash');
                 const isSystemExit = !isCrash && (typeLower.includes('system exit') || descLower.includes('system exit') || descLower.includes('exited system') || descLower.includes('exited the system'));
                 const isAltTabCopyPaste = !isCrash && (isSystemExit || descLower.includes('tab') || descLower.includes('paste') || descLower.includes('clipboard') || descLower.includes('copy') || descLower.includes('exit tab') || typeLower.includes('alt-tab') || typeLower.includes('copy-paste'));
@@ -161,7 +198,7 @@ function registerAdminRoutes(app, { db, io, DATA_DIR, authMiddleware, settingsSe
                 }
 
                 const timeText = new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }).toLowerCase();
-                const actionText = isCrash ? 'System Crash' : (isAltTabCopyPaste ? (descLower.includes('paste') ? 'Copy/Paste' : 'Alt Tab') : (type || 'Violation'));
+                const actionText = isCrash ? 'System Crash' : (isAltTabCopyPaste ? (descLower.includes('paste') ? 'Copy/Paste' : 'Alt Tab') : (safeType || 'Violation'));
                 const colorVal = isCrash ? '#dc2626' : (isAltTabCopyPaste ? '#eab308' : '#ef4444');
 
                 const foundActive = Object.values(activeStudents).find(s => s && (s.studentId === user || s.name === user));
@@ -182,7 +219,7 @@ function registerAdminRoutes(app, { db, io, DATA_DIR, authMiddleware, settingsSe
                 }
 
                 io.emit('admin_security_alert', {
-                    user, name: user, studentId: user, type, desc, action: desc,
+                    user, name: user, studentId: user, type: safeType, desc: safeDesc, action: safeDesc,
                     isAltTabCopyPaste, isSystemExit, timestamp
                 });
                 io.emit('admin_stats_update');

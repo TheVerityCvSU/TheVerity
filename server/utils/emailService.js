@@ -115,7 +115,7 @@ async function parseRestError(res, providerName) {
   let rawText = '';
   try {
     rawText = await res.text();
-  } catch (_) {}
+  } catch (_) { }
   try {
     const parsed = rawText ? JSON.parse(rawText) : null;
     const detail = parsed?.message || parsed?.error?.message || parsed?.error || parsed?.code || rawText;
@@ -371,7 +371,6 @@ function formatDueDateForEmail(dueDate) {
   });
 }
 
-<<<<<<< HEAD
 /**
  * Generates HTML email for student activity, material, deadline, and missed notifications.
  */
@@ -508,49 +507,43 @@ function generateStudentNotificationEmailHtml({
  * Dispatches an email using configured HTTPS REST APIs (Resend / Brevo) or Nodemailer SMTP.
  */
 async function sendEmail({ email, name, subject, html, text, otp }) {
-  const user = (process.env.SMTP_USER || process.env.EMAIL_USER || DEFAULT_SMTP_USER).trim();
-  const from = process.env.SMTP_FROM || process.env.EMAIL_FROM || (user ? `"The Verity Team" <${user}>` : '"The Verity Team" <noreply@theverity.local>');
-=======
   const user = extractEmailAddress(process.env.SMTP_USER || process.env.EMAIL_USER || DEFAULT_SMTP_USER);
   const from = stripQuotes(process.env.SMTP_FROM || process.env.EMAIL_FROM) || (user ? `"The Verity Team" <${user}>` : '"The Verity Team" <noreply@theverity.local>');
->>>>>>> 3b82a0e04c7a495c9e05ceca4205e12acdacce60
 
   // 1. Try HTTPS REST API first (port 443 - bypasses all cloud container port restrictions)
   const restResult = await sendViaRestApi({ email, name, otp, subject, html, text, from });
   if (restResult && restResult.success) {
-    return { success: true, messageId: restResult.messageId };
+    return {
+      success: true,
+      provider: restResult.provider,
+      messageId: restResult.messageId,
+      ...(otp !== undefined ? { otp } : {})
+    };
   }
 
-<<<<<<< HEAD
-  // 2. Detect Render Free Tier where outbound TCP ports 25, 465, and 587 are dropped by host firewall
-  const isRenderFree = Boolean(process.env.RENDER && !process.env.RENDER_SMTP_ENABLED && !process.env.RESEND_API_KEY && !process.env.BREVO_API_KEY);
-  if (isRenderFree) {
-    console.warn(`[EMAIL SERVICE] Running on Render Free Tier container. Outbound raw SMTP ports (25, 465, 587) are restricted by host policy.`);
-    return { success: false, error: 'Raw SMTP ports restricted by cloud container (Render Free Tier)', simulated: false };
-=======
   // 2. Render Free Tier drops outbound TCP ports 25, 465, and 587; fail fast instead of hanging 8+ seconds on SMTP timeouts
   const isRenderWithoutSmtp = Boolean(process.env.RENDER && process.env.RENDER_SMTP_ENABLED !== 'true');
   if (isRenderWithoutSmtp) {
     const reason = restResult?.error || 'Email REST provider not configured on Render (set BREVO_API_KEY + verified BREVO_SENDER_EMAIL, or RESEND_API_KEY).';
     console.warn(`[EMAIL SERVICE] Render delivery stopped without raw SMTP retry: ${reason}`);
-    return { success: false, provider: restResult?.provider || 'render', error: reason, simulated: false, otp };
->>>>>>> 3b82a0e04c7a495c9e05ceca4205e12acdacce60
+    return {
+      success: false,
+      provider: restResult?.provider || 'render',
+      error: reason,
+      simulated: false,
+      ...(otp !== undefined ? { otp } : {})
+    };
   }
 
   const primaryTransporter = getTransporter();
   if (!primaryTransporter) {
-<<<<<<< HEAD
     console.warn(`[EMAIL SERVICE] SMTP not configured for ${email}.`);
-    return { success: false, simulated: true, error: 'SMTP not configured' };
-=======
-    console.log(`[EMAIL SERVICE] SMTP not configured. OTP logged above for development.`);
     return {
       success: false,
       simulated: !restResult?.attempted,
-      otp,
-      error: restResult?.error || 'SMTP not configured'
+      error: restResult?.error || 'SMTP not configured',
+      ...(otp !== undefined ? { otp } : {})
     };
->>>>>>> 3b82a0e04c7a495c9e05ceca4205e12acdacce60
   }
 
   // 3. Primary attempt: Port 587 STARTTLS (fast and reliable)
@@ -563,11 +556,12 @@ async function sendEmail({ email, name, subject, html, text, otp }) {
       html
     });
     console.log(`[EMAIL SERVICE] Email sent successfully to ${email}. MessageId: ${info.messageId}`);
-<<<<<<< HEAD
-    return { success: true, messageId: info.messageId };
-=======
-    return { success: true, provider: 'smtp', messageId: info.messageId, otp };
->>>>>>> 3b82a0e04c7a495c9e05ceca4205e12acdacce60
+    return {
+      success: true,
+      provider: 'smtp',
+      messageId: info.messageId,
+      ...(otp !== undefined ? { otp } : {})
+    };
   } catch (error) {
     console.warn(`[EMAIL SERVICE] Primary send to ${email} failed: ${error.message}. Retrying via fallback port 465...`);
     try {
@@ -583,20 +577,23 @@ async function sendEmail({ email, name, subject, html, text, otp }) {
         html
       });
       console.log(`[EMAIL SERVICE] Email sent successfully via fallback port 465 to ${email}. MessageId: ${fallbackInfo.messageId}`);
-<<<<<<< HEAD
-      return { success: true, messageId: fallbackInfo.messageId };
-    } catch (fallbackError) {
-      console.error(`[EMAIL SERVICE] All email attempts failed for ${email}:`, fallbackError.message);
-      return { success: false, error: fallbackError.message, simulated: false };
-=======
-      return { success: true, provider: 'smtp', messageId: fallbackInfo.messageId, otp };
+      return {
+        success: true,
+        provider: 'smtp',
+        messageId: fallbackInfo.messageId,
+        ...(otp !== undefined ? { otp } : {})
+      };
     } catch (fallbackError) {
       console.error(`[EMAIL SERVICE] All email attempts failed for ${email}:`, fallbackError.message);
       const combinedError = restResult?.error
         ? `${restResult.error}; SMTP fallback failed: ${fallbackError.message}`
         : fallbackError.message;
-      return { success: false, error: combinedError, simulated: false, otp };
->>>>>>> 3b82a0e04c7a495c9e05ceca4205e12acdacce60
+      return {
+        success: false,
+        error: combinedError,
+        simulated: false,
+        ...(otp !== undefined ? { otp } : {})
+      };
     }
   }
 }

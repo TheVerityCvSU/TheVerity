@@ -40,11 +40,14 @@ function isAllowedCorsOrigin(origin, extraAllowedOrigins = new Set()) {
     if (!origin || origin === 'null' || origin.startsWith('file://')) return true;
     const clean = String(origin).trim().replace(/\/$/, '');
     if (extraAllowedOrigins.has(clean)) return true;
-    if (clean === 'https://verity-2z4v.onrender.com' || clean.endsWith('.vercel.app')) return true;
+    if (clean === 'https://the-verity.onrender.com' || clean === 'https://verity-2z4v.onrender.com') return true;
     try {
         const parsed = new URL(clean);
         const host = parsed.hostname.toLowerCase();
         if (host === 'localhost' || host === '127.0.0.1' || host === '::1') return true;
+        if (parsed.protocol === 'https:' && (host === 'the-verity.vercel.app' || host.startsWith('the-verity-') || host.startsWith('verity-'))) {
+            if (host.endsWith('.vercel.app')) return true;
+        }
         if (/^(192\.168\.|10\.|172\.(1[6-9]|2\d|3[0-1])\.)/.test(host)) return true;
     } catch (_) {
         return false;
@@ -106,11 +109,28 @@ function isHostServerInstance({ dataDir, serverDir, isMainModule = false }) {
     );
 }
 
+/**
+ * Formats and sends a 502 error response when OTP email delivery fails.
+ */
+function sendEmailDeliveryError(res, cleanEmail, emailResult) {
+    const detail = emailResult?.error || 'Email provider delivery failed.';
+    console.warn(`[AUTH] Email delivery failed for ${cleanEmail}: ${detail}`);
+    const userMessage = emailResult?.simulated
+        ? 'Email verification is not configured on this local server. Please connect to the online server or configure SMTP/Brevo.'
+        : `Could not send verification code to ${cleanEmail}. ${detail}`;
+    return res.status(502).json({
+        message: userMessage,
+        emailDeliveryFailed: true,
+        error: detail
+    });
+}
+
 module.exports = {
     todayKey,
     resolveJwtSecret,
     isAllowedCorsOrigin,
     getValidLanIps,
     extractClientIp,
-    isHostServerInstance
+    isHostServerInstance,
+    sendEmailDeliveryError
 };

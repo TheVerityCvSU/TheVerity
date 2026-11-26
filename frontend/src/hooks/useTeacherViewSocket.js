@@ -49,16 +49,16 @@ export function useTeacherViewSocket({
       evalTimeoutRef.current = null;
     }
     if (evalUnbindRef.current) {
-      try { evalUnbindRef.current(); } catch (_) {}
+      try { evalUnbindRef.current(); } catch (_) { }
       evalUnbindRef.current = null;
     }
     const activeSock = compilerSocketRef.current;
     if (activeSock) {
       if (emitStop) {
-        try { activeSock.emit('stop_code'); } catch (_) {}
+        try { activeSock.emit('stop_code'); } catch (_) { }
       }
       if (ownsCompilerSocketRef.current) {
-        try { activeSock.disconnect(); } catch (_) {}
+        try { activeSock.disconnect(); } catch (_) { }
       }
       compilerSocketRef.current = null;
       ownsCompilerSocketRef.current = false;
@@ -115,7 +115,7 @@ export function useTeacherViewSocket({
         .then((d) => {
           if (d?.settings) applyNotifs(d.settings);
         })
-        .catch(() => {});
+        .catch(() => { });
     };
 
     loadNotifs();
@@ -188,13 +188,8 @@ export function useTeacherViewSocket({
           altTarget = String(cloudUrl).replace(/\/+$/, '');
         }
       } else {
-<<<<<<< HEAD
-        if (!conn.isWebHosted && localUrl && !localUrl.includes('verity-2z4v')) {
-          altTarget = String(localUrl).replace(/\/+$/, '');
-=======
         if (!conn.isWebHosted && localUrl && !localUrl.includes('onrender.com')) {
-          altTarget = localUrl;
->>>>>>> 3b82a0e04c7a495c9e05ceca4205e12acdacce60
+          altTarget = String(localUrl).replace(/\/+$/, '');
         }
       }
 
@@ -211,16 +206,16 @@ export function useTeacherViewSocket({
           }
         });
       }
-    } catch (_) {}
+    } catch (_) { }
 
     const handlePastWarnings = (pastLogs) => {
       if (Array.isArray(pastLogs) && pastLogs.length > 0) {
         const curAId = assignmentId ? String(assignmentId) : null;
         const filtered = curAId
           ? pastLogs.filter((l) => {
-              const lAId = l.assignmentId || l.assignment_id;
-              return !lAId || String(lAId) === curAId;
-            })
+            const lAId = l.assignmentId || l.assignment_id;
+            return !lAId || String(lAId) === curAId;
+          })
           : pastLogs;
         mergeWarningLogsRef.current?.(filtered);
       }
@@ -235,7 +230,7 @@ export function useTeacherViewSocket({
     const onLiveGradeUpdate = (d) => handlersRef.current?.handleLiveGradeUpdate(d);
 
     const bindSocket = (targetSock) => {
-      if (!targetSock) return () => {};
+      if (!targetSock) return () => { };
       const joinRoom = () => {
         if (mode === 'live') {
           const token = localStorage.getItem('verity_token') || localStorage.getItem('token');
@@ -274,7 +269,7 @@ export function useTeacherViewSocket({
         targetSock.off('grade_updated', onLiveGradeUpdate);
         try {
           targetSock.emit('teacher_leave', { classroomId, assignmentId });
-        } catch (_) {}
+        } catch (_) { }
       };
     };
 
@@ -294,7 +289,7 @@ export function useTeacherViewSocket({
       if (unbindPrimary) unbindPrimary();
       if (unbindSecondary) unbindSecondary();
       if (secondarySocket) {
-        try { secondarySocket.disconnect(); } catch (_) {}
+        try { secondarySocket.disconnect(); } catch (_) { }
       }
     };
   }, [socket, mode, classroomId, assignmentId, currentUser]);
@@ -345,11 +340,11 @@ export function useTeacherViewSocket({
         if (allowFallbackToPrimary && socket && socket.connected && socket !== targetSock) {
           fallbackTriggered = true;
           if (evalUnbindRef.current) {
-            try { evalUnbindRef.current(); } catch (_) {}
+            try { evalUnbindRef.current(); } catch (_) { }
             evalUnbindRef.current = null;
           }
           if (ownsSocket) {
-            try { targetSock.disconnect(); } catch (_) {}
+            try { targetSock.disconnect(); } catch (_) { }
           }
           setEvalOutput('');
           startOnSocket(socket, false, false);

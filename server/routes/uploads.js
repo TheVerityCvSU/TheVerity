@@ -81,7 +81,7 @@ function registerUploadRoutes(app, { db, DATA_DIR, IS_RENDER_CLOUD, r2Storage, a
     const CLOUD_MEDIA_BASE_URL = (
         process.env.CLOUD_API_URL ||
         process.env.CLOUD_SOCKET_URL ||
-        'https://verity-2z4v.onrender.com'
+        'https://the-verity.onrender.com'
     ).trim().replace(/\/$/, '');
 
     try {

@@ -191,7 +191,7 @@ export default function LoginFormCard({
         </div>
 
         <GoogleSignInButton
-          onClick={startExternalGoogleAuth}
+          onClick={() => startExternalGoogleAuth()}
           isLoading={isLoading}
           isGoogleLoading={isGoogleLoading}
           isDark={isDark}

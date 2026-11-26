@@ -16,6 +16,19 @@
  * - Preserves exact line numbers and column offsets for Monaco editor diagnostic squiggles.
  */
 
+/**
+ * Decodes C# Unicode escape sequences (\uXXXX, \UXXXXXXXX) so obfuscated identifiers
+ * or strings like `Fil\u0065` are normalized before pattern matching.
+ */
+function decodeCSharpUnicodeEscapes(code) {
+  return String(code)
+    .replace(/\\u([0-9a-fA-F]{4})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
+    .replace(/\\U([0-9a-fA-F]{8})/g, (_, hex) => {
+      const cp = parseInt(hex, 16);
+      return cp <= 0x10ffff ? String.fromCodePoint(cp) : _;
+    });
+}
+
 function maskCommentsAndStrings(code) {
   let maskedCode = '';
   let inLineComment = false;
@@ -202,6 +215,11 @@ const BANNED_CODE_PATTERNS = [
   { pattern: /\bSystem\s*\.\s*Runtime\s*\.\s*Loader\b/i, rule: 'REFLECTION', message: 'Restricted API: AssemblyLoadContext/Runtime.Loader is prohibited.' },
   { pattern: /\bAssemblyLoadContext\b/i, rule: 'REFLECTION', message: 'Restricted API: Dynamic AssemblyLoadContext loading is prohibited.' },
   { pattern: /\bType\s*\.\s*GetType\b/i, rule: 'REFLECTION', message: 'Restricted API: Dynamic Type.GetType reflection is prohibited.' },
+  { pattern: /\btypeof\s*\([^)]*\)\s*\.\s*Assembly\b/i, rule: 'REFLECTION', message: 'Restricted API: Inspecting Assembly metadata via typeof(...).Assembly is prohibited.' },
+  { pattern: /\.\s*Assembly\s*\.\s*(GetType|GetTypes|GetExportedTypes|GetLoadedModules|GetModule|CreateInstance|EntryPoint|Location|CodeBase)\b/i, rule: 'REFLECTION', message: 'Restricted API: Assembly reflection is prohibited.' },
+  { pattern: /\b(MethodInfo|ConstructorInfo|FieldInfo|PropertyInfo|MethodBase|ParameterInfo|DynamicMethod|AssemblyName|ModuleHandle|RuntimeMethodHandle|RuntimeTypeHandle)\b/i, rule: 'REFLECTION', message: 'Restricted API: Reflection metadata types are prohibited.' },
+  { pattern: /\.\s*(GetMethod|GetMethods|GetConstructor|GetConstructors|GetField|GetFields|GetProperty|GetProperties|GetMember|GetMembers|InvokeMember)\s*\(/i, rule: 'REFLECTION', message: 'Restricted API: Reflective member lookup/invocation is prohibited.' },
+  { pattern: /\b(System\s*\.\s*CodeDom|Microsoft\s*\.\s*CodeAnalysis|Microsoft\s*\.\s*CSharp)\b/i, rule: 'REFLECTION', message: 'Restricted API: Dynamic runtime compilation is prohibited.' },
   { pattern: /\bAssembly\s*\.\s*(Load|LoadFrom|LoadFile)\b/i, rule: 'REFLECTION', message: 'Restricted API: Dynamic Assembly loading is prohibited.' },
   { pattern: /\bActivator\s*\.\s*CreateInstance\b/i, rule: 'REFLECTION', message: 'Restricted API: Dynamic Activator is prohibited.' },
   { pattern: /\bSystem\s*\.\s*Net\b/i, rule: 'NETWORK_ACCESS', message: 'Restricted API: System.Net networking is prohibited.' },
@@ -214,7 +232,8 @@ const BANNED_CODE_PATTERNS = [
   { pattern: /\bMemoryMappedFile\b/i, rule: 'FILESYSTEM_IO', message: 'Restricted API: MemoryMappedFile is prohibited in sandbox.' },
   { pattern: /\bMicrosoft\s*\.\s*Win32\s*\.\s*Registry\b/i, rule: 'SYSTEM_TAMPER', message: 'Restricted API: Registry access is prohibited.' },
   { pattern: /\bRegistryKey\b/i, rule: 'SYSTEM_TAMPER', message: 'Restricted API: RegistryKey access is prohibited.' },
-  { pattern: /\bEnvironment\s*\.\s*(GetEnvironmentVariable|GetEnvironmentVariables|SetEnvironmentVariable|GetFolderPath|MachineName|UserName|CurrentDirectory|GetCommandLineArgs|CommandLine|OSVersion|GetLogicalDrives|ExpandEnvironmentVariables|SystemDirectory)\b/i, rule: 'ENV_ACCESS', message: 'Restricted API: Reading or modifying host environment/OS paths is prohibited in sandbox.' },
+  { pattern: /\bEnvironment\s*\.\s*(GetEnvironmentVariable|GetEnvironmentVariables|SetEnvironmentVariable|GetFolderPath|MachineName|UserName|UserDomainName|CurrentDirectory|GetCommandLineArgs|CommandLine|OSVersion|GetLogicalDrives|ExpandEnvironmentVariables|SystemDirectory|ProcessPath|ProcessId|StackTrace)\b/i, rule: 'ENV_ACCESS', message: 'Restricted API: Reading or modifying host environment/OS paths is prohibited in sandbox.' },
+  { pattern: /\b(RuntimeInformation|OperatingSystem)\s*\./i, rule: 'ENV_ACCESS', message: 'Restricted API: OS/runtime host fingerprinting is prohibited in sandbox.' },
   { pattern: /\bEnvironment\s*\.\s*Exit\b/i, rule: 'PROCESS_KILL', message: 'Restricted API: Environment.Exit is prohibited in classroom IDE.' },
   { pattern: /\bEnvironment\s*\.\s*FailFast\b/i, rule: 'PROCESS_KILL', message: 'Restricted API: Environment.FailFast is prohibited.' },
   { pattern: /\bAppDomain\s*\.\s*CurrentDomain\b/i, rule: 'SYSTEM_TAMPER', message: 'Restricted API: AppDomain manipulation is prohibited.' }
@@ -225,7 +244,7 @@ const BANNED_STRING_PATTERNS = [
   { pattern: /\bpowershell(\.exe)?\b/i, rule: 'DANGEROUS_COMMAND', message: 'Forbidden command reference: "powershell" is blocked.' },
   { pattern: /\b(bash|sh|certutil|curl|wget|cscript|wscript|mshta|rundll32)(\.exe)?\b/i, rule: 'DANGEROUS_COMMAND', message: 'Forbidden shell or execution utility reference is blocked.' },
   { pattern: /\b(shutdown|format|regedit)\b/i, rule: 'DANGEROUS_COMMAND', message: 'Forbidden system command is blocked in string literal.' },
-  { pattern: /^[a-zA-Z]:[\\/]/, rule: 'PATH_TRAVERSAL', message: 'Absolute file paths (e.g. C:\\...) are prohibited.' },
+  { pattern: /[a-zA-Z]:[\\/]/, rule: 'PATH_TRAVERSAL', message: 'Absolute file paths (e.g. C:\\...) are prohibited.' },
   { pattern: /\.\.[\\/]/, rule: 'PATH_TRAVERSAL', message: 'Directory traversal (..) is prohibited.' }
 ];
 
@@ -233,8 +252,9 @@ const BANNED_STRING_PATTERNS = [
  * Scans a single C# file.
  * Returns { isSafe: true } or { isSafe: false, rule, message, fileName, line, column }.
  */
-function scanSingleFile(code, fileName = 'Program.cs') {
-  if (!code || typeof code !== 'string') return { isSafe: true };
+function scanSingleFile(rawCode, fileName = 'Program.cs') {
+  if (!rawCode || typeof rawCode !== 'string') return { isSafe: true };
+  const code = decodeCSharpUnicodeEscapes(rawCode);
 
   const { maskedCode, strings } = maskCommentsAndStrings(code);
   const lines = code.split('\n');

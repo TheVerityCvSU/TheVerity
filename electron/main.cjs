@@ -7,7 +7,7 @@ const { fork, spawn } = require('child_process');
 const { initLocalDb, localDbAPI } = require('./local-db.cjs');
 const { initStartupVmDetection, getVmStatus, getCachedVmStatusSync } = require('./vm-detect.cjs');
 const { initLanClient, getDiscoveredServer, setDiscoveredServer, verifyHttpServer, resolveLanHostUrl, runDiscoveryScan, stopLanClient } = require('./lan-client.cjs');
-const { isAllowedExternalUrl, isAllowedGoogleAuthUrl, isAuthorizedIpcSender, resolveSafeDistFile } = require('./security-utils.cjs');
+const { isAllowedExternalUrl, isAllowedGoogleAuthUrl, isAuthorizedIpcSender, registerAuthorizedIpcHandlers, resolveSafeDistFile } = require('./security-utils.cjs');
 
 // Persistent diagnostic and startup logging
 const logFile = path.join(os.tmpdir(), 'the-verity-startup.log');
@@ -15,7 +15,7 @@ function logStartup(msg) {
   const line = `[${new Date().toISOString()}] ${msg}\n`;
   try {
     fs.appendFileSync(logFile, line);
-  } catch (_) {}
+  } catch (_) { }
   console.log(msg);
 }
 
@@ -37,7 +37,7 @@ process.on('uncaughtException', (err) => {
       'The Verity - Startup Error',
       `A fatal error occurred:\n\n${err?.message || err}\n\nDiagnostic log written to:\n${logFile}`
     );
-  } catch (_) {}
+  } catch (_) { }
 });
 
 process.on('unhandledRejection', (reason) => {
@@ -54,7 +54,7 @@ if (!gotTheLock) {
       'Another instance of The Verity is already running on this computer.\n\n' +
       'Please open Windows Task Manager (Ctrl + Shift + Esc), close any existing "The Verity" processes, and try launching again.'
     );
-  } catch (_) {}
+  } catch (_) { }
   app.quit();
   process.exit(0);
 }
@@ -137,7 +137,7 @@ function setLockedFile(locked) {
 
 function killKeyboardHook() {
   if (hudProcess && hudProcess.exitCode === null) {
-    try { hudProcess.kill(); } catch (_) {}
+    try { hudProcess.kill(); } catch (_) { }
     hudProcess = null;
   }
   setLockedFile(false);
@@ -154,7 +154,7 @@ function seedDatabase(dataDir) {
     try { current = JSON.parse(fs.readFileSync(dbPath, 'utf-8')); } catch { /* corrupt */ }
   }
   let seedData = { users: [] };
-  try { seedData = JSON.parse(fs.readFileSync(seedPath, 'utf-8')); } catch {}
+  try { seedData = JSON.parse(fs.readFileSync(seedPath, 'utf-8')); } catch { }
 
   const existingEmails = new Set((current.users || []).map((u) => u.email));
   let added = 0;
@@ -214,7 +214,7 @@ function startServer() {
             if (key) parsedEnv[key] = val;
           }
         }
-      } catch (_) {}
+      } catch (_) { }
     }
 
     const isHostMode = process.argv.includes('--host') || process.env.IS_LAN_HOST === 'true';
@@ -427,11 +427,8 @@ function createWindow() {
     try {
       const parsedUrl = new URL(navigationUrl);
       if (parsedUrl.protocol === 'http:' || parsedUrl.protocol === 'https:') {
-<<<<<<< HEAD
-=======
         // Packaged Electron serves dist/ on http://localhost:5173 via protocol.handle('http', ...),
         // so in-app navigation/reloads on localhost:5173 must stay inside Electron rather than opening a browser.
->>>>>>> 3b82a0e04c7a495c9e05ceca4205e12acdacce60
         if (parsedUrl.host === 'localhost:5173') {
           return;
         }
@@ -452,7 +449,7 @@ function createWindow() {
     if (validatedURL && validatedURL.includes('localhost:5173') && app.isPackaged) {
       const fallbackFile = path.join(__dirname, '../dist/index.html');
       logStartup(`[main] Falling back to direct loadFile: ${fallbackFile}`);
-      mainWindow.loadFile(fallbackFile).catch(() => {});
+      mainWindow.loadFile(fallbackFile).catch(() => { });
     }
     launchMainWindow();
   });
@@ -564,15 +561,15 @@ function enableLockdown(options = {}) {
     if (mainWindow.webContents && mainWindow.webContents.isDevToolsOpened()) {
       mainWindow.webContents.closeDevTools();
     }
-  } catch (_) {}
+  } catch (_) { }
 
   if (!alreadyLocked) {
     mainWindow.setFullScreen(true);
     mainWindow.setKiosk(true);
     mainWindow.setVisibleOnAllWorkspaces(true);
   }
-  try { mainWindow.setMinimizable(false); } catch (_) {}
-  try { mainWindow.setClosable(false); } catch (_) {}
+  try { mainWindow.setMinimizable(false); } catch (_) { }
+  try { mainWindow.setClosable(false); } catch (_) { }
 
   if (mainWindow.isMinimized()) mainWindow.restore();
   mainWindow.setAlwaysOnTop(false);
@@ -625,9 +622,9 @@ function enableLockdown(options = {}) {
     for (const accel of LOCKED_SHORTCUTS) {
       try {
         if (!globalShortcut.isRegistered(accel)) {
-          globalShortcut.register(accel, () => {});
+          globalShortcut.register(accel, () => { });
         }
-      } catch (_) {}
+      } catch (_) { }
     }
   } else {
     setLockedFile(false);
@@ -644,8 +641,8 @@ function disableLockdown() {
     mainWindow.setVisibleOnAllWorkspaces(false);
     mainWindow.setKiosk(false);
     mainWindow.setFullScreen(false);
-    try { mainWindow.setMinimizable(true); } catch (_) {}
-    try { mainWindow.setClosable(true); } catch (_) {}
+    try { mainWindow.setMinimizable(true); } catch (_) { }
+    try { mainWindow.setClosable(true); } catch (_) { }
   }
   setLockedFile(false);
   killKeyboardHook();
@@ -676,19 +673,10 @@ app.whenReady().then(() => {
       try {
         const url = new URL(request.url);
         if (url.hostname === 'localhost' && url.port === '5173') {
-<<<<<<< HEAD
           const distDir = path.join(__dirname, '../dist');
           let { safe, filePath } = resolveSafeDistFile(distDir, url.pathname === '/' ? '/index.html' : url.pathname);
           if (!safe || !fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) {
             filePath = path.join(distDir, 'index.html');
-=======
-          let reqPath = decodeURIComponent(url.pathname);
-          if (reqPath === '/' || reqPath === '') reqPath = '/index.html';
-          
-          let file = path.join(__dirname, '../dist', reqPath);
-          if (!fs.existsSync(file) || fs.statSync(file).isDirectory()) {
-            file = path.join(__dirname, '../dist/index.html');
->>>>>>> 3b82a0e04c7a495c9e05ceca4205e12acdacce60
           }
           return net.fetch(pathToFileURL(filePath).href);
         }
@@ -699,11 +687,11 @@ app.whenReady().then(() => {
     });
   }
 
-// Clean any leftover lockfile from a prior unclean exit before launching UI
+  // Clean any leftover lockfile from a prior unclean exit before launching UI
   try {
     const staleLock = path.join(app.getPath('userData'), '.verity-lock');
     if (fs.existsSync(staleLock)) fs.unlinkSync(staleLock);
-  } catch (_) {}
+  } catch (_) { }
 
   createSplashWindow();
 
@@ -847,7 +835,8 @@ ipcMain.on('open-google-auth', (event, url) => {
   });
 });
 
-ipcMain.on('close-google-auth', () => {
+ipcMain.on('close-google-auth', (event) => {
+  if (!isAuthorizedIpcSender(event)) return;
   if (googleAuthWindow && !googleAuthWindow.isDestroyed()) {
     logStartup('[main] close-google-auth received; closing auth window');
     googleAuthWindow.close();
@@ -855,53 +844,40 @@ ipcMain.on('close-google-auth', () => {
   }
 });
 
-ipcMain.handle('check-google-auth-status', () => {
-  return !!(googleAuthWindow && !googleAuthWindow.isDestroyed());
-});
-
-// Local SQLite storage IPC handlers
-ipcMain.handle('local-db:saveDraft', (_, assignmentId, studentId, code, history) => 
-  localDbAPI.saveDraft(assignmentId, studentId, code, history));
-ipcMain.handle('local-db:getDraft', (_, assignmentId, studentId) => 
-  localDbAPI.getDraft(assignmentId, studentId));
-ipcMain.handle('local-db:cacheClassrooms', (_, classrooms) => 
-  localDbAPI.cacheClassrooms(classrooms));
-ipcMain.handle('local-db:getCachedClassrooms', () => 
-  localDbAPI.getCachedClassrooms());
-ipcMain.handle('local-db:cacheClasswork', (_, classroomId, classwork) => 
-  localDbAPI.cacheClasswork(classroomId, classwork));
-ipcMain.handle('local-db:getCachedClasswork', (_, classroomId) => 
-  localDbAPI.getCachedClasswork(classroomId));
-ipcMain.handle('local-db:addToSyncQueue', (_, action, url, method, body) => 
-  localDbAPI.addToSyncQueue(action, url, method, body));
-ipcMain.handle('local-db:getSyncQueue', () => 
-  localDbAPI.getSyncQueue());
-ipcMain.handle('local-db:removeFromSyncQueue', (_, id) => 
-  localDbAPI.removeFromSyncQueue(id));
-ipcMain.handle('local-db:setLocal', (_, key, value) => 
-  localDbAPI.setLocal(key, value));
-ipcMain.handle('local-db:getLocal', (_, key) => 
-  localDbAPI.getLocal(key));
-ipcMain.handle('get-discovered-server', () => 
-  getDiscoveredServer());
-ipcMain.handle('set-lan-server', async (_, serverUrl) => {
-  logStartup(`[main] set-lan-server requested: ${serverUrl}`);
-  if (!serverUrl) {
-    await setDiscoveredServer(null);
-    return { success: true, url: null };
-  }
-  const resolvedUrl = await resolveLanHostUrl(serverUrl, 2500);
-  if (resolvedUrl) {
-    await setDiscoveredServer(resolvedUrl);
-    return { success: true, url: resolvedUrl };
-  }
-  return { success: false, error: 'Could not connect to Verity server at this address' };
-});
-ipcMain.handle('scan-lan-servers', async () => {
-  logStartup('[main] scan-lan-servers requested');
-  await runDiscoveryScan(true);
-  return getDiscoveredServer();
-});
+// Local SQLite storage, Google auth status, and LAN discovery IPC handlers
+registerAuthorizedIpcHandlers(ipcMain, [
+  ['check-google-auth-status', () => !!(googleAuthWindow && !googleAuthWindow.isDestroyed()), false],
+  ['local-db:saveDraft', (_, assignmentId, studentId, code, history) => localDbAPI.saveDraft(assignmentId, studentId, code, history), false],
+  ['local-db:getDraft', (_, assignmentId, studentId) => localDbAPI.getDraft(assignmentId, studentId), null],
+  ['local-db:cacheClassrooms', (_, classrooms) => localDbAPI.cacheClassrooms(classrooms), false],
+  ['local-db:getCachedClassrooms', () => localDbAPI.getCachedClassrooms(), []],
+  ['local-db:cacheClasswork', (_, classroomId, classwork) => localDbAPI.cacheClasswork(classroomId, classwork), false],
+  ['local-db:getCachedClasswork', (_, classroomId) => localDbAPI.getCachedClasswork(classroomId), []],
+  ['local-db:addToSyncQueue', (_, action, url, method, body) => localDbAPI.addToSyncQueue(action, url, method, body), false],
+  ['local-db:getSyncQueue', () => localDbAPI.getSyncQueue(), []],
+  ['local-db:removeFromSyncQueue', (_, id) => localDbAPI.removeFromSyncQueue(id), false],
+  ['local-db:setLocal', (_, key, value) => localDbAPI.setLocal(key, value), false],
+  ['local-db:getLocal', (_, key) => localDbAPI.getLocal(key), null],
+  ['get-discovered-server', () => getDiscoveredServer(), null],
+  ['set-lan-server', async (_, serverUrl) => {
+    logStartup(`[main] set-lan-server requested: ${serverUrl}`);
+    if (!serverUrl) {
+      await setDiscoveredServer(null);
+      return { success: true, url: null };
+    }
+    const resolvedUrl = await resolveLanHostUrl(serverUrl, 2500);
+    if (resolvedUrl) {
+      await setDiscoveredServer(resolvedUrl);
+      return { success: true, url: resolvedUrl };
+    }
+    return { success: false, error: 'Could not connect to Verity server at this address' };
+  }, { success: false, error: 'Unauthorized IPC sender' }],
+  ['scan-lan-servers', async () => {
+    logStartup('[main] scan-lan-servers requested');
+    await runDiscoveryScan(true);
+    return getDiscoveredServer();
+  }, null],
+]);
 
 app.on('will-quit', () => {
   logStartup('[main] app will-quit fired');
@@ -912,6 +888,6 @@ app.on('will-quit', () => {
   globalShortcut.unregisterAll();
   stopLanClient();
   stopServer();
-  try { localDbAPI.close(); } catch (_) {}
+  try { localDbAPI.close(); } catch (_) { }
   killKeyboardHook();
 });

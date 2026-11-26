@@ -98,7 +98,13 @@ export function useGoogleAuthFlow({ onSuccess, onError }) {
       setIsGoogleLoading(false);
     };
 
+    let expectedBackendOrigin = '';
+    try {
+      expectedBackendOrigin = new URL(backendUrl).origin;
+    } catch (_) {}
+
     const handlePopupMessage = (event) => {
+      if (expectedBackendOrigin && event?.origin !== expectedBackendOrigin) return;
       const msg = event?.data;
       if (!msg || msg.sessionId !== sessionId) return;
       if (msg.type === 'verity-google-auth-success') {
@@ -116,8 +122,18 @@ export function useGoogleAuthFlow({ onSuccess, onError }) {
     socket.on(`google-login-success-${sessionId}`, handleAuthSuccessData);
     socket.on(`google-login-error-${sessionId}`, handleAuthErrorData);
 
-    const extraQuery = Object.entries(extraParams || {})
-      .filter(([_, v]) => v !== undefined && v !== null && v !== '')
+    const safeParams =
+      extraParams &&
+      typeof extraParams === 'object' &&
+      !extraParams.nativeEvent &&
+      !extraParams._reactName
+        ? { ...extraParams }
+        : {};
+    if (typeof window !== 'undefined' && /^https?:\/\//i.test(window.location?.origin || '')) {
+      safeParams.origin = window.location.origin;
+    }
+    const extraQuery = Object.entries(safeParams)
+      .filter(([_, v]) => v !== undefined && v !== null && v !== '' && typeof v !== 'object' && typeof v !== 'function')
       .map(([k, v]) => `&${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
       .join('');
     const url = `${backendUrl}/auth/google/external?sessionId=${sessionId}${extraQuery}`;

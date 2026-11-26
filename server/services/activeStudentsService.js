@@ -50,6 +50,8 @@ function createActiveStudentsService({ io }) {
         return classroomCounts;
     }
 
+    let lastActiveBroadcastSignature = '';
+
     function broadcastActiveActivities() {
         const allCounts = {};
         const classroomCounts = getActiveClassroomsMap();
@@ -59,7 +61,11 @@ function createActiveStudentsService({ io }) {
             const aId = String(student.assignmentId);
             allCounts[aId] = (allCounts[aId] || 0) + 1;
         }
-        io.emit('active_activities_update', { counts: allCounts, classroomCounts });
+        const payload = { counts: allCounts, classroomCounts };
+        const signature = JSON.stringify(payload);
+        if (signature === lastActiveBroadcastSignature) return;
+        lastActiveBroadcastSignature = signature;
+        io.emit('active_activities_update', payload);
     }
 
     function removeStudentFromPreviousActivities(studentId, studentName, excludeKey = null) {

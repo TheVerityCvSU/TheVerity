@@ -123,7 +123,8 @@ function registerSystemRoutes(app, {
         try {
             const controller = new AbortController();
             const timeout = setTimeout(() => controller.abort(), 3500);
-            const ghRes = await fetch('https://api.github.com/repos/belheroth/Verity/releases/latest', {
+            const ghRepo = (process.env.GITHUB_REPO || 'TheVerityCvSU/TheVerity').trim();
+            const ghRes = await fetch(`https://api.github.com/repos/${ghRepo}/releases/latest`, {
                 headers: { 'User-Agent': 'The-Verity-App' },
                 signal: controller.signal
             });
@@ -212,7 +213,8 @@ function registerSystemRoutes(app, {
         try {
             const controller = new AbortController();
             const timeout = setTimeout(() => controller.abort(), 4000);
-            const ghRes = await fetch('https://api.github.com/repos/belheroth/Verity/releases/latest', {
+            const ghRepo = (process.env.GITHUB_REPO || 'TheVerityCvSU/TheVerity').trim();
+            const ghRes = await fetch(`https://api.github.com/repos/${ghRepo}/releases/latest`, {
                 headers: { 'User-Agent': 'The-Verity-App' },
                 signal: controller.signal
             });

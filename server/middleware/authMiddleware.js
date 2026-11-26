@@ -3,7 +3,7 @@ const jwt = require('jsonwebtoken');
 /**
  * Builds authentication, RBAC, admin IP whitelist, and OTP/login rate-limiting middleware.
  */
-function createAuthMiddleware({ JWT_SECRET, IS_RENDER_CLOUD }) {
+function createAuthMiddleware({ JWT_SECRET, IS_RENDER_CLOUD, db = null }) {
     const adminLoginAttempts = new Map();
     const otpAttemptCounts = new Map();
     const otpSendCooldowns = new Map();
@@ -29,7 +29,7 @@ function createAuthMiddleware({ JWT_SECRET, IS_RENDER_CLOUD }) {
             return true;
         }
         if (!ip) return true;
-        const cleanIp = ip.replace(/^.*:/, '');
+        const cleanIp = String(ip).replace(/^::ffff:/i, '');
         const allowedEnv = rawAllowed.split(',').map(s => s.trim()).filter(Boolean);
         const defaultAllowed = ['127.0.0.1', '::1', 'localhost', '192.168.8.115', '131.226.102.72'];
         if (defaultAllowed.includes(cleanIp) || allowedEnv.includes(cleanIp)) {
@@ -99,8 +99,32 @@ function createAuthMiddleware({ JWT_SECRET, IS_RENDER_CLOUD }) {
 
         const user = verifySessionToken(token);
         if (!user) return res.status(403).json({ message: 'Invalid token.' });
-        req.user = user;
-        next();
+        if (!db) {
+            req.user = user;
+            return next();
+        }
+        const roleLower = String(user.role || '').toLowerCase();
+        const tbl = roleLower === 'admin' ? 'admin_users' : 'users';
+        const lookupEmail = String(user.email || '').trim().toLowerCase();
+        const promise = lookupEmail
+            ? db.get(`SELECT id, status, role FROM ${tbl} WHERE id = ? OR LOWER(email) = ?`, user.id ?? -1, lookupEmail)
+            : db.get(`SELECT id, status, role FROM ${tbl} WHERE id = ?`, user.id ?? -1);
+        Promise.resolve(promise)
+            .then((row) => {
+                if (!row) {
+                    return res.status(401).json({ message: 'Account no longer exists. Please sign in again.' });
+                }
+                const statusLower = String(row.status || 'Active').toLowerCase();
+                if (statusLower === 'disabled' || statusLower === 'suspended' || statusLower === 'pending') {
+                    return res.status(403).json({ message: `Account is ${statusLower}. Access denied.` });
+                }
+                req.user = user;
+                next();
+            })
+            .catch(() => {
+                req.user = user;
+                next();
+            });
     };
 
     const authenticateTokenOrLoopback = (req, res, next) => {

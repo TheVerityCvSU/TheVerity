@@ -1,7 +1,4 @@
-<<<<<<< HEAD
-=======
-import React, { useState } from 'react';
->>>>>>> 3b82a0e04c7a495c9e05ceca4205e12acdacce60
+import { useState } from 'react';
 import { motion } from 'framer-motion';
 
 export default function InstructorPillRow({
@@ -36,10 +33,10 @@ export default function InstructorPillRow({
     ...(onSelect ? styles.pillRowClickable : {}),
     ...(onSelect && isHovered
       ? {
-          backgroundColor: isDark ? '#262626' : '#f8fafc',
-          border: isDark ? '1px solid #4b5563' : '1px solid #cbd5e1',
-          transform: 'translateY(-1px)'
-        }
+        backgroundColor: isDark ? '#262626' : '#f8fafc',
+        border: isDark ? '1px solid #4b5563' : '1px solid #cbd5e1',
+        transform: 'translateY(-1px)'
+      }
       : {})
   };
 

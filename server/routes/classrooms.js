@@ -602,13 +602,7 @@ function registerClassroomRoutes(app, { db, io, authMiddleware, classroomHelpers
             if (!code) return res.status(400).json({ message: 'Class code required' });
 
             const trimmed = code.trim().toLowerCase();
-            let classroom = await db.get('SELECT * FROM classrooms WHERE LOWER(code) = ?', trimmed);
-            if (!classroom) {
-                classroom = await db.get(
-                    'SELECT * FROM classrooms WHERE LOWER(section) = ? OR LOWER(name) = ? OR CAST(id as TEXT) = ?',
-                    trimmed, trimmed, trimmed
-                );
-            }
+            const classroom = await db.get('SELECT * FROM classrooms WHERE LOWER(code) = ?', trimmed);
             if (!classroom) return res.status(404).json({ message: 'No class found with that code' });
 
             const classSettings = parseClassroomSettings(classroom.settings);

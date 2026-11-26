@@ -7,7 +7,7 @@ const { pathToFileURL } = require('url');
 const { fork } = require('child_process');
 const { initLocalDb, localDbAPI } = require('./local-db.cjs');
 const { initStartupVmDetection, getVmStatus, getCachedVmStatusSync } = require('./vm-detect.cjs');
-const { isAllowedExternalUrl, isAllowedGoogleAuthUrl, isAuthorizedIpcSender, resolveSafeDistFile } = require('./security-utils.cjs');
+const { isAllowedExternalUrl, isAllowedGoogleAuthUrl, isAuthorizedIpcSender, registerAuthorizedIpcHandlers, resolveSafeDistFile } = require('./security-utils.cjs');
 const { initLanClient, getDiscoveredServer, setDiscoveredServer, resolveLanHostUrl, runDiscoveryScan, stopLanClient } = require('./lan-client.cjs');
 const http = require('http');
 const netTcp = require('net');
@@ -532,16 +532,13 @@ ipcMain.on('open-google-auth', (event, url) => {
   });
 });
 
-ipcMain.on('close-google-auth', () => {
+ipcMain.on('close-google-auth', (event) => {
+  if (!isAuthorizedIpcSender(event)) return;
   if (googleAuthWindow && !googleAuthWindow.isDestroyed()) {
     logStartup('[admin-main] close-google-auth received; closing auth window');
     googleAuthWindow.close();
     googleAuthWindow = null;
   }
-});
-
-ipcMain.handle('check-google-auth-status', () => {
-  return !!(googleAuthWindow && !googleAuthWindow.isDestroyed());
 });
 
 ipcMain.handle('get-app-version', () => {
@@ -551,67 +548,39 @@ ipcMain.handle('get-app-version', () => {
 const { registerUpdateIpc } = require('./updater.cjs');
 registerUpdateIpc(() => mainWindow);
 
-ipcMain.handle('check-vm-status', async () => {
-  return await getVmStatus();
-});
-
-ipcMain.handle('get-cached-vm-status', () => {
-  return getCachedVmStatusSync();
-});
-
-// IPC Handler for client-side local database
-ipcMain.handle('local-db:saveDraft', (event, assignmentId, studentId, code, history) => {
-  return localDbAPI.saveDraft(assignmentId, studentId, code, history);
-});
-ipcMain.handle('local-db:getDraft', (event, assignmentId, studentId) => {
-  return localDbAPI.getDraft(assignmentId, studentId);
-});
-ipcMain.handle('local-db:cacheClassrooms', (event, classrooms) => {
-  return localDbAPI.cacheClassrooms(classrooms);
-});
-ipcMain.handle('local-db:getCachedClassrooms', () => {
-  return localDbAPI.getCachedClassrooms();
-});
-ipcMain.handle('local-db:cacheClasswork', (event, classroomId, classwork) => {
-  return localDbAPI.cacheClasswork(classroomId, classwork);
-});
-ipcMain.handle('local-db:getCachedClasswork', (event, classroomId) => {
-  return localDbAPI.getCachedClasswork(classroomId);
-});
-ipcMain.handle('local-db:addToSyncQueue', (event, action, url, method, body) => {
-  return localDbAPI.addToSyncQueue(action, url, method, body);
-});
-ipcMain.handle('local-db:getSyncQueue', () => {
-  return localDbAPI.getSyncQueue();
-});
-ipcMain.handle('local-db:removeFromSyncQueue', (event, id) => {
-  return localDbAPI.removeFromSyncQueue(id);
-});
-ipcMain.handle('local-db:setLocal', (event, key, value) => {
-  return localDbAPI.setLocal(key, value);
-});
-ipcMain.handle('local-db:getLocal', (event, key) => {
-  return localDbAPI.getLocal(key);
-});
-ipcMain.handle('get-discovered-server', () => {
-  return getDiscoveredServer();
-});
-ipcMain.handle('set-lan-server', async (_, serverUrl) => {
-  if (!serverUrl) {
-    await setDiscoveredServer(null);
-    return { success: true, url: null };
-  }
-  const resolvedUrl = await resolveLanHostUrl(serverUrl, 2500);
-  if (resolvedUrl) {
-    await setDiscoveredServer(resolvedUrl);
-    return { success: true, url: resolvedUrl };
-  }
-  return { success: false, error: 'Could not connect to Verity server at this address' };
-});
-ipcMain.handle('scan-lan-servers', async () => {
-  await runDiscoveryScan(true);
-  return getDiscoveredServer();
-});
+registerAuthorizedIpcHandlers(ipcMain, [
+  ['check-google-auth-status', () => !!(googleAuthWindow && !googleAuthWindow.isDestroyed()), false],
+  ['check-vm-status', async () => await getVmStatus(), { isVm: false, reasons: [] }],
+  ['get-cached-vm-status', () => getCachedVmStatusSync(), { isVm: false, reasons: [] }],
+  ['local-db:saveDraft', (_, assignmentId, studentId, code, history) => localDbAPI.saveDraft(assignmentId, studentId, code, history), false],
+  ['local-db:getDraft', (_, assignmentId, studentId) => localDbAPI.getDraft(assignmentId, studentId), null],
+  ['local-db:cacheClassrooms', (_, classrooms) => localDbAPI.cacheClassrooms(classrooms), false],
+  ['local-db:getCachedClassrooms', () => localDbAPI.getCachedClassrooms(), []],
+  ['local-db:cacheClasswork', (_, classroomId, classwork) => localDbAPI.cacheClasswork(classroomId, classwork), false],
+  ['local-db:getCachedClasswork', (_, classroomId) => localDbAPI.getCachedClasswork(classroomId), []],
+  ['local-db:addToSyncQueue', (_, action, url, method, body) => localDbAPI.addToSyncQueue(action, url, method, body), false],
+  ['local-db:getSyncQueue', () => localDbAPI.getSyncQueue(), []],
+  ['local-db:removeFromSyncQueue', (_, id) => localDbAPI.removeFromSyncQueue(id), false],
+  ['local-db:setLocal', (_, key, value) => localDbAPI.setLocal(key, value), false],
+  ['local-db:getLocal', (_, key) => localDbAPI.getLocal(key), null],
+  ['get-discovered-server', () => getDiscoveredServer(), null],
+  ['set-lan-server', async (_, serverUrl) => {
+    if (!serverUrl) {
+      await setDiscoveredServer(null);
+      return { success: true, url: null };
+    }
+    const resolvedUrl = await resolveLanHostUrl(serverUrl, 2500);
+    if (resolvedUrl) {
+      await setDiscoveredServer(resolvedUrl);
+      return { success: true, url: resolvedUrl };
+    }
+    return { success: false, error: 'Could not connect to Verity server at this address' };
+  }, { success: false, error: 'Unauthorized IPC sender' }],
+  ['scan-lan-servers', async () => {
+    await runDiscoveryScan(true);
+    return getDiscoveredServer();
+  }, null],
+]);
 
 app.on('window-all-closed', () => {
   stopServer();

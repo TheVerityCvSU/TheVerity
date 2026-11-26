@@ -85,6 +85,7 @@ function generateClassCodeSync(takenSet = new Set()) {
 }
 
 function seedFromDatabaseJson(adapter, dataDir) {
+    if (process.env.VERITY_SKIP_SEED === '1') return;
     try {
         const candidatePaths = [
             path.join(dataDir, 'database.json'),

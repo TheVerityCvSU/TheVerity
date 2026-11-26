@@ -90,7 +90,7 @@ function createSystemSettingsService({ db, io, activeStudents }) {
             sessionTimeout: '30m',
             cognitivePauseThreshold: 45,
             strictClipboardBlocking: true,
-            enforceSingleMonitor: false,
+            enforceSingleMonitor: true,
             disableWindowsKeyAltTab: true,
             blockVirtualMachine: true,
             passwordPolicies: { ...DEFAULT_PASSWORD_POLICIES }

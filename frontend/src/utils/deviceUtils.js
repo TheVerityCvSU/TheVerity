@@ -122,11 +122,7 @@ export const isMobileDevice = () => {
  * Keep false in production so ComLab & PC web browser access is strictly blocked for students
  * while genuine mobile phones/tablets and the official The Verity (.exe) app remain allowed.
  */
-<<<<<<< HEAD
 export const DISABLE_DESKTOP_WEB_BLOCKER = Boolean(import.meta.env?.DEV);
-=======
-export const DISABLE_DESKTOP_WEB_BLOCKER = false;
->>>>>>> 3b82a0e04c7a495c9e05ceca4205e12acdacce60
 
 /**
  * Checks if the user is running in a desktop or laptop web browser
