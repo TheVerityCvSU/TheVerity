@@ -1,4 +1,3 @@
-import React from 'react';
 import { FileText, Video, Link2, ArrowUpRight } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import Skeleton from '../Skeleton';

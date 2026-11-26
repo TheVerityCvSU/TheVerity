@@ -1,4 +1,5 @@
-import React, { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect } from 'react';
+import '../utils/monaco/monacoConfig.js';
 import Editor from '@monaco-editor/react';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { registerMonacoSnippets } from '../utils/monaco/registerMonacoSnippets.js';
@@ -89,7 +90,7 @@ export default function CompilerView() {
 
   const handleRenameFile = (id, newName) => {
     const cleaned = (newName || '').replace(/\.[a-zA-Z0-9]+$/i, '').trim();
-    const safeName = cleaned.replace(/[^a-zA-Z0-9_\-]/g, '').slice(0, 40) || 'File';
+    const safeName = cleaned.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 40) || 'File';
     const updated = extraFiles.map((f) => (f.id === id ? { ...f, name: safeName } : f));
     setExtraFiles(updated);
     persistExtraFiles(updated);

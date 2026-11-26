@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import { useState, useRef } from 'react';
 import { Home, Calendar, Archive, Settings } from 'lucide-react';
 import ProfileMenu from '../ProfileMenu';
 
@@ -11,7 +11,7 @@ export default function TeacherGradingHeader({
   onLogout,
   styles
 }) {
-  const [isHeaderHovered, setIsHeaderHovered] = useState(false);
+  const [, setIsHeaderHovered] = useState(false);
   const [headerIndicatorStyle, setHeaderIndicatorStyle] = useState({ left: 0, width: 0, opacity: 0 });
   const headerNavRefs = useRef({});
 

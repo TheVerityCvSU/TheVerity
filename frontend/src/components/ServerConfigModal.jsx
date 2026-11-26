@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Loader2, RotateCcw, Wifi, Info } from 'lucide-react';
 import { useDarkMode } from '../hooks/useDarkMode';
@@ -9,27 +9,31 @@ import ServerTestResultBanner from './serverConfig/ServerTestResultBanner';
 
 export default function ServerConfigModal({ isOpen, onClose }) {
   const { isDark } = useDarkMode();
-  const [currentUrl, setCurrentUrl] = useState('');
   const [inputUrl, setInputUrl] = useState('');
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState(null); // { success: boolean, message: string }
 
-  useEffect(() => {
+  const [prevOpen, setPrevOpen] = useState(isOpen);
+  if (isOpen !== prevOpen) {
+    setPrevOpen(isOpen);
     if (isOpen) {
-      let active = localStorage.getItem('verity_custom_server') || localStorage.getItem('verity_cloud_url') || getCloudUrl() || DEFAULT_CLOUD_API_URL;
-      setCurrentUrl(active);
+      const active = localStorage.getItem('verity_custom_server') || localStorage.getItem('verity_cloud_url') || getCloudUrl() || DEFAULT_CLOUD_API_URL;
       setInputUrl(active);
       setTestResult(null);
-
-      if (window.electronAPI?.localDB?.getLocal) {
-        window.electronAPI.localDB.getLocal('verity_custom_server').then(saved => {
-          if (saved) {
-            setCurrentUrl(saved);
-            setInputUrl(saved);
-          }
-        }).catch(() => { });
-      }
     }
+  }
+
+  useEffect(() => {
+    if (!isOpen) return;
+    let cancelled = false;
+    if (window.electronAPI?.localDB?.getLocal) {
+      window.electronAPI.localDB.getLocal('verity_custom_server').then(saved => {
+        if (saved && !cancelled) {
+          setInputUrl(saved);
+        }
+      }).catch(() => { });
+    }
+    return () => { cancelled = true; };
   }, [isOpen]);
 
   const handleTestConnection = async () => {

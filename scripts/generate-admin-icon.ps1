@@ -1,6 +1,7 @@
 Add-Type -AssemblyName System.Drawing
 
-$electronAssets = "d:\The-Verity\electron\assets"
+$repoRoot = Split-Path -Parent $PSScriptRoot
+$electronAssets = Join-Path $repoRoot "electron\assets"
 
 function Render-Admin-V-Vector([int]$size) {
     $bmp = New-Object System.Drawing.Bitmap $size, $size, ([System.Drawing.Imaging.PixelFormat]::Format32bppArgb)

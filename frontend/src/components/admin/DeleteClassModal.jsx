@@ -1,4 +1,3 @@
-import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { AlertTriangle, X } from 'lucide-react';
 
@@ -6,8 +5,7 @@ export default function DeleteClassModal({
   deleteConfirmClass,
   isDark,
   onClose,
-  onConfirm,
-  styles
+  onConfirm
 }) {
   return (
     <AnimatePresence>

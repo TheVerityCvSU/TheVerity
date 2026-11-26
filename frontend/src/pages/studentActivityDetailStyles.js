@@ -1,4 +1,4 @@
-export const getStyles = (isDark, isMobile) => ({
+export const getStyles = (isDark) => ({
   container: {
     height: '100dvh',
     minHeight: '100vh',

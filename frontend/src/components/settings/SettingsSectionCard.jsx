@@ -1,4 +1,3 @@
-import React from 'react';
 import { Moon, Sun, CheckCircle2 } from 'lucide-react';
 import ProfilePictureChanger from './ProfilePictureChanger';
 import CheckUpdateField from './CheckUpdateField';

@@ -15,16 +15,28 @@ WORKDIR /app
 ARG BUILD_ID=2026-09-20-v2
 
 # Install server dependencies and compile native binaries for Linux
-COPY package.json ./
-RUN npm install --production && npm rebuild better-sqlite3 --build-from-source
+COPY package*.json ./
+RUN npm install --omit=dev && npm rebuild better-sqlite3 --build-from-source
 
 # Copy server application code
 COPY . ./
 
+# Run container as a non-root user with writable working directories
+RUN groupadd --system verity && \
+    useradd --system --gid verity --create-home verity && \
+    mkdir -p /app/temp_submissions /app/uploads && \
+    chown -R verity:verity /app
+
+USER verity
+
 # Environment configuration
 ENV PORT=3001
 ENV NODE_ENV=production
+ENV HOME=/home/verity
 
 EXPOSE 3001
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+    CMD curl -fsS http://127.0.0.1:${PORT}/health || exit 1
 
 CMD ["node", "server.js"]

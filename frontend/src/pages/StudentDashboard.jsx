@@ -1,8 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect, lazy, Suspense } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import SettingsPanel from './SettingsPanel';
 import StudentCalendar from './StudentCalendar';
-import CompilerView from './CompilerView';
+import PageLoader from '../components/PageLoader';
+
+const CompilerView = lazy(() => import('./CompilerView'));
 import VideoPreviewModal from '../components/VideoPreviewModal';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { useMediaQuery } from '../hooks/useMediaQuery';
@@ -31,10 +33,6 @@ export default function StudentDashboard({
   const [activeView, setActiveView] = useState(() => localStorage.getItem('verity_student_view') || 'classrooms');
   const [slideDirection, setSlideDirection] = useState(1);
   const [isFadingOut, setIsFadingOut] = useState(false);
-
-  useEffect(() => {
-    setIsFadingOut(false);
-  }, []);
 
   useEffect(() => {
     const handleSync = (e) => {
@@ -227,7 +225,9 @@ export default function StudentDashboard({
 
           {activeView === 'compiler' && (
             <motion.div key="compiler" custom={slideDirection} variants={drillVariants} initial="initial" animate="animate" exit="exit" style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-              <CompilerView />
+              <Suspense fallback={<PageLoader />}>
+                <CompilerView />
+              </Suspense>
             </motion.div>
           )}
 

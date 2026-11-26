@@ -43,7 +43,6 @@ export function useTeacherGradingData({ assignment, classroom, socket }) {
   const [copiedCode, setCopiedCode] = useState(false);
 
   const loadData = useCallback(async () => {
-    setLoading(true);
     const { submissionList, enrolledCount } = await fetchSubmissionsAndEnrollment(assignment, classroom);
     setTotalEnrolledCount(enrolledCount);
     setStudents(submissionList);
@@ -54,8 +53,15 @@ export function useTeacherGradingData({ assignment, classroom, socket }) {
     setLoading(false);
   }, [assignment, classroom]);
 
+  const gradingTargetKey = `${classroom?.id ?? ''}|${assignment?.id ?? ''}`;
+  const [prevGradingTargetKey, setPrevGradingTargetKey] = useState(null);
+  if (gradingTargetKey !== prevGradingTargetKey) {
+    setPrevGradingTargetKey(gradingTargetKey);
+    setLoading(true);
+  }
+
   useEffect(() => {
-    loadData();
+    Promise.resolve().then(() => loadData());
 
     if (assignment?.id) {
       apiFetch(`${import.meta.env.VITE_API_URL}/grades/${assignment.id}`)
@@ -71,6 +77,7 @@ export function useTeacherGradingData({ assignment, classroom, socket }) {
 
   useTeacherGradingSocket({
     assignmentId: assignment?.id,
+    classroomId: assignment?.classroomId || assignment?.classroom_id || 'none',
     socket,
     loadData,
     setStudents,
@@ -88,18 +95,21 @@ export function useTeacherGradingData({ assignment, classroom, socket }) {
     return students.find(s => s.id === selectedId) || null;
   }, [students, selectedId]);
 
-  useEffect(() => {
+  const savedGradeForSelected = selectedStudent ? getStudentGrade(grades, selectedStudent) : null;
+  const selectedGradeSyncKey = `${selectedStudent?.id ?? ''}|${savedGradeForSelected?.grade ?? ''}|${savedGradeForSelected?.feedback ?? ''}|${maxPoints}`;
+  const [prevSelectedGradeSyncKey, setPrevSelectedGradeSyncKey] = useState(null);
+  if (selectedGradeSyncKey !== prevSelectedGradeSyncKey) {
+    setPrevSelectedGradeSyncKey(selectedGradeSyncKey);
     if (selectedStudent) {
-      const saved = getStudentGrade(grades, selectedStudent);
-      setGradeInput(saved?.grade != null ? String(saved.grade) : String(maxPoints));
-      setFeedbackInput(saved?.feedback || '');
+      setGradeInput(savedGradeForSelected?.grade != null ? String(savedGradeForSelected.grade) : String(maxPoints));
+      setFeedbackInput(savedGradeForSelected?.feedback || '');
     } else {
       setGradeInput(String(maxPoints));
       setFeedbackInput('');
     }
     setSaveStatus('idle');
     setSaveError('');
-  }, [selectedStudent, grades, maxPoints]);
+  }
 
   const turnedInStudents = useMemo(() => students.filter(s => Boolean(s.submittedAt || s.finalCode)), [students]);
   const gradedStudents = useMemo(() => students.filter(s => isStudentGraded(grades, s)), [students, grades]);

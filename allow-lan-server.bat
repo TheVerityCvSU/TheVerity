@@ -25,9 +25,14 @@ netsh advfirewall firewall delete rule name="Node.js Server (TCP 3001)" >nul 2>&
 netsh advfirewall firewall add rule name="The Verity Server (TCP 3001)" dir=in action=allow protocol=TCP localport=3001 profile=any
 netsh advfirewall firewall add rule name="The Verity LAN Discovery (UDP 39123)" dir=in action=allow protocol=UDP localport=39123 profile=any
 
-:: Add rule for The Verity.exe application on all profiles
-if exist "%LOCALAPPDATA%\Programs\the-verity\The Verity.exe" (
-    netsh advfirewall firewall add rule name="The Verity Application" dir=in action=allow program="%LOCALAPPDATA%\Programs\the-verity\The Verity.exe" enable=yes profile=any >nul 2>&1
+:: Add rule for The Verity.exe and The Verity Admin.exe on all profiles
+if exist "%LOCALAPPDATA%\Programs\The Verity\The Verity.exe" (
+    netsh advfirewall firewall delete rule name="The Verity Application" >nul 2>&1
+    netsh advfirewall firewall add rule name="The Verity Application" dir=in action=allow program="%LOCALAPPDATA%\Programs\The Verity\The Verity.exe" enable=yes profile=any >nul 2>&1
+)
+if exist "%LOCALAPPDATA%\Programs\The Verity Admin\The Verity Admin.exe" (
+    netsh advfirewall firewall delete rule name="The Verity Admin Application" >nul 2>&1
+    netsh advfirewall firewall add rule name="The Verity Admin Application" dir=in action=allow program="%LOCALAPPDATA%\Programs\The Verity Admin\The Verity Admin.exe" enable=yes profile=any >nul 2>&1
 )
 
 :: 2. Set all local and Ethernet network profiles to Private (so Windows doesn't block LAN communication)

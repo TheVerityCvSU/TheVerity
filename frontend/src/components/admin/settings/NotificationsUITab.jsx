@@ -1,4 +1,3 @@
-import React from 'react';
 import { motion } from 'framer-motion';
 import { Bell, LayoutList, Moon, Sun, Clipboard } from 'lucide-react';
 import { tabVariants } from '../../../data/adminSettings';

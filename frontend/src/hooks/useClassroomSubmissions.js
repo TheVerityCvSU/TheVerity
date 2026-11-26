@@ -14,7 +14,6 @@ function readLocalSubmissionsMap({ assignments, classroomId, currentUser, studen
   const targetEmail = (currentUser?.email || '').toLowerCase().trim();
   const targetName = (currentUser?.name || safeUsername || '').toLowerCase().trim();
   const targetId = (currentUser?.id != null ? String(currentUser.id) : studentId).toLowerCase().trim();
-  const kimAliases = ['kim fabie', 'kimfabie', 'mikooooo', 'kimfabie123@gmail.com', 'kimfabie159@gmail.com'];
 
   assignments.forEach(task => {
     if (isMaterialItem && isMaterialItem(task)) return;
@@ -69,7 +68,6 @@ function readLocalSubmissionsMap({ assignments, classroomId, currentUser, studen
             (targetId && (kLower.endsWith(`_${targetId}`) || kLower.includes(`_id_${targetId}`))) ||
             (targetEmail && kLower.includes(targetEmail)) ||
             (targetName && kLower.includes(targetName)) ||
-            (kimAliases.some(a => kLower.includes(a))) ||
             key === `verity_sub_${cId}_${aId}` ||
             key === `verity_sub_default_${aId}` ||
             key === `verity_sub_${aId}`
@@ -102,7 +100,7 @@ export function useClassroomSubmissions({ assignments, classroom, currentUser, s
       studentId,
       safeUsername,
       isMaterialItem,
-      unsubmittedIds: unsubmittedIdsRef.current
+      unsubmittedIds: new Set()
     }).map
   );
   const [submissionTimestamps, setSubmissionTimestamps] = useState(() =>
@@ -113,7 +111,7 @@ export function useClassroomSubmissions({ assignments, classroom, currentUser, s
       studentId,
       safeUsername,
       isMaterialItem,
-      unsubmittedIds: unsubmittedIdsRef.current
+      unsubmittedIds: new Set()
     }).timestamps
   );
   const [checkedTasks, setCheckedTasks] = useState({});
@@ -189,14 +187,12 @@ export function useClassroomSubmissions({ assignments, classroom, currentUser, s
             const targetEmail = (currentUser?.email || '').toLowerCase().trim();
             const targetName = (currentUser?.name || safeUsername || '').toLowerCase().trim();
             const targetId = (currentUser?.id != null ? String(currentUser.id) : studentId).toLowerCase().trim();
-            const kimAliases = ['kim fabie', 'kimfabie', 'mikooooo', 'kimfabie123@gmail.com', 'kimfabie159@gmail.com'];
 
             const hasSub = data.submissions.some(s => {
               const sName = String(s.student_name || s.studentName || '').toLowerCase().trim();
               const sId = String(s.student_id || s.studentId || '').toLowerCase().trim();
 
               if ((targetName && sName === targetName) || (targetEmail && sName === targetEmail) || (targetId && sId === targetId)) return true;
-              if ((kimAliases.includes(targetEmail) || kimAliases.includes(targetName)) && (kimAliases.includes(sName) || kimAliases.includes(sId))) return true;
               if (currentUser?.role === 'Student' && data.submissions.length === 1) return true;
               return false;
             });

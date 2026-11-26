@@ -1,7 +1,6 @@
 import React, { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import './index.css';
-import './utils/monaco/monacoConfig.js'; // offline Monaco (no CDN)
 import App from './App.jsx';
 import { GoogleOAuthProvider } from '@react-oauth/google';
 import { MotionConfig } from 'framer-motion';
@@ -25,10 +24,11 @@ class ErrorBoundary extends React.Component {
       }));
     } catch (_) {}
     try {
-      const userStr = localStorage.getItem('user');
+      const userStr = localStorage.getItem('currentUser') || localStorage.getItem('verity_user') || localStorage.getItem('user');
       const userObj = userStr ? JSON.parse(userStr) : null;
       const token = localStorage.getItem('verity_token') || localStorage.getItem('token');
-      fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/audit-logs`, {
+      const apiBase = localStorage.getItem('verity_custom_server') || localStorage.getItem('verity_lan_server') || import.meta.env.VITE_API_URL || 'http://localhost:3001';
+      fetch(`${apiBase.replace(/\/$/, '')}/audit-logs`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

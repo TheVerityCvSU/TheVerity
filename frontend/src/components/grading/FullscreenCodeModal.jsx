@@ -1,4 +1,3 @@
-import React from 'react';
 import { Code2, Copy, Check, X } from 'lucide-react';
 
 export default function FullscreenCodeModal({

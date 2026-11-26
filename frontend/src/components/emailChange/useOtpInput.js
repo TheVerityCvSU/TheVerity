@@ -1,12 +1,12 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useCallback } from 'react';
 
 export function useOtpInput(onComplete) {
   const [otpDigits, setOtpDigits] = useState(['', '', '', '', '', '']);
   const digitInputRefs = useRef([]);
 
-  const resetOtp = () => {
+  const resetOtp = useCallback(() => {
     setOtpDigits(['', '', '', '', '', '']);
-  };
+  }, []);
 
   const handleDigitChange = (index, value, setError) => {
     const clean = value.replace(/\D/g, '');

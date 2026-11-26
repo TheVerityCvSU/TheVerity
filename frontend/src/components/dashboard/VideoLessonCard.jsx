@@ -1,4 +1,3 @@
-import React from 'react';
 import { Play, CheckCircle2 } from 'lucide-react';
 import VideoThumbnailBackground from '../VideoThumbnailBackground';
 

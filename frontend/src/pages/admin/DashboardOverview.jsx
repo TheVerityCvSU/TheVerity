@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { useDarkMode } from '../../hooks/useDarkMode';
 import {
@@ -12,7 +12,7 @@ import UserAuditModal from '../../components/admin/UserAuditModal';
 import Skeleton from '../../components/Skeleton';
 import { getStyles } from './dashboardOverviewStyles';
 
-export default function DashboardOverview({ stats, users, loading = false, query, setQuery, onDeleteUser, msg }) {
+export default function DashboardOverview({ stats, users, loading = false, query, msg }) {
   const { isDark } = useDarkMode();
   const sh = getStyles(isDark);
   const [showDiagnostic, setShowDiagnostic] = useState(false);

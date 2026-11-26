@@ -1,4 +1,3 @@
-import React from 'react';
 import { Eye, EyeOff, Loader2 } from 'lucide-react';
 import PasswordRequirements from '../PasswordRequirements';
 import { styles } from '../../pages/registerStyles';

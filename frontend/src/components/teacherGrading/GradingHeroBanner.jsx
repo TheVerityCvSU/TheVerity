@@ -1,4 +1,3 @@
-import React from 'react';
 import { ClipboardList, Award, Clock, ChevronUp, ChevronDown } from 'lucide-react';
 import AttachmentCard from '../AttachmentCard';
 import RichInstruction from '../RichInstruction';

@@ -18,12 +18,14 @@
     "dev": "concurrently \"cd frontend && vite\" \"node --watch server/server.js\"",
     "build": "npm --prefix frontend run build",
     "build:all": "npm --prefix frontend run build && npm run build:server",
-    "build:server": "esbuild server/server.js --bundle --platform=node --outfile=dist-server/server-bundle.cjs --external:better-sqlite3 --external:node:sqlite",
+    "build:server": "esbuild server/server.js --bundle --platform=node --outfile=dist-server/server-bundle.cjs --external:better-sqlite3 --external:node:sqlite && node -e \"require('fs').copyFileSync('server/db/schema.sql', 'dist-server/schema.sql')\"",
     "electron": "electron .",
     "electron:admin": "electron electron/admin-main.cjs",
+    "lint": "npm --prefix frontend run lint",
+    "test": "node --test server/tests/*.test.js",
     "prepare:dotnet": "node scripts/prepare-dotnet-sdk.cjs",
     "package": "npm run prepare:dotnet && npm run clean:users && npm run build && npm run build:server && electron-builder",
-    "package:admin": "npm run prepare:dotnet && npm run clean:admin && npm run build && npm run build:server && electron-builder --config electron-builder.admin.json"
+    "package:admin": "npm run clean:admin && npm run build && npm run build:server && electron-builder --config electron-builder.admin.json"
   },
   "devDependencies": {
     "concurrently": "^10.0.3",
@@ -41,6 +43,8 @@
     },
     "files": [
       "electron/**/*",
+      "!electron/admin-*",
+      "!electron/assets/icon-admin.*",
       "dist/**/*"
     ],
     "extraResources": [
@@ -55,14 +59,8 @@
         "from": "dist-server",
         "to": "dist-server",
         "filter": [
-          "server-bundle.cjs"
-        ]
-      },
-      {
-        "from": "server",
-        "to": ".",
-        "filter": [
-          "database.json"
+          "server-bundle.cjs",
+          "schema.sql"
         ]
       }
     ],
@@ -94,8 +92,5 @@
       "include": "build/installer.nsh",
       "warningsAsErrors": false
     }
-  },
-  "dependencies": {
-    "package": "^1.0.1"
   }
 }

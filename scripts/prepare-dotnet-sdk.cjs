@@ -1,26 +1,53 @@
 const fs = require('fs');
 const path = require('path');
 const https = require('https');
-const http = require('http');
 
 const TARGET_DIR = path.join(__dirname, '..', 'build');
 const TARGET_PATH = path.join(TARGET_DIR, 'dotnet-sdk-win-x64.exe');
 const DOTNET_URL = 'https://aka.ms/dotnet/8.0/dotnet-sdk-win-x64.exe';
+const MIN_SDK_BYTES = 100 * 1024 * 1024;
 
-function downloadFile(url, destPath) {
+function downloadFile(url, destPath, redirectsLeft = 8) {
     return new Promise((resolve, reject) => {
-        const client = url.startsWith('https:') ? https : http;
-        client.get(url, (res) => {
+        if (redirectsLeft < 0) {
+            return reject(new Error('Too many redirects while downloading .NET SDK.'));
+        }
+        let parsed;
+        try {
+            parsed = new URL(url);
+        } catch (err) {
+            return reject(err);
+        }
+        if (parsed.protocol !== 'https:') {
+            return reject(new Error(`Refusing non-HTTPS .NET SDK URL: ${url}`));
+        }
+
+        const tmpPath = `${destPath}.tmp`;
+        try { fs.unlinkSync(tmpPath); } catch (_) {}
+
+        const req = https.get(url, (res) => {
             if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-                return downloadFile(res.headers.location, destPath).then(resolve).catch(reject);
+                res.resume();
+                const nextUrl = new URL(res.headers.location, url).href;
+                return downloadFile(nextUrl, destPath, redirectsLeft - 1).then(resolve).catch(reject);
             }
             if (res.statusCode !== 200) {
+                res.resume();
                 return reject(new Error(`Download failed with HTTP ${res.statusCode}`));
             }
 
             const total = parseInt(res.headers['content-length'] || '0', 10);
             let downloaded = 0;
-            const fileStream = fs.createWriteStream(destPath);
+            const fileStream = fs.createWriteStream(tmpPath);
+            let settled = false;
+
+            const cleanupAndReject = (err) => {
+                if (settled) return;
+                settled = true;
+                try { fileStream.destroy(); } catch (_) {}
+                fs.unlink(tmpPath, () => {});
+                reject(err);
+            };
 
             res.on('data', (chunk) => {
                 downloaded += chunk.length;
@@ -30,19 +57,38 @@ function downloadFile(url, destPath) {
                 }
             });
 
+            res.on('aborted', () => cleanupAndReject(new Error('Download aborted unexpectedly.')));
+            res.on('error', cleanupAndReject);
             res.pipe(fileStream);
 
             fileStream.on('finish', () => {
-                fileStream.close();
-                console.log(`\n[prepare-dotnet-sdk] Download complete: ${destPath} (${(fs.statSync(destPath).size / 1048576).toFixed(1)} MB)`);
-                resolve();
+                fileStream.close(() => {
+                    if (settled) return;
+                    try {
+                        const finalSize = fs.statSync(tmpPath).size;
+                        if (total > 0 && finalSize !== total) {
+                            return cleanupAndReject(new Error(`Incomplete download (${finalSize} of ${total} bytes)`));
+                        }
+                        if (finalSize < MIN_SDK_BYTES) {
+                            return cleanupAndReject(new Error(`Downloaded .NET SDK is unexpectedly small (${finalSize} bytes)`));
+                        }
+                        fs.renameSync(tmpPath, destPath);
+                        settled = true;
+                        console.log(`\n[prepare-dotnet-sdk] Download complete: ${destPath} (${(finalSize / 1048576).toFixed(1)} MB)`);
+                        resolve();
+                    } catch (err) {
+                        cleanupAndReject(err);
+                    }
+                });
             });
 
-            fileStream.on('error', (err) => {
-                fs.unlink(destPath, () => {});
-                reject(err);
-            });
-        }).on('error', reject);
+            fileStream.on('error', cleanupAndReject);
+        });
+
+        req.setTimeout(60000, () => {
+            try { req.destroy(new Error('.NET SDK download timed out.')); } catch (_) {}
+        });
+        req.on('error', reject);
     });
 }
 

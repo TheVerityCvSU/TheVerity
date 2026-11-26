@@ -1,4 +1,3 @@
-import React from 'react';
 import { Link2, X } from 'lucide-react';
 
 export default function AddLinkHeader({ onClose, colors, isDark }) {

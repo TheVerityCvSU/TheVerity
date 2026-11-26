@@ -73,7 +73,7 @@ export const generateClassCode = (existingListOrCodes = []) => {
     });
   }
 
-  let code = '';
+  let code;
   let attempts = 0;
   do {
     let currentCode = '';

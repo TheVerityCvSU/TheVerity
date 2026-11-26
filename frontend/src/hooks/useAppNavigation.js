@@ -101,21 +101,14 @@ export function useAppNavigation({ isAdminApp, currentUser }) {
     localStorage.setItem('currentScreen', currentScreen);
   }, [currentScreen]);
 
-  useEffect(() => {
+  if (isAdminApp) {
     const activeUser = currentUser || resolveUser();
     const roleLower = String(activeUser?.role || '').toLowerCase();
-    if (isAdminApp) {
-      if (roleLower === 'admin') {
-        if (currentScreen !== 'admin_dashboard') {
-          setCurrentScreen('admin_dashboard');
-        }
-      } else {
-        if (currentScreen !== 'admin_login') {
-          setCurrentScreen('admin_login');
-        }
-      }
+    const desiredScreen = roleLower === 'admin' ? 'admin_dashboard' : 'admin_login';
+    if (currentScreen !== desiredScreen) {
+      setCurrentScreen(desiredScreen);
     }
-  }, [isAdminApp, currentUser, currentScreen]);
+  }
 
   const [navigationStack, setNavigationStack] = useState(() => {
     try {
@@ -134,9 +127,12 @@ export function useAppNavigation({ isAdminApp, currentUser }) {
     } catch {}
   }, [navigationStack]);
 
+  if ((currentScreen === 'login' || currentScreen === 'admin_login' || !currentUser) && navigationStack.length > 0) {
+    setNavigationStack([]);
+  }
+
   useEffect(() => {
     if (currentScreen === 'login' || currentScreen === 'admin_login' || !currentUser) {
-      setNavigationStack([]);
       try { sessionStorage.removeItem('verity_nav_stack'); } catch {}
     }
   }, [currentScreen, currentUser]);
@@ -250,6 +246,13 @@ export function useAppNavigation({ isAdminApp, currentUser }) {
     }
   };
 
+  const resolveUserRef = useRef(resolveUser);
+  const executeGoBackRef = useRef(executeGoBack);
+  useEffect(() => {
+    resolveUserRef.current = resolveUser;
+    executeGoBackRef.current = executeGoBack;
+  });
+
   useEffect(() => {
     if (typeof window !== 'undefined' && window.history && !window.history.state) {
       try {
@@ -258,7 +261,7 @@ export function useAppNavigation({ isAdminApp, currentUser }) {
     }
 
     const handlePopState = () => {
-      const activeUser = currentUser || resolveUser();
+      const activeUser = currentUser || resolveUserRef.current();
       if (currentScreen === 'student_workspace' && (activeAssignment?.disableBack || activeAssignment?.disable_back)) {
         const cId = activeClassroom?.id != null ? String(activeClassroom.id) : (activeAssignment?.classroom_id || 'none');
         const aId = activeAssignment?.id != null ? String(activeAssignment.id) : 'none';
@@ -278,7 +281,7 @@ export function useAppNavigation({ isAdminApp, currentUser }) {
           return;
         }
       }
-      executeGoBack();
+      executeGoBackRef.current();
     };
 
     window.addEventListener('popstate', handlePopState);

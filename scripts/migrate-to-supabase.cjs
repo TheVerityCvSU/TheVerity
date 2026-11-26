@@ -1,10 +1,14 @@
-  const { Pool } = require('../server/node_modules/pg');
+const { Pool } = require('../server/node_modules/pg');
 const { openSqliteDatabase } = require('../server/db/sqlite-adapter');
 const fs = require('fs');
 const path = require('path');
-require('dotenv').config({ path: path.join(__dirname, '../server/.env') });
+require('../server/node_modules/dotenv').config({ path: path.join(__dirname, '../server/.env') });
 
-let rawUrl = process.env.DATABASE_URL || '';
+let rawUrl = (process.env.DATABASE_URL || '').trim();
+if (!rawUrl) {
+  console.error('DATABASE_URL is not set in server/.env');
+  process.exit(1);
+}
 // Automatically encode special characters in password if present
 const authMatch = rawUrl.match(/^(postgres(?:ql)?:\/\/[^:]+:)(.*)(@[^@]+)$/);
 if (authMatch) {
@@ -14,9 +18,14 @@ if (authMatch) {
   }
 }
 
+const useStrictTls = process.env.PG_SSL_REJECT_UNAUTHORIZED === 'true';
+const sslConfig = (rawUrl.includes('localhost') || rawUrl.includes('127.0.0.1')) && process.env.PG_SSL !== 'true'
+  ? undefined
+  : { rejectUnauthorized: useStrictTls };
+
 const pool = new Pool({
   connectionString: rawUrl,
-  ssl: { rejectUnauthorized: false }
+  ssl: sslConfig
 });
 
 const sqliteDb = openSqliteDatabase(path.join(__dirname, '../server/database.sqlite'));
@@ -117,7 +126,7 @@ async function run() {
     }
     console.log('✅ Announcements migrated.');
 
-    // 7. Migrate Submissions
+    // 7. Migrate Submissions & Grades
     const submissions = sqliteDb.prepare('SELECT assignment_id, student_name, history, submittedAt FROM submissions').all();
     console.log(`📤 Migrating ${submissions.length} submissions...`);
     for (const s of submissions) {
@@ -128,6 +137,21 @@ async function run() {
       `, [s.assignment_id, s.student_name, s.history || '[]', s.submittedAt || null]);
     }
     console.log('✅ Submissions migrated.');
+
+    const grades = sqliteDb.prepare('SELECT assignment_id, student_id, grade, feedback, graded_at, updated_at FROM grades').all();
+    console.log(`🏅 Migrating ${grades.length} grades...`);
+    for (const g of grades) {
+      await client.query(`
+        INSERT INTO grades (assignment_id, student_id, grade, feedback, graded_at, updated_at)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        ON CONFLICT (assignment_id, student_id) DO UPDATE SET
+          grade = EXCLUDED.grade,
+          feedback = EXCLUDED.feedback,
+          graded_at = EXCLUDED.graded_at,
+          updated_at = EXCLUDED.updated_at;
+      `, [g.assignment_id, g.student_id, g.grade ?? null, g.feedback || '', g.graded_at || null, g.updated_at || new Date().toISOString()]);
+    }
+    console.log('✅ Grades migrated.');
 
     // 8. Verification
     const uCount = (await client.query('SELECT COUNT(*) FROM users')).rows[0].count;

@@ -64,8 +64,8 @@ export const getClassroomTheme = (classroom) => {
  * Saves classroom theme across all canonical keys, updates local caches,
  * dispatches local events, emits socket event, and updates server DB via REST API.
  */
-export const saveClassroomTheme = (classroom, theme, socket = null) => {
-  if (!theme) return;
+export const applyClassroomThemeLocally = (classroom, theme, { emitWindowEvent = false } = {}) => {
+  if (!theme) return [];
   const themeJson = JSON.stringify(theme);
   const keys = getThemeStorageKeys(classroom);
 
@@ -108,6 +108,30 @@ export const saveClassroomTheme = (classroom, theme, socket = null) => {
     }
   }
 
+  if (emitWindowEvent && typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('verity:banner-updated', {
+      detail: {
+        classroomId: classroom?.id,
+        code: classroom?.code || classroom?.section,
+        name: classroom?.name,
+        theme,
+        keys
+      }
+    }));
+  }
+
+  return keys;
+};
+
+/**
+ * Persists a classroom banner theme across all candidate storage keys,
+ * dispatches local events, emits socket event, and updates server DB via REST API.
+ */
+export const saveClassroomTheme = (classroom, theme, socket = null, { persist = true } = {}) => {
+  if (!theme) return;
+  const keys = applyClassroomThemeLocally(classroom, theme, { emitWindowEvent: persist });
+  if (!persist) return;
+
   const detailPayload = {
     classroomId: classroom?.id,
     code: classroom?.code || classroom?.section,
@@ -115,9 +139,6 @@ export const saveClassroomTheme = (classroom, theme, socket = null) => {
     theme,
     keys
   };
-
-  // Dispatch custom window event
-  window.dispatchEvent(new CustomEvent('verity:banner-updated', { detail: detailPayload }));
 
   // Emit socket event for real-time server/client propagation
   if (socket) {

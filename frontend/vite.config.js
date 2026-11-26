@@ -49,7 +49,16 @@ export default defineConfig(({ mode }) => {
       chunkSizeWarningLimit: 1000,
       rollupOptions: {
         output: {
-          manualChunks: undefined
+          manualChunks(id) {
+            if (!id.includes('node_modules') || id.includes('.worker')) return undefined;
+            if (id.includes('monaco-editor')) return 'monaco-vendor';
+            if (id.includes('jodit')) return 'jodit-vendor';
+            if (id.includes('framer-motion')) return 'motion-vendor';
+            if (id.includes('socket.io-client') || id.includes('engine.io-client')) return 'socket-vendor';
+            if (id.includes('lucide-react')) return 'icons-vendor';
+            if (id.includes('react-dom') || /[\\/]react[\\/]/.test(id)) return 'react-vendor';
+            return undefined;
+          }
         }
       }
     },

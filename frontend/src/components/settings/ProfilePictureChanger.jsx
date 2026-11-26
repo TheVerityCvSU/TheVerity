@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import { useState, useRef } from 'react';
 import { User, Camera, Upload, Trash2, CheckCircle2 } from 'lucide-react';
 import { useCurrentUser } from '../../hooks/useCurrentUser';
 import { processAvatarImage } from '../../utils/imageResize';
@@ -8,14 +8,11 @@ export default function ProfilePictureChanger({ isDark, avatar, onAvatarChange }
   const { currentUser } = useCurrentUser();
   const fileInputRef = useRef(null);
   const [feedback, setFeedback] = useState(null);
-  const [imgError, setImgError] = useState(false);
+  const [failedAvatar, setFailedAvatar] = useState(null);
 
   const currentAvatar = avatar !== undefined ? avatar : (currentUser?.avatar || currentUser?.profilePicture);
+  const imgError = Boolean(currentAvatar) && failedAvatar === currentAvatar;
   const name = currentUser?.name || 'User';
-
-  useEffect(() => {
-    setImgError(false);
-  }, [currentAvatar]);
 
   const getInitials = (str) => {
     if (!str || str === 'User') return 'V';
@@ -105,7 +102,7 @@ export default function ProfilePictureChanger({ isDark, avatar, onAvatarChange }
             <img
               src={currentAvatar}
               alt={name}
-              onError={() => setImgError(true)}
+              onError={() => setFailedAvatar(currentAvatar)}
               style={{
                 width: '100%',
                 height: '100%',

@@ -22,19 +22,15 @@ export const fetchDotnetStatus = async () => {
  * Request the local backend to download and install .NET SDK automatically.
  */
 export const triggerInstallDotnet = async () => {
-  try {
-    const res = await fetch(`${LOCAL_BASE}/api/system/install-dotnet`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' }
-    });
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      throw new Error(body.message || `HTTP ${res.status}`);
-    }
-    return await res.json();
-  } catch (err) {
-    throw err;
+  const res = await fetch(`${LOCAL_BASE}/api/system/install-dotnet`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' }
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.message || `HTTP ${res.status}`);
   }
+  return await res.json();
 };
 
 /**

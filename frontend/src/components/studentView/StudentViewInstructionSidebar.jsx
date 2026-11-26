@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import { useMemo } from 'react';
 import { PanelLeftClose, Maximize2, Minimize2 } from 'lucide-react';
 import AttachmentCard from '../AttachmentCard';
 import RichInstruction from '../RichInstruction';

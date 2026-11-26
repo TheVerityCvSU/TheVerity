@@ -1,4 +1,3 @@
-import React from 'react';
 import { Play, Square, ZoomIn, ZoomOut } from 'lucide-react';
 import { MIN_FONT, MAX_FONT } from '../../data/compilerService';
 

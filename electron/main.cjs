@@ -7,6 +7,7 @@ const { fork, spawn } = require('child_process');
 const { initLocalDb, localDbAPI } = require('./local-db.cjs');
 const { initStartupVmDetection, getVmStatus, getCachedVmStatusSync } = require('./vm-detect.cjs');
 const { initLanClient, getDiscoveredServer, setDiscoveredServer, verifyHttpServer, resolveLanHostUrl, runDiscoveryScan, stopLanClient } = require('./lan-client.cjs');
+const { isAllowedExternalUrl, isAllowedGoogleAuthUrl, isAuthorizedIpcSender, resolveSafeDistFile } = require('./security-utils.cjs');
 
 // Persistent diagnostic and startup logging
 const logFile = path.join(os.tmpdir(), 'the-verity-startup.log');
@@ -91,7 +92,7 @@ let lockdownActive = false;
 let lockFilePath = null;
 
 function startKeyboardHook() {
-  if (!app.isPackaged) return; // dev mode: don't hijack the developer's keyboard
+  if (!app.isPackaged || process.platform !== 'win32') return; // dev mode or non-Windows
   if (hudProcess) return; // already started
   try {
     const exePath = path.join(process.resourcesPath, 'native', 'KioskLockHook.exe');
@@ -101,11 +102,20 @@ function startKeyboardHook() {
       return;
     }
     setLockedFile(false);
-    hudProcess = spawn(exePath, [lockFilePath], { detached: true });
-    hudProcess.on('error', (err) => logStartup(`[main] hook error (non-fatal): ${err.message}`));
-    hudProcess.unref();
+    hudProcess = spawn(exePath, [lockFilePath, String(process.pid)], { windowsHide: true, stdio: 'ignore' });
+    hudProcess.on('error', (err) => {
+      hudProcess = null;
+      logStartup(`[main] hook error (non-fatal): ${err.message}`);
+    });
+    hudProcess.on('exit', () => {
+      hudProcess = null;
+    });
+    hudProcess.on('close', () => {
+      hudProcess = null;
+    });
     logStartup('[main] Keyboard hook started for exam lockdown');
   } catch (err) {
+    hudProcess = null;
     logStartup(`[main] Could not start keyboard hook (non-fatal): ${err.message}`);
   }
 }
@@ -377,12 +387,10 @@ function createWindow() {
   });
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    if (
-      url.includes('accounts.google.com') ||
-      url.includes('google.com/gsi/') ||
-      url.includes('oauth2.googleapis.com') ||
-      url.includes('/auth/google')
-    ) {
+    if (lockdownActive) {
+      return { action: 'deny' };
+    }
+    if (isAllowedGoogleAuthUrl(url)) {
       return {
         action: 'allow',
         overrideBrowserWindowOptions: {
@@ -392,13 +400,14 @@ function createWindow() {
           webPreferences: {
             nodeIntegration: false,
             contextIsolation: true,
+            sandbox: true,
             userAgent: CHROME_USER_AGENT,
           }
         }
       };
     }
 
-    if (url.startsWith('http://') || url.startsWith('https://')) {
+    if (isAllowedExternalUrl(url)) {
       shell.openExternal(url);
     }
     return { action: 'deny' };
@@ -418,13 +427,19 @@ function createWindow() {
     try {
       const parsedUrl = new URL(navigationUrl);
       if (parsedUrl.protocol === 'http:' || parsedUrl.protocol === 'https:') {
-        if (!app.isPackaged && parsedUrl.host === 'localhost:5173') {
+        if (parsedUrl.host === 'localhost:5173') {
           return;
         }
         event.preventDefault();
-        shell.openExternal(navigationUrl);
+        if (!lockdownActive && isAllowedExternalUrl(navigationUrl)) {
+          shell.openExternal(navigationUrl);
+        }
+      } else {
+        event.preventDefault();
       }
-    } catch (_) {}
+    } catch (_) {
+      event.preventDefault();
+    }
   });
 
   mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL) => {
@@ -656,15 +671,12 @@ app.whenReady().then(() => {
       try {
         const url = new URL(request.url);
         if (url.hostname === 'localhost' && url.port === '5173') {
-          let reqPath = decodeURIComponent(url.pathname);
-          if (reqPath === '/' || reqPath === '') reqPath = '/index.html';
-          
-          let file = path.join(__dirname, '../dist', reqPath);
-          if (!fs.existsSync(file)) {
-            file = path.join(__dirname, '../dist/index.html');
+          const distDir = path.join(__dirname, '../dist');
+          let { safe, filePath } = resolveSafeDistFile(distDir, url.pathname === '/' ? '/index.html' : url.pathname);
+          if (!safe || !fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) {
+            filePath = path.join(distDir, 'index.html');
           }
-          
-          return net.fetch(pathToFileURL(file).href);
+          return net.fetch(pathToFileURL(filePath).href);
         }
       } catch (e) {
         logStartup(`[protocol] handle error: ${e.message}`);
@@ -672,6 +684,12 @@ app.whenReady().then(() => {
       return net.fetch(request, { bypassCustomProtocolHandlers: true });
     });
   }
+
+// Clean any leftover lockfile from a prior unclean exit before launching UI
+  try {
+    const staleLock = path.join(app.getPath('userData'), '.verity-lock');
+    if (fs.existsSync(staleLock)) fs.unlinkSync(staleLock);
+  } catch (_) {}
 
   createSplashWindow();
 
@@ -702,11 +720,13 @@ app.whenReady().then(() => {
 
 // --- IPC from renderer (React) ---
 ipcMain.on('enable-lockdown', (event, options) => {
+  if (!isAuthorizedIpcSender(event)) return;
   logStartup(`[main] enable-lockdown received: ${JSON.stringify(options || {})}`);
   enableLockdown(options);
 });
 
-ipcMain.on('disable-lockdown', () => {
+ipcMain.on('disable-lockdown', (event) => {
+  if (!isAuthorizedIpcSender(event)) return;
   logStartup('[main] disable-lockdown received');
   disableLockdown();
 });
@@ -718,20 +738,24 @@ ipcMain.handle('get-app-version', () => {
 const { registerUpdateIpc } = require('./updater.cjs');
 registerUpdateIpc(() => mainWindow, disableLockdown);
 
-ipcMain.handle('get-display-count', () => {
+ipcMain.handle('get-display-count', (event) => {
+  if (!isAuthorizedIpcSender(event)) return 1;
   const { screen } = require('electron');
   return screen.getAllDisplays().length;
 });
 
-ipcMain.handle('check-vm-status', async () => {
+ipcMain.handle('check-vm-status', async (event) => {
+  if (!isAuthorizedIpcSender(event)) return { isVm: false, reasons: [] };
   return await getVmStatus();
 });
 
-ipcMain.handle('get-cached-vm-status', () => {
+ipcMain.handle('get-cached-vm-status', (event) => {
+  if (!isAuthorizedIpcSender(event)) return { isVm: false, reasons: [] };
   return getCachedVmStatusSync();
 });
 
-ipcMain.handle('clear-clipboard', () => {
+ipcMain.handle('clear-clipboard', (event) => {
+  if (!isAuthorizedIpcSender(event)) return false;
   try {
     clipboard.clear();
     return true;
@@ -740,16 +764,27 @@ ipcMain.handle('clear-clipboard', () => {
   }
 });
 
-ipcMain.on('close-app', () => {
+ipcMain.on('close-app', (event) => {
+  if (!isAuthorizedIpcSender(event)) return;
   disableLockdown();
   app.quit();
 });
 
 ipcMain.on('open-external', (event, url) => {
-  shell.openExternal(url);
+  if (!isAuthorizedIpcSender(event)) return;
+  if (lockdownActive) return;
+  if (isAllowedExternalUrl(url)) {
+    shell.openExternal(url);
+  }
 });
 
 ipcMain.on('open-google-auth', (event, url) => {
+  if (!isAuthorizedIpcSender(event)) return;
+  if (lockdownActive) return;
+  if (!isAllowedGoogleAuthUrl(url)) {
+    logStartup(`[main] Blocked disallowed open-google-auth URL: ${url}`);
+    return;
+  }
   logStartup(`[main] open-google-auth requested: ${url}`);
   if (googleAuthWindow && !googleAuthWindow.isDestroyed()) {
     googleAuthWindow.focus();
@@ -773,8 +808,16 @@ ipcMain.on('open-google-auth', (event, url) => {
   });
 
   googleAuthWindow.webContents.setWindowOpenHandler(({ url: childUrl }) => {
-    shell.openExternal(childUrl);
+    if (!lockdownActive && isAllowedExternalUrl(childUrl)) {
+      shell.openExternal(childUrl);
+    }
     return { action: 'deny' };
+  });
+
+  googleAuthWindow.webContents.on('will-navigate', (navEvent, navUrl) => {
+    if (!isAllowedGoogleAuthUrl(navUrl)) {
+      navEvent.preventDefault();
+    }
   });
 
   googleAuthWindow.loadURL(url).catch((err) => {
@@ -855,5 +898,6 @@ app.on('will-quit', () => {
   globalShortcut.unregisterAll();
   stopLanClient();
   stopServer();
+  try { localDbAPI.close(); } catch (_) {}
   killKeyboardHook();
 });

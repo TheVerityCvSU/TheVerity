@@ -1,4 +1,3 @@
-import React from 'react';
 import { Plus, Home } from 'lucide-react';
 import { motion } from 'framer-motion';
 import TeacherCourseCard from './TeacherCourseCard';

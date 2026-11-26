@@ -3,7 +3,7 @@ const path = require('path');
 
 const target = process.argv[2] ? process.argv[2].toLowerCase() : 'all';
 
-const folders = ['dist', 'temp_submissions'];
+const folders = ['dist', 'dist-server', 'temp_submissions'];
 
 if (target === 'users' || target === 'user') {
     folders.push(path.join('release', 'Users', 'win-unpacked'));

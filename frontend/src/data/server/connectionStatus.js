@@ -65,7 +65,7 @@ export const getConnectionStatus = () => {
 
   const isLanConnected = getIsLanConnected();
 
-  let activeMode = 'offline';
+  let activeMode;
   if (userPreferredMode === 'lan') {
     if (isLanConnected || state.isLocalServerUp) {
       activeMode = 'lan';

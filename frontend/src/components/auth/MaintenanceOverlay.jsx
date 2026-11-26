@@ -1,4 +1,3 @@
-import React from 'react';
 import { Moon, Sun, Construction, AlertTriangle } from 'lucide-react';
 
 export default function MaintenanceOverlay({ isDark, toggle, message, styles }) {

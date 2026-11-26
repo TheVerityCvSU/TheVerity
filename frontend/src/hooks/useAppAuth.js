@@ -9,7 +9,6 @@ export function useAppAuth({
   isAdminApp,
   socket,
   getSocket,
-  lockDown,
   releaseLockdown,
   setCurrentScreen,
   currentScreen,
@@ -32,6 +31,10 @@ export function useAppAuth({
   });
 
   const hasRestoredRef = useRef(false);
+  const setCurrentScreenRef = useRef(setCurrentScreen);
+  useEffect(() => {
+    setCurrentScreenRef.current = setCurrentScreen;
+  }, [setCurrentScreen]);
 
   useEffect(() => {
     if (hasRestoredRef.current) return;
@@ -90,15 +93,15 @@ export function useAppAuth({
         }
       }
 
-      if (typeof setCurrentScreen === 'function') {
-        setCurrentScreen(destScreen);
+      if (typeof setCurrentScreenRef.current === 'function') {
+        setCurrentScreenRef.current(destScreen);
         localStorage.setItem('currentScreen', destScreen);
       }
     };
 
     restoreAccountSession();
     return () => { isMounted = false; };
-  }, [isAdminApp, lockDown]);
+  }, [isAdminApp]);
 
   const handleLogout = useCallback(() => {
     hasRestoredRef.current = true;
@@ -184,7 +187,7 @@ export function useAppAuth({
 
   useEffect(() => {
     const onAuthInvalid = (e) => {
-      if (!isAdminApp && currentUser?.role !== 'Admin') return;
+      if (!currentUser) return;
       if (!localStorage.getItem('verity_token') && !localStorage.getItem('token')) return;
       try {
         sessionStorage.setItem(
@@ -196,15 +199,16 @@ export function useAppAuth({
     };
     window.addEventListener('verity:auth-invalid', onAuthInvalid);
     return () => window.removeEventListener('verity:auth-invalid', onAuthInvalid);
-  }, [isAdminApp, currentUser?.role, handleLogout]);
+  }, [currentUser, handleLogout]);
 
+  const currentUserRole = currentUser?.role;
   useEffect(() => {
     const checkMaintenance = async () => {
       try {
         const res = await apiFetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/maintenance-status`);
         if (res.ok) {
           const data = await res.json();
-          if (data.enabled && currentUser && currentUser.role !== 'Admin') {
+          if (data.enabled && currentUserRole && currentUserRole !== 'Admin') {
             handleLogout();
           }
         }
@@ -233,7 +237,7 @@ export function useAppAuth({
       if (cfg?.data && typeof cfg.data.clearLocalStorageOnLogout === 'boolean') {
         try { localStorage.setItem('verity_clear_storage_on_logout', String(cfg.data.clearLocalStorageOnLogout)); } catch (_) {}
       }
-      if (cfg?.general?.maintenanceMode && currentUser && currentUser.role !== 'Admin') {
+      if (cfg?.general?.maintenanceMode && currentUserRole && currentUserRole !== 'Admin') {
         handleLogout();
       }
     };
@@ -243,7 +247,7 @@ export function useAppAuth({
       clearInterval(interval);
       if (activeSock) activeSock.off('system_settings_updated', onSettingsUpdated);
     };
-  }, [currentUser?.role, handleLogout, socket, getSocket]);
+  }, [currentUserRole, handleLogout, socket, getSocket]);
 
   useEffect(() => {
     const token = localStorage.getItem('verity_token') || localStorage.getItem('token');
@@ -291,7 +295,7 @@ export function useAppAuth({
       notifyUserListeners(currentUser);
       const token = localStorage.getItem('verity_token') || localStorage.getItem('token');
       if (activeSocket) {
-        activeSocket.auth = { token };
+        Reflect.set(activeSocket, 'auth', { token });
         activeSocket.emit('authenticate', { token, user: currentUser });
       }
       if (window.electronAPI?.localDB?.setLocal) {
@@ -311,7 +315,7 @@ export function useAppAuth({
       localStorage.removeItem('currentUser');
       localStorage.removeItem('verity_user');
       notifyUserListeners(null);
-      if (activeSocket) activeSocket.auth = {};
+      if (activeSocket) Reflect.set(activeSocket, 'auth', {});
       if (window.electronAPI?.localDB?.setLocal) {
         window.electronAPI.localDB.setLocal('verity_saved_session_user', null).catch(() => {});
         window.electronAPI.localDB.setLocal('verity_saved_session_token', null).catch(() => {});
@@ -335,7 +339,7 @@ export function useAppAuth({
       localStorage.setItem('token', token);
     }
 
-    let targetScreen = 'student_dashboard';
+    let targetScreen;
     if (normalized?.role === 'Admin') {
       targetScreen = 'admin_login';
     } else if (normalized?.role === 'Teacher') {

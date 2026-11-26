@@ -1,5 +1,5 @@
-import { useState, useEffect, useRef } from 'react';
-import { BarChart3, Users, Home, Shield, Settings, X } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { X } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import AdminLayout from './admin/AdminLayout';
 import DashboardOverview from './admin/DashboardOverview';
@@ -9,30 +9,6 @@ import SecurityLogs from './admin/SecurityLogs';
 import AdminSettings from './admin/AdminSettings';
 import { apiFetch } from '../data/api';
 
-// Shared styles for modals and global elements (moved from original file)
-const sh = {
-  modalOverlay: { position: 'fixed', inset: 0, backgroundColor: 'rgba(15, 23, 42, 0.4)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 200, backdropFilter: 'blur(4px)', padding: '20px' },
-  modalCard: {
-    backgroundColor: 'white',
-    padding: '28px',
-    borderRadius: '24px',
-    width: '100%',
-    maxWidth: '460px',
-    boxShadow: '0 25px 60px rgba(0,0,0,0.2)',
-    maxHeight: '90vh',
-    overflowY: 'auto',
-    // Hide scrollbars but preserve scrolling
-    msOverflowStyle: 'none', /* IE and Edge */
-    scrollbarWidth: 'none', /* Firefox */
-  },
-  modalHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' },
-  closeBtn: { background: 'none', border: 'none', cursor: 'pointer', color: '#64748b', display: 'flex', alignItems: 'center', padding: '4px', borderRadius: '50%' },
-  form: { display: 'flex', flexDirection: 'column', gap: '14px' },
-  inputPill: { width: '100%', padding: '10px 18px', borderRadius: '9999px', border: '1px solid #cbd5e1', fontSize: '0.88rem', color: '#334155', boxSizing: 'border-box', outline: 'none', backgroundColor: '#f8fafc' },
-  submitBlueBtn: { padding: '11px', backgroundColor: '#007bff', border: 'none', borderRadius: '9999px', color: 'white', fontWeight: '700', fontSize: '0.9rem', cursor: 'pointer', width: '100%', boxShadow: '0 4px 12px rgba(0, 123, 255, 0.3)' },
-  addBlueBtn: { display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '9px 20px', backgroundColor: '#007bff', color: 'white', border: 'none', borderRadius: '9999px', fontWeight: '600', fontSize: '0.85rem', cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0, boxShadow: '0 4px 12px rgba(0, 123, 255, 0.3)' },
-};
-
 export default function AdminDashboard({ currentUser, onLogout, socket }) {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [users, setUsers] = useState([]);
@@ -40,8 +16,6 @@ export default function AdminDashboard({ currentUser, onLogout, socket }) {
     const saved = localStorage.getItem('verity_sidebar_collapsed');
     return saved ? saved === 'true' : false;
   });
-  const navRefs = useRef({});
-  const [indicatorStyle, setIndicatorStyle] = useState({ top: Number(sessionStorage.getItem('verity_admin_nav_top')) || 0, height: 42, opacity: 0 });
   const [query, setQuery] = useState('');
   const [dashboardSearchFocused, setDashboardSearchFocused] = useState(false);
   const [msg, setMsg] = useState(null);
@@ -72,7 +46,7 @@ export default function AdminDashboard({ currentUser, onLogout, socket }) {
         try {
           const stored = localStorage.getItem('verity_notifications_read_keys');
           if (stored) readKeys = JSON.parse(stored);
-        } catch (e) {}
+        } catch {}
         const unread = fetched.filter(n => !readKeys.includes(`${n.id}:${n.text}`));
         setNotifications(unread);
       }
@@ -123,9 +97,11 @@ export default function AdminDashboard({ currentUser, onLogout, socket }) {
   };
 
   useEffect(() => {
-    loadUsers();
-    loadStats();
-    loadNotifications();
+    Promise.resolve().then(() => {
+      loadUsers();
+      loadStats();
+      loadNotifications();
+    });
     const iv = setInterval(() => {
       loadStats();
       loadNotifications();
@@ -163,12 +139,10 @@ export default function AdminDashboard({ currentUser, onLogout, socket }) {
     };
     socket.on('admin_security_alert', handleLiveSecurityAlert);
     socket.on('admin_stats_update', handleLiveSecurityAlert);
-    socket.on('proctor_alert_broadcast', handleLiveSecurityAlert);
     socket.on('users_updated', handleLiveSecurityAlert);
     return () => {
       socket.off('admin_security_alert', handleLiveSecurityAlert);
       socket.off('admin_stats_update', handleLiveSecurityAlert);
-      socket.off('proctor_alert_broadcast', handleLiveSecurityAlert);
       socket.off('users_updated', handleLiveSecurityAlert);
     };
   }, [socket]);
@@ -209,26 +183,6 @@ export default function AdminDashboard({ currentUser, onLogout, socket }) {
       const message = 'Could not connect to server.';
       setMsg({ type: 'error', text: message });
       return { success: false, message };
-    }
-  };
-
-  // Nav menu items mapping
-  const navItems = [
-    { id: 'dashboard', Icon: BarChart3, label: 'Dashboard Overview' },
-    { id: 'users', Icon: Users, label: 'User Management' },
-    { id: 'classes', Icon: Home, label: 'Global Classes' },
-    { id: 'security', Icon: Shield, label: 'Security & Audit Logs' },
-    { id: 'settings', Icon: Settings, label: 'Settings' },
-  ];
-
-  const getHeaderTitle = (tab) => {
-    switch (tab) {
-      case 'dashboard': return 'Dashboard Overview';
-      case 'users': return 'User Management';
-      case 'classes': return 'Global Classes';
-      case 'security': return 'Security & Audit Logs';
-      case 'settings': return 'Settings';
-      default: return 'Admin Panel';
     }
   };
 

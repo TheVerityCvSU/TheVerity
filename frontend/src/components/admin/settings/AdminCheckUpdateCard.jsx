@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { RefreshCw, Download } from 'lucide-react';
 import { apiFetch } from '../../../data/api';
@@ -120,7 +120,7 @@ export default function AdminCheckUpdateCard({ styles, T }) {
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
-      } catch (err) {
+      } catch {
         window.open(updateInfo.downloadUrl, '_blank');
       }
       setTimeout(() => setIsDownloading(false), 2000);

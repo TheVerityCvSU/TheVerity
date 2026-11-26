@@ -1,4 +1,4 @@
-import React, { useState, useLayoutEffect, useRef } from 'react';
+import { useState, useLayoutEffect, useRef } from 'react';
 import { Home, Calendar, Archive, Code2, Settings, Plus } from 'lucide-react';
 import ProfileMenu from '../ProfileMenu';
 

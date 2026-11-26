@@ -1,4 +1,3 @@
-import React from 'react';
 import { 
   ClipboardList, CheckCircle2, Clock, PlayCircle, Code2, Copy, Check, 
   Award, RefreshCw, CheckCheck, AlertCircle 
@@ -16,7 +15,6 @@ export default function EvaluationDeskCard({
   feedbackInput,
   setFeedbackInput,
   scorePresets,
-  quickFeedbacks,
   saveStatus,
   saveError,
   onEvaluate,
@@ -224,26 +222,6 @@ export default function EvaluationDeskCard({
             placeholder={`Leave constructive feedback or review comments for ${selectedStudent.name}...`}
             style={styles.feedbackTextarea}
           />
-
-          {/* Quick feedback suggestions */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', marginTop: '8px' }}>
-            <span style={{ fontSize: '0.72rem', color: isDark ? '#94a3b8' : '#64748b', fontWeight: '600' }}>
-              Suggestions:
-            </span>
-            {quickFeedbacks.map((q, idx) => (
-              <button
-                key={idx}
-                type="button"
-                onClick={() => {
-                  setFeedbackInput(prev => prev ? `${prev} ${q}` : q);
-                }}
-                style={styles.quickFeedbackPill}
-                className="btn-anim"
-              >
-                + {q}
-              </button>
-            ))}
-          </div>
         </div>
 
         {/* Evaluate CTA Row */}

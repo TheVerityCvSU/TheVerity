@@ -46,7 +46,10 @@ export function useStudentViewKiosk({
   const [isDesktopWeb, setIsDesktopWeb] = useState(() => isDesktopWebBrowser());
   const [idleWarning, setIdleWarning] = useState(false);
 
-  const lastActivityRef = useRef(Date.now());
+  const lastActivityRef = useRef(0);
+  useEffect(() => {
+    lastActivityRef.current = Date.now();
+  }, []);
   const isExitingCleanlyRef = useRef(false);
   const lastTabExitLogRef = useRef(0);
   const copiedInternallyRef = useRef(new Set());
@@ -134,7 +137,6 @@ export function useStudentViewKiosk({
   // Monitor count enforcement
   useEffect(() => {
     if (!kioskRules.enforceSingleMonitor) {
-      setMultiMonitorDetected(false);
       return;
     }
     const checkMonitors = async () => {
@@ -151,7 +153,6 @@ export function useStudentViewKiosk({
   // VM detection
   useEffect(() => {
     if (kioskRules.blockVirtualMachine === false) {
-      setVmDetected(false);
       return;
     }
     let isMounted = true;
@@ -279,8 +280,8 @@ export function useStudentViewKiosk({
   return {
     kioskRules,
     examDefaults,
-    multiMonitorDetected,
-    vmDetected,
+    multiMonitorDetected: kioskRules.enforceSingleMonitor ? multiMonitorDetected : false,
+    vmDetected: kioskRules.blockVirtualMachine !== false ? vmDetected : false,
     vmReasons,
     isDesktopWeb,
     idleWarning,

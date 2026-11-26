@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import { apiFetch } from '../data/api';
 
 export function useStudentViewProctorLogs({
@@ -43,7 +43,9 @@ export function useStudentViewProctorLogs({
     return [];
   });
   const proctorLogsRef = useRef(proctorLogs);
-  proctorLogsRef.current = proctorLogs;
+  useEffect(() => {
+    proctorLogsRef.current = proctorLogs;
+  }, [proctorLogs]);
 
   const addProctorLog = useCallback(
     (message, color = '#ef4444', customDesc = null, isCrash = false) => {
@@ -120,7 +122,7 @@ export function useStudentViewProctorLogs({
         })
       }).catch(() => {});
     },
-    [submitted, classroom?.id, classroomId, assignment?.id, assignmentId, studentActualId, safeUsername, currentUser, codeRef, codeHistoryRef, persistHistoryFn, emitToSockets, assignment?.title]
+    [submitted, classroom, classroomId, assignment, assignmentId, studentActualId, safeUsername, currentUser, codeRef, codeHistoryRef, persistHistoryFn, emitToSockets]
   );
 
   return {

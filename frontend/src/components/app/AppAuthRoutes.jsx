@@ -1,7 +1,6 @@
-import React from 'react';
 import ProtectedRoute from '../ProtectedRoute';
-import AdminDashboard from '../../pages/AdminDashboard';
 import AdminLogin from '../../pages/admin/AdminLogin';
+import AdminDashboard from '../../pages/AdminDashboard';
 import Login from '../../pages/Login';
 import Register from '../../pages/Register';
 import NotFound from '../../pages/NotFound';
@@ -15,8 +14,7 @@ export default function AppAuthRoutes({
   setCurrentUser,
   socket,
   handleLogout,
-  handleUserLogin,
-  lockDown,
+  handleUserLogin
 }) {
   const handleAdminLoginSuccess = (user, token) => {
     localStorage.removeItem('verity_teacher_classrooms');

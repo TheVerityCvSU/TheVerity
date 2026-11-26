@@ -1,4 +1,3 @@
-import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Edit3, X, AlertCircle, Eye, EyeOff } from 'lucide-react';
 import PasswordRequirements from '../PasswordRequirements';

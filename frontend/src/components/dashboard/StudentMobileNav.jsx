@@ -1,4 +1,3 @@
-import React from 'react';
 import { Home, Calendar, Archive, Code2, Settings } from 'lucide-react';
 
 export default function StudentMobileNav({ isDark, activeView, onSetView }) {

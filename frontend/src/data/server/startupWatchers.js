@@ -12,7 +12,11 @@ import { attemptAutoLanReconnect } from './lanDiscovery';
 // Asks the local server to sync with the cloud (fire-and-forget)
 const pingLocalSync = () => {
   try {
-    fetch(`${getLocalApiUrl()}/api/sync`, { method: 'POST' }).catch(() => {});
+    const token = typeof localStorage !== 'undefined' ? (localStorage.getItem('verity_token') || localStorage.getItem('token')) : null;
+    fetch(`${getLocalApiUrl()}/api/sync`, {
+      method: 'POST',
+      headers: token ? { Authorization: `Bearer ${token}` } : {}
+    }).catch(() => {});
   } catch (_) {}
 };
 

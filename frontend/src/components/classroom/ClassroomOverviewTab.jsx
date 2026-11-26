@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import { 
   ChevronRight, CheckCircle2, ClipboardList, FileText, Video, Link2 
 } from 'lucide-react';
@@ -330,11 +330,11 @@ export default function ClassroomOverviewTab({
         }}>
           <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
             <div style={{ width: '42px', height: '42px', borderRadius: '50%', backgroundColor: '#059669', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '1.1rem' }}>
-              KF
+              {(classroom?.instructor || 'IN').split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0].toUpperCase()).join('') || 'IN'}
             </div>
             <div>
               <div style={{ fontSize: '0.65rem', fontWeight: 'bold', color: '#10b981', letterSpacing: '0.05em', textTransform: 'uppercase' }}>YOUR TEACHER</div>
-              <div style={{ fontSize: '1rem', fontWeight: 'bold' }}>{classroom?.instructor || 'Kim Fabie'}</div>
+              <div style={{ fontSize: '1rem', fontWeight: 'bold' }}>{classroom?.instructor || 'Instructor'}</div>
               <div style={{ fontSize: '0.75rem', color: textMuted }}>Offline 24 hours ago</div>
             </div>
           </div>

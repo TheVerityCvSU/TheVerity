@@ -1,18 +1,14 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { MoreVertical } from 'lucide-react';
 import { useDarkMode } from '../hooks/useDarkMode';
-import { getClassroomTheme } from '../data/classroomTheme';
 import { useClassroomBannerTheme } from './classroomCard/useClassroomBannerTheme';
 import ClassroomCardBanner from './classroomCard/ClassroomCardBanner';
 import ClassroomCardMenu from './classroomCard/ClassroomCardMenu';
 
-export const getClassroomCardTheme = (cls) => getClassroomTheme(cls);
-
 export default function ClassroomCard({
   classroom,
   onEnter,
-  onOpenGrading,
   onArchive,
   onUnarchive,
   onSettings,

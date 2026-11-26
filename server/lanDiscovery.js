@@ -1,5 +1,6 @@
 const dgram = require('dgram');
 const os = require('os');
+const { execFile } = require('child_process');
 
 const DISCOVERY_PORT = 39123;
 const APP_TAG = 'the-verity';
@@ -7,6 +8,30 @@ const APP_TAG = 'the-verity';
 let beaconSocket = null;
 let beaconTimer = null;
 let isRunning = false;
+let arpFetchInFlight = false;
+let cachedArpIps = [];
+let lastArpFetchAt = 0;
+const ARP_CACHE_TTL_MS = 5000;
+
+function refreshArpIpsAsync(allLocalIps) {
+    const now = Date.now();
+    if (arpFetchInFlight || (now - lastArpFetchAt) < ARP_CACHE_TTL_MS) return;
+    arpFetchInFlight = true;
+    execFile('arp', ['-a'], { timeout: 1200, windowsHide: true }, (err, stdout) => {
+        arpFetchInFlight = false;
+        lastArpFetchAt = Date.now();
+        if (err || !stdout) return;
+        const matches = Array.from(new Set(String(stdout).match(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g) || []));
+        cachedArpIps = matches.filter(ip =>
+            !ip.startsWith('224.') &&
+            !ip.startsWith('239.') &&
+            !ip.startsWith('255.') &&
+            !ip.endsWith('.255') &&
+            !ip.startsWith('127.') &&
+            !(allLocalIps || []).includes(ip)
+        );
+    });
+}
 
 // Return all valid, reachable physical IPv4 network interfaces (excluding virtual/APIPA/internal)
 function getValidNetworkInterfaces() {
@@ -28,7 +53,7 @@ function getValidNetworkInterfaces() {
                     try {
                         const ipParts = iface.address.split('.').map(Number);
                         const maskParts = iface.netmask.split('.').map(Number);
-                        const bcastParts = ipParts.map((part, i) => (part | (~maskParts[i] & 255)) >>> 0);
+                        const bcastParts = ipParts.map((part, i) => ((part | (~maskParts[i] & 255)) & 255) >>> 0);
                         broadcast = bcastParts.join('.');
                     } catch (_) { }
                 }
@@ -167,39 +192,27 @@ function startLanDiscovery(httpPort = 3001, isHost = true) {
                         beaconSocket.send(globalPayload, 0, globalPayload.length, DISCOVERY_PORT, '255.255.255.255');
                     } catch (_) { }
 
-                    // Also send direct unicast beacons to every active device in the ARP table
-                    // Unicast UDP bypasses router broadcast suppression and client isolation!
-                    try {
-                        const { execSync } = require('child_process');
-                        const arpOut = execSync('arp -a', { timeout: 1000, windowsHide: true }).toString();
-                        const matches = Array.from(new Set(arpOut.match(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g) || []));
-                        const targetIps = matches.filter(ip =>
-                            !ip.startsWith('224.') &&
-                            !ip.startsWith('239.') &&
-                            !ip.startsWith('255.') &&
-                            !ip.endsWith('.255') &&
-                            !ip.startsWith('127.') &&
-                            !allIps.includes(ip)
-                        );
-                        for (const targetIp of targetIps) {
-                            try {
-                                const matchedIp = findBestMatchingServerIp(targetIp);
-                                const unicastPayload = Buffer.from(JSON.stringify({
-                                    app: APP_TAG,
-                                    type: 'beacon',
-                                    role: 'host',
-                                    port: httpPort,
-                                    primaryIp: matchedIp,
-                                    serverUrl: `http://${matchedIp}:${httpPort}`,
-                                    ips: allIps,
-                                    candidateUrls: candidateUrls,
-                                    hostname: os.hostname(),
-                                    timestamp: Date.now()
-                                }));
-                                beaconSocket.send(unicastPayload, 0, unicastPayload.length, DISCOVERY_PORT, targetIp);
-                            } catch (_) { }
-                        }
-                    } catch (_) { }
+                    // Send direct unicast beacons using async-refreshed ARP table (never blocks event loop)
+                    refreshArpIpsAsync(allIps);
+                    const targetIps = cachedArpIps.filter(ip => !allIps.includes(ip));
+                    for (const targetIp of targetIps) {
+                        try {
+                            const matchedIp = findBestMatchingServerIp(targetIp);
+                            const unicastPayload = Buffer.from(JSON.stringify({
+                                app: APP_TAG,
+                                type: 'beacon',
+                                role: 'host',
+                                port: httpPort,
+                                primaryIp: matchedIp,
+                                serverUrl: `http://${matchedIp}:${httpPort}`,
+                                ips: allIps,
+                                candidateUrls: candidateUrls,
+                                hostname: os.hostname(),
+                                timestamp: Date.now()
+                            }));
+                            beaconSocket.send(unicastPayload, 0, unicastPayload.length, DISCOVERY_PORT, targetIp);
+                        } catch (_) { }
+                    }
 
                 } catch (_) { }
             };

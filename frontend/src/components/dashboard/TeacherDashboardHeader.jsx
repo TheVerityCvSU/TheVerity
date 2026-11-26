@@ -1,4 +1,4 @@
-import React, { useRef, useLayoutEffect, useState } from 'react';
+import { useRef, useLayoutEffect, useState } from 'react';
 import { Home, Calendar, Archive, Settings } from 'lucide-react';
 import ProfileMenu from '../../components/ProfileMenu';
 
@@ -20,16 +20,21 @@ export default function TeacherDashboardHeader({
   ];
 
   useLayoutEffect(() => {
-    const activeRef = navRefs.current[activeView];
-    if (activeRef) {
-      setIndicatorStyle(prev => ({
-        left: activeRef.offsetLeft,
-        width: activeRef.offsetWidth,
-        opacity: 1,
-        transition: prev.opacity === 0 ? 'none' : 'all 0.3s cubic-bezier(0.25, 1, 0.5, 1)'
-      }));
-    }
-  }, [activeView]);
+    const updateIndicator = () => {
+      const activeRef = navRefs.current[activeView];
+      if (activeRef) {
+        setIndicatorStyle(prev => ({
+          left: activeRef.offsetLeft,
+          width: activeRef.offsetWidth,
+          opacity: 1,
+          transition: prev.opacity === 0 ? 'none' : 'all 0.3s cubic-bezier(0.25, 1, 0.5, 1)'
+        }));
+      }
+    };
+    updateIndicator();
+    window.addEventListener('resize', updateIndicator);
+    return () => window.removeEventListener('resize', updateIndicator);
+  }, [activeView, isMobile]);
 
   return (
     <header
@@ -37,12 +42,17 @@ export default function TeacherDashboardHeader({
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
+        width: '100%',
+        boxSizing: 'border-box',
+        minHeight: '72px',
         padding: '16px clamp(20px, 3vw, 48px)',
         backgroundColor: isDark ? '#1a1a1a' : '#f8f9fa',
+        fontFamily: '"Inter", "Segoe UI", sans-serif',
         borderBottom: 'none',
         position: 'sticky',
         top: 0,
         zIndex: 50,
+        flexShrink: 0,
       }}
     >
       <div

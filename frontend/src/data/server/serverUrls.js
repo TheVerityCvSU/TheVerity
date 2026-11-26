@@ -147,8 +147,7 @@ export const LOCAL_API_URL = getLocalApiUrl();
 export const getCompilerSocketUrl = () => {
   const isElectron = typeof window !== 'undefined' && (
     Boolean(window.electronAPI) ||
-    Boolean(window.location && isPrivateHost(window.location.hostname)) ||
-    (navigator.userAgent && navigator.userAgent.includes('TheVerity'))
+    Boolean(navigator.userAgent && navigator.userAgent.includes('TheVerity'))
   );
 
   const isWebHosted = typeof window !== 'undefined' &&
@@ -162,6 +161,7 @@ export const getCompilerSocketUrl = () => {
     return LOCAL_DEV_API_URL;
   }
 
+  // LAN browser/mobile clients (e.g. http://192.168.x.x) or offline/cloud-down mode route to getLocalApiUrl()
   if (state.isCloudDown || !isWebHosted) {
     return getLocalApiUrl();
   }

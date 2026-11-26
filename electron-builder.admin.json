@@ -16,14 +16,8 @@
       "from": "dist-server",
       "to": "dist-server",
       "filter": [
-        "server-bundle.cjs"
-      ]
-    },
-    {
-      "from": "server",
-      "to": ".",
-      "filter": [
-        "database.json"
+        "server-bundle.cjs",
+        "schema.sql"
       ]
     }
   ],

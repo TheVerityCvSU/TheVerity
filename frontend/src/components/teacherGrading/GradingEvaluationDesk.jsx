@@ -1,11 +1,11 @@
-import React, { useMemo } from 'react';
+import { useMemo } from 'react';
 import { 
   ClipboardList, CheckCircle2, Clock, PlayCircle, Code2, Copy, 
   Check, Award, RefreshCw, CheckCheck, AlertCircle 
 } from 'lucide-react';
 import { formatShortDate, formatFullDate } from '../../utils/dateUtils';
 import { getStudentGrade, isStudentGraded } from '../../utils/gradeUtils';
-import { getScorePresets, QUICK_FEEDBACK_SUGGESTIONS } from './gradingConstants';
+import { getScorePresets } from './gradingConstants';
 
 export default function GradingEvaluationDesk({
   selectedStudent,
@@ -28,7 +28,6 @@ export default function GradingEvaluationDesk({
   onClearGrade
 }) {
   const scorePresets = useMemo(() => getScorePresets(maxPoints), [maxPoints]);
-  const quickFeedbacks = QUICK_FEEDBACK_SUGGESTIONS;
 
   if (!selectedStudent) {
     return (
@@ -218,23 +217,6 @@ export default function GradingEvaluationDesk({
             placeholder={`Leave constructive feedback or review comments for ${selectedStudent.name}...`}
             style={styles.feedbackTextarea}
           />
-
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', marginTop: '8px' }}>
-            <span style={{ fontSize: '0.72rem', color: isDark ? '#94a3b8' : '#64748b', fontWeight: '600' }}>
-              Suggestions:
-            </span>
-            {quickFeedbacks.map((q, idx) => (
-              <button
-                key={idx}
-                type="button"
-                onClick={() => setFeedbackInput(prev => prev ? `${prev} ${q}` : q)}
-                style={styles.quickFeedbackPill}
-                className="btn-anim"
-              >
-                + {q}
-              </button>
-            ))}
-          </div>
         </div>
 
         {/* Evaluate CTA Row */}

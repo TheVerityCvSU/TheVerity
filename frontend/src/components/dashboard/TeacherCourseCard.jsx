@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { MoreVertical, Copy, Check, Archive } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { useDarkMode } from '../../hooks/useDarkMode';

@@ -1,4 +1,3 @@
-import React from 'react';
 import { ArrowLeft, ShieldCheck, KeyRound, Loader2 } from 'lucide-react';
 import { styles } from '../../pages/registerStyles';
 

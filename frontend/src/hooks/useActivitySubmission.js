@@ -200,7 +200,7 @@ export function useActivitySubmission({ assignment, classroom, currentUser, sock
         socket.off('grade_deleted');
       }
     };
-  }, [assignmentId, classroomId, studentId, safeUsername, submissionKey, gradesKey, socket, currentUser]);
+  }, [assignmentId, classroomId, studentId, safeUsername, submissionKey, gradesKey, draftCodeKey, socket, currentUser]);
 
   const handleSubmit = () => setShowSubmitModal(true);
 

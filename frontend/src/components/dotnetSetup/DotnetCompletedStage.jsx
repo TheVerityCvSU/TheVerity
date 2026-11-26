@@ -1,4 +1,3 @@
-import React from 'react';
 import { CheckCircle2, Zap } from 'lucide-react';
 
 export default function DotnetCompletedStage({ isDarkTheme, status }) {

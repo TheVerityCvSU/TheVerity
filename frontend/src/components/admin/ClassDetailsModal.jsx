@@ -1,7 +1,5 @@
-import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Search, UserPlus, Check } from 'lucide-react';
-import Skeleton from '../Skeleton';
 
 export default function ClassDetailsModal({
   viewClass,

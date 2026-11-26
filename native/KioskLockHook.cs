@@ -1,25 +1,20 @@
 // KioskLockHook — a native low-level keyboard hook that reliably blocks the
-// Windows key and other escape paths (Task View, Alt+Tab, etc.) while a lock
-// file exists. Electron's globalShortcut cannot swallow the bare Win key on
-// Windows; only a WH_KEYBOARD_LL hook can.
+// Windows key and OS task-switching combos (Alt+Tab, Win+Tab, Alt+Esc, Ctrl+Esc,
+// Alt+F4, Win+V) while a lock file exists, without interfering with normal Tab usage.
 //
-// Usage: KioskLockHook.exe <lockfile>
-//   - While <lockfile> EXISTS  -> hook is ACTIVE (blocks keys)
+// Usage: KioskLockHook.exe <lockfile> [parentPid]
+//   - While <lockfile> EXISTS  -> hook is ACTIVE (blocks escape shortcuts)
 //   - While <lockfile> ABSENT  -> hook is PASSIVE (passes keys through)
-//
-// The lockfile lets the Electron main process toggle lockdown with zero native
-// IPC: just create/remove the file.
 
 using System;
-using System.IO;
 using System.Diagnostics;
+using System.IO;
 using System.Runtime.InteropServices;
-using System.Threading;
 
 class KioskLockHook
 {
-    // --- Win32 API ---
     delegate IntPtr LowLevelKeyboardProc(int nCode, IntPtr wParam, IntPtr lParam);
+    delegate void TimerProc(IntPtr hwnd, uint uMsg, IntPtr idEvent, uint dwTime);
 
     [DllImport("user32.dll", SetLastError = true)]
     static extern IntPtr SetWindowsHookEx(int idHook, LowLevelKeyboardProc lpfn, IntPtr hMod, uint dwThreadId);
@@ -30,29 +25,61 @@ class KioskLockHook
     [DllImport("user32.dll")]
     static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode, IntPtr wParam, IntPtr lParam);
 
+    [DllImport("user32.dll")]
+    static extern short GetAsyncKeyState(uint vKey);
+
+    [DllImport("user32.dll")]
+    static extern sbyte GetMessage(out MSG lpMsg, IntPtr hWnd, uint wMsgFilterMin, uint wMsgFilterMax);
+
+    [DllImport("user32.dll")]
+    static extern bool TranslateMessage(ref MSG lpMsg);
+
+    [DllImport("user32.dll")]
+    static extern IntPtr DispatchMessage(ref MSG lpMsg);
+
+    [DllImport("user32.dll")]
+    static extern IntPtr SetTimer(IntPtr hWnd, IntPtr nIDEvent, uint uElapse, TimerProc lpTimerFunc);
+
+    [DllImport("user32.dll")]
+    static extern bool KillTimer(IntPtr hWnd, IntPtr uIDEvent);
+
+    [DllImport("user32.dll")]
+    static extern void PostQuitMessage(int nExitCode);
+
     [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
     static extern IntPtr GetModuleHandle(string lpModuleName);
 
-    [DllImport("kernel32.dll")] static extern bool AttachConsole(int dwProcessId);
-    [DllImport("kernel32.dll")] static extern bool FreeConsole();
+    [StructLayout(LayoutKind.Sequential)]
+    struct POINT
+    {
+        public int x;
+        public int y;
+    }
 
-    // WH_KEYBOARD_LL and message codes
+    [StructLayout(LayoutKind.Sequential)]
+    struct MSG
+    {
+        public IntPtr hwnd;
+        public uint message;
+        public IntPtr wParam;
+        public IntPtr lParam;
+        public uint time;
+        public POINT pt;
+    }
+
     const int WH_KEYBOARD_LL = 13;
     const int WM_KEYDOWN = 0x0100;
     const int WM_KEYUP = 0x0101;
     const int WM_SYSKEYDOWN = 0x0104;
     const int WM_SYSKEYUP = 0x0105;
 
-    // Virtual-key codes we want to block (0x prefix = hex)
     const uint VK_LWIN = 0x5B;
     const uint VK_RWIN = 0x5C;
     const uint VK_TAB = 0x09;
     const uint VK_ESCAPE = 0x1B;
-    const uint VK_MENU = 0x12;   // Alt
-    const uint VK_CONTROL = 0x11;
-    const uint VK_F1 = 0x70;
+    const uint VK_MENU = 0x12;     // Alt
+    const uint VK_CONTROL = 0x11;  // Ctrl
     const uint VK_F4 = 0x73;
-    const uint VK_DELETE = 0x2E;
     const uint VK_V = 0x56;
 
     [StructLayout(LayoutKind.Sequential)]
@@ -65,59 +92,51 @@ class KioskLockHook
         public IntPtr dwExtraInfo;
     }
 
-    static LowLevelKeyboardProc proc = HookCallback;
+    static readonly LowLevelKeyboardProc proc = HookCallback;
+    static readonly TimerProc watchTimerProc = WatchdogTick;
     static IntPtr hookID = IntPtr.Zero;
+    static IntPtr timerID = IntPtr.Zero;
     static volatile bool active = false;
-
     static string lockFile;
-    static DateTime lastCheck = DateTime.MinValue;
+    static int parentPid = 0;
 
     static IntPtr HookCallback(int nCode, IntPtr wParam, IntPtr lParam)
     {
         if (nCode >= 0 && active)
         {
-            KBDLLHOOKSTRUCT kbd = (KBDLLHOOKSTRUCT)Marshal.PtrToStructure(lParam, typeof(KBDLLHOOKSTRUCT));
             int msg = wParam.ToInt32();
-            // We block on the down event so the OS never sees the keypress.
             if (msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN || msg == WM_KEYUP || msg == WM_SYSKEYUP)
             {
-                Console.WriteLine("[hook] msg=0x" + msg.ToString("X") + " vk=0x" + kbd.vkCode.ToString("X") + " flags=0x" + kbd.flags.ToString("X"));
-                if (IsBlocked(kbd.vkCode, msg))
+                KBDLLHOOKSTRUCT kbd = (KBDLLHOOKSTRUCT)Marshal.PtrToStructure(lParam, typeof(KBDLLHOOKSTRUCT));
+                if (IsBlocked(kbd.vkCode))
                 {
-                    Console.WriteLine("[hook] BLOCKED vk=0x" + kbd.vkCode.ToString("X"));
-                    return new IntPtr(1); // swallow the event
+                    return new IntPtr(1);
                 }
             }
         }
         return CallNextHookEx(hookID, nCode, wParam, lParam);
     }
 
-    static bool IsBlocked(int vkCode, int msg)
+    static bool IsBlocked(int vkCode)
     {
-        // Block the bare Windows keys outright (Start menu + every Win combo).
+        // Block bare Windows keys outright (Start menu & Win+* combinations).
         if (vkCode == (int)VK_LWIN || vkCode == (int)VK_RWIN)
             return true;
 
-        // Block Win+V (Windows Clipboard History popup)
+        // Block Win+V (Windows Clipboard History) even if modifier state lagged.
         if (vkCode == (int)VK_V && (IsDown(VK_LWIN) || IsDown(VK_RWIN)))
             return true;
 
-        if ((vkCode == (int)VK_LWIN || vkCode == (int)VK_RWIN) && IsDown(VK_V))
+        // Only block Tab when paired with Alt or Windows key — allow normal Tab indentation in editors/forms.
+        if (vkCode == (int)VK_TAB && (IsDown(VK_MENU) || IsDown(VK_LWIN) || IsDown(VK_RWIN)))
             return true;
 
-        // The Win key is swallowed above, so these combos can never fire — but
-        // block them explicitly anyway as defense in depth:
-        //   - Win+Tab / Alt+Tab  (window / task switchers)
-        if (vkCode == (int)VK_TAB)
+        // Block Alt+Esc, Ctrl+Esc (Start Menu), and Ctrl+Shift+Esc (Task Manager).
+        if (vkCode == (int)VK_ESCAPE && (IsDown(VK_MENU) || IsDown(VK_CONTROL)))
             return true;
 
-        // Alt+F4  (force close the app)
+        // Block Alt+F4.
         if (vkCode == (int)VK_F4 && IsDown(VK_MENU))
-            return true;
-
-        // Win+Ctrl+Shift+B (restarts the display driver)
-        // Covered by Win key being blocked, but keep Ctrl+Alt+Del blocked:
-        if (vkCode == (int)VK_DELETE && IsDown(VK_CONTROL) && IsDown(VK_MENU))
             return true;
 
         return false;
@@ -128,38 +147,88 @@ class KioskLockHook
         return (GetAsyncKeyState(vk) & 0x8000) != 0;
     }
 
-    [DllImport("user32.dll")] static extern short GetAsyncKeyState(uint vKey);
+    static bool IsParentAlive()
+    {
+        if (parentPid <= 0) return true;
+        try
+        {
+            Process parent = Process.GetProcessById(parentPid);
+            return !parent.HasExited;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    static void CleanupAndQuit()
+    {
+        active = false;
+        try
+        {
+            if (!string.IsNullOrEmpty(lockFile) && File.Exists(lockFile))
+            {
+                File.Delete(lockFile);
+            }
+        }
+        catch { }
+        PostQuitMessage(0);
+    }
+
+    static void WatchdogTick(IntPtr hwnd, uint uMsg, IntPtr idEvent, uint dwTime)
+    {
+        if (!IsParentAlive())
+        {
+            CleanupAndQuit();
+            return;
+        }
+        try
+        {
+            active = !string.IsNullOrEmpty(lockFile) && File.Exists(lockFile);
+        }
+        catch
+        {
+            active = false;
+        }
+    }
 
     [STAThread]
     static int Main(string[] args)
     {
         lockFile = args.Length > 0 ? args[0] : Path.Combine(Path.GetTempPath(), "verity_lock");
-        // ensure the directory exists
+        if (args.Length > 1)
+        {
+            int parsed;
+            if (int.TryParse(args[1], out parsed) && parsed > 0)
+                parentPid = parsed;
+        }
+
         string dir = Path.GetDirectoryName(lockFile);
         if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+        active = File.Exists(lockFile);
 
-        hookID = SetWindowsHookEx(WH_KEYBOARD_LL, proc,
-            GetModuleHandle(Process.GetCurrentProcess().MainModule.ModuleName), 0);
+        using (Process curProcess = Process.GetCurrentProcess())
+        using (ProcessModule curModule = curProcess.MainModule)
+        {
+            hookID = SetWindowsHookEx(WH_KEYBOARD_LL, proc, GetModuleHandle(curModule.ModuleName), 0);
+        }
 
         if (hookID == IntPtr.Zero)
         {
-            Console.WriteLine("KioskLockHook: failed to install hook (error " + Marshal.GetLastWin32Error() + ")");
             return 1;
         }
 
-        Console.WriteLine("KioskLockHook ready. lockfile=" + lockFile);
-        if (AttachConsole(-1)) { /* attach to parent console */ }
+        timerID = SetTimer(IntPtr.Zero, IntPtr.Zero, 250, watchTimerProc);
 
-        // Poll for the lock file; never block the hook thread.
-        while (true)
+        MSG msg;
+        while (GetMessage(out msg, IntPtr.Zero, 0, 0) > 0)
         {
-            if ((DateTime.UtcNow - lastCheck).TotalMilliseconds > 250)
-            {
-                lastCheck = DateTime.UtcNow;
-                active = File.Exists(lockFile);
-            }
-            Thread.Sleep(25);
+            TranslateMessage(ref msg);
+            DispatchMessage(ref msg);
         }
-        // Console.ReadLine(); // unreachable but keeps compiler happy
+
+        if (timerID != IntPtr.Zero) KillTimer(IntPtr.Zero, timerID);
+        if (hookID != IntPtr.Zero) UnhookWindowsHookEx(hookID);
+        return 0;
     }
 }

@@ -1,4 +1,3 @@
-import React from 'react';
 import { Archive, RefreshCw } from 'lucide-react';
 
 export default function StudentCourseCardMenu({

@@ -22,9 +22,15 @@ export function useTeacherClassworkPeople({ classroom, currentUser, socket, clas
     );
   }, [enrolledStudents]);
 
+  const [prevPeopleClassId, setPrevPeopleClassId] = useState(null);
+  const peopleSyncKey = `${classroom?.id ?? ''}|${refreshStudentsKey}`;
+  if (classroom?.id && peopleSyncKey !== prevPeopleClassId) {
+    setPrevPeopleClassId(peopleSyncKey);
+    setLoadingStudents(true);
+  }
+
   useEffect(() => {
     if (!classroom?.id) return;
-    setLoadingStudents(true);
 
     const loadStudents = async () => {
       const studentsMap = {};

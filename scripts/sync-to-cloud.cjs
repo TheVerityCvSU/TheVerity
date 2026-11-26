@@ -1,24 +1,31 @@
-const Database = require('../server/node_modules/better-sqlite3');
+const { openSqliteDatabase } = require('../server/db/sqlite-adapter');
 const path = require('path');
 const fs = require('fs');
 
 const serverEnv = path.join(__dirname, '../server/.env');
 const prodEnv = path.join(__dirname, '../frontend/.env.production');
-if (fs.existsSync(serverEnv)) require('dotenv').config({ path: serverEnv });
-if (fs.existsSync(prodEnv)) require('dotenv').config({ path: prodEnv });
+if (fs.existsSync(serverEnv)) require('../server/node_modules/dotenv').config({ path: serverEnv });
+if (fs.existsSync(prodEnv)) require('../server/node_modules/dotenv').config({ path: prodEnv });
 
 const CLOUD_URL = process.env.CLOUD_URL || process.env.VITE_API_URL || 'http://localhost:3001';
-const db = new Database(path.join(__dirname, '../server/database.sqlite'));
+const ADMIN_EMAIL = process.env.ADMIN_EMAIL || process.env.VERITY_BOOTSTRAP_ADMIN_EMAIL || '';
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || process.env.VERITY_BOOTSTRAP_ADMIN_PASSWORD || '';
 
 async function sync() {
-  console.log(`📡 Connecting to Cloud Backend at ${CLOUD_URL}...`);
+  if (!ADMIN_EMAIL || !ADMIN_PASSWORD) {
+    throw new Error('Set ADMIN_EMAIL and ADMIN_PASSWORD (or VERITY_BOOTSTRAP_ADMIN_EMAIL / VERITY_BOOTSTRAP_ADMIN_PASSWORD) before running sync-to-cloud.');
+  }
 
-  // 1. Authenticate as System Admin
-  const loginRes = await fetch(`${CLOUD_URL}/login`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email: 'admin@verity.com', password: 'admin' })
-  });
+  const db = openSqliteDatabase(path.join(__dirname, '../server/database.sqlite'));
+  try {
+    console.log(`📡 Connecting to Cloud Backend at ${CLOUD_URL}...`);
+
+    // 1. Authenticate as System Admin
+    const loginRes = await fetch(`${CLOUD_URL}/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: ADMIN_EMAIL, password: ADMIN_PASSWORD })
+    });
 
   if (!loginRes.ok) {
     const text = await loginRes.text();
@@ -98,13 +105,14 @@ async function sync() {
   const verifyRes = await fetch(`${CLOUD_URL}/users`, {
     headers: { 'Authorization': `Bearer ${token}` }
   });
-  if (verifyRes.ok) {
-    const data = await verifyRes.json();
-    console.log(`\n🎉 Verification: Cloud now has ${data.users?.length} accounts:`);
-    console.table(data.users.map(u => ({ id: u.id, name: u.name, email: u.email, role: u.role, status: u.status })));
+    if (verifyRes.ok) {
+      const data = await verifyRes.json();
+      console.log(`\n🎉 Verification: Cloud now has ${data.users?.length} accounts:`);
+      console.table(data.users.map(u => ({ id: u.id, name: u.name, email: u.email, role: u.role, status: u.status })));
+    }
+  } finally {
+    try { db.close(); } catch (_) {}
   }
-
-  db.close();
 }
 
 sync().catch(err => {

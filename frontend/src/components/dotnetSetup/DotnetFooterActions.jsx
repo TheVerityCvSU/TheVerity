@@ -1,4 +1,3 @@
-import React from 'react';
 import { ExternalLink, Loader2, Download, RefreshCw } from 'lucide-react';
 
 export default function DotnetFooterActions({

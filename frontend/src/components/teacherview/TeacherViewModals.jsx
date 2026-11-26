@@ -1,4 +1,3 @@
-import React from 'react';
 import TeacherViewGradeModal from './TeacherViewGradeModal';
 import TeacherViewSettingsModal from './TeacherViewSettingsModal';
 import TeacherViewToast from './TeacherViewToast';

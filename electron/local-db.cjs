@@ -67,7 +67,7 @@ function wrapSqlite(rawDb, engine) {
                     rawDb.exec('COMMIT');
                     return res;
                 } catch (e) {
-                    rawDb.exec('ROLLBACK');
+                    try { rawDb.exec('ROLLBACK'); } catch (_) {}
                     throw e;
                 }
             };
@@ -173,7 +173,14 @@ function initLocalDb(userDataPath) {
         db = null;
         if (fs.existsSync(fallbackFile)) {
             try {
-                fallbackData = JSON.parse(fs.readFileSync(fallbackFile, 'utf8'));
+                const parsed = JSON.parse(fs.readFileSync(fallbackFile, 'utf8'));
+                fallbackData = {
+                    drafts: parsed && typeof parsed.drafts === 'object' && parsed.drafts !== null ? parsed.drafts : {},
+                    cached_classrooms: Array.isArray(parsed?.cached_classrooms) ? parsed.cached_classrooms : [],
+                    cached_classwork: parsed && typeof parsed.cached_classwork === 'object' && parsed.cached_classwork !== null ? parsed.cached_classwork : {},
+                    sync_queue: Array.isArray(parsed?.sync_queue) ? parsed.sync_queue : [],
+                    key_value: parsed && typeof parsed.key_value === 'object' && parsed.key_value !== null ? parsed.key_value : {}
+                };
             } catch (_) {
                 fallbackData = { drafts: {}, cached_classrooms: [], cached_classwork: {}, sync_queue: [], key_value: {} };
             }
@@ -185,7 +192,9 @@ function initLocalDb(userDataPath) {
 function saveFallback() {
     if (!fallbackFile) return;
     try {
-        fs.writeFileSync(fallbackFile, JSON.stringify(fallbackData, null, 2), 'utf8');
+        const tmpFile = `${fallbackFile}.tmp`;
+        fs.writeFileSync(tmpFile, JSON.stringify(fallbackData, null, 2), 'utf8');
+        fs.renameSync(tmpFile, fallbackFile);
     } catch (e) {
         console.error('[LocalDB] Failed to save fallback data:', e);
     }
@@ -374,7 +383,8 @@ const localDbAPI = {
 
     // Set local key-value setting
     setLocal(key, value) {
-        const valStr = typeof value === 'object' ? JSON.stringify(value) : String(value);
+        const normalizedVal = value === undefined ? null : value;
+        const valStr = JSON.stringify(normalizedVal);
         if (db && !useJsonFallback) {
             db.prepare(`
                 INSERT INTO local_key_value (key, value)
@@ -383,7 +393,7 @@ const localDbAPI = {
             `).run(String(key), valStr);
             return { success: true };
         } else {
-            fallbackData.key_value[key] = value;
+            fallbackData.key_value[String(key)] = normalizedVal;
             saveFallback();
             return { success: true };
         }
@@ -396,7 +406,18 @@ const localDbAPI = {
             if (!row) return null;
             try { return JSON.parse(row.value); } catch (_) { return row.value; }
         } else {
-            return fallbackData.key_value[key] ?? null;
+            const val = fallbackData.key_value[String(key)];
+            return val === undefined ? null : val;
+        }
+    },
+
+    // Flush and close open storage handles cleanly on exit
+    close() {
+        if (db && !useJsonFallback) {
+            try { db.close(); } catch (_) {}
+            db = null;
+        } else if (fallbackFile) {
+            saveFallback();
         }
     }
 };

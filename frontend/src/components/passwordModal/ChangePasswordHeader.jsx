@@ -1,4 +1,3 @@
-import React from 'react';
 import { KeyRound, X } from 'lucide-react';
 
 export default function ChangePasswordHeader({ onClose, loading, colors, isDark }) {

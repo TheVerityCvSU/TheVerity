@@ -1,4 +1,3 @@
-import React from 'react';
 import { Download, AlertCircle, CheckCircle2, Sparkles } from 'lucide-react';
 
 export default function UpdateStatusBanner({

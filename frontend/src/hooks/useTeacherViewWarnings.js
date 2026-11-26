@@ -14,7 +14,7 @@ const isCognitivePause = (item) => {
   return str.includes('cognitive pause') || str.includes('inactivity');
 };
 
-export function useTeacherViewWarnings({ assignment, classroom, students, mode, selectedStudentId, activeStudent }) {
+export function useTeacherViewWarnings({ assignment, classroom, students, activeStudent }) {
   // Persistent warning logs for this activity session
   const [sessionWarnings, setSessionWarnings] = useState(() => {
     if (!assignment?.id) return [];
@@ -35,31 +35,35 @@ export function useTeacherViewWarnings({ assignment, classroom, students, mode, 
     }
   });
 
+  const warnCacheKey = `${classroom?.id || 'all'}|${assignment?.id || ''}`;
+  const [prevWarnCacheKey, setPrevWarnCacheKey] = useState(warnCacheKey);
+
   // Re-hydrate session warnings whenever assignment changes
-  useEffect(() => {
+  if (warnCacheKey !== prevWarnCacheKey) {
+    setPrevWarnCacheKey(warnCacheKey);
     if (!assignment?.id) {
       setSessionWarnings([]);
-      return;
-    }
-    try {
-      const key = `verity_session_warnings_${classroom?.id || 'all'}_${assignment.id}`;
-      const cached = localStorage.getItem(key);
-      const list = cached ? JSON.parse(cached) : [];
-      if (Array.isArray(list)) {
-        setSessionWarnings(
-          list.filter((l) => {
-            if (isCognitivePause(l)) return false;
-            const aId = l.assignmentId || l.assignment_id;
-            return !aId || aId === 'none' || String(aId) === String(assignment.id);
-          })
-        );
-      } else {
+    } else {
+      try {
+        const key = `verity_session_warnings_${classroom?.id || 'all'}_${assignment.id}`;
+        const cached = localStorage.getItem(key);
+        const list = cached ? JSON.parse(cached) : [];
+        if (Array.isArray(list)) {
+          setSessionWarnings(
+            list.filter((l) => {
+              if (isCognitivePause(l)) return false;
+              const aId = l.assignmentId || l.assignment_id;
+              return !aId || aId === 'none' || String(aId) === String(assignment.id);
+            })
+          );
+        } else {
+          setSessionWarnings([]);
+        }
+      } catch {
         setSessionWarnings([]);
       }
-    } catch {
-      setSessionWarnings([]);
     }
-  }, [assignment?.id, classroom?.id]);
+  }
 
   const mergeWarningLogs = useCallback(
     (incomingList) => {
@@ -109,7 +113,7 @@ export function useTeacherViewWarnings({ assignment, classroom, students, mode, 
         return merged;
       });
     },
-    [assignment?.id, classroom?.id]
+    [assignment, classroom]
   );
 
   // Load session proctor warning logs from backend
@@ -127,6 +131,7 @@ export function useTeacherViewWarnings({ assignment, classroom, students, mode, 
   }, [assignment?.id, classroom?.id, mergeWarningLogs]);
 
   // Aggregate and memoize all logs
+  const curAId = assignment?.id != null ? String(assignment.id) : null;
   const allLogs = useMemo(() => {
     const logs = [];
     const seenMap = new Map();
@@ -199,7 +204,7 @@ export function useTeacherViewWarnings({ assignment, classroom, students, mode, 
 
       const logItem = {
         ...rawLog,
-        id: rawLog.id || playbackInfo.epochMs || Date.now(),
+        id: rawLog.id || playbackInfo.epochMs || `${sId}-${fallbackDedupeKey}`,
         epochMs: playbackInfo.epochMs || null,
         studentName: sName,
         studentId: sId,
@@ -218,8 +223,6 @@ export function useTeacherViewWarnings({ assignment, classroom, students, mode, 
       logs.push(logItem);
     };
 
-    const curAId = assignment?.id != null ? String(assignment.id) : null;
-
     // 1. Process history warnings first (they have exact epoch ms and keystroke index)
     Object.values(students).forEach((student) => {
       const sAId = student.assignmentId || student.assignment_id;
@@ -234,7 +237,7 @@ export function useTeacherViewWarnings({ assignment, classroom, students, mode, 
             const sanitizedWarning = sanitizeAction(h.warning);
             addLog(
               {
-                id: h.time || Date.now(),
+                id: h.time || `${student.id || student.name}-hist-${hIdx}`,
                 timestamp: h.time,
                 historyIndex: hIdx,
                 message: sanitizedWarning,
@@ -271,11 +274,11 @@ export function useTeacherViewWarnings({ assignment, classroom, students, mode, 
     }
 
     return logs.sort((a, b) => {
-      const tA = a.epochMs || a.playbackTimeMs || a.id || 0;
-      const tB = b.epochMs || b.playbackTimeMs || b.id || 0;
+      const tA = a.epochMs || a.playbackTimeMs || (typeof a.id === 'number' ? a.id : 0);
+      const tB = b.epochMs || b.playbackTimeMs || (typeof b.id === 'number' ? b.id : 0);
       return tB - tA;
     });
-  }, [students, sessionWarnings, mode, selectedStudentId, assignment?.id]);
+  }, [students, sessionWarnings, curAId]);
 
   const activeStudentWarnings = useMemo(() => {
     if (!activeStudent || (!activeStudent.id && !activeStudent.name)) return [];

@@ -1,12 +1,15 @@
 import { useState, useEffect } from 'react';
-import { getClassroomTheme, saveClassroomTheme } from '../data/classroomTheme';
+import { getClassroomTheme, applyClassroomThemeLocally } from '../data/classroomTheme';
 
 export function useClassroomBannerTheme({ classroom, socket }) {
+  const classroomKey = `${classroom?.id ?? ''}|${classroom?.code ?? ''}|${classroom?.section ?? ''}|${classroom?.name ?? ''}|${typeof classroom?.theme === 'string' ? classroom.theme : JSON.stringify(classroom?.theme || null)}`;
+  const [prevKey, setPrevKey] = useState(classroomKey);
   const [bannerTheme, setBannerTheme] = useState(() => getClassroomTheme(classroom));
 
-  useEffect(() => {
+  if (classroomKey !== prevKey) {
+    setPrevKey(classroomKey);
     setBannerTheme(getClassroomTheme(classroom));
-  }, [classroom?.id, classroom?.code, classroom?.section, classroom?.name, classroom?.theme]);
+  }
 
   useEffect(() => {
     const handleUpdate = (e) => {
@@ -21,7 +24,7 @@ export function useClassroomBannerTheme({ classroom, socket }) {
 
       if (matches && detail.theme) {
         setBannerTheme(detail.theme);
-        saveClassroomTheme(classroom, detail.theme, null);
+        applyClassroomThemeLocally(classroom, detail.theme);
       }
     };
 
@@ -29,14 +32,16 @@ export function useClassroomBannerTheme({ classroom, socket }) {
       if (document.visibilityState === 'visible') setBannerTheme(getClassroomTheme(classroom));
     };
 
+    const handleSocketThemeChanged = (data) => handleUpdate({ detail: data });
+
     window.addEventListener('verity:banner-updated', handleUpdate);
     document.addEventListener('visibilitychange', handleVisibility);
-    if (socket) socket.on('classroom_theme_changed', (data) => handleUpdate({ detail: data }));
+    if (socket) socket.on('classroom_theme_changed', handleSocketThemeChanged);
 
     return () => {
       window.removeEventListener('verity:banner-updated', handleUpdate);
       document.removeEventListener('visibilitychange', handleVisibility);
-      if (socket) socket.off('classroom_theme_changed');
+      if (socket) socket.off('classroom_theme_changed', handleSocketThemeChanged);
     };
   }, [classroom, socket]);
 

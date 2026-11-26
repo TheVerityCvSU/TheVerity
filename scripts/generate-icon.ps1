@@ -1,8 +1,9 @@
 Add-Type -AssemblyName System.Drawing
 
-$electronAssets = "c:\Users\vicfa\The-Verity\electron\assets"
-$frontendPublic = "c:\Users\vicfa\The-Verity\frontend\public"
-$buildDir = "c:\Users\vicfa\The-Verity\build"
+$repoRoot = Split-Path -Parent $PSScriptRoot
+$electronAssets = Join-Path $repoRoot "electron\assets"
+$frontendPublic = Join-Path $repoRoot "frontend\public"
+$buildDir = Join-Path $repoRoot "build"
 
 function Render-V-Vector([int]$size) {
     $bmp = New-Object System.Drawing.Bitmap $size, $size, ([System.Drawing.Imaging.PixelFormat]::Format32bppArgb)

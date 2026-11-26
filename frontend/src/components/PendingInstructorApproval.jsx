@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { approveInstructor, rejectInstructor } from '../data/instructorApproval';
 import { getStyles } from './pendingApprovals/pendingApprovalStyles';

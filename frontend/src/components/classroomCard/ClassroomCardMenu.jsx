@@ -1,4 +1,3 @@
-import React from 'react';
 import { motion } from 'framer-motion';
 import { Copy, Check, Trash2, Archive, RotateCcw, Settings } from 'lucide-react';
 

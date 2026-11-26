@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { enrollStudentInClassroom } from '../data/enrollmentService';
 import AddStudentHeader from './addStudent/AddStudentHeader';
@@ -23,15 +23,22 @@ export default function AddStudentModal({
   const [successMsg, setSuccessMsg] = useState('');
   const emailInputRef = useRef(null);
 
-  useEffect(() => {
+  const [prevOpen, setPrevOpen] = useState(isOpen);
+  if (isOpen !== prevOpen) {
+    setPrevOpen(isOpen);
     if (isOpen) {
       setEmail('');
       setName('');
       setError('');
       setSuccessMsg('');
       setLoading(false);
-      setTimeout(() => emailInputRef.current?.focus(), 80);
     }
+  }
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const focusTimer = setTimeout(() => emailInputRef.current?.focus(), 80);
+    return () => clearTimeout(focusTimer);
   }, [isOpen]);
 
   useEffect(() => {

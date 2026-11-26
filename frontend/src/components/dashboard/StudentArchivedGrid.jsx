@@ -1,4 +1,3 @@
-import React from 'react';
 import { motion } from 'framer-motion';
 import StudentCourseCard from './StudentCourseCard';
 import { cardThemes } from '../../data/studentDashboardConstants';

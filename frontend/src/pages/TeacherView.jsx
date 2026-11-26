@@ -1,5 +1,5 @@
-/* eslint-disable react-hooks/set-state-in-effect, no-empty, react-hooks/exhaustive-deps */
 import { useState, useEffect, useMemo } from 'react';
+import '../utils/monaco/monacoConfig.js';
 import Editor from '@monaco-editor/react';
 import { useMediaQuery } from '../hooks/useMediaQuery';
 import { useDarkMode } from '../hooks/useDarkMode';
@@ -26,8 +26,7 @@ export default function TeacherView({
   initialStudent,
   onBack,
   onLogout,
-  mode = 'live',
-  onSwitchMode
+  mode = 'live'
 }) {
   const { isDark, toggle: toggleDarkMode } = useDarkMode();
   const theme = useMemo(() => getTeacherViewTheme(isDark), [isDark]);
@@ -61,6 +60,7 @@ export default function TeacherView({
     assignment?.points ? String(assignment.points) : '100'
   );
   const [feedbackInput, setFeedbackInput] = useState('');
+  const [gradeSyncKey, setGradeSyncKey] = useState('');
 
   // 1. Roster and active coders hook
   const roster = useTeacherViewRoster({ assignment, classroom, initialStudent, mode, studentSearch });
@@ -87,7 +87,8 @@ export default function TeacherView({
     setSubmittedStudentNames: roster.setSubmittedStudentNames,
     submittedStudentNamesRef: roster.submittedStudentNamesRef,
     mergeWarningLogs: warnings.mergeWarningLogs,
-    activeStudent: roster.activeStudent
+    activeStudent: roster.activeStudent,
+    selectedStudentId: roster.selectedStudentId
   });
 
   // 4. Playback and history calculations
@@ -96,7 +97,7 @@ export default function TeacherView({
     Array.isArray(rawHistory) && rawHistory.length > 0
       ? rawHistory
       : roster.activeStudent.code || roster.activeStudent.finalCode
-      ? [{ time: Date.now(), code: roster.activeStudent.code || roster.activeStudent.finalCode }]
+      ? [{ time: 0, code: roster.activeStudent.code || roster.activeStudent.finalCode }]
       : [];
 
   const hasPlayback =
@@ -119,24 +120,33 @@ export default function TeacherView({
     }
   }
 
-  // Pre-populate grade form
-  useEffect(() => {
-    if (roster.selectedStudentId && assignment?.id) {
-      const gradesKey = `verity_grades_${assignment.id}`;
-      try {
-        const savedGrades = JSON.parse(localStorage.getItem(gradesKey)) || {};
-        const curStudent = roster.students[roster.selectedStudentId] || { id: roster.selectedStudentId };
-        const saved = getStudentGrade(savedGrades, curStudent);
-        if (saved) {
-          if (saved.grade != null) setGradeInput(String(saved.grade));
-          if (saved.feedback != null) setFeedbackInput(saved.feedback);
-        } else {
-          setGradeInput(assignment?.points ? String(assignment.points) : '100');
-          setFeedbackInput('');
-        }
-      } catch {}
+  const handleRunCode = () => {
+    if (terminalMode === 'collapsed') {
+      setTerminalMode('normal');
     }
-  }, [roster.selectedStudentId, assignment?.id, roster.students]);
+    socketHook.handleEvaluate(displayCode);
+  };
+
+  // Pre-populate grade form cleanly when selected student or assignment changes
+  const desiredGradeSyncKey = roster.selectedStudentId && assignment?.id
+    ? `${roster.selectedStudentId}:${assignment.id}`
+    : '';
+  if (desiredGradeSyncKey && desiredGradeSyncKey !== gradeSyncKey) {
+    setGradeSyncKey(desiredGradeSyncKey);
+    const gradesKey = `verity_grades_${assignment.id}`;
+    try {
+      const savedGrades = JSON.parse(localStorage.getItem(gradesKey)) || {};
+      const curStudent = roster.students[roster.selectedStudentId] || { id: roster.selectedStudentId };
+      const saved = getStudentGrade(savedGrades, curStudent);
+      if (saved) {
+        if (saved.grade != null) setGradeInput(String(saved.grade));
+        if (saved.feedback != null) setFeedbackInput(saved.feedback);
+      } else {
+        setGradeInput(assignment?.points ? String(assignment.points) : '100');
+        setFeedbackInput('');
+      }
+    } catch {}
+  }
 
   const handleSaveGrade = () => {
     saveTeacherGrade({
@@ -170,8 +180,9 @@ export default function TeacherView({
         classroom={classroom}
         mode={mode}
         activeStudent={roster.activeStudent}
+        displayCode={displayCode}
         evaluating={socketHook.evaluating}
-        handleEvaluate={socketHook.handleEvaluate}
+        handleEvaluate={handleRunCode}
         handleStopCode={socketHook.handleStopCode}
         setShowGradeModal={setShowGradeModal}
         setShowSettingsModal={setShowSettingsModal}
@@ -278,8 +289,12 @@ export default function TeacherView({
             terminalMode={terminalMode}
             setTerminalMode={setTerminalMode}
             evaluating={socketHook.evaluating}
+            programStarted={socketHook.programStarted}
             evalOutput={socketHook.evalOutput}
             setEvalOutput={socketHook.setEvalOutput}
+            inputValue={socketHook.inputValue}
+            setInputValue={socketHook.setInputValue}
+            handleTerminalInput={socketHook.handleTerminalInput}
             activeStudent={roster.activeStudent}
             theme={theme}
             isDark={isDark}

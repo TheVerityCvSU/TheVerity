@@ -21,7 +21,7 @@ export const logSecurityEvent = ({ user = 'System', type = 'System Event', sever
     const raw = localStorage.getItem(STORAGE_KEY);
     const existing = raw ? JSON.parse(raw) : [];
     localStorage.setItem(STORAGE_KEY, JSON.stringify([newLog, ...existing].slice(0, 300)));
-  } catch (e) { /* storage unavailable */ }
+  } catch { /* storage unavailable */ }
 
   // Fire-and-forget sync to backend
   apiFetch(`${API_BASE}/audit-logs`, {
@@ -41,7 +41,7 @@ export const getSecurityLogs = async () => {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) localLogs = JSON.parse(raw);
-  } catch (e) { /* ignore */ }
+  } catch { /* ignore */ }
 
   try {
     const res = await apiFetch(`${API_BASE}/audit-logs`);
@@ -55,11 +55,11 @@ export const getSecurityLogs = async () => {
           ...localLogs,
           ...serverLogs.filter(l => !seen.has(`${l.timestamp}|${l.desc}`))
         ].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp)).slice(0, 300);
-        try { localStorage.setItem(STORAGE_KEY, JSON.stringify(merged)); } catch (e) { }
+        try { localStorage.setItem(STORAGE_KEY, JSON.stringify(merged)); } catch { }
         return merged;
       }
     }
-  } catch (e) { /* offline — return local */ }
+  } catch { /* offline — return local */ }
 
   return localLogs;
 };

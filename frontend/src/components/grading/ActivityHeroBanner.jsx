@@ -1,4 +1,3 @@
-import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ClipboardList, Award, Clock, ChevronDown, ChevronUp } from 'lucide-react';
 import AttachmentCard from '../AttachmentCard';

@@ -58,12 +58,9 @@ export function useStudentViewTestCases({
     } catch {}
   }, [testCases, assignmentId, studentId]);
 
-  // Keep activeTestCaseId valid
-  useEffect(() => {
-    if (!testCases.some((tc) => tc.id === activeTestCaseId) && testCases.length > 0) {
-      setActiveTestCaseId(testCases[0].id);
-    }
-  }, [testCases, activeTestCaseId]);
+  const resolvedActiveTestCaseId = testCases.some((tc) => tc.id === activeTestCaseId)
+    ? activeTestCaseId
+    : (testCases[0]?.id || 'tc-1');
 
   const handleAddTestCase = () => {
     if (submitted) return;
@@ -225,7 +222,7 @@ export function useStudentViewTestCases({
   return {
     testCases,
     setTestCases,
-    activeTestCaseId,
+    activeTestCaseId: resolvedActiveTestCaseId,
     setActiveTestCaseId,
     isRunningTests,
     passedTestsCount,

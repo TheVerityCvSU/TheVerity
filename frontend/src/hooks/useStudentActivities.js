@@ -35,7 +35,7 @@ function readLocalSubmittedAssignmentIds() {
   return ids;
 }
 
-export function useStudentActivities({ currentUser, classrooms, activeClassrooms, onOpenAssignment }) {
+export function useStudentActivities({ currentUser, classrooms, activeClassrooms }) {
   const getActivitiesStorageKey = useCallback((user) => {
     const id = user?.id || user?.email || 'anon';
     return `verity_cached_upcoming_activities_${id}`;
@@ -92,7 +92,10 @@ export function useStudentActivities({ currentUser, classrooms, activeClassrooms
     }
   });
 
-  useEffect(() => {
+  const userStorageKey = `${getActivitiesStorageKey(currentUser)}|${getClassworkStorageKey(currentUser)}`;
+  const [prevUserStorageKey, setPrevUserStorageKey] = useState(userStorageKey);
+  if (userStorageKey !== prevUserStorageKey) {
+    setPrevUserStorageKey(userStorageKey);
     try {
       const userClassrooms = getCachedClassrooms(currentUser, 'student').filter(c => !isPhantomClassroom(c));
       const rawAct = localStorage.getItem(getActivitiesStorageKey(currentUser));
@@ -120,7 +123,7 @@ export function useStudentActivities({ currentUser, classrooms, activeClassrooms
         }
       }
     } catch (_) {}
-  }, [currentUser, getActivitiesStorageKey, getClassworkStorageKey]);
+  }
 
   const effectiveActiveClassrooms = useMemo(() => {
     if (Array.isArray(activeClassrooms)) return activeClassrooms.filter(c => !isClassroomArchived(c));
@@ -138,6 +141,7 @@ export function useStudentActivities({ currentUser, classrooms, activeClassrooms
     );
   }, [upcomingActivities, classrooms, effectiveActiveClassrooms]);
 
+  const [nowMs] = useState(() => Date.now());
   const dashboardStats = useMemo(() => {
     const cachedClasses = getCachedClassrooms(currentUser, 'student').filter(c => !isPhantomClassroom(c));
     const hasKnownClasses = (Array.isArray(classrooms) && classrooms.length > 0) || cachedClasses.length > 0;
@@ -158,7 +162,6 @@ export function useStudentActivities({ currentUser, classrooms, activeClassrooms
     let done = 0;
     let dueSoon = 0;
     let miss = 0;
-    const nowMs = Date.now();
 
     listToCount.forEach((cw) => {
       if (submittedAssignmentIds.has(String(cw.id))) {
@@ -176,7 +179,7 @@ export function useStudentActivities({ currentUser, classrooms, activeClassrooms
     });
 
     return { done, dueSoon, miss };
-  }, [allClasswork, upcomingActivities, classrooms, effectiveActiveClassrooms, currentUser, submittedAssignmentIds]);
+  }, [allClasswork, upcomingActivities, classrooms, effectiveActiveClassrooms, currentUser, submittedAssignmentIds, nowMs]);
 
   // Keep submittedAssignmentIds synced with backend + live submission events
   useEffect(() => {
@@ -336,17 +339,17 @@ export function useStudentActivities({ currentUser, classrooms, activeClassrooms
     return list;
   }, [allClasswork, activeClassrooms, currentUser]);
 
-  const [seenVideoMap, setSeenVideoMap] = useState({});
+  const [manuallySeenVideoMap, setSeenVideoMap] = useState({});
 
-  useEffect(() => {
+  const seenVideoMap = useMemo(() => {
     const uid = currentUser?.id || 'anon';
     const map = {};
     videoLessons.forEach(v => {
       const key = `verity_seen_video_${uid}_${v.id}`;
-      map[v.id] = localStorage.getItem(key) === 'true';
+      map[v.id] = Boolean(manuallySeenVideoMap[v.id]) || localStorage.getItem(key) === 'true';
     });
-    setSeenVideoMap(map);
-  }, [videoLessons, currentUser]);
+    return map;
+  }, [videoLessons, currentUser, manuallySeenVideoMap]);
 
   const unseenVideo = useMemo(() => {
     return videoLessons.find(v => !seenVideoMap[v.id]) || null;

@@ -23,11 +23,7 @@ export function getStudentIdentity(currentUser, username, assignment, classroom)
     (currentUser?.email ? currentUser.email.split('@')[0] : '') ||
     `Student_${Math.floor(Math.random() * 1000)}`;
 
-  const isKimStudentAlias =
-    String(currentUser?.email || '').trim().toLowerCase() === 'kimfabie123@gmail.com' &&
-    ['kim fabie', 'kimfabie', 'kimfabie123@gmail.com'].includes(rawStudentDisplayName.toLowerCase());
-
-  const studentDisplayName = isKimStudentAlias ? 'MIKOOOOO' : rawStudentDisplayName;
+  const studentDisplayName = rawStudentDisplayName;
   const safeUsername = studentDisplayName;
   const studentActualId =
     currentUser?.id != null

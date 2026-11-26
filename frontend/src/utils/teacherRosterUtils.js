@@ -1,4 +1,3 @@
-import { apiFetch } from '../data/api';
 import { normalizeReplayStudentName } from './teacherViewUtils';
 
 export function getInitialStudentRoster(initialStudent, mode) {

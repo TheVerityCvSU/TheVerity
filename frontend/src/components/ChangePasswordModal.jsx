@@ -1,9 +1,9 @@
-import React, { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { AlertCircle, Loader2, ShieldCheck } from 'lucide-react';
 import { changeUserPassword } from '../data/passwordService';
 import { fetchPasswordPolicies } from '../data/registerService';
-import { validatePasswordAgainstPolicies } from './PasswordRequirements';
+import { validatePasswordAgainstPolicies } from '../utils/passwordValidation';
 import { useCurrentUser, updateCurrentUser } from '../hooks/useCurrentUser';
 import PasswordInputField from './passwordModal/PasswordInputField';
 import ChangePasswordHeader from './passwordModal/ChangePasswordHeader';
@@ -37,7 +37,9 @@ export default function ChangePasswordModal({
 
   const currentInputRef = useRef(null);
 
-  useEffect(() => {
+  const [prevOpen, setPrevOpen] = useState(isOpen);
+  if (isOpen !== prevOpen) {
+    setPrevOpen(isOpen);
     if (isOpen) {
       setCurrentPassword('');
       setNewPassword('');
@@ -47,9 +49,18 @@ export default function ChangePasswordModal({
       setShowConfirm(false);
       setError('');
       setLoading(false);
-      fetchPasswordPolicies().then(p => setPolicies(p)).catch(() => {});
-      setTimeout(() => currentInputRef.current?.focus(), 80);
     }
+  }
+
+  useEffect(() => {
+    if (!isOpen) return;
+    let active = true;
+    fetchPasswordPolicies().then(p => { if (active) setPolicies(p); }).catch(() => {});
+    const focusTimer = setTimeout(() => currentInputRef.current?.focus(), 80);
+    return () => {
+      active = false;
+      clearTimeout(focusTimer);
+    };
   }, [isOpen]);
 
   useEffect(() => {

@@ -2,11 +2,14 @@ import { useState, useEffect } from 'react';
 import { getClassroomTheme } from '../../data/classroomTheme';
 
 export function useClassroomBannerTheme(classroom) {
+  const classroomKey = `${classroom?.id ?? ''}|${classroom?.code ?? ''}|${classroom?.section ?? ''}|${classroom?.name ?? ''}|${typeof classroom?.theme === 'string' ? classroom.theme : JSON.stringify(classroom?.theme || null)}`;
+  const [prevKey, setPrevKey] = useState(classroomKey);
   const [theme, setTheme] = useState(() => getClassroomTheme(classroom));
 
-  useEffect(() => {
+  if (classroomKey !== prevKey) {
+    setPrevKey(classroomKey);
     setTheme(getClassroomTheme(classroom));
-  }, [classroom?.id, classroom?.code, classroom?.section, classroom?.name, classroom?.theme]);
+  }
 
   useEffect(() => {
     const handleBannerUpdate = (e) => {
@@ -36,7 +39,7 @@ export function useClassroomBannerTheme(classroom) {
       window.removeEventListener('verity:banner-updated', handleBannerUpdate);
       document.removeEventListener('visibilitychange', handleVisibility);
     };
-  }, [classroom?.id, classroom?.code, classroom?.section, classroom?.name, classroom?.theme]);
+  }, [classroom]);
 
   return theme;
 }

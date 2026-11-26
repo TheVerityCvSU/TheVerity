@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { io } from 'socket.io-client';
 import { apiFetch, getLocalApiUrl, getCloudUrl, getConnectionStatus } from '../data/api';
 import {
@@ -128,9 +128,9 @@ export function useTeacherClassrooms({ currentUser, socket }) {
 
     if (socket) {
       socket.on('active_activities_update', handlePrimaryUpdate);
-      socket.on('teacher_student_update', handleStudentUpdate);
+      socket.on('teacher_update_code', handleStudentUpdate);
       socket.on('teacher_student_left', handleStudentLeft);
-      socket.on('teacher_student_submitted', handleStudentLeft);
+      socket.on('teacher_receive_submission', handleStudentLeft);
       socket.emit('get_active_activities');
     }
 
@@ -169,9 +169,9 @@ export function useTeacherClassrooms({ currentUser, socket }) {
           secSocket.emit('get_active_activities');
         });
         secSocket.on('active_activities_update', handleSecondaryUpdate);
-        secSocket.on('teacher_student_update', handleStudentUpdate);
+        secSocket.on('teacher_update_code', handleStudentUpdate);
         secSocket.on('teacher_student_left', handleStudentLeft);
-        secSocket.on('teacher_student_submitted', handleStudentLeft);
+        secSocket.on('teacher_receive_submission', handleStudentLeft);
       }
     } catch (_) {}
 
@@ -217,16 +217,16 @@ export function useTeacherClassrooms({ currentUser, socket }) {
       isSubscribed = false;
       if (socket) {
         socket.off('active_activities_update', handlePrimaryUpdate);
-        socket.off('teacher_student_update', handleStudentUpdate);
+        socket.off('teacher_update_code', handleStudentUpdate);
         socket.off('teacher_student_left', handleStudentLeft);
-        socket.off('teacher_student_submitted', handleStudentLeft);
+        socket.off('teacher_receive_submission', handleStudentLeft);
       }
       if (secSocket) {
         try {
           secSocket.off('active_activities_update', handleSecondaryUpdate);
-          secSocket.off('teacher_student_update', handleStudentUpdate);
+          secSocket.off('teacher_update_code', handleStudentUpdate);
           secSocket.off('teacher_student_left', handleStudentLeft);
-          secSocket.off('teacher_student_submitted', handleStudentLeft);
+          secSocket.off('teacher_receive_submission', handleStudentLeft);
           secSocket.disconnect();
         } catch (_) {}
       }

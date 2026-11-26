@@ -7,9 +7,15 @@ export function useTeacherViewPlayback({ history, hasPlayback, selectedStudentId
   const [playbackSpeed, setPlaybackSpeed] = useState(1);
 
   const playbackSpeedRef = useRef(1);
-  playbackSpeedRef.current = playbackSpeed;
+  useEffect(() => {
+    playbackSpeedRef.current = playbackSpeed;
+  }, [playbackSpeed]);
 
-  const playTimerRef = useRef(null);
+  const playbackIndexRef = useRef(playbackIndex);
+  useEffect(() => {
+    playbackIndexRef.current = playbackIndex;
+  }, [playbackIndex]);
+
   const animFrameRef = useRef(null);
   const progressLineRef = useRef(null);
   const progressThumbRef = useRef(null);
@@ -18,12 +24,17 @@ export function useTeacherViewPlayback({ history, hasPlayback, selectedStudentId
   const currentIdxRef = useRef(0);
   const currentAnimTimeRef = useRef(0);
 
-  // Reset state when active student or mode changes
-  useEffect(() => {
-    if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
-    if (playTimerRef.current) clearTimeout(playTimerRef.current);
+  const resetPlaybackKey = `${selectedStudentId ?? ''}|${mode}`;
+  const [prevResetPlaybackKey, setPrevResetPlaybackKey] = useState(resetPlaybackKey);
+  if (resetPlaybackKey !== prevResetPlaybackKey) {
+    setPrevResetPlaybackKey(resetPlaybackKey);
     setPlaybackIndex(-1);
     setIsPlaying(false);
+  }
+
+  // Reset refs and DOM indicators when active student or mode changes
+  useEffect(() => {
+    if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
     currentAnimTimeRef.current = 0;
     smoothProgressRef.current = 0;
     if (progressLineRef.current) progressLineRef.current.style.width = '0%';
@@ -57,20 +68,17 @@ export function useTeacherViewPlayback({ history, hasPlayback, selectedStudentId
   const totalPlaybackDuration = cumulativeTimes[cumulativeTimes.length - 1] || 1;
 
   // Animation frame playback loop
+  const canPlay = hasPlayback && history.length >= 2;
   useEffect(() => {
-    if (!isPlaying) {
+    if (!isPlaying || !canPlay) {
       if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
-      if (playTimerRef.current) clearTimeout(playTimerRef.current);
-      return;
-    }
-    if (!hasPlayback || history.length < 2) {
-      setIsPlaying(false);
       return;
     }
 
     const maxIndex = Math.max(history.length - 1, 1);
     let currentAnimTime = currentAnimTimeRef.current;
-    const currentIdx = playbackIndex < 0 ? 0 : Math.min(playbackIndex, maxIndex);
+    const latestPlaybackIndex = playbackIndexRef.current;
+    const currentIdx = latestPlaybackIndex < 0 ? 0 : Math.min(latestPlaybackIndex, maxIndex);
     const stepStart = cumulativeTimes[currentIdx] || 0;
     const stepEnd = cumulativeTimes[currentIdx + 1] ?? stepStart + 1000;
 
@@ -86,7 +94,7 @@ export function useTeacherViewPlayback({ history, hasPlayback, selectedStudentId
     currentAnimTimeRef.current = currentAnimTime;
 
     let lastFrameTimestamp = performance.now();
-    currentIdxRef.current = playbackIndex < 0 ? 0 : playbackIndex;
+    currentIdxRef.current = latestPlaybackIndex < 0 ? 0 : latestPlaybackIndex;
 
     const animate = (now) => {
       const delta = now - lastFrameTimestamp;
@@ -136,11 +144,14 @@ export function useTeacherViewPlayback({ history, hasPlayback, selectedStudentId
 
     return () => {
       if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
-      if (playTimerRef.current) clearTimeout(playTimerRef.current);
     };
-  }, [isPlaying, hasPlayback, history, cumulativeTimes, totalPlaybackDuration]);
+  }, [isPlaying, canPlay, history, cumulativeTimes, totalPlaybackDuration]);
 
   const togglePlay = () => {
+    if (!canPlay) {
+      setIsPlaying(false);
+      return;
+    }
     if (!isPlaying) {
       const maxIndex = Math.max(history.length - 1, 1);
       if (
@@ -167,7 +178,6 @@ export function useTeacherViewPlayback({ history, hasPlayback, selectedStudentId
 
   const handleScrub = (targetTime) => {
     if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
-    if (playTimerRef.current) clearTimeout(playTimerRef.current);
     setIsPlaying(false);
 
     const clampedTime = Math.min(Math.max(targetTime, 0), totalPlaybackDuration);

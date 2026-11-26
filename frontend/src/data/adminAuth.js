@@ -20,7 +20,7 @@ export async function loginAdmin({ email, password }) {
       cloudOnly: isCloudExplicit,
       timeoutMs: 30000
     });
-  } catch (networkErr) {
+  } catch {
     const err = new Error(
       isCloudExplicit
         ? 'Could not reach the Online Cloud Server. Wait a moment if the server is waking up, or switch Network Mode to Local LAN to sign into your local server.'

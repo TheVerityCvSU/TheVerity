@@ -48,11 +48,11 @@ export default function StudentView({
     }
   });
 
-  useEffect(() => {
-    if (assignment) {
-      setCurrentAssignment(assignment);
-    }
-  }, [assignment]);
+  const [prevAssignmentProp, setPrevAssignmentProp] = useState(assignment);
+  if (assignment && assignment !== prevAssignmentProp) {
+    setPrevAssignmentProp(assignment);
+    setCurrentAssignment(assignment);
+  }
 
   const { safeUsername, studentActualId, assignmentId, classroomId, studentDisplayName } =
     getStudentIdentity(currentUser, username, currentAssignment || assignment, classroom);
@@ -86,6 +86,7 @@ export default function StudentView({
   // If assignment is missing instructions/details, look up in cache or fetch
   useEffect(() => {
     if (resolvedInstruction) return;
+    let cancelled = false;
 
     const findInList = (list) => {
       if (!Array.isArray(list)) return null;
@@ -96,27 +97,12 @@ export default function StudentView({
 
     const cId = classroomId !== 'none' ? classroomId : (classroom?.id != null ? String(classroom.id) : null);
 
-    // 1. Check classroom specific storage
-    if (cId) {
-      try {
-        const raw = localStorage.getItem(`verity_classwork_${cId}`);
-        if (raw) {
-          const match = findInList(JSON.parse(raw));
-          if (match) {
-            const ex = extractInstructionText(match);
-            setCurrentAssignment((prev) => ({ ...(prev || {}), ...match, details: ex }));
-            return;
-          }
-        }
-      } catch (_) {}
-    }
-
-    // 2. Scan all localStorage keys for classwork
-    try {
-      for (let i = 0; i < localStorage.length; i++) {
-        const key = localStorage.key(i);
-        if (key && (key.startsWith('verity_classwork_') || key.startsWith('verity_cached_classwork') || key.startsWith('verity_cached_upcoming_activities'))) {
-          const raw = localStorage.getItem(key);
+    Promise.resolve().then(() => {
+      if (cancelled) return;
+      // 1. Check classroom specific storage
+      if (cId) {
+        try {
+          const raw = localStorage.getItem(`verity_classwork_${cId}`);
           if (raw) {
             const match = findInList(JSON.parse(raw));
             if (match) {
@@ -125,45 +111,67 @@ export default function StudentView({
               return;
             }
           }
-        }
+        } catch (_) {}
       }
-    } catch (_) {}
 
-    // 3. Fetch from API (/classwork/:classroomId or /classwork)
-    const baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:3001';
-    const fetchUrl = cId ? `${baseUrl}/classwork/${cId}` : `${baseUrl}/classwork`;
-
-    apiFetch(fetchUrl)
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        const list = data?.classwork || data?.assignments || (Array.isArray(data) ? data : []);
-        const match = findInList(list);
-        if (match) {
-          const extracted = extractInstructionText(match);
-          setCurrentAssignment((prev) => {
-            const updated = { ...(prev || {}), ...match, details: extracted };
-            try { localStorage.setItem('activeAssignment', JSON.stringify(updated)); } catch (_) {}
-            return updated;
-          });
-        } else if (cId) {
-          apiFetch(`${baseUrl}/classwork`)
-            .then((r) => (r.ok ? r.json() : null))
-            .then((allData) => {
-              const allList = allData?.classwork || allData?.assignments || (Array.isArray(allData) ? allData : []);
-              const m = findInList(allList);
-              if (m) {
-                const ex = extractInstructionText(m);
-                setCurrentAssignment((prev) => {
-                  const updated = { ...(prev || {}), ...m, details: ex };
-                  try { localStorage.setItem('activeAssignment', JSON.stringify(updated)); } catch (_) {}
-                  return updated;
-                });
+      // 2. Scan all localStorage keys for classwork
+      try {
+        for (let i = 0; i < localStorage.length; i++) {
+          const key = localStorage.key(i);
+          if (key && (key.startsWith('verity_classwork_') || key.startsWith('verity_cached_classwork') || key.startsWith('verity_cached_upcoming_activities'))) {
+            const raw = localStorage.getItem(key);
+            if (raw) {
+              const match = findInList(JSON.parse(raw));
+              if (match) {
+                const ex = extractInstructionText(match);
+                setCurrentAssignment((prev) => ({ ...(prev || {}), ...match, details: ex }));
+                return;
               }
-            })
-            .catch(() => {});
+            }
+          }
         }
-      })
-      .catch(() => {});
+      } catch (_) {}
+
+      // 3. Fetch from API (/classwork/:classroomId or /classwork)
+      const baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+      const fetchUrl = cId ? `${baseUrl}/classwork/${cId}` : `${baseUrl}/classwork`;
+
+      apiFetch(fetchUrl)
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          if (cancelled) return;
+          const list = data?.classwork || data?.assignments || (Array.isArray(data) ? data : []);
+          const match = findInList(list);
+          if (match) {
+            const extracted = extractInstructionText(match);
+            setCurrentAssignment((prev) => {
+              const updated = { ...(prev || {}), ...match, details: extracted };
+              try { localStorage.setItem('activeAssignment', JSON.stringify(updated)); } catch (_) {}
+              return updated;
+            });
+          } else if (cId) {
+            apiFetch(`${baseUrl}/classwork`)
+              .then((r) => (r.ok ? r.json() : null))
+              .then((allData) => {
+                if (cancelled) return;
+                const allList = allData?.classwork || allData?.assignments || (Array.isArray(allData) ? allData : []);
+                const m = findInList(allList);
+                if (m) {
+                  const ex = extractInstructionText(m);
+                  setCurrentAssignment((prev) => {
+                    const updated = { ...(prev || {}), ...m, details: ex };
+                    try { localStorage.setItem('activeAssignment', JSON.stringify(updated)); } catch (_) {}
+                    return updated;
+                  });
+                }
+              })
+              .catch(() => {});
+          }
+        })
+        .catch(() => {});
+    });
+
+    return () => { cancelled = true; };
   }, [resolvedInstruction, classroomId, classroom?.id, assignmentId]);
 
   const [strictCompiler, setStrictCompiler] = useState(false);
@@ -259,7 +267,10 @@ export default function StudentView({
     editorRef,
     monacoRef
   });
-  compilerHookRef.current = compilerHook;
+  useEffect(() => {
+    compilerHookRef.current = compilerHook;
+  });
+  const emitToSockets = compilerHook.emitToSockets;
 
   // Submission hook
   const submissionHook = useStudentViewSubmission({
@@ -284,11 +295,9 @@ export default function StudentView({
     isRunning: compilerHook.isRunning
   });
 
-  useEffect(() => {
-    if (submissionHook.submitted !== submitted) {
-      setSubmitted(submissionHook.submitted);
-    }
-  }, [submissionHook.submitted, submitted]);
+  if (submissionHook.submitted !== submitted) {
+    setSubmitted(submissionHook.submitted);
+  }
 
   // Keep submission state synced with editor
   useEffect(() => {
@@ -298,17 +307,33 @@ export default function StudentView({
   }, [submissionHook.submitted]);
 
   const effectiveAssignment = currentAssignment || assignment;
+  const latestCodeRef = useRef('');
+  useEffect(() => {
+    latestCodeRef.current = filesHook.codeRef?.current || filesHook.code || '';
+  }, [filesHook.codeRef, filesHook.code]);
+
+  const clsId = classroom?.id;
+  const clsCode = classroom?.code;
+  const clsSection = classroom?.section;
+  const effAssignId = effectiveAssignment?.id;
+  const effAssignClsId = effectiveAssignment?.classroomId;
+  const effAssignClsIdSnake = effectiveAssignment?.classroom_id;
+  const effAssignClassCode = effectiveAssignment?.classCode;
+  const userEmail = currentUser?.email || '';
+  const userAvatar = currentUser?.avatar || '';
+  const isSubmitted = submissionHook.submitted;
+  const proctorLogs = kioskHook.proctorLogs;
 
   // Broadcast live presence on mount, reconnect, and periodic heartbeat
   const emitPresence = useCallback(() => {
-    if (isSandbox || submissionHook.submitted) return;
+    if (isSandbox || isSubmitted) return;
     const resolvedClassroomId =
-      (classroom?.id != null ? String(classroom.id) : null) ||
+      (clsId != null ? String(clsId) : null) ||
       (classroomId !== 'none' ? classroomId : null) ||
-      (effectiveAssignment?.classroomId != null ? String(effectiveAssignment.classroomId) : null) ||
-      (effectiveAssignment?.classroom_id != null ? String(effectiveAssignment.classroom_id) : null) ||
+      (effAssignClsId != null ? String(effAssignClsId) : null) ||
+      (effAssignClsIdSnake != null ? String(effAssignClsIdSnake) : null) ||
       'none';
-    const resolvedAssignmentId = effectiveAssignment?.id || assignmentId;
+    const resolvedAssignmentId = effAssignId || assignmentId;
     if (!resolvedAssignmentId || resolvedAssignmentId === 'unassigned') return;
 
     const payload = {
@@ -316,38 +341,36 @@ export default function StudentView({
       id: studentActualId,
       name: studentDisplayName || safeUsername,
       studentName: studentDisplayName || safeUsername,
-      email: currentUser?.email || '',
-      avatar: currentUser?.avatar || '',
-      code: filesHook.codeRef?.current || filesHook.code || '',
+      email: userEmail,
+      avatar: userAvatar,
+      code: latestCodeRef.current || '',
       classroomId: resolvedClassroomId,
-      classCode: classroom?.code || classroom?.section || effectiveAssignment?.classCode || '',
+      classCode: clsCode || clsSection || effAssignClassCode || '',
       assignmentId: resolvedAssignmentId,
-      logs: kioskHook.proctorLogs || [],
+      logs: proctorLogs || [],
       timestamp: Date.now()
     };
-    compilerHook.emitToSockets('student_enter_activity', payload);
-    compilerHook.emitToSockets('student_typing', payload);
+    emitToSockets('student_enter_activity', payload);
+    emitToSockets('student_typing', payload);
   }, [
     isSandbox,
-    submissionHook.submitted,
-    classroom?.id,
-    classroom?.code,
-    classroom?.section,
+    isSubmitted,
+    clsId,
+    clsCode,
+    clsSection,
     classroomId,
-    effectiveAssignment?.id,
-    effectiveAssignment?.classroomId,
-    effectiveAssignment?.classroom_id,
-    effectiveAssignment?.classCode,
+    effAssignId,
+    effAssignClsId,
+    effAssignClsIdSnake,
+    effAssignClassCode,
     assignmentId,
     studentActualId,
     studentDisplayName,
     safeUsername,
-    currentUser?.email,
-    currentUser?.avatar,
-    filesHook.codeRef,
-    filesHook.code,
-    kioskHook.proctorLogs,
-    compilerHook.emitToSockets
+    userEmail,
+    userAvatar,
+    proctorLogs,
+    emitToSockets
   ]);
 
   useEffect(() => {
@@ -451,13 +474,13 @@ export default function StudentView({
       return;
     }
     if (!isSandbox && leaveInfoRef.current) {
-      compilerHook.emitToSockets('student_leave_workspace', {
+      emitToSockets('student_leave_workspace', {
         ...leaveInfoRef.current,
         timestamp: Date.now()
       });
     }
     if (typeof onBack === 'function') onBack();
-  }, [isBackBlocked, isBackStrictLock, isSandbox, compilerHook.emitToSockets, onBack]);
+  }, [isBackBlocked, isBackStrictLock, isSandbox, emitToSockets, onBack]);
 
   useEffect(() => {
     if (!isBackStrictLock || submissionHook.submitted) return;

@@ -29,6 +29,7 @@ export function useClassroomClasswork({ classroom, currentUser, socket, activeTa
   const visibleMaterials = useMemo(() => assignments.filter(item => isMaterialItem(item)), [assignments]);
 
   const seenMaterialsKey = `verity_seen_materials_${classroom?.id ?? 'default'}_${currentUser?.email || currentUser?.id || 'anon'}`;
+  const [prevSeenKey, setPrevSeenKey] = useState(seenMaterialsKey);
   const [seenMaterialIds, setSeenMaterialIds] = useState(() => {
     try {
       const saved = localStorage.getItem(seenMaterialsKey);
@@ -36,20 +37,26 @@ export function useClassroomClasswork({ classroom, currentUser, socket, activeTa
     } catch { return []; }
   });
 
-  useEffect(() => {
+  if (seenMaterialsKey !== prevSeenKey) {
+    setPrevSeenKey(seenMaterialsKey);
     try {
       const saved = localStorage.getItem(seenMaterialsKey);
       setSeenMaterialIds(saved ? JSON.parse(saved) : []);
     } catch {
       setSeenMaterialIds([]);
     }
-  }, [seenMaterialsKey]);
+  }
 
   const unseenMaterials = useMemo(() => {
     return visibleMaterials.filter(m => !seenMaterialIds.includes(m.id));
   }, [visibleMaterials, seenMaterialIds]);
 
   const hasUnseenMaterials = unseenMaterials.length > 0;
+
+  if (activeTab === 'materials' && visibleMaterials.length > 0 && hasUnseenMaterials) {
+    const allIds = visibleMaterials.map(m => m.id);
+    setSeenMaterialIds(allIds);
+  }
 
   const markMaterialsAsSeen = () => {
     try {
@@ -72,10 +79,12 @@ export function useClassroomClasswork({ classroom, currentUser, socket, activeTa
   };
 
   useEffect(() => {
-    if (activeTab === 'materials' && visibleMaterials.length > 0 && hasUnseenMaterials) {
-      markMaterialsAsSeen();
+    if (activeTab === 'materials' && visibleMaterials.length > 0) {
+      try {
+        localStorage.setItem(seenMaterialsKey, JSON.stringify(visibleMaterials.map(m => m.id)));
+      } catch {}
     }
-  }, [activeTab, visibleMaterials.length, hasUnseenMaterials]);
+  }, [activeTab, visibleMaterials, seenMaterialsKey]);
 
   useEffect(() => {
     const applyList = (list) => {
@@ -177,7 +186,7 @@ export function useClassroomClasswork({ classroom, currentUser, socket, activeTa
           applyList(merged);
           try {
             localStorage.setItem(storageKey, JSON.stringify(merged));
-          } catch (e) {}
+          } catch {}
           if (window.electronAPI?.localDB?.cacheClasswork) {
             window.electronAPI.localDB.cacheClasswork(classroomId, merged).catch(() => {});
           }

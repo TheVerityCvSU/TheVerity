@@ -34,7 +34,7 @@ export const testServerHealth = async (target) => {
         message: `Server returned HTTP ${res.status}. Verify the server is running on the Host PC.`
       };
     }
-  } catch (err) {
+  } catch {
     return {
       success: false,
       message: `Could not reach ${target}. Ensure the Host PC is on the same Wi-Fi router, port 3001 is open, and server.js is running.`

@@ -44,7 +44,6 @@ export function useTeacherGrading({ classroom, assignment, socket }) {
   const [copiedCode, setCopiedCode] = useState(false);
 
   const loadData = useCallback(async () => {
-    setLoading(true);
     const res = await fetchSubmissionsAndEnrollment(assignment, classroom);
     setStudents(res.students);
     setTotalEnrolledCount(res.enrolledCount);
@@ -57,9 +56,16 @@ export function useTeacherGrading({ classroom, assignment, socket }) {
     setLoading(false);
   }, [assignment, classroom]);
 
+  const gradingTargetKey = `${classroom?.id ?? ''}|${assignment?.id ?? ''}`;
+  const [prevGradingTargetKey, setPrevGradingTargetKey] = useState(null);
+  if (gradingTargetKey !== prevGradingTargetKey) {
+    setPrevGradingTargetKey(gradingTargetKey);
+    setLoading(true);
+  }
+
   useEffect(() => {
     let cancelled = false;
-    loadData();
+    Promise.resolve().then(() => loadData());
 
     if (assignment?.id) {
       apiFetch(`${import.meta.env.VITE_API_URL}/grades/${assignment.id}`)
@@ -84,6 +90,7 @@ export function useTeacherGrading({ classroom, assignment, socket }) {
 
   useGradingSocketEvents({
     assignmentId,
+    classroomId: assignment?.classroomId || assignment?.classroom_id || 'none',
     socket,
     loadData,
     setStudents,
@@ -101,20 +108,21 @@ export function useTeacherGrading({ classroom, assignment, socket }) {
     return students.find(s => s.id === selectedId) || null;
   }, [students, selectedId]);
 
-  useEffect(() => {
+  const savedGradeForSelected = selectedStudent ? getStudentGrade(grades, selectedStudent) : null;
+  const selectedGradeSyncKey = `${selectedStudent?.id ?? ''}|${savedGradeForSelected?.grade ?? ''}|${savedGradeForSelected?.feedback ?? ''}|${maxPoints}`;
+  const [prevSelectedGradeSyncKey, setPrevSelectedGradeSyncKey] = useState(null);
+  if (selectedGradeSyncKey !== prevSelectedGradeSyncKey) {
+    setPrevSelectedGradeSyncKey(selectedGradeSyncKey);
     if (selectedStudent) {
-      const saved = getStudentGrade(grades, selectedStudent);
-      setGradeInput(saved?.grade != null ? String(saved.grade) : String(maxPoints));
-      setFeedbackInput(saved?.feedback || '');
-      setSaveStatus('idle');
-      setSaveError('');
+      setGradeInput(savedGradeForSelected?.grade != null ? String(savedGradeForSelected.grade) : String(maxPoints));
+      setFeedbackInput(savedGradeForSelected?.feedback || '');
     } else {
       setGradeInput(String(maxPoints));
       setFeedbackInput('');
-      setSaveStatus('idle');
-      setSaveError('');
     }
-  }, [selectedStudent, grades, maxPoints]);
+    setSaveStatus('idle');
+    setSaveError('');
+  }
 
   const turnedInStudents = useMemo(() => {
     return students.filter(s => Boolean(s.submittedAt || s.finalCode));

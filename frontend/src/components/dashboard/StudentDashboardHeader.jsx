@@ -1,4 +1,4 @@
-import React, { useRef, useLayoutEffect, useState } from 'react';
+import { useRef, useLayoutEffect, useState } from 'react';
 import { Home, Calendar, Archive, Code2, Settings, Plus } from 'lucide-react';
 import ProfileMenu from '../../components/ProfileMenu';
 
@@ -39,7 +39,7 @@ export default function StudentDashboardHeader({
     updateIndicator();
     window.addEventListener('resize', updateIndicator);
     return () => window.removeEventListener('resize', updateIndicator);
-  }, [activeView]);
+  }, [activeView, isMobile]);
 
   return (
     <header
@@ -47,12 +47,17 @@ export default function StudentDashboardHeader({
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
+        width: '100%',
+        boxSizing: 'border-box',
+        minHeight: '72px',
         padding: '16px clamp(20px, 3vw, 48px)',
         backgroundColor: bgColor,
+        fontFamily: '"Inter", "Segoe UI", sans-serif',
         borderBottom: 'none',
         position: 'sticky',
         top: 0,
         zIndex: 50,
+        flexShrink: 0,
       }}
     >
       {activeView !== 'compiler' && (

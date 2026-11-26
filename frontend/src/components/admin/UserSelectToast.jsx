@@ -1,4 +1,3 @@
-import React from 'react';
 
 export default function UserSelectToast({ visible, isDark }) {
   if (!visible) return null;

@@ -10,6 +10,7 @@ export default function TeacherViewHeader({
   classroom,
   mode,
   activeStudent,
+  displayCode,
   evaluating,
   handleEvaluate,
   handleStopCode,
@@ -17,6 +18,7 @@ export default function TeacherViewHeader({
   setShowSettingsModal
 }) {
   const isStudentCompleted = activeStudent?.status === 'Submitted' || activeStudent?.status === 'Graded';
+  const canRunCode = isStudentCompleted || (mode === 'playback' && Boolean(displayCode && String(displayCode).trim()));
   const isStudentLive = activeStudent?.isLive !== false && activeStudent?.status === 'Live';
 
   return (
@@ -190,7 +192,7 @@ export default function TeacherViewHeader({
 
       {/* Right Section: Action Controls */}
       <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? '6px' : '10px' }}>
-        {isStudentCompleted && (
+        {canRunCode && (
           <>
             <button
               onClick={handleEvaluate}
@@ -238,25 +240,27 @@ export default function TeacherViewHeader({
               <Square size={12} fill="currentColor" />
               {!isMobile && <span>Stop</span>}
             </button>
-
-            <button
-              onClick={() => setShowGradeModal(true)}
-              style={{
-                padding: isMobile ? '6px 10px' : '7px 14px',
-                backgroundColor: isDark ? '#3b82f6' : '#2563eb',
-                color: '#ffffff',
-                border: 'none',
-                borderRadius: '8px',
-                cursor: 'pointer',
-                fontWeight: '600',
-                fontSize: '0.82rem',
-                boxShadow: '0 2px 4px rgba(37, 99, 235, 0.2)'
-              }}
-              title="Grade or update student grade"
-            >
-              {activeStudent.status === 'Graded' ? 'Grade: Done' : 'Grade'}
-            </button>
           </>
+        )}
+
+        {isStudentCompleted && (
+          <button
+            onClick={() => setShowGradeModal(true)}
+            style={{
+              padding: isMobile ? '6px 10px' : '7px 14px',
+              backgroundColor: isDark ? '#3b82f6' : '#2563eb',
+              color: '#ffffff',
+              border: 'none',
+              borderRadius: '8px',
+              cursor: 'pointer',
+              fontWeight: '600',
+              fontSize: '0.82rem',
+              boxShadow: '0 2px 4px rgba(37, 99, 235, 0.2)'
+            }}
+            title="Grade or update student grade"
+          >
+            {activeStudent.status === 'Graded' ? 'Grade: Done' : 'Grade'}
+          </button>
         )}
 
         {/* Settings Button */}

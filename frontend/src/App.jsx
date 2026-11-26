@@ -1,5 +1,4 @@
-import React, { useEffect, useRef } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { useEffect, useRef } from 'react';
 import syncService from './data/syncService';
 import { useDarkMode } from './hooks/useDarkMode';
 import { useAppSecurity, isRunningInAdminMode, lockDown, releaseLockdown } from './hooks/useAppSecurity';
@@ -14,9 +13,6 @@ import AppStudentRoutes from './components/app/AppStudentRoutes';
 import AppTeacherRoutes from './components/app/AppTeacherRoutes';
 import AppAuthRoutes from './components/app/AppAuthRoutes';
 import ErrorBoundary from './components/ErrorBoundary';
-
-export { createVeritySocket } from './hooks/useAppSocket';
-export { isRunningInAdminMode } from './hooks/useAppSecurity';
 
 export default function App() {
   const { isDark } = useDarkMode();
@@ -38,7 +34,6 @@ export default function App() {
   const { currentUser, setCurrentUser, handleLogout, handleUserLogin } = auth;
 
   const nav = useAppNavigation({ isAdminApp, currentUser });
-  navRef.current = nav;
   const {
     currentScreen, setCurrentScreen, activeClassroom, setActiveClassroom,
     activeAssignment, setActiveAssignment, selectedStudentForPlayback,
@@ -53,7 +48,14 @@ export default function App() {
     setActiveAssignment,
     setActiveClassroom,
   });
-  socketRef.current = socket;
+
+  useEffect(() => {
+    navRef.current = nav;
+  });
+
+  useEffect(() => {
+    socketRef.current = socket;
+  }, [socket]);
 
   const security = useAppSecurity({ currentUser, currentScreen, socket });
   const { isDesktopWeb, vmDetected, vmReasons, verifyEnvironmentBeforeExam } = security;

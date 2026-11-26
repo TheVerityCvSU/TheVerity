@@ -1,4 +1,3 @@
-import React from 'react';
 import { TerminalSquare, CheckSquare, Trash2, PlayCircle, ZoomIn, ZoomOut } from 'lucide-react';
 import CompilerOutputPane from './CompilerOutputPane';
 import CompilerTestCasesPane from './CompilerTestCasesPane';

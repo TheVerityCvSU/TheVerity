@@ -1,4 +1,3 @@
-import React from 'react';
 import { motion } from 'framer-motion';
 import StudentCourseCard from './StudentCourseCard';
 import Skeleton from '../Skeleton';
@@ -8,7 +7,6 @@ export default function StudentClassroomsGrid({
   isMobile,
   loadingClassrooms,
   activeClassrooms,
-  cardBg,
   textMuted,
   handleEnterClassroom,
   handleArchiveClass,

@@ -1,13 +1,13 @@
-export const getActivityStyles = (isDark, isMobile) => ({
+export const getActivityStyles = (isDark) => ({
   container: {
     height: '100dvh',
     minHeight: '100vh',
     width: '100%',
     display: 'flex',
     flexDirection: 'column',
-    backgroundColor: isDark ? '#3C3C3C' : '#EEF0F3',
+    backgroundColor: isDark ? '#1a1a1a' : '#f8f9fa',
     color: isDark ? '#E8EAED' : 'inherit',
-    fontFamily: 'Arial, Helvetica, sans-serif',
+    fontFamily: '"Inter", "Segoe UI", sans-serif',
     position: 'relative',
     overflow: 'hidden'
   },

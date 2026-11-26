@@ -1,4 +1,3 @@
-import React from 'react';
 import { RefreshCw, Download } from 'lucide-react';
 import { useAppUpdate } from '../../hooks/useAppUpdate';
 import UpdateStatusBanner from './UpdateStatusBanner';

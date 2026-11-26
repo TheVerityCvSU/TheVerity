@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   X,
@@ -6,7 +6,6 @@ import {
   Download,
   FileText,
   Loader2,
-  AlertCircle,
   FileSpreadsheet,
   Presentation,
   FileCode,
@@ -44,16 +43,26 @@ export default function IframePreviewModal({ url, title, type, onClose, isDark: 
   const resolvedUrl = useMemo(() => {
     if (!url) return '';
     const trimmed = String(url).trim();
-    if (trimmed.startsWith('blob:') || trimmed.startsWith('data:')) return trimmed;
+    const lower = trimmed.toLowerCase();
+    // Reject dangerous scriptable URI schemes outright
+    if (lower.startsWith('javascript:') || lower.startsWith('vbscript:') || lower.startsWith('data:text/html')) {
+      return '';
+    }
+    if (lower.startsWith('blob:') || /^data:(?:image\/(?:png|jpe?g|gif|webp|bmp|avif)|application\/pdf);base64,/i.test(trimmed)) {
+      return trimmed;
+    }
+    if (lower.startsWith('data:')) {
+      return '';
+    }
     const resolved = resolveMediaUrl(trimmed);
-    if (resolved && (resolved.startsWith('http://') || resolved.startsWith('https://') || resolved.startsWith('/'))) {
+    if (resolved && (/^https?:\/\//i.test(resolved) || resolved.startsWith('/'))) {
       return resolved;
     }
     // Domain without scheme
-    if (trimmed.includes('.') && !trimmed.startsWith('/')) {
+    if (trimmed.includes('.') && !trimmed.startsWith('/') && !/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(trimmed)) {
       return `https://${trimmed}`;
     }
-    return resolved;
+    return '';
   }, [url]);
 
   // Determine file type
@@ -82,14 +91,13 @@ export default function IframePreviewModal({ url, title, type, onClose, isDark: 
 
   // DOCX In-Memory Rendering
   const docxRef = useRef(null);
-  const [docxLoading, setDocxLoading] = useState(false);
-  const [docxError, setDocxError] = useState(null);
+  const [docxState, setDocxState] = useState({ url: null, loading: false, error: null });
+  const docxLoading = isDocx && Boolean(resolvedUrl) && (docxState.url !== resolvedUrl ? true : docxState.loading);
+  const docxError = isDocx && docxState.url === resolvedUrl ? docxState.error : null;
 
   useEffect(() => {
     if (!isDocx || !resolvedUrl) return;
     let isCancelled = false;
-    setDocxLoading(true);
-    setDocxError(null);
 
     fetchUploadWithProxyFallback(resolvedUrl)
       .then(async (res) => {
@@ -104,15 +112,15 @@ export default function IframePreviewModal({ url, title, type, onClose, isDark: 
             ignoreHeight: false
           });
         }
+        if (!isCancelled) {
+          setDocxState({ url: resolvedUrl, loading: false, error: null });
+        }
       })
       .catch((err) => {
         if (!isCancelled) {
           console.warn('[DOCX Preview] Error rendering docx:', err);
-          setDocxError(err.message || 'Could not parse Word document');
+          setDocxState({ url: resolvedUrl, loading: false, error: err.message || 'Could not parse Word document' });
         }
-      })
-      .finally(() => {
-        if (!isCancelled) setDocxLoading(false);
       });
 
     return () => {
@@ -121,22 +129,21 @@ export default function IframePreviewModal({ url, title, type, onClose, isDark: 
   }, [isDocx, resolvedUrl]);
 
   // Plain Text Content Loading
-  const [textContent, setTextContent] = useState('');
-  const [textLoading, setTextLoading] = useState(false);
+  const [textState, setTextState] = useState({ url: null, content: '', loading: false });
+  const textContent = isText && textState.url === resolvedUrl ? textState.content : '';
+  const textLoading = isText && Boolean(resolvedUrl) && (textState.url !== resolvedUrl ? true : textState.loading);
 
   useEffect(() => {
     if (!isText || !resolvedUrl) return;
     let isCancelled = false;
-    setTextLoading(true);
 
     fetchUploadWithProxyFallback(resolvedUrl)
       .then(res => res.text())
       .then(text => {
-        if (!isCancelled) setTextContent(text);
+        if (!isCancelled) setTextState({ url: resolvedUrl, content: text, loading: false });
       })
-      .catch(() => {})
-      .finally(() => {
-        if (!isCancelled) setTextLoading(false);
+      .catch(() => {
+        if (!isCancelled) setTextState({ url: resolvedUrl, content: '', loading: false });
       });
 
     return () => { isCancelled = true; };
@@ -169,6 +176,7 @@ export default function IframePreviewModal({ url, title, type, onClose, isDark: 
 
   const handleOpenExternal = (e) => {
     if (e && e.stopPropagation) e.stopPropagation();
+    if (!resolvedUrl || !(/^(?:https?:\/\/|\/)/i.test(resolvedUrl))) return;
     window.open(resolvedUrl, '_blank', 'noopener,noreferrer');
   };
 
@@ -584,12 +592,20 @@ export default function IframePreviewModal({ url, title, type, onClose, isDark: 
 
             {/* 6. EXTERNAL WEB LINK / FALLBACK IFRAME */}
             {!isPdf && !isOffice && !isText && !isImage && (
-              <iframe 
-                src={resolvedUrl}
-                style={{ width: '100%', height: '100%', border: 'none' }}
-                title={title || "Preview"}
-                allow="fullscreen"
-              />
+              resolvedUrl && /^(?:https?:\/\/|\/)/i.test(resolvedUrl) ? (
+                <iframe
+                  src={resolvedUrl}
+                  sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+                  referrerPolicy="no-referrer"
+                  style={{ width: '100%', height: '100%', border: 'none' }}
+                  title={title || "Preview"}
+                  allow="fullscreen"
+                />
+              ) : (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: isDark ? '#94a3b8' : '#64748b' }}>
+                  Blocked unsafe or unsupported preview URL.
+                </div>
+              )
             )}
           </div>
         </motion.div>

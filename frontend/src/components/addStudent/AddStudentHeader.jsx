@@ -1,4 +1,3 @@
-import React from 'react';
 import { UserPlus, X } from 'lucide-react';
 
 export default function AddStudentHeader({ onClose, loading, colors, isDark }) {

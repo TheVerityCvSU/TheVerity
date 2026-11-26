@@ -1,4 +1,3 @@
-import React from 'react';
 import { Mail, X } from 'lucide-react';
 
 export default function ChangeEmailHeader({ step, onClose, loading, colors, isDark }) {

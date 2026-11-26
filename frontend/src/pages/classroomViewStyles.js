@@ -1,4 +1,4 @@
-export const getStyles = (isDark, isMobile = false) => ({
+export const getStyles = (isDark) => ({
   headerRow: {
     display: 'flex',
     justifyContent: 'space-between',

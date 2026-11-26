@@ -4,7 +4,7 @@
  */
 import { state } from './connectionState';
 import { DEFAULT_CLOUD_API_URL, getCloudUrl, getLocalApiUrl, isHostedWebEnv } from './serverUrls';
-import { notifyListeners, getIsLanConnected, hasDedicatedLanOrLocalDb } from './connectionStatus';
+import { notifyListeners, hasDedicatedLanOrLocalDb } from './connectionStatus';
 import { waitForLanServer } from './lanDiscovery';
 import { buildRequestPath } from './buildRequestPath';
 import { fetchBestUpdateInfo } from './updateCheck';
@@ -61,7 +61,11 @@ const shouldQueueClientOfflineMutation = (pathWithQuery, method) => {
 
 // Asks the local server to sync with the cloud (fire-and-forget)
 const pingSync = (baseUrl) => {
-  fetch(`${baseUrl}/api/sync`, { method: 'POST' }).catch(() => {});
+  const token = typeof localStorage !== 'undefined' ? (localStorage.getItem('verity_token') || localStorage.getItem('token')) : null;
+  fetch(`${baseUrl}/api/sync`, {
+    method: 'POST',
+    headers: token ? { Authorization: `Bearer ${token}` } : {}
+  }).catch(() => {});
 };
 
 const markCloudUp = () => {
@@ -105,7 +109,7 @@ const fetchHostedWeb = async ({ cloudUrl, primaryCloudUrl, pathWithQuery, option
     const response = await fetchWithTimeout(primaryCloudUrl, 15000);
     markCloudUp();
     return handleServerResponse(response, { pathWithQuery, origin: 'cloud', hadAuthHeader: Boolean(headers['Authorization']) });
-  } catch (err) {
+  } catch {
     // If a custom cloud URL in localStorage failed, reset to DEFAULT_CLOUD_API_URL and retry immediately
     const defaultTargetUrl = `${DEFAULT_CLOUD_API_URL}${pathWithQuery}`;
     if (cloudUrl !== DEFAULT_CLOUD_API_URL) {
@@ -119,7 +123,7 @@ const fetchHostedWeb = async ({ cloudUrl, primaryCloudUrl, pathWithQuery, option
       state.isCloudDown = true;
       notifyListeners();
       console.warn(`[apiFetch] Request to cloud server failed: ${defaultTargetUrl}`, retryErr.message);
-      throw new Error('Could not reach the online server. Please check your connection or try again in a moment.');
+      throw new Error('Could not reach the online server. Please check your connection or try again in a moment.', { cause: retryErr });
     }
   }
 };
@@ -214,7 +218,7 @@ export const apiFetch = async (url, options = {}) => {
       }
     } catch (lanErr) {
       if (state.userPreferredMode === 'lan') {
-        throw new Error(`Could not connect to Local/LAN server at ${getLocalApiUrl()}. Please check that the server is running.`);
+        throw new Error(`Could not connect to Local/LAN server at ${getLocalApiUrl()}. Please check that the server is running.`, { cause: lanErr });
       }
       state.isLocalServerUp = false;
     }

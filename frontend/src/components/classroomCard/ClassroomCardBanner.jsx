@@ -1,4 +1,3 @@
-import React from 'react';
 import ClassroomBannerIllustration from '../ClassroomBannerIllustration';
 
 export default function ClassroomCardBanner({ classroom, theme, role }) {

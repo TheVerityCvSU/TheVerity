@@ -1,5 +1,5 @@
 process.env.IS_VERITY_ADMIN = 'true';
-const { app, BrowserWindow, ipcMain, shell, session, protocol, net, dialog } = require('electron');
+const { app, BrowserWindow, Menu, ipcMain, shell, session, protocol, net, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -7,6 +7,10 @@ const { pathToFileURL } = require('url');
 const { fork } = require('child_process');
 const { initLocalDb, localDbAPI } = require('./local-db.cjs');
 const { initStartupVmDetection, getVmStatus, getCachedVmStatusSync } = require('./vm-detect.cjs');
+const { isAllowedExternalUrl, isAllowedGoogleAuthUrl, isAuthorizedIpcSender, resolveSafeDistFile } = require('./security-utils.cjs');
+const { initLanClient, getDiscoveredServer, setDiscoveredServer, resolveLanHostUrl, runDiscoveryScan, stopLanClient } = require('./lan-client.cjs');
+const http = require('http');
+const netTcp = require('net');
 
 // Persistent diagnostic and startup logging
 const logFile = path.join(os.tmpdir(), 'the-verity-admin-startup.log');
@@ -120,7 +124,25 @@ function seedDatabase(dataDir) {
   }
 }
 
-function startServer() {
+function checkPortOccupied(port = 3001, timeoutMs = 600) {
+  return new Promise((resolve) => {
+    const socket = new netTcp.Socket();
+    let done = false;
+    const finish = (occupied) => {
+      if (done) return;
+      done = true;
+      try { socket.destroy(); } catch (_) {}
+      resolve(occupied);
+    };
+    socket.setTimeout(timeoutMs);
+    socket.once('connect', () => finish(true));
+    socket.once('timeout', () => finish(false));
+    socket.once('error', () => finish(false));
+    try { socket.connect(port, '127.0.0.1'); } catch (_) { finish(false); }
+  });
+}
+
+async function startServer() {
   try {
     const serverPath = app.isPackaged
       ? path.join(process.resourcesPath, 'dist-server', 'server-bundle.cjs')
@@ -131,6 +153,12 @@ function startServer() {
 
     if (!fs.existsSync(serverPath)) {
       logStartup(`[admin-main] server-bundle.cjs not found at ${serverPath}`);
+      return;
+    }
+
+    const occupied = await checkPortOccupied(3001);
+    if (occupied) {
+      logStartup('[admin-main] Port 3001 is already active; skipping embedded server fork to avoid collision.');
       return;
     }
 
@@ -207,10 +235,11 @@ function createSplashWindow() {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
+      sandbox: true,
     },
   });
 
-  splashWindow.loadFile(path.join(__dirname, 'splash.html')).catch((err) => {
+  splashWindow.loadFile(path.join(__dirname, 'admin-splash.html')).catch((err) => {
     logStartup(`[admin-main] splashWindow.loadFile error: ${err.message}`);
   });
   splashWindow.on('closed', () => {
@@ -227,21 +256,36 @@ function createWindow() {
     icon: path.join(__dirname, 'assets', 'icon-admin.png'),
     autoHideMenuBar: true,
     webPreferences: {
-      preload: path.join(__dirname, 'preload.cjs'),
+      preload: path.join(__dirname, 'admin-preload.cjs'),
       additionalArguments: ['--admin-app'],
       nodeIntegration: false,
       contextIsolation: true,
+      sandbox: true,
       devTools: !app.isPackaged,
     },
   });
 
+  mainWindow.setMenu(null);
+  mainWindow.setMenuBarVisibility(false);
+
+  mainWindow.webContents.on('devtools-opened', () => {
+    if (app.isPackaged) {
+      mainWindow.webContents.closeDevTools();
+    }
+  });
+
+  mainWindow.webContents.on('before-input-event', (event, input) => {
+    const isDevToolsShortcut =
+      input.key === 'F12' ||
+      ((input.control || input.meta) && input.shift && ['I', 'i', 'J', 'j', 'C', 'c'].includes(input.key)) ||
+      ((input.control || input.meta) && ['u', 'U'].includes(input.key));
+    if (isDevToolsShortcut && app.isPackaged) {
+      event.preventDefault();
+    }
+  });
+
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    if (
-      url.includes('accounts.google.com') ||
-      url.includes('google.com/gsi/') ||
-      url.includes('oauth2.googleapis.com') ||
-      url.includes('/auth/google')
-    ) {
+    if (isAllowedGoogleAuthUrl(url)) {
       return {
         action: 'allow',
         overrideBrowserWindowOptions: {
@@ -251,13 +295,14 @@ function createWindow() {
           webPreferences: {
             nodeIntegration: false,
             contextIsolation: true,
+            sandbox: true,
             userAgent: CHROME_USER_AGENT,
           }
         }
       };
     }
 
-    if (url.startsWith('http://') || url.startsWith('https://')) {
+    if (isAllowedExternalUrl(url)) {
       shell.openExternal(url);
     }
     return { action: 'deny' };
@@ -277,17 +322,31 @@ function createWindow() {
     try {
       const parsedUrl = new URL(navigationUrl);
       if (parsedUrl.protocol === 'http:' || parsedUrl.protocol === 'https:') {
-        if (!app.isPackaged && parsedUrl.host === 'localhost:5173') {
+        if (parsedUrl.host === 'localhost:5173') {
           return;
         }
         event.preventDefault();
-        shell.openExternal(navigationUrl);
+        if (isAllowedExternalUrl(navigationUrl)) {
+          shell.openExternal(navigationUrl);
+        }
+      } else {
+        event.preventDefault();
       }
-    } catch (_) {}
+    } catch (_) {
+      event.preventDefault();
+    }
   });
 
   mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL) => {
+    if (errorCode === -3) return;
     logStartup(`[admin-main] mainWindow did-fail-load: code ${errorCode}, ${errorDescription}, url: ${validatedURL}`);
+    if (validatedURL && validatedURL.includes('localhost:5173') && app.isPackaged) {
+      const fallbackFile = path.join(__dirname, '../dist/index.html');
+      logStartup(`[admin-main] Falling back to direct loadFile: ${fallbackFile}`);
+      mainWindow.loadFile(fallbackFile).catch(() => {});
+      launchMainWindow();
+      return;
+    }
     launchMainWindow();
     dialog.showErrorBox(
       'The Verity Admin - Loading Error',
@@ -313,7 +372,13 @@ function createWindow() {
   const targetUrl = 'http://localhost:5173/?admin=true#/admin';
   logStartup(`[admin-main] mainWindow loading ${targetUrl}...`);
   mainWindow.loadURL(targetUrl).catch((err) => {
-    logStartup(`[admin-main] mainWindow.loadURL failed: ${err.message}`);
+    logStartup(`[admin-main] mainWindow.loadURL failed: ${err.message}. Trying direct loadFile...`);
+    if (app.isPackaged) {
+      const fallbackFile = path.join(__dirname, '../dist/index.html');
+      mainWindow.loadFile(fallbackFile).catch((fErr) => {
+        logStartup(`[admin-main] fallback loadFile failed: ${fErr.message}`);
+      });
+    }
     launchMainWindow();
   });
 
@@ -336,6 +401,7 @@ function createWindow() {
 // App lifecycle
 app.whenReady().then(() => {
   logStartup('[admin-main] app.whenReady fired');
+  Menu.setApplicationMenu(null);
 
   session.defaultSession.webRequest.onBeforeSendHeaders(
     { urls: ['https://accounts.google.com/*', 'https://*.google.com/*', 'https://oauth2.googleapis.com/*'] },
@@ -355,15 +421,15 @@ app.whenReady().then(() => {
       try {
         const url = new URL(request.url);
         if (url.hostname === 'localhost' && url.port === '5173') {
-          let reqPath = decodeURIComponent(url.pathname);
-          if (reqPath === '/' || reqPath === '' || reqPath.startsWith('/admin')) reqPath = '/index.html';
-          
-          let file = path.join(__dirname, '../dist', reqPath);
-          if (!fs.existsSync(file) || fs.statSync(file).isDirectory()) {
-            file = path.join(__dirname, '../dist/index.html');
+          const distDir = path.join(__dirname, '../dist');
+          const reqPath = (url.pathname === '/' || url.pathname === '' || url.pathname.startsWith('/admin'))
+            ? '/index.html'
+            : url.pathname;
+          let { safe, filePath } = resolveSafeDistFile(distDir, reqPath);
+          if (!safe || !fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) {
+            filePath = path.join(distDir, 'index.html');
           }
-          
-          return net.fetch(pathToFileURL(file).href);
+          return net.fetch(pathToFileURL(filePath).href);
         }
       } catch (e) {
         logStartup(`[admin-main] protocol handle error: ${e.message}`);
@@ -383,7 +449,14 @@ app.whenReady().then(() => {
     logStartup(`[admin-main] Local SQLite database initialization failed: ${err.message}`);
   }
 
-  startServer();
+  startServer().catch((err) => {
+    logStartup(`[admin-main] startServer rejected: ${err?.message || err}`);
+  });
+  try {
+    initLanClient(() => mainWindow, localDbAPI);
+  } catch (lanErr) {
+    logStartup(`[admin-main] initLanClient error: ${lanErr.message}`);
+  }
   createSplashWindow();
   createWindow();
 
@@ -393,15 +466,24 @@ app.whenReady().then(() => {
 });
 
 // IPC Handlers
-ipcMain.on('close-app', () => {
+ipcMain.on('close-app', (event) => {
+  if (!isAuthorizedIpcSender(event)) return;
   app.quit();
 });
 
 ipcMain.on('open-external', (event, url) => {
-  shell.openExternal(url);
+  if (!isAuthorizedIpcSender(event)) return;
+  if (isAllowedExternalUrl(url)) {
+    shell.openExternal(url);
+  }
 });
 
 ipcMain.on('open-google-auth', (event, url) => {
+  if (!isAuthorizedIpcSender(event)) return;
+  if (!isAllowedGoogleAuthUrl(url)) {
+    logStartup(`[admin-main] Blocked disallowed open-google-auth URL: ${url}`);
+    return;
+  }
   logStartup(`[admin-main] open-google-auth requested: ${url}`);
   if (googleAuthWindow && !googleAuthWindow.isDestroyed()) {
     googleAuthWindow.focus();
@@ -419,13 +501,22 @@ ipcMain.on('open-google-auth', (event, url) => {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
+      sandbox: true,
       userAgent: CHROME_USER_AGENT,
     }
   });
 
   googleAuthWindow.webContents.setWindowOpenHandler(({ url: childUrl }) => {
-    shell.openExternal(childUrl);
+    if (isAllowedExternalUrl(childUrl)) {
+      shell.openExternal(childUrl);
+    }
     return { action: 'deny' };
+  });
+
+  googleAuthWindow.webContents.on('will-navigate', (navEvent, navUrl) => {
+    if (!isAllowedGoogleAuthUrl(navUrl)) {
+      navEvent.preventDefault();
+    }
   });
 
   googleAuthWindow.loadURL(url).catch((err) => {
@@ -502,6 +593,25 @@ ipcMain.handle('local-db:setLocal', (event, key, value) => {
 ipcMain.handle('local-db:getLocal', (event, key) => {
   return localDbAPI.getLocal(key);
 });
+ipcMain.handle('get-discovered-server', () => {
+  return getDiscoveredServer();
+});
+ipcMain.handle('set-lan-server', async (_, serverUrl) => {
+  if (!serverUrl) {
+    await setDiscoveredServer(null);
+    return { success: true, url: null };
+  }
+  const resolvedUrl = await resolveLanHostUrl(serverUrl, 2500);
+  if (resolvedUrl) {
+    await setDiscoveredServer(resolvedUrl);
+    return { success: true, url: resolvedUrl };
+  }
+  return { success: false, error: 'Could not connect to Verity server at this address' };
+});
+ipcMain.handle('scan-lan-servers', async () => {
+  await runDiscoveryScan(true);
+  return getDiscoveredServer();
+});
 
 app.on('window-all-closed', () => {
   stopServer();
@@ -513,5 +623,7 @@ app.on('will-quit', () => {
     googleAuthWindow.close();
     googleAuthWindow = null;
   }
+  try { stopLanClient(); } catch (_) {}
+  try { localDbAPI.close(); } catch (_) {}
   stopServer();
 });

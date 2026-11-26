@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { generateClassCode, isClassroomArchived } from '../../utils/classroomList';
 import { useDarkMode } from '../../hooks/useDarkMode';
 import {
@@ -89,8 +89,10 @@ export default function GlobalClassesTab() {
   };
 
   useEffect(() => {
-    loadClassrooms(true);
-    loadAllUsers();
+    Promise.resolve().then(() => {
+      loadClassrooms(true);
+      loadAllUsers();
+    });
     const handleServerChanged = () => {
       loadClassrooms(true);
       loadAllUsers();
@@ -107,17 +109,26 @@ export default function GlobalClassesTab() {
     };
   }, []);
 
-  useEffect(() => {
-    if (!viewClass || !viewClass.id) {
+  const viewClassId = viewClass?.id || '';
+  const [prevViewClassId, setPrevViewClassId] = useState(viewClassId);
+  if (viewClassId !== prevViewClassId) {
+    setPrevViewClassId(viewClassId);
+    if (!viewClassId) {
       setViewStudents([]);
       setShowAddStudentsInView(false);
       setSelectedAddStudentIds(new Set());
-      return;
+    } else {
+      setViewLoadingStudents(true);
     }
-    setViewLoadingStudents(true);
+  }
+
+  useEffect(() => {
+    if (!viewClass || !viewClass.id) return;
+    let active = true;
     fetchClassroomRoster(viewClass.id, viewClass.students)
-      .then(setViewStudents)
-      .finally(() => setViewLoadingStudents(false));
+      .then((list) => { if (active) setViewStudents(list); })
+      .finally(() => { if (active) setViewLoadingStudents(false); });
+    return () => { active = false; };
   }, [viewClass]);
 
   const handleToggleArchiveClass = async (c) => {

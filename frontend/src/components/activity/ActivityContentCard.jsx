@@ -1,4 +1,3 @@
-import React from 'react';
 import { ArrowLeft, BookOpen, Calendar, Award, FileText, Video, Link2, ClipboardList } from 'lucide-react';
 import AttachmentCard from '../AttachmentCard';
 import RichInstruction from '../RichInstruction';

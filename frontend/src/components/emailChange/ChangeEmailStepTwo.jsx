@@ -1,4 +1,3 @@
-import React from 'react';
 import { CheckCircle2, ArrowLeft, RefreshCw, Loader2, ShieldCheck } from 'lucide-react';
 
 export default function ChangeEmailStepTwo({

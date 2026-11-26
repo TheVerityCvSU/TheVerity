@@ -30,7 +30,20 @@ function initCloudRelay(activeStudents, localIo) {
     activeStudentsRef = activeStudents;
     localIoRef = localIo;
 
+    if (cloudSocket) {
+        try { cloudSocket.removeAllListeners(); cloudSocket.disconnect(); } catch (_) { }
+        cloudSocket = null;
+    }
+    if (heartbeatTimer) {
+        clearInterval(heartbeatTimer);
+        heartbeatTimer = null;
+    }
+
     try {
+        const relaySecret = (process.env.CLOUD_RELAY_SECRET || '').trim();
+        if (!relaySecret) {
+            console.warn('[Cloud Relay] CLOUD_RELAY_SECRET is not set; outbound relay events will be rejected by hardened Cloud servers.');
+        }
         console.log(`[Cloud Relay] Initializing bridge to Cloud Server at ${CLOUD_URL}...`);
         cloudSocket = ioClient(CLOUD_URL, {
             reconnection: true,
@@ -38,7 +51,8 @@ function initCloudRelay(activeStudents, localIo) {
             reconnectionDelay: 2000,
             reconnectionDelayMax: 10000,
             timeout: 8000,
-            transports: ['websocket', 'polling']
+            transports: ['websocket', 'polling'],
+            auth: relaySecret ? { relaySecret } : undefined
         });
 
         cloudSocket.on('connect', () => {
@@ -129,8 +143,24 @@ function relayUnsubmitExam(data) {
     cloudSocket.emit('unsubmit_exam', data);
 }
 
+function shutdownCloudRelay() {
+    isConnected = false;
+    if (heartbeatTimer) {
+        clearInterval(heartbeatTimer);
+        heartbeatTimer = null;
+    }
+    if (cloudSocket) {
+        try {
+            cloudSocket.removeAllListeners();
+            cloudSocket.disconnect();
+        } catch (_) { }
+        cloudSocket = null;
+    }
+}
+
 module.exports = {
     initCloudRelay,
+    shutdownCloudRelay,
     relayStudentActivity,
     relayProctorAlert,
     relayTerminalUpdate,

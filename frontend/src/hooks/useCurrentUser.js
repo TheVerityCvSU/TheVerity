@@ -14,11 +14,6 @@ export function useCurrentUser() {
   const [user, setUser] = useState(() => getStoredUser() || getGlobalUser());
 
   useEffect(() => {
-    const fresh = getStoredUser();
-    if (JSON.stringify(fresh) !== JSON.stringify(user)) {
-      setUser(fresh);
-    }
-
     const handleChange = (newUser) => {
       setUser(newUser);
     };
@@ -26,7 +21,7 @@ export function useCurrentUser() {
     return () => {
       userListeners.delete(handleChange);
     };
-  }, [user]);
+  }, []);
 
   return { currentUser: user, updateCurrentUser };
 }

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useDarkMode } from '../../hooks/useDarkMode';
 import { useMediaQuery } from '../../hooks/useMediaQuery';
 import { sortClassroomsAlphabetically, isClassroomArchived } from '../../utils/classroomList';
@@ -105,8 +105,8 @@ export default function CalendarView({ classrooms = [], isStudent = false, curre
     };
   }, [isStudent, currentUser]);
 
+  const [nowMs] = useState(() => Date.now());
   const processedActivities = useMemo(() => {
-    const nowMs = Date.now();
     return activities
       .filter((act) => {
         const t = String(act.activityType || act.type || '').toLowerCase();
@@ -137,7 +137,7 @@ export default function CalendarView({ classrooms = [], isStudent = false, curre
         };
       })
       .filter((act) => act.parsedDate !== null);
-  }, [activities, filterClass, classrooms, isStudent, submittedIds]);
+  }, [activities, filterClass, classrooms, isStudent, submittedIds, nowMs]);
 
   const miniCalendarDays = useMemo(() => {
     const year = miniCalendarMonth.getFullYear();

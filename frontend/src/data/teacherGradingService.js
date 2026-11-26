@@ -1,17 +1,7 @@
 import { apiFetch } from './api';
 
-export function normalizeReplayStudentName(rawName, rawEmail = '') {
+export function normalizeReplayStudentName(rawName) {
   const trimmed = String(rawName || '').trim();
-  const lower = trimmed.toLowerCase();
-  const emailLower = String(rawEmail || '').trim().toLowerCase();
-  if (
-    emailLower === 'kimfabie123@gmail.com' ||
-    lower === 'kimfabie123@gmail.com' ||
-    lower === 'kimfabie' ||
-    lower === 'kim fabie'
-  ) {
-    return 'MIKOOOOO';
-  }
   return trimmed || 'Student';
 }
 

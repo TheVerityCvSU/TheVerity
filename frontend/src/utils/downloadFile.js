@@ -5,7 +5,7 @@ import { extractUploadPath, resolveMediaUrl } from './mediaUrl';
  */
 function buildDownloadFilename(resolvedUrl, suggestedName) {
   const cleanUrlPath = String(resolvedUrl || '').split('?')[0].split('#')[0];
-  let urlBasename = '';
+  let urlBasename;
   try {
     urlBasename = decodeURIComponent(cleanUrlPath.split('/').pop() || '').replace(/^\d+_/, '');
   } catch (_) {
@@ -18,7 +18,7 @@ function buildDownloadFilename(resolvedUrl, suggestedName) {
   if (!nameHasExt && urlExtMatch) {
     name = `${name}${urlExtMatch[1]}`;
   }
-  return name.replace(/[<>:"/\\|?*\x00-\x1F]/g, '_');
+  return Array.from(name, (ch) => (ch.charCodeAt(0) < 32 || '<>:"/\\|?*'.includes(ch) ? '_' : ch)).join('');
 }
 
 /**

@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { CheckCircle2 } from 'lucide-react';
+import { apiFetch } from '../data/api';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { useCurrentUser } from '../hooks/useCurrentUser';
 import Skeleton from '../components/Skeleton';
@@ -10,7 +11,7 @@ import { SECTIONS } from '../data/settingsConstants';
 import SettingsSectionCard from '../components/settings/SettingsSectionCard';
 import { styles } from './settingsStyles';
 
-export default function SettingsPanel({ role = 'Student', onBack, loading = false }) {
+export default function SettingsPanel({ role = 'Student', loading = false }) {
   const sections = SECTIONS[role] || SECTIONS.Student;
   const STORAGE_KEY = `verity:settings:${role}`;
   const { isDark, toggle: toggleDarkMode } = useDarkMode();
@@ -42,22 +43,53 @@ export default function SettingsPanel({ role = 'Student', onBack, loading = fals
   const [securityNotice, setSecurityNotice] = useState(null);
 
   useEffect(() => {
-    if (!currentUser) return;
-    setValues(prev => {
-      const updated = { ...prev };
-      if (currentUser.name) {
-        const nameParts = currentUser.name.split(' ');
-        updated['User Details:First Name'] = nameParts[0];
-        updated['User Details:Last Name'] = nameParts.slice(1).join(' ');
-      }
-      if (currentUser.email) updated['User Details:Email Address'] = currentUser.email;
-      const storedAvatar = currentUser.avatar || currentUser.profilePicture || null;
-      if (prev['Profile Picture:Avatar'] === undefined || prev['Profile Picture:Avatar'] === null) {
-        updated['Profile Picture:Avatar'] = storedAvatar;
-      }
-      return updated;
-    });
-  }, [currentUser]);
+    if (role !== 'Student') return;
+    let active = true;
+    apiFetch(`${import.meta.env.VITE_API_URL}/users/notification-preferences`)
+      .then(res => res.ok ? res.json() : null)
+      .then(data => {
+        if (!active || !data?.preferences) return;
+        const p = data.preferences;
+        setValues(prev => {
+          const next = {
+            ...prev,
+            'Notifications:New Classwork Email Alerts': p.newClasswork !== false,
+            'Notifications:New Materials Email Alerts': p.newMaterial !== false,
+            'Notifications:Upcoming Deadline Alerts': p.upcomingDeadline !== false,
+            'Notifications:Missed Activity Alerts': p.missedActivity !== false,
+            'Notifications:Grade Notifications': p.gradeNotifications !== false,
+            'Notifications:Instructor Announcements': Boolean(p.instructorAnnouncements),
+            'Notifications:Reminder Lead Time': p.reminderLeadTime || '24 hours before'
+          };
+          try { localStorage.setItem(STORAGE_KEY, JSON.stringify(next)); } catch (_) {}
+          return next;
+        });
+      })
+      .catch(() => {});
+    return () => { active = false; };
+  }, [role, STORAGE_KEY]);
+
+  const userSyncKey = `${currentUser?.name || ''}|${currentUser?.email || ''}|${currentUser?.avatar || currentUser?.profilePicture || ''}`;
+  const [prevUserSyncKey, setPrevUserSyncKey] = useState(userSyncKey);
+  if (userSyncKey !== prevUserSyncKey) {
+    setPrevUserSyncKey(userSyncKey);
+    if (currentUser) {
+      setValues(prev => {
+        const updated = { ...prev };
+        if (currentUser.name) {
+          const nameParts = currentUser.name.split(' ');
+          updated['User Details:First Name'] = nameParts[0];
+          updated['User Details:Last Name'] = nameParts.slice(1).join(' ');
+        }
+        if (currentUser.email) updated['User Details:Email Address'] = currentUser.email;
+        const storedAvatar = currentUser.avatar || currentUser.profilePicture || null;
+        if (prev['Profile Picture:Avatar'] === undefined || prev['Profile Picture:Avatar'] === null) {
+          updated['Profile Picture:Avatar'] = storedAvatar;
+        }
+        return updated;
+      });
+    }
+  }
 
   const handleSave = async (sectionTitle) => {
     try {
@@ -75,6 +107,21 @@ export default function SettingsPanel({ role = 'Student', onBack, loading = fals
         const avatarVal = values[`${sectionTitle}:Avatar`];
         const payload = { avatar: avatarVal !== undefined ? avatarVal : null };
         await updateCurrentUser(payload);
+      } else if (sectionTitle === 'Notifications' && role === 'Student') {
+        const payload = {
+          newClasswork: values['Notifications:New Classwork Email Alerts'] ?? true,
+          newMaterial: values['Notifications:New Materials Email Alerts'] ?? true,
+          upcomingDeadline: values['Notifications:Upcoming Deadline Alerts'] ?? true,
+          missedActivity: values['Notifications:Missed Activity Alerts'] ?? true,
+          gradeNotifications: values['Notifications:Grade Notifications'] ?? true,
+          instructorAnnouncements: values['Notifications:Instructor Announcements'] ?? false,
+          reminderLeadTime: values['Notifications:Reminder Lead Time'] || '24 hours before'
+        };
+        await apiFetch(`${import.meta.env.VITE_API_URL}/users/notification-preferences`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
       }
     } catch (err) {
       console.error('Failed to save settings:', err);

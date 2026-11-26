@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Plus, PanelRightClose, PanelRightOpen } from 'lucide-react';
 import { useDarkMode } from '../../hooks/useDarkMode';

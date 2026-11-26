@@ -1,4 +1,3 @@
-import React from 'react';
 import { X, Check, RefreshCw } from 'lucide-react';
 import { getCloudUrl } from '../../data/api';
 

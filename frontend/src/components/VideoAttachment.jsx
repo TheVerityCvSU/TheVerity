@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { Maximize2, AlertCircle, Download, Film } from 'lucide-react';
 import { getVideoThumbnailUrl, resolveMediaUrl } from '../utils/mediaUrl';
 import { triggerDirectDownload } from '../utils/downloadFile';

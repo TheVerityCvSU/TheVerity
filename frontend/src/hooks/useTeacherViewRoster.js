@@ -7,7 +7,9 @@ import { getInitialStudentRoster, findLongestLocalHistory, extractSubmissionsFro
 export function useTeacherViewRoster({ assignment, classroom, initialStudent, mode, studentSearch }) {
   const [submittedStudentNames, setSubmittedStudentNames] = useState(() => new Set());
   const submittedStudentNamesRef = useRef(submittedStudentNames);
-  submittedStudentNamesRef.current = submittedStudentNames;
+  useEffect(() => {
+    submittedStudentNamesRef.current = submittedStudentNames;
+  }, [submittedStudentNames]);
 
   const [students, setStudents] = useState(() => getInitialStudentRoster(initialStudent, mode));
 
@@ -71,40 +73,43 @@ export function useTeacherViewRoster({ assignment, classroom, initialStudent, mo
         }
       })
       .catch(() => {});
-  }, [assignment?.id, classroom?.id, mode]);
+  }, [assignment, classroom, mode]);
 
-  // Sync initialStudent prop
-  useEffect(() => {
-    if (initialStudent && (initialStudent.id || initialStudent.name)) {
-      const rawId = initialStudent.id || initialStudent.name;
-      const sId = mode !== 'live' ? normalizeReplayStudentName(initialStudent.name || rawId, initialStudent.email) : rawId;
-      setSelectedStudentId(sId);
-      const hist = findLongestLocalHistory(classroom, assignment, sId, initialStudent.name,
-        Array.isArray(initialStudent.history) && initialStudent.history.length > 0 ? initialStudent.history
-          : Array.isArray(initialStudent.codeHistory) && initialStudent.codeHistory.length > 0 ? initialStudent.codeHistory
-          : initialStudent.finalCode ? [{ time: Date.now(), code: initialStudent.finalCode }] : []);
+  const initialStudentKey = initialStudent && (initialStudent.id || initialStudent.name)
+    ? `${initialStudent.id || ''}|${initialStudent.name || ''}|${classroom?.id || ''}|${assignment?.id || ''}|${mode}`
+    : '';
+  const [prevInitialStudentKey, setPrevInitialStudentKey] = useState(initialStudentKey);
 
-      setStudents((prev) => {
-        const next = { ...prev };
-        if (rawId !== sId && next[rawId]) delete next[rawId];
-        const existing = next[sId] || {};
-        const longerHist = Array.isArray(existing.codeHistory) && existing.codeHistory.length > hist.length ? existing.codeHistory
-          : hist.length > 0 ? hist : [{ time: Date.now(), code: initialStudent.finalCode || '' }];
+  if (initialStudentKey && initialStudentKey !== prevInitialStudentKey) {
+    setPrevInitialStudentKey(initialStudentKey);
+    const rawId = initialStudent.id || initialStudent.name;
+    const sId = mode !== 'live' ? normalizeReplayStudentName(initialStudent.name || rawId, initialStudent.email) : rawId;
+    setSelectedStudentId(sId);
+    const hist = findLongestLocalHistory(classroom, assignment, sId, initialStudent.name,
+      Array.isArray(initialStudent.history) && initialStudent.history.length > 0 ? initialStudent.history
+        : Array.isArray(initialStudent.codeHistory) && initialStudent.codeHistory.length > 0 ? initialStudent.codeHistory
+        : initialStudent.finalCode ? [{ time: 0, code: initialStudent.finalCode }] : []);
 
-        return {
-          ...next,
-          [sId]: {
-            ...existing, id: sId, name: mode !== 'live' ? sId : initialStudent.name || sId,
-            status: 'Submitted', code: initialStudent.finalCode || initialStudent.code || (longerHist.length > 0 ? longerHist[longerHist.length - 1]?.code : '') || '',
-            codeHistory: longerHist, logs: initialStudent.logs || existing.logs || []
-          }
-        };
-      });
-    }
-  }, [initialStudent, classroom?.id, assignment?.id, mode]);
+    setStudents((prev) => {
+      const next = { ...prev };
+      if (rawId !== sId && next[rawId]) delete next[rawId];
+      const existing = next[sId] || {};
+      const longerHist = Array.isArray(existing.codeHistory) && existing.codeHistory.length > hist.length ? existing.codeHistory
+        : hist.length > 0 ? hist : [{ time: 0, code: initialStudent.finalCode || '' }];
 
-  // Keep selection valid as student list evolves
-  useEffect(() => {
+      return {
+        ...next,
+        [sId]: {
+          ...existing, id: sId, name: mode !== 'live' ? sId : initialStudent.name || sId,
+          status: 'Submitted', code: initialStudent.finalCode || initialStudent.code || (longerHist.length > 0 ? longerHist[longerHist.length - 1]?.code : '') || '',
+          codeHistory: longerHist, logs: initialStudent.logs || existing.logs || []
+        }
+      };
+    });
+  }
+
+  // Keep selection valid as derived value instead of mutating inside useEffect
+  const resolvedSelectedStudentId = useMemo(() => {
     if (mode === 'live') {
       const liveKeys = Object.keys(students).filter((k) => {
         const s = students[k];
@@ -114,23 +119,20 @@ export function useTeacherViewRoster({ assignment, classroom, initialStudent, mo
         const kLower = String(k).trim().toLowerCase();
         return !submittedStudentNames.has(sNameLower) && !submittedStudentNames.has(sIdLower) && !submittedStudentNames.has(kLower);
       });
-      if (liveKeys.length > 0) {
-        const currentStudent = students[selectedStudentId];
-        const curName = String(currentStudent?.name || currentStudent?.studentName || '').trim().toLowerCase();
-        const curId = String(currentStudent?.id || currentStudent?.studentId || selectedStudentId || '').trim().toLowerCase();
-        const isCurrentValid = currentStudent && currentStudent.status === 'Live' && !submittedStudentNames.has(curName) && !submittedStudentNames.has(curId);
-        if (!isCurrentValid) setSelectedStudentId(liveKeys[0]);
-      } else {
-        setSelectedStudentId(null);
-      }
-    } else {
-      const validKeys = Object.keys(students).filter(
-        (k) => students[k] && (students[k].status === 'Submitted' || students[k].status === 'Graded' || (Array.isArray(students[k].codeHistory) && students[k].codeHistory.length > 0) || Boolean(students[k].code || students[k].finalCode))
-      );
-      if (validKeys.length > 0 && (!selectedStudentId || !students[selectedStudentId])) {
-        setSelectedStudentId(validKeys[0]);
-      }
+      if (liveKeys.length === 0) return null;
+      const currentStudent = students[selectedStudentId];
+      const curName = String(currentStudent?.name || currentStudent?.studentName || '').trim().toLowerCase();
+      const curId = String(currentStudent?.id || currentStudent?.studentId || selectedStudentId || '').trim().toLowerCase();
+      const isCurrentValid = currentStudent && currentStudent.status === 'Live' && !submittedStudentNames.has(curName) && !submittedStudentNames.has(curId);
+      return isCurrentValid ? selectedStudentId : liveKeys[0];
     }
+    const validKeys = Object.keys(students).filter(
+      (k) => students[k] && (students[k].status === 'Submitted' || students[k].status === 'Graded' || (Array.isArray(students[k].codeHistory) && students[k].codeHistory.length > 0) || Boolean(students[k].code || students[k].finalCode))
+    );
+    if (validKeys.length > 0 && (!selectedStudentId || !students[selectedStudentId])) {
+      return validKeys[0];
+    }
+    return selectedStudentId;
   }, [students, selectedStudentId, mode, submittedStudentNames]);
 
   // Load backend grades
@@ -161,14 +163,14 @@ export function useTeacherViewRoster({ assignment, classroom, initialStudent, mo
   }, [assignment?.id]);
 
   const activeStudent = useMemo(() => {
-    let s = students[selectedStudentId] || Object.values(students).find((st) => st.id === selectedStudentId || st.studentId === selectedStudentId || st.name === selectedStudentId);
+    let s = students[resolvedSelectedStudentId] || Object.values(students).find((st) => st.id === resolvedSelectedStudentId || st.studentId === resolvedSelectedStudentId || st.name === resolvedSelectedStudentId);
     if (mode === 'live' && s) {
       const sNameLower = String(s.name || s.studentName || '').trim().toLowerCase();
       const sIdLower = String(s.id || s.studentId || '').trim().toLowerCase();
       if (submittedStudentNames.has(sNameLower) || submittedStudentNames.has(sIdLower) || s.status === 'Submitted') s = null;
     }
     return s || { name: mode === 'live' ? 'Waiting for students...' : 'Select a student submission', code: mode === 'live' ? '// No student currently live' : '// Select a student to replay their session', logs: [] };
-  }, [students, selectedStudentId, mode, submittedStudentNames]);
+  }, [students, resolvedSelectedStudentId, mode, submittedStudentNames]);
 
   const visibleStudents = useMemo(() => {
     let list = Object.values(students);
@@ -197,7 +199,7 @@ export function useTeacherViewRoster({ assignment, classroom, initialStudent, mo
   }, [students, submittedStudentNames]);
 
   return {
-    students, setStudents, selectedStudentId, setSelectedStudentId,
+    students, setStudents, selectedStudentId: resolvedSelectedStudentId, setSelectedStudentId,
     submittedStudentNames, setSubmittedStudentNames, submittedStudentNamesRef,
     activeStudent, visibleStudents, liveStudentCount
   };

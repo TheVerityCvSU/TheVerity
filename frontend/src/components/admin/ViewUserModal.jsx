@@ -1,4 +1,3 @@
-import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { User, X, Mail, Check, Copy, Clock, Shield, Edit3 } from 'lucide-react';
 

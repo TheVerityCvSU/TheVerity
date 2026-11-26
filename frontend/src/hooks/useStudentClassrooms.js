@@ -44,13 +44,15 @@ export function useStudentClassrooms({ currentUser, socket }) {
   const [joinError, setJoinError] = useState('');
   const [isJoining, setIsJoining] = useState(false);
 
-  // Sync cache on user change
-  useEffect(() => {
+  const studentUserKey = currentUser?.id || currentUser?.email || 'anon';
+  const [prevStudentUserKey, setPrevStudentUserKey] = useState(studentUserKey);
+  if (studentUserKey !== prevStudentUserKey) {
+    setPrevStudentUserKey(studentUserKey);
     const cached = sortClassroomsAlphabetically(
       getCachedClassrooms(currentUser, 'student').filter(c => !isPhantomClassroom(c))
     );
     setClassrooms(cached);
-  }, [currentUser]);
+  }
 
   useEffect(() => {
     saveCachedClassrooms(classrooms, currentUser, 'student');
@@ -98,7 +100,7 @@ export function useStudentClassrooms({ currentUser, socket }) {
 
   useEffect(() => {
     let active = true;
-    fetchEnrolledClassrooms().finally(() => {
+    Promise.resolve().then(() => fetchEnrolledClassrooms()).finally(() => {
       setTimeout(() => {
         if (active) setLoadingClassrooms(false);
       }, 350);

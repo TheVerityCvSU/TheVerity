@@ -1,4 +1,3 @@
-import React from 'react';
 import { X, Clock, Award } from 'lucide-react';
 import RichInstruction from '../RichInstruction';
 

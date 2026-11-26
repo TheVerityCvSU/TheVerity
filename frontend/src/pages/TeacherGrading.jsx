@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { ArrowLeft } from 'lucide-react';
 import Skeleton from '../components/Skeleton';
 import { useDarkMode } from '../hooks/useDarkMode';
@@ -31,6 +31,7 @@ export default function TeacherGrading({
 }) {
   const { isDark } = useDarkMode();
   const isMobile = useMediaQuery('(max-width: 900px)');
+  const isHeaderMobile = useMediaQuery('(max-width: 768px)');
   const currentUser = propCurrentUser || (() => {
     try { return JSON.parse(localStorage.getItem('verity_user')); } catch { return null; }
   })();
@@ -114,8 +115,7 @@ export default function TeacherGrading({
       <TeacherGradingHeader
         currentUser={currentUser}
         isDark={isDark}
-        isMobile={isMobile}
-        styles={styles}
+        isMobile={isHeaderMobile}
         onBack={onBack}
         onNavigateView={onNavigateView}
         onLogout={onLogout}

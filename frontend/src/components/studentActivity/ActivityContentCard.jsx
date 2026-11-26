@@ -1,9 +1,8 @@
-import React from 'react';
 import { ArrowLeft, BookOpen, Calendar, Award, FileText, Video, Link2, ClipboardList } from 'lucide-react';
 import AttachmentCard from '../AttachmentCard';
 import RichInstruction from '../RichInstruction';
 import ActivitySubmissionSection from './ActivitySubmissionSection';
-import { formatFullDate, formatDateTimeCompact } from '../../utils/dateUtils';
+import { formatDateTimeCompact } from '../../utils/dateUtils';
 import { isClassroomArchived } from '../../utils/classroomList';
 
 export default function ActivityContentCard({

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState } from 'react';
 
 export const TAB_ORDER = { stream: 0, classwork: 1, people: 2, materials: 3 };
 
@@ -27,22 +27,20 @@ export function useClassroomTabs(classroom) {
 
   const [tabDirection, setTabDirection] = useState(1);
   const [transitionMode, setTransitionMode] = useState('tab');
-  const prevClassroomIdRef = useRef(classroom?.id);
+  const [prevClassroomId, setPrevClassroomId] = useState(classroom?.id);
 
-  useEffect(() => {
-    if (classroom?.id && prevClassroomIdRef.current !== classroom?.id) {
-      prevClassroomIdRef.current = classroom?.id;
-      setTransitionMode('classroom');
-      try {
-        const saved = sessionStorage.getItem(`verity_student_classroom_tab_${classroom.id}`);
-        if (saved && ['stream', 'classwork', 'materials'].includes(saved)) {
-          setActiveTab(saved);
-        } else {
-          setActiveTab('stream');
-        }
-      } catch (_) {}
-    }
-  }, [classroom?.id]);
+  if (classroom?.id && prevClassroomId !== classroom?.id) {
+    setPrevClassroomId(classroom.id);
+    setTransitionMode('classroom');
+    try {
+      const saved = sessionStorage.getItem(`verity_student_classroom_tab_${classroom.id}`);
+      if (saved && ['stream', 'classwork', 'materials'].includes(saved)) {
+        setActiveTab(saved);
+      } else {
+        setActiveTab('stream');
+      }
+    } catch (_) {}
+  }
 
   const handleTabChange = (newTab) => {
     if (newTab === activeTab) return;

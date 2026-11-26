@@ -1,10 +1,13 @@
 node_modules
 npm-debug.log
+*.log
 temp_*
 *.sqlite*
-database.sqlite*
+*.db*
+database.json
+host.flag
 uploads/*
+tests
 .git
 .env
-.env.production
-.env.development
+.env.*

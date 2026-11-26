@@ -1,39 +1,31 @@
-import React, { useState, useEffect, useLayoutEffect, useRef, useMemo } from 'react';
-import JoditEditor from 'jodit-react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import ProfileMenu from './ProfileMenu';
-import ClassroomSettings from './ClassroomSettings';
-import { 
-  Calendar, ClipboardList, Settings, User, MoreVertical, ArrowLeft, X, Link2, 
-  Image, Video, Monitor, Menu, Home, Archive, Edit3, Maximize2, Copy, Check, 
-  Info, Users, BookOpen, Sparkles, Plus, Send, ChevronRight, ChevronDown, CheckCircle2, 
-  MessageSquare, PlayCircle, Eye, RefreshCw, Palette, ExternalLink, FileText, FileCode,
-  Paperclip, MoreHorizontal, Code2, Trash2, AlertTriangle, Lock, Unlock, ShieldAlert
+import {
+  Calendar, ClipboardList, Settings, Link2,
+  Video, Home, Archive, Maximize2, Copy, Check,
+  Lock, FileText
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { io } from 'socket.io-client';
 import { apiFetch, getLocalApiUrl, getCloudUrl, getConnectionStatus } from '../data/api';
-import Skeleton from '../components/Skeleton';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { useMediaQuery } from '../hooks/useMediaQuery';
-import { isPhantomClassroom, mergeClassroomsPreservingOrder, sortClassroomsAlphabetically, isClassroomArchived, normalizeClassroomSettings } from '../utils/classroomList';
-import { THEME_PRESETS } from '../utils/themePresets';
-import { getClassroomTheme, saveClassroomTheme } from '../data/classroomTheme';
-import { getClassroomStorageKey, getCachedClassrooms, saveCachedClassrooms } from '../data/classroomCache';
+import { isPhantomClassroom, sortClassroomsAlphabetically, isClassroomArchived, normalizeClassroomSettings } from '../utils/classroomList';
+import { getClassroomTheme } from '../data/classroomTheme';
+import { getCachedClassrooms, saveCachedClassrooms } from '../data/classroomCache';
 import { getLessonType } from '../utils/lessonType';
-import { resolveMediaUrl, resolveMediaUrlsInHtml, getActiveUploadBaseUrl, extractUploadPath } from '../utils/mediaUrl';
-import ImagePreviewModal from '../components/ImagePreviewModal';
-import AddLinkModal from '../components/AddLinkModal';
-import VideoPreviewModal from '../components/VideoPreviewModal';
-import IframePreviewModal from '../components/IframePreviewModal';
-import AddStudentModal from '../components/AddStudentModal';
-import PasteAsCodeModal from '../components/PasteAsCodeModal';
-import VideoAttachment from '../components/VideoAttachment';
-import AttachmentCard from '../components/AttachmentCard';
-import RichInstruction from '../components/RichInstruction';
-import ArchiveConfirmModal from '../components/ArchiveConfirmModal';
-import { getStudentGrade, isStudentGraded, formatGradeScore } from '../utils/gradeUtils';
-import { formatShortDate } from '../utils/dateUtils';
-import ClassroomBannerIllustration from '../components/ClassroomBannerIllustration';
+import { resolveMediaUrl, getActiveUploadBaseUrl, extractUploadPath } from '../utils/mediaUrl';
+import { getStudentGrade } from '../utils/gradeUtils';
+import { getStyles } from '../utils/teacherClassworkPageStyles';
+import TeacherStreamTab from '../components/teacherClasswork/TeacherStreamTab';
+import TeacherClassworkTab from '../components/teacherClasswork/TeacherClassworkTab';
+import TeacherMaterialsTab from '../components/teacherClasswork/TeacherMaterialsTab';
+import TeacherPeopleTab from '../components/teacherClasswork/TeacherPeopleTab';
+import TeacherGradesTab from '../components/teacherClasswork/TeacherGradesTab';
+import TeacherClassworkSecondaryModals from '../components/teacherClasswork/TeacherClassworkSecondaryModals';
+import TeacherActivityFormModal from '../components/teacherClasswork/TeacherActivityFormModal';
+import TeacherClassworkDetailModals from '../components/teacherClasswork/TeacherClassworkDetailModals';
+import TeacherClassworkMobileNav from '../components/teacherClasswork/TeacherClassworkMobileNav';
 
 const EMPTY_FORM = { title: '', activityType: 'Activity', noDueDate: true, dueDate: '', instruction: '', points: '100', grading: 'On', attachments: [], duration: 60, autoSaveInterval: '30s', treatWarningsAsErrors: false, disableBack: false, testCases: [] };
 
@@ -104,16 +96,20 @@ export default function TeacherClasswork({
   const { isDark } = useDarkMode();
   const isMobile = useMediaQuery('(max-width: 900px)');
   const styles = getStyles(isDark);
-  const isPhantom = isPhantomClassroom;
 
   const [classrooms, setClassrooms] = useState(() => {
     return sortClassroomsAlphabetically(getCachedClassrooms(currentUser, 'teacher').filter(c => !isPhantomClassroom(c)));
   });
   const [archivedOverride, setArchivedOverride] = useState(null);
-
-  useEffect(() => {
+  const [prevArchClassId, setPrevArchClassId] = useState(classroom?.id);
+  if (classroom?.id !== prevArchClassId) {
+    setPrevArchClassId(classroom?.id);
     setArchivedOverride(null);
-  }, [classroom?.id]);
+  }
+  const socketRef = useRef(socket);
+  useEffect(() => {
+    socketRef.current = socket;
+  }, [socket]);
 
   useEffect(() => {
     const loadClassroomsList = () => {
@@ -192,12 +188,7 @@ export default function TeacherClasswork({
       body: JSON.stringify({ archived: false })
     }).catch(() => {});
   };
-  const [isHeaderHovered, setIsHeaderHovered] = useState(false);
-  const [isFadingOut, setIsFadingOut] = useState(false);
-  const handleExit = (action) => {
-    setIsFadingOut(true);
-    setTimeout(() => action(), 100);
-  };
+  const [, setIsHeaderHovered] = useState(false);
   const [indicatorStyle, setIndicatorStyle] = useState({ top: 0, left: 0, width: 0, opacity: 0, transition: 'none' });
   const navRefs = useRef({});
 
@@ -214,23 +205,21 @@ export default function TeacherClasswork({
     }
   });
   const [tabDirection, setTabDirection] = useState(1);
-  const [transitionMode, setTransitionMode] = useState('tab'); // 'classroom' | 'tab'
+  const [, setTransitionMode] = useState('tab'); // 'classroom' | 'tab'
   const [classroomDirection, setClassroomDirection] = useState(1);
-  const prevClassroomIdRef = useRef(classroom?.id);
+  const [prevNavClassroomId, setPrevNavClassroomId] = useState(classroom?.id);
 
-  useEffect(() => {
-    if (classroom?.id && prevClassroomIdRef.current !== classroom?.id) {
-      prevClassroomIdRef.current = classroom?.id;
-      setTransitionMode('classroom');
-      try {
-        const savedTab = sessionStorage.getItem(`verity_teacher_classwork_tab_${classroom.id}`) ||
-                         sessionStorage.getItem('verity_teacher_classwork_tab_active');
-        if (savedTab && TAB_ORDER[savedTab] !== undefined) {
-          setActiveTab(savedTab);
-        }
-      } catch {}
-    }
-  }, [classroom?.id]);
+  if (classroom?.id && prevNavClassroomId !== classroom?.id) {
+    setPrevNavClassroomId(classroom?.id);
+    setTransitionMode('classroom');
+    try {
+      const savedTab = sessionStorage.getItem(`verity_teacher_classwork_tab_${classroom.id}`) ||
+                       sessionStorage.getItem('verity_teacher_classwork_tab_active');
+      if (savedTab && TAB_ORDER[savedTab] !== undefined) {
+        setActiveTab(savedTab);
+      }
+    } catch {}
+  }
 
   useEffect(() => {
     try {
@@ -366,7 +355,7 @@ export default function TeacherClasswork({
                 method: 'PUT',
                 headers: {
                   'Content-Type': 'application/json',
-                  ...(socket?.id ? { 'X-Socket-ID': socket.id } : {})
+                  ...(socketRef.current?.id ? { 'X-Socket-ID': socketRef.current.id } : {})
                 },
                 body: JSON.stringify({ classwork: merged })
               }).catch(() => {});
@@ -445,13 +434,18 @@ export default function TeacherClasswork({
   const toggleExpand = (id) => setExpandedId(prev => (String(prev) === String(id) ? null : id));
 
   useEffect(() => {
+    let active = true;
     const load = () => {
       const url = (classroomId && classroomId !== 'default')
         ? `${import.meta.env.VITE_API_URL}/submission-counts?classroomId=${classroomId}`
         : `${import.meta.env.VITE_API_URL}/submission-counts`;
       apiFetch(url)
-        .then(res => res.json())
-        .then(data => setSubmissionData({ counts: data.counts || {}, studentCount: data.studentCount || 0 }))
+        .then(res => (res.ok ? res.json() : null))
+        .then(data => {
+          if (active && data) {
+            setSubmissionData({ counts: data.counts || {}, studentCount: data.studentCount || 0 });
+          }
+        })
         .catch(() => {});
     };
     load();
@@ -459,12 +453,31 @@ export default function TeacherClasswork({
       if (typeof document !== 'undefined' && document.hidden) return;
       load();
     }, 30000);
-    return () => clearInterval(interval);
-  }, [classroomId]);
+
+    if (socket) {
+      socket.on('submission_updated', load);
+      socket.on('submission_deleted', load);
+      socket.on('student_unsubmitted', load);
+      socket.on('teacher_receive_submission', load);
+      socket.on('classroom_students_changed', load);
+    }
+
+    return () => {
+      active = false;
+      clearInterval(interval);
+      if (socket) {
+        socket.off('submission_updated', load);
+        socket.off('submission_deleted', load);
+        socket.off('student_unsubmitted', load);
+        socket.off('teacher_receive_submission', load);
+        socket.off('classroom_students_changed', load);
+      }
+    };
+  }, [classroomId, socket]);
 
   // Real-time active students tracking per activity & classroom
   const [activeActivityCounts, setActiveActivityCounts] = useState({});
-  const [activeClassroomCounts, setActiveClassroomCounts] = useState({});
+  const [, setActiveClassroomCounts] = useState({});
 
   const getActiveCountForActivity = (item) => {
     if (!item) return 0;
@@ -576,9 +589,9 @@ export default function TeacherClasswork({
 
     if (socket) {
       socket.on('active_activities_update', handlePrimaryActiveUpdate);
-      socket.on('teacher_student_update', handleStudentUpdate);
+      socket.on('teacher_update_code', handleStudentUpdate);
       socket.on('teacher_student_left', handleStudentLeftOrSubmitted);
-      socket.on('teacher_student_submitted', handleStudentLeftOrSubmitted);
+      socket.on('teacher_receive_submission', handleStudentLeftOrSubmitted);
       socket.emit('get_active_activities');
     }
 
@@ -617,9 +630,9 @@ export default function TeacherClasswork({
           secSocket.emit('get_active_activities');
         });
         secSocket.on('active_activities_update', handleSecondaryActiveUpdate);
-        secSocket.on('teacher_student_update', handleStudentUpdate);
+        secSocket.on('teacher_update_code', handleStudentUpdate);
         secSocket.on('teacher_student_left', handleStudentLeftOrSubmitted);
-        secSocket.on('teacher_student_submitted', handleStudentLeftOrSubmitted);
+        secSocket.on('teacher_receive_submission', handleStudentLeftOrSubmitted);
       }
     } catch (_) {}
 
@@ -667,16 +680,16 @@ export default function TeacherClasswork({
       isSubscribed = false;
       if (socket) {
         socket.off('active_activities_update', handlePrimaryActiveUpdate);
-        socket.off('teacher_student_update', handleStudentUpdate);
+        socket.off('teacher_update_code', handleStudentUpdate);
         socket.off('teacher_student_left', handleStudentLeftOrSubmitted);
-        socket.off('teacher_student_submitted', handleStudentLeftOrSubmitted);
+        socket.off('teacher_receive_submission', handleStudentLeftOrSubmitted);
       }
       if (secSocket) {
         try {
           secSocket.off('active_activities_update', handleSecondaryActiveUpdate);
-          secSocket.off('teacher_student_update', handleStudentUpdate);
+          secSocket.off('teacher_update_code', handleStudentUpdate);
           secSocket.off('teacher_student_left', handleStudentLeftOrSubmitted);
-          secSocket.off('teacher_student_submitted', handleStudentLeftOrSubmitted);
+          secSocket.off('teacher_receive_submission', handleStudentLeftOrSubmitted);
           secSocket.disconnect();
         } catch (_) {}
       }
@@ -690,16 +703,24 @@ export default function TeacherClasswork({
   const [isClassInfoModalOpen, setIsClassInfoModalOpen] = useState(false);
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
   const [currentClassroom, setCurrentClassroom] = useState(classroom);
-  useEffect(() => {
+  const [prevCurClsId, setPrevCurClsId] = useState(classroom?.id);
+  const classroomPropRef = useRef(classroom);
+
+  if (classroom?.id !== prevCurClsId) {
+    setPrevCurClsId(classroom?.id);
     setCurrentClassroom(classroom);
-  }, [classroom?.id]);
+  }
+
+  useEffect(() => {
+    classroomPropRef.current = classroom;
+  }, [classroom]);
 
   useEffect(() => {
     const handleClassroomUpdatedEvent = (e) => {
       const incoming = e?.detail?.classroom;
       if (!incoming || classroom?.id == null) return;
       if (String(incoming.id) === String(classroom.id)) {
-        setCurrentClassroom(prev => ({ ...(prev || classroom), ...incoming }));
+        setCurrentClassroom(prev => ({ ...(prev || classroomPropRef.current), ...incoming }));
       }
     };
     window.addEventListener('verity:classroom-updated', handleClassroomUpdatedEvent);
@@ -715,40 +736,50 @@ export default function TeacherClasswork({
   // Class code & theme
   const classCode = displayClassroom?.code || displayClassroom?.section || (displayClassroom?.id ? `vji${displayClassroom.id}ku4` : 'vji3bku4');
   const [bannerTheme, setBannerTheme] = useState(() => getClassroomTheme(displayClassroom));
+  const bannerThemeSyncKey = `${displayClassroom?.id ?? ''}|${displayClassroom?.code ?? ''}|${displayClassroom?.section ?? ''}|${displayClassroom?.name ?? ''}|${typeof displayClassroom?.theme === 'string' ? displayClassroom.theme : JSON.stringify(displayClassroom?.theme || null)}`;
+  const [prevBannerThemeSyncKey, setPrevBannerThemeSyncKey] = useState(bannerThemeSyncKey);
 
   // Reset banner theme when classroom changes
-  useEffect(() => {
+  if (bannerThemeSyncKey !== prevBannerThemeSyncKey) {
+    setPrevBannerThemeSyncKey(bannerThemeSyncKey);
     setBannerTheme(getClassroomTheme(displayClassroom));
-  }, [displayClassroom?.id, displayClassroom?.code, displayClassroom?.section, displayClassroom?.name, displayClassroom?.theme]);
+  }
 
   // Real-time socket & window theme updates listener
+  const displayClassroomRef = useRef(displayClassroom);
+  useEffect(() => {
+    displayClassroomRef.current = displayClassroom;
+  }, [displayClassroom]);
+
   useEffect(() => {
     const handleUpdate = (e) => {
       const detail = e.detail;
+      const curDisp = displayClassroomRef.current;
       if (!detail) return;
       const matches =
-        (displayClassroom?.id != null && String(detail.classroomId) === String(displayClassroom.id)) ||
-        (displayClassroom?.code && detail.code && String(detail.code).toLowerCase() === String(displayClassroom.code).toLowerCase()) ||
-        (displayClassroom?.section && detail.code && String(detail.code).toLowerCase() === String(displayClassroom.section).toLowerCase()) ||
-        (displayClassroom?.name && detail.name && String(detail.name).toLowerCase() === String(displayClassroom.name).toLowerCase()) ||
-        (detail.keys && detail.keys.includes(`verity_classroom_theme_${displayClassroom?.id}`));
+        (curDisp?.id != null && String(detail.classroomId) === String(curDisp.id)) ||
+        (curDisp?.code && detail.code && String(detail.code).toLowerCase() === String(curDisp.code).toLowerCase()) ||
+        (curDisp?.section && detail.code && String(detail.code).toLowerCase() === String(curDisp.section).toLowerCase()) ||
+        (curDisp?.name && detail.name && String(detail.name).toLowerCase() === String(curDisp.name).toLowerCase()) ||
+        (detail.keys && detail.keys.includes(`verity_classroom_theme_${curDisp?.id}`));
 
       if (matches && detail.theme) {
         setBannerTheme(detail.theme);
       }
     };
 
+    const handleSocketTheme = (data) => handleUpdate({ detail: data });
     window.addEventListener('verity:banner-updated', handleUpdate);
     if (socket) {
-      socket.on('classroom_theme_changed', (data) => handleUpdate({ detail: data }));
+      socket.on('classroom_theme_changed', handleSocketTheme);
     }
     return () => {
       window.removeEventListener('verity:banner-updated', handleUpdate);
       if (socket) {
-        socket.off('classroom_theme_changed');
+        socket.off('classroom_theme_changed', handleSocketTheme);
       }
     };
-  }, [displayClassroom?.id, displayClassroom?.code, displayClassroom?.section, displayClassroom?.name, displayClassroom?.theme, socket]);
+  }, [socket]);
 
   const handleUpdateClassroom = (updated) => {
     const merged = { ...(displayClassroom || {}), ...updated };
@@ -764,6 +795,7 @@ export default function TeacherClasswork({
   const [codeCopied, setCodeCopied] = useState(false);
   
   const [allowManageStudents, setAllowManageStudents] = useState(true);
+  const [isAddStudentOpen, setIsAddStudentOpen] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -821,8 +853,13 @@ export default function TeacherClasswork({
     );
   }, [enrolledStudents]);
   const [loadingStudents, setLoadingStudents] = useState(false);
-  const [isAddStudentOpen, setIsAddStudentOpen] = useState(false);
   const [refreshStudentsKey, setRefreshStudentsKey] = useState(0);
+  const [prevPeopleLoadKey, setPrevPeopleLoadKey] = useState(null);
+  const peopleLoadKey = `${classroom?.id ?? ''}|${refreshStudentsKey}`;
+  if (classroom?.id && peopleLoadKey !== prevPeopleLoadKey) {
+    setPrevPeopleLoadKey(peopleLoadKey);
+    setLoadingStudents(true);
+  }
   const [instructorInfo, setInstructorInfo] = useState({
     name: classroom?.instructor || (currentUser?.role === 'Teacher' ? currentUser.name : ''),
     email: classroom?.instructorEmail || classroom?.instructor_email || (currentUser?.role === 'Teacher' ? currentUser.email : ''),
@@ -831,10 +868,31 @@ export default function TeacherClasswork({
 
   useEffect(() => {
     if (!classroom?.id) return;
-    setLoadingStudents(true);
 
     const loadStudents = async () => {
       const studentsMap = {};
+      const nameToKey = {};
+      const upsertStudent = (rawName, rawEmail, avatar = null) => {
+        const cleanName = String(rawName || '').trim();
+        if (!cleanName) return;
+        const nameKey = cleanName.toLowerCase();
+        const cleanEmail = String(rawEmail || '').trim().toLowerCase();
+        const hasRealEmail = cleanEmail.includes('@') && !cleanEmail.endsWith('@student.verity.edu');
+        const key = hasRealEmail
+          ? cleanEmail
+          : (nameToKey[nameKey] || nameKey);
+        if (hasRealEmail && nameToKey[nameKey] && !studentsMap[cleanEmail] && studentsMap[nameToKey[nameKey]]?.email?.endsWith('@student.verity.edu')) {
+          delete studentsMap[nameToKey[nameKey]];
+          nameToKey[nameKey] = cleanEmail;
+        }
+        const resolvedEmail = hasRealEmail ? cleanEmail : `${nameKey.replace(/\s+/g, '.')}@student.verity.edu`;
+        studentsMap[key] = {
+          name: cleanName,
+          email: resolvedEmail,
+          avatar: avatar || studentsMap[key]?.avatar || null
+        };
+        if (!nameToKey[nameKey]) nameToKey[nameKey] = key;
+      };
 
       try {
         for (let i = 0; i < localStorage.length; i++) {
@@ -851,11 +909,7 @@ export default function TeacherClasswork({
                 );
                 if (match) {
                   const studentName = k.replace('verity_student_classrooms_', '');
-                  studentsMap[studentName.toLowerCase()] = { 
-                    name: studentName, 
-                    email: `${studentName.toLowerCase().replace(/\s+/g, '.')}@student.verity.edu`,
-                    avatar: null
-                  };
+                  upsertStudent(studentName, '');
                 }
               }
             }
@@ -877,11 +931,7 @@ export default function TeacherClasswork({
           if (Array.isArray(data.students)) {
             data.students.forEach(s => {
               if (s && s.name) {
-                studentsMap[s.name.toLowerCase()] = { 
-                  name: s.name, 
-                  email: s.email || `${s.name.toLowerCase().replace(/\s+/g, '.')}@student.verity.edu`,
-                  avatar: s.avatar || null
-                };
+                upsertStudent(s.name, s.email, s.avatar || null);
               }
             });
           }
@@ -897,11 +947,7 @@ export default function TeacherClasswork({
           if (Array.isArray(arr)) {
             arr.forEach(s => {
               if (s && s.name) {
-                studentsMap[s.name.toLowerCase()] = {
-                  name: s.name,
-                  email: s.email || `${s.name.toLowerCase().replace(/\s+/g, '.')}@student.verity.edu`,
-                  avatar: s.avatar || studentsMap[s.name.toLowerCase()]?.avatar || null
-                };
+                upsertStudent(s.name, s.email, s.avatar || null);
               }
             });
           }
@@ -942,11 +988,13 @@ export default function TeacherClasswork({
 
     if (socket) {
       socket.on('user_avatar_updated', handleAvatarBroadcast);
+      socket.on('classroom_students_changed', loadStudents);
     }
 
     return () => {
       if (socket) {
         socket.off('user_avatar_updated', handleAvatarBroadcast);
+        socket.off('classroom_students_changed', loadStudents);
       }
     };
   }, [classroom?.id, classCode, classroom?.section, socket, currentUser, refreshStudentsKey]);
@@ -997,14 +1045,6 @@ export default function TeacherClasswork({
     }
   }, [selectedGradingActivityId, classroom?.id]);
 
-  useEffect(() => {
-    if (visibleClasswork.length > 0) {
-      if (!selectedGradingActivityId || !visibleClasswork.some(a => a.id === selectedGradingActivityId)) {
-        setSelectedGradingActivityId(visibleClasswork[0].id);
-      }
-    }
-  }, [visibleClasswork, selectedGradingActivityId]);
-
   const activeGradingActivity = visibleClasswork.find(a => a.id === selectedGradingActivityId) || visibleClasswork[0];
   const gradesKey = `verity_grades_${activeGradingActivity?.id ?? 'default'}`;
   const maxPoints = parseInt(activeGradingActivity?.points, 10) || 100;
@@ -1052,10 +1092,17 @@ export default function TeacherClasswork({
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [isGradesActivityDropdownOpen]);
 
+  const [prevGradActivityId, setPrevGradActivityId] = useState(activeGradingActivity?.id);
+  if (activeGradingActivity?.id !== prevGradActivityId) {
+    setPrevGradActivityId(activeGradingActivity?.id);
+    if (!activeGradingActivity?.id) {
+      setGradingStudents([]);
+    }
+  }
+
   // Load ONLY students who have submitted this activity for this classroom
   useEffect(() => {
     if (!activeGradingActivity?.id) {
-      setGradingStudents([]);
       return;
     }
 
@@ -1134,7 +1181,7 @@ export default function TeacherClasswork({
             (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base', numeric: true })
           );
           setGradingStudents(list);
-          setSelectedStudentId(prev => (prev && map[prev] ? prev : (list.find(s => s.id === selectedStudentId)?.id || list[0]?.id || null)));
+          setSelectedStudentId(prev => (prev && map[prev] ? prev : (list[0]?.id || null)));
         })
         .catch(() => {});
     };
@@ -1202,16 +1249,19 @@ export default function TeacherClasswork({
     } catch {}
   }, [gradingGrades, gradesKey]);
 
-  useEffect(() => {
+  const curStudentForGrade = selectedStudentId ? gradingStudents.find(s => s.id === selectedStudentId) : null;
+  const savedGradeItem = selectedStudentId ? getStudentGrade(gradingGrades, curStudentForGrade || selectedStudentId) : null;
+  const studentGradeSyncKey = `${selectedStudentId ?? ''}|${savedGradeItem?.grade ?? ''}|${savedGradeItem?.feedback ?? ''}|${maxPoints}`;
+  const [prevStudentGradeSyncKey, setPrevStudentGradeSyncKey] = useState(null);
+  if (studentGradeSyncKey !== prevStudentGradeSyncKey) {
+    setPrevStudentGradeSyncKey(studentGradeSyncKey);
     if (selectedStudentId) {
-      const curStudent = gradingStudents.find(s => s.id === selectedStudentId);
-      const saved = getStudentGrade(gradingGrades, curStudent || selectedStudentId);
-      setStudentGradeInput(saved?.grade != null ? String(saved.grade) : String(maxPoints));
-      setStudentFeedbackInput(saved?.feedback || '');
+      setStudentGradeInput(savedGradeItem?.grade != null ? String(savedGradeItem.grade) : String(maxPoints));
+      setStudentFeedbackInput(savedGradeItem?.feedback || '');
       setIndivSaveStatus('idle');
       setIndivSaveError('');
     }
-  }, [selectedStudentId, gradingGrades, maxPoints, gradingStudents]);
+  }
 
   const handleSaveIndividualGrade = async () => {
     if (!selectedStudentId || !activeGradingActivity) return;
@@ -1318,7 +1368,7 @@ export default function TeacherClasswork({
           else if (editorObj.focus) editorObj.focus();
           // Use a zero-width space so Jodit doesn't strip the empty span!
           s.insertHTML(`<span id="${id}">&#8203;</span>`);
-        } catch(err) {}
+        } catch {}
       }
     }
     callback();
@@ -1728,7 +1778,7 @@ export default function TeacherClasswork({
       if (joditRef.current) {
         currentInstruction = joditRef.current.value ?? joditRef.current.editor?.value ?? form.instruction;
       }
-    } catch (err) {}
+    } catch {}
 
     const data = {
       classroom_id: classroomId,
@@ -1789,92 +1839,115 @@ export default function TeacherClasswork({
     setTimeout(() => setCodeCopied(false), 2000);
   };
 
-  // SVG Illustration for Google Classroom Banner
-  const renderBannerIllustration = () => (
-    <ClassroomBannerIllustration
-      themeId={bannerTheme?.id || 'emerald_books'}
-      style={{ position: 'absolute', right: 0, top: 0, height: '100%', width: '100%', pointerEvents: 'none' }}
-    />
-  );
-  const joditConfig = useMemo(() => ({
-    readonly: false,
-    theme: isDark ? 'dark' : 'default',
-    buttons: [
-      'bold', 'italic', 'underline', 'strikethrough', 'inlineCode', '|',
-      'eraser', 'font', 'fontsize', 'brush', 'paragraph', '|',
-      'ul', 'ol', '|',
-      'table', '|',
-      'undo', 'redo'
-    ],
-    controls: {
-      inlineCode: {
-        iconURL: `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16"><path d="M10.478 1.647a.5.5 0 1 0-.956-.294l-4 13a.5.5 0 0 0 .956.294l4-13zM4.854 4.146a.5.5 0 0 1 0 .708L1.707 8l3.147 3.146a.5.5 0 0 1-.708.708l-3.5-3.5a.5.5 0 0 1 0-.708l3.5-3.5a.5.5 0 0 1 .708 0zm6.292 0a.5.5 0 0 0 0 .708L14.293 8l-3.147 3.146a.5.5 0 0 0 .708.708l3.5-3.5a.5.5 0 0 0 0-.708l-3.5-3.5a.5.5 0 0 0-.708 0z"/></svg>`,
-        tooltip: 'Highlight (Code)',
-        exec: (editor) => {
-          editor.s.commitStyle({
-            element: 'code',
-            attributes: {
-              class: 'inline-code-highlight'
+  const joditConfig = useMemo(() => {
+    const toolbarRows = [
+      'bold', 'italic', 'underline', 'strikethrough', '|', 'inlineCode', 'codeBox', '|', 'ul', 'ol', '|', 'undo', 'redo',
+      '\n',
+      'font', 'fontsize', 'brush', 'paragraph', '|', 'table', '|', 'eraser'
+    ];
+    return {
+      readonly: false,
+      theme: isDark ? 'dark' : 'default',
+      toolbarAdaptive: false,
+      buttons: toolbarRows,
+      buttonsMD: toolbarRows,
+      buttonsSM: toolbarRows,
+      buttonsXS: toolbarRows,
+      controls: {
+        inlineCode: {
+          icon: '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><g fill="none"><path d="m7 8-4 4 4 4m10-8 4 4-4 4m-3-11-4 14"/></g></svg>',
+          tooltip: 'Highlight (Code)',
+          exec: (editor) => {
+            editor.s.commitStyle({
+              element: 'code',
+              attributes: {
+                class: 'inline-code-highlight'
+              }
+            });
+          }
+        },
+        codeBox: {
+          icon: '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><g fill="none"><rect x="2.5" y="4" width="19" height="16" rx="3"/><path d="m9 9-3 3 3 3m6-6 3 3-3 3"/></g></svg>',
+          tooltip: 'Code Box (Block)',
+          exec: (editor) => {
+            const selHtml = editor.s?.html || '';
+            const escapeHtml = (str) => String(str || '')
+              .replace(/&/g, '&amp;')
+              .replace(/</g, '&lt;')
+              .replace(/>/g, '&gt;')
+              .replace(/"/g, '&quot;');
+            let blockText = '';
+            if (selHtml.trim()) {
+              const tmp = document.createElement('div');
+              tmp.innerHTML = selHtml
+                .replace(/<br\s*\/?>/gi, '\n')
+                .replace(/<\/(p|div|li|h[1-6]|tr)>/gi, '\n');
+              blockText = (tmp.textContent || tmp.innerText || '').replace(/\n{3,}/g, '\n\n').trim();
             }
-          });
+            const safeContent = escapeHtml(blockText || 'Input:\n\nOutput:');
+            editor.s.insertHTML(
+              `<pre class="verity-code-box" style="background: #1e1e1e; color: #e5e7eb; border: 1px solid #3f3f46; padding: 12px 16px; border-radius: 8px; font-family: Consolas, Monaco, 'Courier New', monospace; font-size: 0.88rem; line-height: 1.5; white-space: pre-wrap; margin: 8px 0; overflow-x: auto;">${safeContent}</pre><p><br></p>`
+            );
+          }
         }
-      }
-    },
-    placeholder: 'Enter assignment instruction...',
-    height: 300,
-    showCharsCounter: false,
-    showWordsCounter: false,
-    showXPathInStatusbar: false,
-    hidePoweredByJodit: true,
-    disablePlugins: 'image-properties,image-processor,video-properties',
-    popup: { img: [], image: [], video: [], a: [] },
-    i18n: {
-      en: {
-        'Paste as HTML': 'Paste as Code?',
-        'Your code is similar to HTML. Keep as HTML?': 'The content you are pasting looks like code or HTML. How would you like to paste it?',
-        'Keep': 'Paste as HTML',
-        'Insert as Text': 'Paste as Code'
-      }
-    },
-    events: {
-      beforeOpenPasteDialog: (msg, title, callback, buttonList) => {
-        const isWord = String(title || '').toLowerCase().includes('word');
-        setPasteCodeModal({
-          isWord,
-          title: isWord ? 'Word Paste Detected' : 'Paste as Code?',
-          msg: isWord
-            ? 'The pasted content is coming from a Microsoft Word or Excel document. Do you want to keep formatting or clean it up?'
-            : 'The content you are pasting looks like code or HTML. How would you like to format it in the instructions?',
-          callback,
-          buttonList
-        });
-        return false;
       },
-      onCustomPasteHTMLOption: (action, html) => {
-        if (action === 'cancel') {
-          return '';
+      placeholder: 'Enter assignment instruction...',
+      height: 300,
+      showCharsCounter: false,
+      showWordsCounter: false,
+      showXPathInStatusbar: false,
+      hidePoweredByJodit: true,
+      disablePlugins: 'image-properties,image-processor,video-properties',
+      popup: { img: [], image: [], video: [], a: [] },
+      i18n: {
+        en: {
+          'Paste as HTML': 'Paste as Code?',
+          'Your code is similar to HTML. Keep as HTML?': 'The content you are pasting looks like code or HTML. How would you like to paste it?',
+          'Keep': 'Paste as HTML',
+          'Insert as Text': 'Paste as Code'
         }
-        if (action === 'as-code') {
-          const escape = (str) => String(str || '')
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;');
-          const bg = isDark ? '#1a221f' : '#f8fafc';
-          const text = isDark ? '#a7f3d0' : '#065f46';
-          const border = isDark ? '#2e3d38' : '#cbd5e1';
-          return `<pre style="background-color: ${bg}; color: ${text}; border: 1px solid ${border}; padding: 12px 16px; border-radius: 8px; font-family: Consolas, Monaco, 'Courier New', monospace; font-size: 0.88rem; line-height: 1.5; white-space: pre-wrap; margin: 8px 0; overflow-x: auto;"><code>${escape(html)}</code></pre><p><br></p>`;
+      },
+      events: {
+        beforeOpenPasteDialog: (msg, title, callback, buttonList) => {
+          const isWord = String(title || '').toLowerCase().includes('word');
+          setPasteCodeModal({
+            isWord,
+            title: isWord ? 'Word Paste Detected' : 'Paste as Code?',
+            msg: isWord
+              ? 'The pasted content is coming from a Microsoft Word or Excel document. Do you want to keep formatting or clean it up?'
+              : 'The content you are pasting looks like code or HTML. How would you like to format it in the instructions?',
+            callback,
+            buttonList
+          });
+          return false;
+        },
+        onCustomPasteHTMLOption: (action, html) => {
+          if (action === 'cancel') {
+            return '';
+          }
+          if (action === 'as-code') {
+            const escape = (str) => String(str || '')
+              .replace(/&/g, '&amp;')
+              .replace(/</g, '&lt;')
+              .replace(/>/g, '&gt;')
+              .replace(/"/g, '&quot;');
+            const bg = isDark ? '#1a221f' : '#f8fafc';
+            const text = isDark ? '#a7f3d0' : '#065f46';
+            const border = isDark ? '#2e3d38' : '#cbd5e1';
+            return `<pre style="background-color: ${bg}; color: ${text}; border: 1px solid ${border}; padding: 12px 16px; border-radius: 8px; font-family: Consolas, Monaco, 'Courier New', monospace; font-size: 0.88rem; line-height: 1.5; white-space: pre-wrap; margin: 8px 0; overflow-x: auto;"><code>${escape(html)}</code></pre><p><br></p>`;
+          }
+          return html;
         }
-        return html;
+      },
+      style: {
+        background: isDark ? '#242424' : '#f9fafb',
+        color: isDark ? '#E8EAED' : '#111827'
       }
-    },
-    style: {
-      background: isDark ? '#242424' : '#f9fafb',
-      color: isDark ? '#E8EAED' : '#111827'
-    }
-  }), [isDark]);
+    };
+  }, [isDark, setPasteCodeModal]);
 
   // ═══ Design tokens for the instructor classroom shell ═══
+  const [streamFallbackNow] = useState(() => Date.now());
   const ui = {
     bg: isDark ? '#141615' : '#f4f5f7',
     surface: isDark ? '#1b1e1c' : '#ffffff',
@@ -1929,7 +2002,7 @@ export default function TeacherClasswork({
   return (
     <motion.div
       initial={{ opacity: 0 }}
-      animate={{ opacity: isFadingOut ? 0 : 1 }}
+      animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
       transition={{ duration: 0.22, ease: 'easeOut' }}
       style={styles.container}
@@ -2196,1556 +2269,154 @@ export default function TeacherClasswork({
                 style={{ display: 'flex', flexDirection: 'column', flex: 1, width: '100%' }}
               >
 
-              {/* ═══ TAB 1: STREAM ═══ */}
               {activeTab === 'stream' && (
-                <div style={{
-                  display: 'flex',
-                  flexDirection: isMobile ? 'column' : 'row',
-                  gap: isMobile ? '24px' : '32px',
-                  alignItems: 'flex-start',
-                  width: '100%'
-                }}>
-
-                  {/* LEFT COLUMN: Classroom card + Teaching list */}
-                  <aside style={{
-                    width: isMobile ? '100%' : '280px',
-                    flexShrink: 0,
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: '20px',
-                    position: isMobile ? 'static' : 'sticky',
-                    top: '20px'
-                  }}>
-                    <div style={{
-                      position: 'relative', overflow: 'hidden', borderRadius: '16px',
-                      padding: isMobile ? '20px' : '24px 20px',
-                      minHeight: isMobile ? '200px' : '260px',
-                      display: 'flex', flexDirection: 'column', boxSizing: 'border-box',
-                      border: isClassroomArchivedState ? '1px dashed rgba(148, 163, 184, 0.55)' : 'none',
-                      boxShadow: isDark ? '0 18px 40px -18px rgba(0,0,0,0.7)' : '0 14px 30px -16px rgba(15,23,42,0.35)'
-                    }}>
-                      {/* Background theme layer (desaturated when archived) */}
-                      <div style={{
-                        position: 'absolute',
-                        inset: 0,
-                        background: bannerTheme?.customImageUrl
-                          ? `url(${bannerTheme.customImageUrl}) center/cover no-repeat`
-                          : `linear-gradient(150deg, ${bannerTheme?.primary || '#137333'}, ${bannerTheme?.secondary || '#1e8e3e'})`,
-                        filter: isClassroomArchivedState ? 'grayscale(65%) saturate(0.5) brightness(0.84)' : 'none',
-                        zIndex: 0
-                      }} />
-                      {isClassroomArchivedState && (
-                        <div style={{
-                          position: 'absolute',
-                          inset: 0,
-                          backgroundColor: 'rgba(15, 23, 42, 0.42)',
-                          pointerEvents: 'none',
-                          zIndex: 0
-                        }} />
-                      )}
-
-                      {/* Decorative rings */}
-                      <div style={{ position: 'absolute', top: '-70px', right: '-70px', width: '210px', height: '210px', borderRadius: '50%', border: '1px solid rgba(255,255,255,0.14)', pointerEvents: 'none', zIndex: 1 }} />
-                      <div style={{ position: 'absolute', top: '-24px', right: '-24px', width: '120px', height: '120px', borderRadius: '50%', border: '1px solid rgba(255,255,255,0.12)', pointerEvents: 'none', zIndex: 1 }} />
-
-                      <div style={{ position: 'relative', zIndex: 2, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', flexWrap: 'wrap' }}>
-                        <span style={{ fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.07em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
-                          Your classroom
-                        </span>
-                        {isClassroomArchivedState && (
-                          <span style={{
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: '4px',
-                            padding: '3px 8px',
-                            borderRadius: '9999px',
-                            backgroundColor: 'rgba(15, 23, 42, 0.65)',
-                            border: '1px solid rgba(255,255,255,0.28)',
-                            color: '#f8fafc',
-                            fontSize: '0.65rem',
-                            fontWeight: 700,
-                            letterSpacing: '0.05em'
-                          }}>
-                            <Archive size={11} /> ARCHIVED
-                          </span>
-                        )}
-                      </div>
-
-                      {!bannerTheme?.customImageUrl && (
-                        <div style={{
-                          position: 'absolute',
-                          right: '-10px',
-                          top: '10px',
-                          width: '210px',
-                          height: '165px',
-                          pointerEvents: 'none',
-                          zIndex: 1,
-                          overflow: 'hidden',
-                          filter: isClassroomArchivedState ? 'grayscale(65%)' : 'none'
-                        }}>
-                          <ClassroomBannerIllustration
-                            themeId={bannerTheme?.id || 'emerald_books'}
-                            style={{ width: '100%', height: '100%' }}
-                          />
-                        </div>
-                      )}
-
-                      <div style={{ position: 'relative', zIndex: 2, marginTop: 'auto' }}>
-                        <h1 style={{ fontSize: isMobile ? '1.8rem' : '2rem', fontWeight: 500, color: bannerTheme.textColor || 'white', margin: '0 0 6px', wordBreak: 'break-word', lineHeight: 1.15, letterSpacing: '-0.01em' }}>
-                          {displayClassroom?.name || 'Verity'}
-                        </h1>
-                        <div style={{ fontSize: '0.78rem', color: bannerTheme.textColor || 'white', opacity: 0.85 }}>
-                          {displayClassroom?.section || displayClassroom?.subject || displayClassroom?.name || ''}
-                        </div>
-                        {displayClassroom?.description && (
-                          <div style={{
-                            marginTop: '6px',
-                            fontSize: '0.74rem',
-                            color: bannerTheme.textColor || 'white',
-                            opacity: 0.78,
-                            lineHeight: 1.4,
-                            display: '-webkit-box',
-                            WebkitLineClamp: 2,
-                            WebkitBoxOrient: 'vertical',
-                            overflow: 'hidden'
-                          }}>
-                            {displayClassroom.description}
-                          </div>
-                        )}
-                        <div style={{ height: '1px', background: 'rgba(255,255,255,0.22)', margin: '14px 0 12px' }} />
-                        {isClassroomArchivedState ? (
-                          <button
-                            className="vt-customize"
-                            onClick={handleUnarchiveCurrentClassroom}
-                            style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'transparent', border: 'none', color: bannerTheme.textColor || 'white', cursor: 'pointer', padding: 0, fontSize: '0.78rem', fontWeight: 600, opacity: 0.92, fontFamily: 'inherit' }}
-                          >
-                            <RefreshCw size={13} /> Unarchive Classroom
-                          </button>
-                        ) : (
-                          <button
-                            className="vt-customize"
-                            onClick={() => { setOriginalBannerTheme(bannerTheme); setIsCustomizeOpen(true); }}
-                            style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'transparent', border: 'none', color: bannerTheme.textColor || 'white', cursor: 'pointer', padding: 0, fontSize: '0.78rem', fontWeight: 600, opacity: 0.92, fontFamily: 'inherit' }}
-                          >
-                            <Edit3 size={13} /> Customize
-                          </button>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* CLASSROOMS LIST */}
-                    <div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0 10px', marginBottom: '10px' }}>
-                        <span style={sectionLabelStyle}>Classrooms</span>
-                        <span style={{ ...sectionLabelStyle, color: ui.faint }}>{String(activeClassrooms.length).padStart(2, '0')}</span>
-                      </div>
-                      <div style={{
-                        display: 'flex',
-                        flexDirection: isMobile ? 'row' : 'column',
-                        gap: isMobile ? '8px' : '4px',
-                        overflowX: isMobile ? 'auto' : 'visible',
-                        paddingBottom: isMobile ? '6px' : '0'
-                      }}>
-                        {sidebarClassrooms.map((cls, idx) => {
-                          const active = String(classroom?.id) === String(cls.id);
-                          const badgeColor = BADGE_COLORS[idx % BADGE_COLORS.length];
-                          const clsName = cls.name || 'Untitled';
-                          const clsArchived = isClassroomArchived(cls);
-                          return (
-                            <button
-                              key={cls.id}
-                              className="vt-class-row"
-                              onClick={() => handleSelectClassroom(cls, idx)}
-                              title={active ? `${clsName} (Current classroom)` : `Switch to ${clsName}`}
-                              style={{
-                                display: 'flex', alignItems: 'center', gap: '12px', padding: '10px 12px', borderRadius: '10px',
-                                width: isMobile ? 'auto' : '100%',
-                                minWidth: isMobile ? '160px' : 'auto',
-                                flexShrink: 0,
-                                textAlign: 'left', cursor: 'pointer', fontFamily: 'inherit',
-                                background: active
-                                  ? (isDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(255, 255, 255, 0.75)')
-                                  : 'transparent',
-                                backdropFilter: active ? 'blur(12px)' : 'none',
-                                WebkitBackdropFilter: active ? 'blur(12px)' : 'none',
-                                border: active
-                                  ? (isDark ? '1px solid rgba(255, 255, 255, 0.15)' : '1px solid rgba(0, 0, 0, 0.08)')
-                                  : '1px solid transparent',
-                                boxShadow: active
-                                  ? (isDark ? '0 4px 16px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.12)' : '0 4px 12px rgba(0, 0, 0, 0.05), inset 0 1px 0 rgba(255, 255, 255, 0.8)')
-                                  : 'none',
-                                color: active ? ui.text : (isDark ? '#c4c9c5' : '#374151'),
-                                transition: 'all 0.2s ease'
-                              }}
-                            >
-                              <span style={{
-                                width: '26px', height: '26px', borderRadius: '7px', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                fontSize: '0.74rem', fontWeight: 800, flexShrink: 0,
-                                background: active
-                                  ? (isDark ? 'rgba(255, 255, 255, 0.14)' : 'rgba(0, 0, 0, 0.06)')
-                                  : (isDark ? '#232725' : '#f1f5f9'),
-                                border: active
-                                  ? (isDark ? '1px solid rgba(255, 255, 255, 0.2)' : '1px solid rgba(0, 0, 0, 0.08)')
-                                  : 'none',
-                                color: active ? ui.text : badgeColor
-                              }}>
-                                {clsName.charAt(0).toUpperCase()}
-                              </span>
-                              <span style={{ flex: 1, fontSize: '0.82rem', fontWeight: active ? 600 : 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                {clsName}
-                              </span>
-                              {clsArchived && (
-                                <span style={{ fontSize: '0.64rem', fontWeight: 700, padding: '2px 6px', borderRadius: '9999px', backgroundColor: isDark ? 'rgba(148,163,184,0.18)' : '#e2e8f0', color: isDark ? '#cbd5e1' : '#475569' }}>
-                                  Archived
-                                </span>
-                              )}
-                            </button>
-                          );
-                        })}
-                      </div>
-                      <div style={{ height: '1px', background: ui.border, marginTop: '16px' }} />
-                    </div>
-                  </aside>
-
-                  {/* CENTER COLUMN: Stream feed */}
-                  <div style={{ flex: 1, minWidth: 0, width: '100%', display: 'flex', flexDirection: 'column' }}>
-                    <AnimatePresence mode="wait" custom={classroomDirection}>
-                      <motion.div
-                        key={classroom?.id || 'stream_feed'}
-                        custom={classroomDirection}
-                        variants={classroomSlideVariants}
-                        initial="enter"
-                        animate="center"
-                        exit="exit"
-                        style={{ width: '100%', display: 'flex', flexDirection: 'column' }}
-                      >
-                  <div style={{ marginBottom: '18px' }}>
-                    <h2 style={{ fontSize: '1.6rem', fontWeight: 500, letterSpacing: '-0.01em', margin: 0, color: ui.text }}>Classroom stream</h2>
-                  </div>
-
-                  {/* Latest activity header */}
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', flexWrap: 'wrap', gap: '10px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <span style={sectionLabelStyle}>Latest activity</span>
-                      <span style={{ fontSize: '0.7rem', color: ui.faint }}>
-                        {formatShortDate(visibleStreamItems[0]?.posted || visibleStreamItems[0]?.createdAt || Date.now())}
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Feed */}
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                    {loadingClasswork ? (
-                      <>
-                        <Skeleton.StreamCard />
-                        <Skeleton.StreamCard />
-                        <Skeleton.StreamCard />
-                      </>
-                    ) : filteredStreamItems.length === 0 ? (
-                      <div style={{ padding: '36px 20px', borderRadius: '14px', border: `1px dashed ${ui.border}`, textAlign: 'center', color: ui.muted, fontSize: '0.84rem' }}>
-                        {classSettings.classworkStream === 'Hide notifications'
-                          ? 'Classwork and material notifications on the Stream are hidden in Classroom Settings.'
-                          : "This is where you'll see classwork, learning materials, and activities posted for your students."}
-                      </div>
-                    ) : (
-                      filteredStreamItems.map((item, index) => {
-                        const isMaterial = isMaterialItem(item);
-                        const plain = (item.details || '').replace(/<[^>]*>?/gm, '').replace(/&nbsp;/g, ' ').trim();
-                        const postedLabel = formatShortDate(item.posted || item.createdAt || (typeof item.id === 'number' && item.id > 1e12 ? item.id : null));
-                        const openItem = () => {
-                          if (isMaterial) {
-                            handleTabChange('materials');
-                          } else {
-                            handleTabChange('classwork');
-                          }
-                          setExpandedId(item.id);
-                        };
-
-                        const lessonType = isMaterial ? getLessonType(item) : null;
-                        const badgeText = isMaterial
-                          ? (lessonType === 'video' ? 'Video Lesson' : lessonType === 'link' ? 'Link Resource' : 'Material')
-                          : (item.activityType || 'Classwork');
-                        const badgeColor = isMaterial
-                          ? (lessonType === 'video' ? (isDark ? '#fbbf24' : '#d97706') : lessonType === 'link' ? (isDark ? '#38bdf8' : '#0284c7') : (isDark ? '#34d399' : '#059669'))
-                          : ui.accentText;
-                        const iconBg = isMaterial
-                          ? (lessonType === 'video' ? (isDark ? 'rgba(245, 158, 11, 0.15)' : '#fef3c7') : lessonType === 'link' ? (isDark ? 'rgba(56, 189, 248, 0.15)' : '#e0f2fe') : (isDark ? 'rgba(16, 185, 129, 0.15)' : '#dcfce7'))
-                          : (isDark ? 'rgba(52, 211, 153, 0.12)' : '#ecfdf5');
-                        const iconColor = isMaterial
-                          ? (lessonType === 'video' ? (isDark ? '#fbbf24' : '#d97706') : lessonType === 'link' ? (isDark ? '#38bdf8' : '#0284c7') : (isDark ? '#34d399' : '#059669'))
-                          : ui.accentText;
-
-                        const itemActiveCount = !isMaterial ? getActiveCountForActivity(item) : 0;
-
-                        return (
-                          <motion.div 
-                            key={item.id} 
-                            initial={{ opacity: 0, y: 15 }}
-                            animate={{ opacity: 1, y: 0 }}
-                            transition={{ duration: 0.3, delay: index * 0.05 }}
-                            className="vt-card" style={{ background: ui.surface, border: `1px solid ${ui.border}`, borderRadius: '14px', overflow: 'visible', position: 'relative' }}>
-                            {itemActiveCount > 0 && (
-                              <span
-                                title={`${itemActiveCount} student${itemActiveCount > 1 ? 's' : ''} currently working on this activity`}
-                                style={{
-                                  position: 'absolute',
-                                  top: '-4px',
-                                  left: '-4px',
-                                  width: '14px',
-                                  height: '14px',
-                                  borderRadius: '50%',
-                                  backgroundColor: '#10b981',
-                                  boxShadow: isDark
-                                    ? `0 0 0 2.5px ${ui.surface || '#1b1e1c'}, 0 0 12px #10b981`
-                                    : '0 0 0 2.5px #ffffff, 0 0 12px #10b981',
-                                  animation: 'live-pulse 1.8s infinite',
-                                  zIndex: 40,
-                                  pointerEvents: 'auto'
-                                }}
-                              />
-                            )}
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '16px 16px 0' }}>
-                              {renderTeacherAvatar()}
-                              <div style={{ flex: 1, minWidth: 0 }}>
-                                <div style={{ fontSize: '0.82rem', fontWeight: 500, color: ui.muted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                  {postedLabel || 'Recently'}
-                                </div>
-                              </div>
-                              <button className="vt-icon-btn" onClick={openItem} title={isMaterial ? "Open in Materials" : "Open in Classwork"} style={smallIconBtnStyle}>
-                                <MoreHorizontal size={18} />
-                              </button>
-                            </div>
-
-                            <div style={{
-                              display: 'flex',
-                              alignItems: isMobile ? 'flex-start' : 'center',
-                              flexDirection: isMobile ? 'column' : 'row',
-                              gap: '16px',
-                              padding: '16px'
-                            }}>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '16px', width: isMobile ? '100%' : 'auto', flex: isMobile ? 'none' : 1, minWidth: 0 }}>
-                                <div style={{ width: '72px', height: '72px', borderRadius: '10px', background: iconBg, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                                  {(() => {
-                                    const IconComp = getMaterialIcon(item);
-                                    return <IconComp size={28} color={iconColor} strokeWidth={1.6} />;
-                                  })()}
-                                </div>
-                                <div style={{ flex: 1, minWidth: 0 }}>
-                                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                                    <div style={{ fontSize: '0.62rem', fontWeight: 700, letterSpacing: '0.07em', textTransform: 'uppercase', color: badgeColor }}>
-                                      {badgeText}
-                                    </div>
-                                    {item.dueDate && !isMaterial && (
-                                      <span style={{ fontSize: '0.68rem', color: isDark ? '#fbbf24' : '#d97706', fontWeight: 600 }}>
-                                        • Due {formatShortDate(item.dueDate)}
-                                      </span>
-                                    )}
-                                    {item.attachments && item.attachments.length > 0 && (
-                                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', fontSize: '0.68rem', color: ui.faint }}>
-                                        • <Paperclip size={10} /> {item.attachments.length} {item.attachments.length === 1 ? 'file' : 'files'}
-                                      </span>
-                                    )}
-                                  </div>
-                                  <div style={{ fontSize: '1.25rem', fontWeight: 500, color: ui.text, margin: '4px 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                    {item.title}
-                                  </div>
-                                  <div style={{
-                                    fontSize: '0.76rem',
-                                    color: ui.muted,
-                                    lineHeight: 1.5,
-                                    display: '-webkit-box',
-                                    WebkitLineClamp: classSettings.classworkStream === 'Show attachments and details' ? 4 : 2,
-                                    WebkitBoxOrient: 'vertical',
-                                    overflow: 'hidden'
-                                  }}>
-                                    {plain || (isMaterial ? "View learning materials, syllabus, and study references." : "View assignment instructions and manage your students' work.")}
-                                  </div>
-                                  {classSettings.classworkStream === 'Show attachments and details' && item.attachments && item.attachments.length > 0 && (
-                                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '10px' }}>
-                                      {item.attachments.map((att, attIdx) => (
-                                        <span
-                                          key={attIdx}
-                                          onClick={(e) => {
-                                            e.stopPropagation();
-                                            openItem();
-                                          }}
-                                          style={{
-                                            display: 'inline-flex',
-                                            alignItems: 'center',
-                                            gap: '5px',
-                                            padding: '4px 10px',
-                                            borderRadius: '8px',
-                                            background: ui.surfaceAlt,
-                                            border: `1px solid ${ui.border}`,
-                                            fontSize: '0.72rem',
-                                            fontWeight: 600,
-                                            color: ui.text,
-                                            cursor: 'pointer'
-                                          }}
-                                        >
-                                          <Paperclip size={11} /> {att.name || att.title || 'Attachment'}
-                                        </span>
-                                      ))}
-                                    </div>
-                                  )}
-                                </div>
-                              </div>
-                              <button
-                                className="vt-outline-btn"
-                                onClick={openItem}
-                                style={{
-                                  flexShrink: 0,
-                                  background: ui.surfaceAlt,
-                                  border: `1px solid ${ui.border}`,
-                                  color: ui.text,
-                                  padding: '9px 16px',
-                                  borderRadius: '9px',
-                                  fontSize: '0.76rem',
-                                  fontWeight: 600,
-                                  cursor: 'pointer',
-                                  fontFamily: 'inherit',
-                                  transition: 'all 0.2s ease',
-                                  width: isMobile ? '100%' : 'auto',
-                                  textAlign: 'center'
-                                }}
-                              >
-                                {isMaterial ? 'View material' : 'View assignment'}
-                              </button>
-                            </div>
-                          </motion.div>
-                        );
-                      })
-                    )}
-                  </div>
-                      </motion.div>
-                    </AnimatePresence>
-                  </div>
-                </div>
+                <TeacherStreamTab
+                  isMobile={isMobile}
+                  isDark={isDark}
+                  ui={ui}
+                  sectionLabelStyle={sectionLabelStyle}
+                  smallIconBtnStyle={smallIconBtnStyle}
+                  isClassroomArchivedState={isClassroomArchivedState}
+                  bannerTheme={bannerTheme}
+                  displayClassroom={displayClassroom}
+                  classroom={classroom}
+                  classroomDirection={classroomDirection}
+                  classroomSlideVariants={classroomSlideVariants}
+                  activeClassrooms={activeClassrooms}
+                  sidebarClassrooms={sidebarClassrooms}
+                  badgeColors={BADGE_COLORS}
+                  handleUnarchiveCurrentClassroom={handleUnarchiveCurrentClassroom}
+                  setOriginalBannerTheme={setOriginalBannerTheme}
+                  setIsCustomizeOpen={setIsCustomizeOpen}
+                  handleSelectClassroom={handleSelectClassroom}
+                  loadingClasswork={loadingClasswork}
+                  filteredStreamItems={filteredStreamItems}
+                  visibleStreamItems={visibleStreamItems}
+                  streamFallbackNow={streamFallbackNow}
+                  classSettings={classSettings}
+                  isMaterialItem={isMaterialItem}
+                  getMaterialIcon={getMaterialIcon}
+                  getActiveCountForActivity={getActiveCountForActivity}
+                  renderTeacherAvatar={renderTeacherAvatar}
+                  handleTabChange={handleTabChange}
+                  setExpandedId={setExpandedId}
+                />
               )}
 
-              {/* ═══ TAB 2: CLASSWORK ═══ */}
               {activeTab === 'classwork' && (
-                <div style={{ maxWidth: '1000px', margin: '0 auto', width: '100%' }}>
-                  <div style={styles.headerRow}>
-                    <div>
-                      <h2 style={{ color: isDark ? '#E8EAED' : '#1e293b', fontWeight: '700', fontSize: '1.4rem', margin: 0 }}>
-                        List of Classworks
-                      </h2>
-                      <p style={{ margin: '4px 0 0 0', color: isDark ? '#a3a3a3' : '#64748b', fontSize: '0.85rem' }}>
-                        Create and organize assignments, questions, and learning activities for this class.
-                      </p>
-                    </div>
-                    {!isClassroomArchivedState && (
-                      <div>
-                        <button onClick={() => openCreate()} style={styles.addButton} className="btn-anim">
-                          <Plus size={18} style={{ marginRight: '6px' }} /> Create
-                        </button>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* List of Classwork */}
-                  <div style={styles.list}>
-                    {loadingClasswork ? (
-                      Array.from({ length: 3 }).map((_, i) => <Skeleton.AssignmentRow key={i} />)
-                    ) : visibleClasswork.length === 0 ? (
-                      <div style={{ textAlign: 'center', padding: '40px 20px', color: isDark ? '#a3a3a3' : '#94a3b8' }}>
-                        <BookOpen size={48} color={isDark ? '#4A4A4A' : '#cbd5e1'} style={{ margin: '0 auto 12px auto', display: 'block' }} />
-                        <p style={{ margin: 0, fontSize: '1rem', fontWeight: '600' }}>No classwork yet</p>
-                        <p style={{ margin: '6px 0 0 0', fontSize: '0.85rem' }}>Click "Create" to assign new work to your students.</p>
-                      </div>
-                    ) : (
-                      visibleClasswork.map((item, index) => {
-                        const isOpen = String(expandedId) === String(item.id);
-                        const due = formatShortDate(item.dueDate);
-                        const posted = formatShortDate(item.posted || (typeof item.id === 'number' && item.id > 1e12 ? item.id : null));
-                        const itemActiveCount = getActiveCountForActivity(item);
-                        return (
-                          <motion.div 
-                            key={item.id} 
-                            initial={{ opacity: 0, y: 15 }}
-                            animate={{ opacity: 1, y: 0 }}
-                            transition={{ duration: 0.3, delay: index * 0.05 }}
-                            style={styles.itemWrapper}>
-                            <div style={styles.itemHeader}>
-                              <div
-                                style={{
-                                  width: '100%',
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  justifyContent: 'space-between',
-                                  padding: '14px 20px',
-                                  borderRadius: '12px',
-                                  backgroundColor: isDark ? (isOpen ? '#242a2b' : '#1e2324') : (isOpen ? '#f1f5f9' : '#f8fafc'),
-                                  border: isDark ? (isOpen ? '1px solid #444c4f' : '1px solid #2d3335') : (isOpen ? '1px solid #cbd5e1' : '1px solid #e2e8f0'),
-                                  cursor: 'pointer',
-                                  userSelect: 'none',
-                                  transition: 'all 0.2s ease',
-                                  position: 'relative',
-                                  overflow: 'visible'
-                                }}
-                                onClick={() => toggleExpand(item.id)}
-                                onMouseOver={(e) => {
-                                  if (isDark && !isOpen) {
-                                    e.currentTarget.style.backgroundColor = '#242a2b';
-                                    e.currentTarget.style.borderColor = '#383e40';
-                                  }
-                                }}
-                                onMouseOut={(e) => {
-                                  if (isDark && !isOpen) {
-                                    e.currentTarget.style.backgroundColor = '#1e2324';
-                                    e.currentTarget.style.borderColor = '#2d3335';
-                                  }
-                                }}
-                              >
-                                {itemActiveCount > 0 && (
-                                  <span
-                                    title={`${itemActiveCount} student${itemActiveCount > 1 ? 's' : ''} currently working on this activity`}
-                                    style={{
-                                      position: 'absolute',
-                                      top: '-4px',
-                                      left: '-4px',
-                                      width: '14px',
-                                      height: '14px',
-                                      borderRadius: '50%',
-                                      backgroundColor: '#10b981',
-                                      boxShadow: isDark
-                                        ? `0 0 0 2.5px ${isOpen ? '#242a2b' : '#1e2324'}, 0 0 12px #10b981`
-                                        : `0 0 0 2.5px ${isOpen ? '#f1f5f9' : '#f8fafc'}, 0 0 12px #10b981`,
-                                      animation: 'live-pulse 1.8s infinite',
-                                      zIndex: 40,
-                                      pointerEvents: 'auto'
-                                    }}
-                                  />
-                                )}
-                                <div style={{ display: 'flex', alignItems: 'center', minWidth: 0 }}>
-                                  {/* Icon Container */}
-                                  <div style={{ width: '36px', height: '36px', borderRadius: '10px', backgroundColor: isDark ? 'rgba(16, 185, 129, 0.12)' : '#dcfce7', border: isDark ? '1px solid rgba(16, 185, 129, 0.25)' : 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#10b981', marginRight: '16px', flexShrink: 0 }}>
-                                    {(() => {
-                                      const IconComp = getMaterialIcon(item);
-                                      return <IconComp size={18} />;
-                                    })()}
-                                  </div>
-
-                                  <span style={{ color: isDark ? '#f5f5f5' : '#1e293b', fontSize: '1.05rem', fontWeight: '700', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                    {item.title}
-                                  </span>
-                                </div>
-
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexShrink: 0 }}>
-                                  {(item.deleted || item.archived) && (
-                                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', fontSize: '0.72rem', color: isDark ? '#fca5a5' : '#b91c1c', backgroundColor: isDark ? 'rgba(239, 68, 68, 0.14)' : '#fef2f2', border: isDark ? '1px solid rgba(239, 68, 68, 0.35)' : '1px solid #fecaca', padding: '4px 10px', borderRadius: '9999px', fontWeight: '700' }}>
-                                      {item.deleted ? 'Deleted' : 'Archived'}
-                                    </span>
-                                  )}
-                                  {due ? (
-                                    <span style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.75rem', color: isDark ? '#a7f3d0' : '#059669', backgroundColor: isDark ? 'rgba(16, 185, 129, 0.08)' : '#ecfdf5', border: isDark ? '1px solid rgba(16, 185, 129, 0.2)' : '1px solid #d1fae5', padding: '5px 12px', borderRadius: '8px', fontWeight: '600' }}>
-                                      <Calendar size={12} /> Due {due}
-                                    </span>
-                                  ) : null}
-
-                                  {!isClassroomArchivedState && (
-                                    <>
-                                      {/* Vertical Divider */}
-                                      <div style={{ width: '1px', height: '24px', backgroundColor: isDark ? '#3d4447' : '#e2e8f0' }} />
-
-                                      {/* 3-dots Menu Button */}
-                                      <div
-                                        style={{
-                                          ...styles.threeDots,
-                                          width: '32px',
-                                          height: '32px',
-                                          borderRadius: '8px',
-                                          display: 'flex',
-                                          alignItems: 'center',
-                                          justifyContent: 'center',
-                                          transition: 'background 0.15s ease'
-                                        }}
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          toggleMenu(e, item.id);
-                                        }}
-                                        onMouseOver={(e) => e.currentTarget.style.backgroundColor = isDark ? 'rgba(255,255,255,0.08)' : '#e2e8f0'}
-                                        onMouseOut={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
-                                      >
-                                        <MoreVertical size={18} color={isDark ? '#a3a3a3' : '#64748b'} />
-                                        {activeMenu === item.id && (
-                                          <div style={styles.dropdownMenu} onClick={(e) => e.stopPropagation()}>
-                                            {(item.deleted || item.archived) ? (
-                                              <>
-                                                <div style={styles.dropdownItem} onClick={(e) => handleRestoreClasswork(e, item.id)}>Restore</div>
-                                                <div style={{ ...styles.dropdownItem, color: '#ef4444' }} onClick={(e) => { e.stopPropagation(); handleDeleteClasswork(e, item.id); }}>Delete Forever</div>
-                                              </>
-                                            ) : (
-                                              <>
-                                                <div style={styles.dropdownItem} onClick={(e) => openModify(e, item)}>Modify</div>
-                                                <div style={styles.dropdownItem} onClick={(e) => handleArchive(e, item.id)}>Archive</div>
-                                                <div style={styles.dropdownItem} onClick={(e) => handleCopy(e, item)}>Copy</div>
-                                                <div style={{ ...styles.dropdownItem, color: '#ef4444' }} onClick={(e) => { e.stopPropagation(); handleDeleteClasswork(e, item.id); }}>Delete</div>
-                                              </>
-                                            )}
-                                          </div>
-                                        )}
-                                      </div>
-                                    </>
-                                  )}
-                                </div>
-                              </div>
-                            </div>
-                            <AnimatePresence initial={false}>
-                              {isOpen && (
-                                <motion.div
-                                  key="detail"
-                                  initial={{ opacity: 0, height: 0 }}
-                                  animate={{ opacity: 1, height: 'auto' }}
-                                  exit={{ opacity: 0, height: 0 }}
-                                  transition={{ duration: 0.22, ease: 'easeOut' }}
-                                  style={{ overflow: 'hidden' }}
-                                >
-                                  <div style={styles.detailCard}>
-                                    <div style={styles.detailHeaderBar}>
-                                  <ClipboardList size={30} color={isDark ? '#10b981' : '#4b5563'} />
-                                  <div>
-                                    <div style={styles.detailTitle}>{item.title}</div>
-                                    <div style={styles.detailDue}>{due ? `Due ${due}` : 'No Due Date'} • {item.points || 100} points</div>
-                                  </div>
-                                </div>
-
-                                <div style={styles.detailBody}>
-                                  <div style={styles.detailLeft}>
-                                    {posted && <div style={styles.postedText}>Posted {posted}</div>}
-                                  {item.details ? (
-                                    <>
-                                      {(() => {
-                                        const hasMedia = /<(video|iframe|audio)/i.test(item.details || '');
-                                        const isClamped = !hasMedia && expandedInstructionId !== item.id;
-                                        const textLength = typeof item.details === 'string' ? item.details.replace(/<[^>]*>?/gm, '').length : 0;
-                                        const canToggle = !hasMedia && textLength > 100;
-
-                                        return (
-                                          <>
-                                            <div
-                                              style={{
-                                                ...styles.detailInstruction,
-                                                whiteSpace: 'normal',
-                                                ...(isClamped ? {
-                                                  display: '-webkit-box',
-                                                  WebkitLineClamp: 3,
-                                                  WebkitBoxOrient: 'vertical',
-                                                  overflow: 'hidden',
-                                                  textOverflow: 'ellipsis'
-                                                } : {
-                                                  display: 'block'
-                                                })
-                                              }}
-                                              onClick={handleInstructionClick}
-                                            >
-                                              <RichInstruction html={item.details} />
-                                            </div>
-                                            {canToggle && expandedInstructionId !== item.id && (
-                                              <div
-                                                style={{ color: '#10b981', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 'bold', marginTop: '6px' }}
-                                                onClick={(e) => { e.stopPropagation(); setExpandedInstructionId(item.id); }}
-                                              >
-                                                View activity details...
-                                              </div>
-                                            )}
-                                            {canToggle && expandedInstructionId === item.id && (
-                                              <div
-                                                style={{ color: '#10b981', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 'bold', marginTop: '6px' }}
-                                                onClick={(e) => { e.stopPropagation(); setExpandedInstructionId(null); }}
-                                              >
-                                                Show less
-                                              </div>
-                                            )}
-                                          </>
-                                        );
-                                      })()}
-                                    </>
-                                  ) : (
-                                    <p style={styles.detailInstruction}>No instructions provided.</p>
-                                  )}
-
-                                    {item.attachments?.length > 0 && (
-                                      <div style={styles.cardAttachments}>
-                                        {item.attachments.map((att, i) => (
-                                          <AttachmentCard
-                                            key={i}
-                                            att={att}
-                                            isDark={isDark}
-                                            onClick={(clickedAtt) => {
-                                              const targetName = (clickedAtt.name || clickedAtt.url || '').toLowerCase();
-                                              const isImg = clickedAtt.type === 'image' || /\.(png|jpe?g|gif|webp|svg)(\?.*)?$/i.test(targetName);
-                                              const isVid = clickedAtt.type === 'video' || /\.(mp4|webm|mov|m4v|mkv|avi)(\?.*)?$/i.test(targetName);
-                                              if (isImg) setPreviewImage(clickedAtt);
-                                              else if (isVid) setPreviewVideo(clickedAtt);
-                                              else setPreviewIframe(clickedAtt);
-                                            }}
-                                          />
-                                        ))}
-                                      </div>
-                                    )}
-                                  </div>
-
-                                  <div style={styles.detailStats}>
-                                    <div style={styles.statCol}>
-                                      <span style={styles.statNum}>{submissionData.counts[item.id] || 0}</span>
-                                      <span style={styles.statLabel}>Turned in</span>
-                                    </div>
-                                    <div style={styles.statColDivider} />
-                                    <div style={styles.statCol}>
-                                      <span style={styles.statNum}>{enrolledStudents.length || submissionData.studentCount || 0}</span>
-                                      <span style={styles.statLabel}>Assigned</span>
-                                    </div>
-                                  </div>
-                                </div>
-
-                                <div style={styles.detailDivider} />
-
-                                <div style={{
-                                  ...styles.detailFooter,
-                                  flexDirection: isMobile ? 'column' : 'row',
-                                  alignItems: isMobile ? 'stretch' : 'center',
-                                  padding: isMobile ? '14px 20px' : '16px 28px'
-                                }}>
-                                  {/* Link para sa activity details at grading */}
-                                  <span
-                                    style={{
-                                      ...styles.viewActivityLink,
-                                      display: 'inline-flex',
-                                      alignItems: 'center',
-                                      cursor: 'pointer'
-                                    }}
-                                    onClick={() => {
-                                      try {
-                                        sessionStorage.setItem(`verity_teacher_classwork_tab_${classroom?.id || 'default'}`, activeTab);
-                                        sessionStorage.setItem('verity_teacher_classwork_tab_active', activeTab);
-                                      } catch {}
-                                      if (onOpenGrading) onOpenGrading(item);
-                                      else {
-                                        setSelectedGradingActivityId(item.id);
-                                        handleTabChange('grades');
-                                      }
-                                    }}
-                                    onMouseEnter={(e) => { e.currentTarget.style.textDecoration = 'underline'; }}
-                                    onMouseLeave={(e) => { e.currentTarget.style.textDecoration = 'none'; }}
-                                    title="Open activity details and grade student submissions"
-                                  >
-                                    View Activity & Grading
-                                  </span>
-                                  <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap', width: isMobile ? '100%' : 'auto', justifyContent: isMobile ? 'space-between' : 'flex-end' }}>
-                                    {/* Link para sa VCR Replay playback */}
-                                    <span
-                                      style={{
-                                        color: isDark ? '#c084fc' : '#7c3aed',
-                                        fontSize: '0.92rem',
-                                        cursor: 'pointer',
-                                        fontWeight: '700',
-                                        display: 'inline-flex',
-                                        alignItems: 'center'
-                                      }}
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        try {
-                                          sessionStorage.setItem(`verity_teacher_classwork_tab_${classroom?.id || 'default'}`, activeTab);
-                                          sessionStorage.setItem('verity_teacher_classwork_tab_active', activeTab);
-                                        } catch {}
-                                        onOpenPlayback && onOpenPlayback(item, null);
-                                      }}
-                                      onMouseEnter={(e) => { e.currentTarget.style.textDecoration = 'underline'; }}
-                                      onMouseLeave={(e) => { e.currentTarget.style.textDecoration = 'none'; }}
-                                      title="Open VCR replay & student recordings"
-                                    >
-                                      Replay Playback
-                                    </span>
-                                    {/* Button para sa Live Monitoring */}
-                                    {!isClassroomArchivedState && (
-                                      <button
-                                        style={{
-                                          ...styles.liveMonitorBtn,
-                                          width: isMobile ? '100%' : 'auto',
-                                          justifyContent: 'center'
-                                        }}
-                                        className="btn-anim"
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          try {
-                                            sessionStorage.setItem(`verity_teacher_classwork_tab_${classroom?.id || 'default'}`, activeTab);
-                                            sessionStorage.setItem('verity_teacher_classwork_tab_active', activeTab);
-                                          } catch {}
-                                          onStartMonitoring && onStartMonitoring(item);
-                                        }}
-                                        title="Open live proctoring & monitoring"
-                                      >
-                                        <Monitor size={16} /> Live Monitoring
-                                      </button>
-                                    )}
-                                  </div>
-                                </div>
-                                  </div>
-                                </motion.div>
-                              )}
-                            </AnimatePresence>
-                          </motion.div>
-                        );
-                      })
-                    )}
-                  </div>
-                </div>
+                <TeacherClassworkTab
+                  isDark={isDark}
+                  isMobile={isMobile}
+                  styles={styles}
+                  isClassroomArchivedState={isClassroomArchivedState}
+                  openCreate={openCreate}
+                  loadingClasswork={loadingClasswork}
+                  visibleClasswork={visibleClasswork}
+                  expandedId={expandedId}
+                  toggleExpand={toggleExpand}
+                  getActiveCountForActivity={getActiveCountForActivity}
+                  getMaterialIcon={getMaterialIcon}
+                  activeMenu={activeMenu}
+                  toggleMenu={toggleMenu}
+                  handleRestoreClasswork={handleRestoreClasswork}
+                  handleDeleteClasswork={handleDeleteClasswork}
+                  openModify={openModify}
+                  handleArchive={handleArchive}
+                  handleCopy={handleCopy}
+                  expandedInstructionId={expandedInstructionId}
+                  setExpandedInstructionId={setExpandedInstructionId}
+                  handleInstructionClick={handleInstructionClick}
+                  setPreviewImage={setPreviewImage}
+                  setPreviewVideo={setPreviewVideo}
+                  setPreviewIframe={setPreviewIframe}
+                  submissionData={submissionData}
+                  enrolledStudents={enrolledStudents}
+                  classroom={classroom}
+                  activeTab={activeTab}
+                  onOpenGrading={onOpenGrading}
+                  setSelectedGradingActivityId={setSelectedGradingActivityId}
+                  handleTabChange={handleTabChange}
+                  onOpenPlayback={onOpenPlayback}
+                  onStartMonitoring={onStartMonitoring}
+                />
               )}
 
-              {/* ═══ TAB: MATERIALS ═══ */}
               {activeTab === 'materials' && (
-                <div style={{ maxWidth: '1000px', margin: '0 auto', width: '100%' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', borderBottom: isDark ? '1px solid #4A4A4A' : '1px solid #e2e8f0', paddingBottom: '18px', marginBottom: '20px' }}>
-                    <div>
-                      <h2 style={{ margin: 0, color: isDark ? '#E8EAED' : '#1e293b', fontWeight: '700', fontSize: '1.4rem' }}>
-                        List of Materials
-                      </h2>
-                      <p style={{ margin: '4px 0 0 0', color: isDark ? '#a3a3a3' : '#64748b', fontSize: '0.85rem' }}>
-                        Upload and manage resources, syllabus, and study guides for this classroom.
-                      </p>
-                    </div>
-                    {!isClassroomArchivedState && (
-                      <div>
-                        <button onClick={() => openCreate('Material')} style={styles.addButton} className="btn-anim">
-                          <Plus size={18} style={{ marginRight: '6px' }} /> Create
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                  <div style={{ ...styles.list, padding: '0 0 40px 0' }}>
-                    {loadingClasswork ? (
-                      Array.from({ length: 3 }).map((_, i) => <Skeleton.AssignmentRow key={i} />)
-                    ) : visibleMaterials.length === 0 ? (
-                      <div style={{ textAlign: 'center', padding: '40px 20px', color: isDark ? '#a3a3a3' : '#94a3b8' }}>
-                        <FileText size={48} color={isDark ? '#4A4A4A' : '#cbd5e1'} style={{ margin: '0 auto 12px auto', display: 'block' }} />
-                        <p style={{ margin: 0, fontSize: '1rem', fontWeight: '600' }}>No materials uploaded yet</p>
-                        <p style={{ margin: '6px 0 0 0', fontSize: '0.85rem' }}>Use the Create button to upload syllabus, readings, and reference documents.</p>
-                      </div>
-                    ) : (
-                      visibleMaterials.map((item) => {
-                        const isOpen = String(expandedId) === String(item.id);
-                        const posted = formatShortDate(item.posted || (typeof item.id === 'number' && item.id > 1e12 ? item.id : null));
-                        return (
-                          <div key={item.id} style={styles.itemWrapper}>
-                            <div style={styles.itemHeader}>
-                              <div
-                                style={{
-                                  width: '100%',
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  justifyContent: 'space-between',
-                                  padding: '14px 20px',
-                                  borderRadius: '12px',
-                                  backgroundColor: isDark ? (isOpen ? '#242a2b' : '#1e2324') : (isOpen ? '#f1f5f9' : '#f8fafc'),
-                                  border: isDark ? (isOpen ? '1px solid #444c4f' : '1px solid #2d3335') : (isOpen ? '1px solid #cbd5e1' : '1px solid #e2e8f0'),
-                                  cursor: 'pointer',
-                                  userSelect: 'none',
-                                  transition: 'all 0.2s ease',
-                                  position: 'relative'
-                                }}
-                                onClick={() => toggleExpand(item.id)}
-                                onMouseOver={(e) => {
-                                  if (isDark && !isOpen) {
-                                    e.currentTarget.style.backgroundColor = '#242a2b';
-                                    e.currentTarget.style.borderColor = '#383e40';
-                                  }
-                                }}
-                                onMouseOut={(e) => {
-                                  if (isDark && !isOpen) {
-                                    e.currentTarget.style.backgroundColor = '#1e2324';
-                                    e.currentTarget.style.borderColor = '#2d3335';
-                                  }
-                                }}
-                              >
-                                <div style={{ display: 'flex', alignItems: 'center', minWidth: 0 }}>
-                                  {/* Icon Container: Video, Document, or Link */}
-                                  {(() => {
-                                    const lessonType = getLessonType(item);
-                                    let bg = isDark ? 'rgba(16, 185, 129, 0.12)' : '#dcfce7';
-                                    let color = '#10b981';
-                                    if (lessonType === 'video') {
-                                      bg = isDark ? 'rgba(245, 158, 11, 0.15)' : '#fef3c7';
-                                      color = isDark ? '#fbbf24' : '#d97706';
-                                    } else if (lessonType === 'link') {
-                                      bg = isDark ? 'rgba(56, 189, 248, 0.15)' : '#e0f2fe';
-                                      color = isDark ? '#38bdf8' : '#0284c7';
-                                    }
-                                    return (
-                                      <div style={{ width: '36px', height: '36px', borderRadius: '10px', backgroundColor: bg, border: isDark ? `1px solid ${color}40` : 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', color: color, marginRight: '16px', flexShrink: 0 }}>
-                                        {lessonType === 'video' ? <Video size={18} /> : lessonType === 'link' ? <Link2 size={18} /> : <FileText size={18} />}
-                                      </div>
-                                    );
-                                  })()}
-
-                                  <span style={{ color: isDark ? '#f5f5f5' : '#1e293b', fontSize: '1.05rem', fontWeight: '700', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                    {item.title}
-                                  </span>
-                                </div>
-
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexShrink: 0 }}>
-                                  {(item.deleted || item.archived) && (
-                                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', fontSize: '0.72rem', color: isDark ? '#fca5a5' : '#b91c1c', backgroundColor: isDark ? 'rgba(239, 68, 68, 0.14)' : '#fef2f2', border: isDark ? '1px solid rgba(239, 68, 68, 0.35)' : '1px solid #fecaca', padding: '4px 10px', borderRadius: '9999px', fontWeight: '700' }}>
-                                      {item.deleted ? 'Deleted' : 'Archived'}
-                                    </span>
-                                  )}
-                                  {posted ? (
-                                    <span style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.75rem', color: isDark ? '#a7f3d0' : '#059669', backgroundColor: isDark ? 'rgba(16, 185, 129, 0.08)' : '#ecfdf5', border: isDark ? '1px solid rgba(16, 185, 129, 0.2)' : '1px solid #d1fae5', padding: '5px 12px', borderRadius: '8px', fontWeight: '600' }}>
-                                      Posted {posted}
-                                    </span>
-                                  ) : null}
-
-                                  {!isClassroomArchivedState && (
-                                    <>
-                                      {/* Vertical Divider */}
-                                      <div style={{ width: '1px', height: '24px', backgroundColor: isDark ? '#3d4447' : '#e2e8f0' }} />
-
-                                      {/* 3-dots Menu Button */}
-                                      <div
-                                        style={{
-                                          ...styles.threeDots,
-                                          width: '32px',
-                                          height: '32px',
-                                          borderRadius: '8px',
-                                          display: 'flex',
-                                          alignItems: 'center',
-                                          justifyContent: 'center',
-                                          transition: 'background 0.15s ease'
-                                        }}
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          toggleMenu(e, item.id);
-                                        }}
-                                        onMouseOver={(e) => e.currentTarget.style.backgroundColor = isDark ? 'rgba(255,255,255,0.08)' : '#e2e8f0'}
-                                        onMouseOut={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
-                                      >
-                                        <MoreVertical size={18} color={isDark ? '#a3a3a3' : '#64748b'} />
-                                        {activeMenu === item.id && (
-                                          <div style={styles.dropdownMenu} onClick={(e) => e.stopPropagation()}>
-                                            {(item.deleted || item.archived) ? (
-                                              <>
-                                                <div style={styles.dropdownItem} onClick={(e) => handleRestoreClasswork(e, item.id)}>Restore</div>
-                                                <div style={{ ...styles.dropdownItem, color: '#ef4444' }} onClick={(e) => { e.stopPropagation(); handleDeleteClasswork(e, item.id); }}>Delete Forever</div>
-                                              </>
-                                            ) : (
-                                              <>
-                                                <div style={styles.dropdownItem} onClick={(e) => openModify(e, item)}>Modify</div>
-                                                <div style={styles.dropdownItem} onClick={(e) => handleArchive(e, item.id)}>Archive</div>
-                                                <div style={{ ...styles.dropdownItem, color: '#ef4444' }} onClick={(e) => { e.stopPropagation(); handleDeleteClasswork(e, item.id); }}>Delete</div>
-                                              </>
-                                            )}
-                                          </div>
-                                        )}
-                                      </div>
-                                    </>
-                                  )}
-                                </div>
-                              </div>
-                            </div>
-
-                            <AnimatePresence initial={false}>
-                              {isOpen && (
-                                <motion.div
-                                  key="detail"
-                                  initial={{ opacity: 0, height: 0 }}
-                                  animate={{ opacity: 1, height: 'auto' }}
-                                  exit={{ opacity: 0, height: 0 }}
-                                  transition={{ duration: 0.22, ease: 'easeOut' }}
-                                  style={{ overflow: 'hidden' }}
-                                >
-                                  <div style={styles.detailCard}>
-                                    <div style={styles.detailHeaderBar}>
-                                      {(() => {
-                                        const lessonType = getLessonType(item);
-                                        if (lessonType === 'video') return <Video size={30} color={isDark ? '#fbbf24' : '#d97706'} />;
-                                        if (lessonType === 'link') return <Link2 size={30} color={isDark ? '#38bdf8' : '#0284c7'} />;
-                                        return <FileText size={30} color={isDark ? '#10b981' : '#059669'} />;
-                                      })()}
-                                      <div>
-                                        <div style={styles.detailTitle}>{item.title}</div>
-                                      </div>
-                                    </div>
-
-                                <div style={styles.detailBody}>
-                                  <div style={{ ...styles.detailLeft, flex: '1 1 100%' }}>
-                                    {posted && <div style={styles.postedText}>Posted {posted}</div>}
-                                  {item.details ? (
-                                    <>
-                                      {(() => {
-                                        const hasMedia = /<(video|iframe|audio)/i.test(item.details || '');
-                                        const isClamped = !hasMedia && expandedInstructionId !== item.id;
-                                        const textLength = typeof item.details === 'string' ? item.details.replace(/<[^>]*>?/gm, '').length : 0;
-                                        const canToggle = !hasMedia && textLength > 100;
-
-                                        return (
-                                          <>
-                                            <div
-                                              style={{
-                                                ...styles.detailInstruction,
-                                                whiteSpace: 'normal',
-                                                ...(isClamped ? {
-                                                  display: '-webkit-box',
-                                                  WebkitLineClamp: 3,
-                                                  WebkitBoxOrient: 'vertical',
-                                                  overflow: 'hidden',
-                                                  textOverflow: 'ellipsis'
-                                                } : {
-                                                  display: 'block'
-                                                })
-                                              }}
-                                              onClick={handleInstructionClick}
-                                            >
-                                              <RichInstruction html={item.details} />
-                                            </div>
-                                            {canToggle && expandedInstructionId !== item.id && (
-                                              <div
-                                                style={{ color: '#10b981', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 'bold', marginTop: '6px' }}
-                                                onClick={(e) => { e.stopPropagation(); setExpandedInstructionId(item.id); }}
-                                              >
-                                                View details...
-                                              </div>
-                                            )}
-                                            {canToggle && expandedInstructionId === item.id && (
-                                              <div
-                                                style={{ color: '#10b981', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 'bold', marginTop: '6px' }}
-                                                onClick={(e) => { e.stopPropagation(); setExpandedInstructionId(null); }}
-                                              >
-                                                Show less
-                                              </div>
-                                            )}
-                                          </>
-                                        );
-                                      })()}
-                                    </>
-                                  ) : (
-                                    <p style={styles.detailInstruction}>No instructions provided.</p>
-                                  )}
-
-                                    {item.attachments?.length > 0 && (
-                                      <div style={styles.cardAttachments}>
-                                        {item.attachments.map((att, i) => (
-                                          <AttachmentCard
-                                            key={i}
-                                            att={att}
-                                            isDark={isDark}
-                                            onClick={(clickedAtt) => {
-                                              const targetName = (clickedAtt.name || clickedAtt.url || '').toLowerCase();
-                                              const isImg = clickedAtt.type === 'image' || /\.(png|jpe?g|gif|webp|svg)(\?.*)?$/i.test(targetName);
-                                              const isVid = clickedAtt.type === 'video' || /\.(mp4|webm|mov|m4v|mkv|avi)(\?.*)?$/i.test(targetName);
-                                              if (isImg) setPreviewImage(clickedAtt);
-                                              else if (isVid) setPreviewVideo(clickedAtt);
-                                              else setPreviewIframe(clickedAtt);
-                                            }}
-                                          />
-                                        ))}
-                                      </div>
-                                    )}
-                                  </div>
-                                </div>
-
-                                <div style={styles.detailDivider} />
-
-                                <div style={{
-                                  ...styles.detailFooter,
-                                  flexDirection: isMobile ? 'column' : 'row',
-                                  alignItems: isMobile ? 'stretch' : 'center',
-                                  padding: isMobile ? '14px 20px' : '16px 28px'
-                                }}>
-                                  <button
-                                    style={{
-                                      ...styles.viewGradingBtn,
-                                      width: isMobile ? '100%' : 'auto',
-                                      justifyContent: 'center'
-                                    }}
-                                    className="btn-anim"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      setViewingMaterialModal(item);
-                                    }}
-                                    title="View full material details"
-                                  >
-                                    <FileText size={16} /> View Material Details
-                                  </button>
-                                </div>
-                              </div>
-                            </motion.div>
-                              )}
-                            </AnimatePresence>
-                          </div>
-                        );
-                      })
-                    )}
-                  </div>
-                </div>
+                <TeacherMaterialsTab
+                  isDark={isDark}
+                  isMobile={isMobile}
+                  styles={styles}
+                  isClassroomArchivedState={isClassroomArchivedState}
+                  openCreate={openCreate}
+                  loadingClasswork={loadingClasswork}
+                  visibleMaterials={visibleMaterials}
+                  expandedId={expandedId}
+                  toggleExpand={toggleExpand}
+                  activeMenu={activeMenu}
+                  toggleMenu={toggleMenu}
+                  handleRestoreClasswork={handleRestoreClasswork}
+                  handleDeleteClasswork={handleDeleteClasswork}
+                  openModify={openModify}
+                  handleArchive={handleArchive}
+                  expandedInstructionId={expandedInstructionId}
+                  setExpandedInstructionId={setExpandedInstructionId}
+                  handleInstructionClick={handleInstructionClick}
+                  setPreviewImage={setPreviewImage}
+                  setPreviewVideo={setPreviewVideo}
+                  setPreviewIframe={setPreviewIframe}
+                  setViewingMaterialModal={setViewingMaterialModal}
+                />
               )}
 
-              {/* ═══ TAB 3: PEOPLE ═══ */}
               {activeTab === 'people' && (
-                <div style={{ maxWidth: '850px', margin: '0 auto', width: '100%' }}>
-                  <div style={{ marginBottom: '40px' }}>
-                    <div style={styles.peopleSectionHeader}>
-                      <h2 style={styles.peopleSectionTitle}>Teachers</h2>
-                      <span style={{ fontSize: '0.85rem', color: '#10b981', fontWeight: '700' }}>1 instructor</span>
-                    </div>
-                    <div style={styles.peopleList}>
-                      <div style={styles.peopleRow}>
-                        {instructorInfo?.avatar ? (
-                          <img
-                            src={instructorInfo.avatar}
-                            alt={instructorInfo?.name || 'Instructor'}
-                            style={{
-                              width: '40px',
-                              height: '40px',
-                              borderRadius: '50%',
-                              objectFit: 'cover',
-                              flexShrink: 0,
-                              boxShadow: '0 2px 6px rgba(0,0,0,0.15)'
-                            }}
-                          />
-                        ) : (
-                          <div style={styles.peopleAvatarGreen}>
-                            {(instructorInfo?.name || classroom?.instructor || currentUser?.name || 'I').charAt(0).toUpperCase()}
-                          </div>
-                        )}
-                        <div>
-                          <div style={{ fontWeight: '700', color: isDark ? '#E8EAED' : '#1e293b', fontSize: '0.95rem' }}>
-                            {instructorInfo?.name || classroom?.instructor || currentUser?.name || 'Instructor'}
-                          </div>
-                          {(instructorInfo?.email || classroom?.instructorEmail || (currentUser?.role === 'Teacher' ? currentUser?.email : '')) && (
-                            <div style={{ fontSize: '0.8rem', color: isDark ? '#a3a3a3' : '#64748b' }}>
-                              {instructorInfo?.email || classroom?.instructorEmail || (currentUser?.role === 'Teacher' ? currentUser?.email : '')}
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div>
-                    <div style={styles.peopleSectionHeader}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                        <h2 style={styles.peopleSectionTitle}>Students</h2>
-                        {!isClassroomArchivedState && (currentUser?.role === 'Admin' || (currentUser?.role === 'Teacher' && allowManageStudents)) && (
-                          <motion.button 
-                            whileHover={{ scale: 1.05 }} 
-                            whileTap={{ scale: 0.95 }}
-                            onClick={() => setIsAddStudentOpen(true)}
-                            style={{ padding: '6px 12px', backgroundColor: '#10b981', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 'bold' }}
-                          >
-                            + Add Student
-                          </motion.button>
-                        )}
-                      </div>
-                      <span style={{ fontSize: '0.85rem', color: isDark ? '#a3a3a3' : '#64748b', fontWeight: '600' }}>
-                        {enrolledStudents.length} student{enrolledStudents.length === 1 ? '' : 's'}
-                      </span>
-                    </div>
-
-                    <div style={styles.peopleList}>
-                      {loadingStudents ? (
-                        <div style={{ display: 'flex', flexDirection: 'column' }}>
-                          {Array.from({ length: 5 }).map((_, i) => (
-                            <Skeleton.Person key={i} isDark={isDark} />
-                          ))}
-                        </div>
-                      ) : enrolledStudents.length === 0 ? (
-                        <div style={{ padding: '30px 10px', textAlign: 'center', color: isDark ? '#a3a3a3' : '#64748b' }}>
-                          <Users size={40} color={isDark ? '#4A4A4A' : '#cbd5e1'} style={{ margin: '0 auto 10px auto', display: 'block' }} />
-                          <p style={{ fontWeight: '600', margin: 0, color: isDark ? '#E8EAED' : '#1e293b' }}>No students enrolled yet</p>
-                          <p style={{ fontSize: '0.85rem', color: isDark ? '#a3a3a3' : '#94a3b8', margin: '4px 0 0 0' }}>
-                            Give students the class code <strong style={{ color: '#10b981' }}>{classCode}</strong> to join.
-                          </p>
-                        </div>
-                      ) : (
-                        sortedEnrolledStudents.map((student, idx) => (
-                          <div key={idx} style={styles.peopleRow}>
-                            {student.avatar ? (
-                              <img
-                                src={student.avatar}
-                                alt={student.name}
-                                style={{
-                                  width: '40px',
-                                  height: '40px',
-                                  borderRadius: '50%',
-                                  objectFit: 'cover',
-                                  flexShrink: 0,
-                                  boxShadow: '0 2px 6px rgba(0,0,0,0.15)'
-                                }}
-                              />
-                            ) : (
-                              <div style={styles.peopleAvatarBlue}>
-                                {student.name.charAt(0).toUpperCase()}
-                              </div>
-                            )}
-                            <div>
-                              <div style={{ fontWeight: '600', color: isDark ? '#E8EAED' : '#1e293b', fontSize: '0.95rem' }}>
-                                {student.name}
-                              </div>
-                              <div style={{ fontSize: '0.8rem', color: isDark ? '#a3a3a3' : '#64748b' }}>
-                                {student.email}
-                              </div>
-                            </div>
-                          </div>
-                        ))
-                      )}
-                    </div>
-                  </div>
-                </div>
+                <TeacherPeopleTab
+                  isDark={isDark}
+                  styles={styles}
+                  instructorInfo={instructorInfo}
+                  classroom={classroom}
+                  currentUser={currentUser}
+                  isClassroomArchivedState={isClassroomArchivedState}
+                  allowManageStudents={allowManageStudents}
+                  setIsAddStudentOpen={setIsAddStudentOpen}
+                  enrolledStudents={enrolledStudents}
+                  sortedEnrolledStudents={sortedEnrolledStudents}
+                  loadingStudents={loadingStudents}
+                  classCode={classCode}
+                />
               )}
 
-              {/* ═══ TAB 4: GRADES ═══ */}
               {activeTab === 'grades' && (
-                <div style={{ maxWidth: '1000px', margin: '0 auto', width: '100%' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', borderBottom: isDark ? '1px solid #4A4A4A' : '1px solid #e2e8f0', paddingBottom: '18px', marginBottom: '20px' }}>
-                    <div>
-                      <h2 style={{ margin: 0, color: isDark ? '#E8EAED' : '#1e293b', fontWeight: '700', fontSize: '1.4rem' }}>
-                        Classroom Grades
-                      </h2>
-                      <p style={{ margin: '4px 0 0 0', color: isDark ? '#a3a3a3' : '#64748b', fontSize: '0.85rem' }}>
-                        Review and evaluate submissions for {displayClassroom?.name || 'this class'}.
-                      </p>
-                    </div>
-
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                      {bulkToastMsg && (
-                        <span style={{ padding: '6px 12px', backgroundColor: isDark ? '#133527' : '#ecfdf5', color: isDark ? '#34d399' : '#059669', fontSize: '0.8rem', borderRadius: '8px', fontWeight: '700' }}>
-                          {bulkToastMsg}
-                        </span>
-                      )}
-                      {!isClassroomArchivedState && gradingStudents.length > 0 && (
-                        <button
-                          onClick={() => setShowBulkGradeModal(true)}
-                          style={styles.bulkGradeActionBtn}
-                          title="Grade all students who submitted this activity at once"
-                        >
-                          <CheckCircle2 size={16} />
-                          Grade All Submitted ({gradingStudents.length})
-                        </button>
-                      )}
-                    </div>
-                  </div>
-
-                  {loadingClasswork ? (
-                    <Skeleton.Grading isDark={isDark} isMobile={isMobile} showActivitySelector={true} />
-                  ) : visibleClasswork.length === 0 ? (
-                    <div style={{ padding: '40px', textAlign: 'center', color: isDark ? '#a3a3a3' : '#94a3b8' }}>
-                      No assignments created yet in this classroom.
-                    </div>
-                  ) : (
-                    <>
-                      <div style={styles.activitySelectionRow}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
-                          <span style={{ fontSize: '0.88rem', fontWeight: '700', color: isDark ? '#E8EAED' : '#334155', display: 'flex', alignItems: 'center' }}>
-                            Activity:
-                          </span>
-                        </div>
-                        <div
-                          ref={gradesActivityDropdownRef}
-                          style={{ position: 'relative', minWidth: '260px', maxWidth: '420px', flex: '1 1 auto', zIndex: 35 }}
-                        >
-                          <button
-                            id="grades-activity-dropdown"
-                            type="button"
-                            aria-label="Select activity"
-                            aria-expanded={isGradesActivityDropdownOpen}
-                            onClick={() => setIsGradesActivityDropdownOpen(prev => !prev)}
-                            style={{
-                              width: '100%',
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'space-between',
-                              gap: '12px',
-                              padding: '9px 16px',
-                              borderRadius: '9999px',
-                              border: isGradesActivityDropdownOpen
-                                ? '1px solid #10b981'
-                                : (isDark ? '1px solid #3d4447' : '1px solid #cbd5e1'),
-                              backgroundColor: isDark ? '#242a2b' : '#ffffff',
-                              color: isDark ? '#E8EAED' : '#1e293b',
-                              fontSize: '0.88rem',
-                              fontWeight: '700',
-                              fontFamily: 'inherit',
-                              cursor: 'pointer',
-                              outline: 'none',
-                              boxSizing: 'border-box',
-                              boxShadow: isGradesActivityDropdownOpen
-                                ? '0 0 0 3px rgba(16, 185, 129, 0.16)'
-                                : (isDark ? '0 2px 8px rgba(0,0,0,0.28)' : '0 1px 3px rgba(15,23,42,0.06)'),
-                              transition: 'all 0.18s ease'
-                            }}
-                          >
-                            <span style={{ display: 'flex', alignItems: 'center', minWidth: 0, overflow: 'hidden' }}>
-                              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                {activeGradingActivity?.title || 'Select activity'}
-                              </span>
-                            </span>
-                            <ChevronDown
-                              size={16}
-                              style={{
-                                flexShrink: 0,
-                                color: isGradesActivityDropdownOpen ? '#10b981' : (isDark ? '#a3a3a3' : '#64748b'),
-                                transform: isGradesActivityDropdownOpen ? 'rotate(180deg)' : 'rotate(0deg)',
-                                transition: 'transform 0.2s ease, color 0.2s ease'
-                              }}
-                            />
-                          </button>
-
-                          <AnimatePresence>
-                            {isGradesActivityDropdownOpen && (
-                              <motion.div
-                                initial={{ opacity: 0, y: -6, scale: 0.98 }}
-                                animate={{ opacity: 1, y: 0, scale: 1 }}
-                                exit={{ opacity: 0, y: -6, scale: 0.98 }}
-                                transition={{ duration: 0.15, ease: 'easeOut' }}
-                                style={{
-                                  position: 'absolute',
-                                  top: 'calc(100% + 8px)',
-                                  left: 0,
-                                  right: 0,
-                                  backgroundColor: isDark ? '#202526' : '#ffffff',
-                                  border: isDark ? '1px solid #383e40' : '1px solid #e2e8f0',
-                                  borderRadius: '16px',
-                                  padding: '6px',
-                                  boxShadow: isDark
-                                    ? '0 14px 32px rgba(0, 0, 0, 0.55)'
-                                    : '0 12px 28px rgba(15, 23, 42, 0.12)',
-                                  maxHeight: '280px',
-                                  overflowY: 'auto',
-                                  display: 'flex',
-                                  flexDirection: 'column',
-                                  gap: '3px',
-                                  zIndex: 50
-                                }}
-                              >
-                                {visibleClasswork.map(act => {
-                                  const isSelected = String(act.id) === String(activeGradingActivity?.id);
-                                  return (
-                                    <button
-                                      key={act.id}
-                                      type="button"
-                                      onClick={() => {
-                                        setSelectedGradingActivityId(act.id);
-                                        setIsGradesActivityDropdownOpen(false);
-                                      }}
-                                      style={{
-                                        width: '100%',
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        justifyContent: 'space-between',
-                                        gap: '10px',
-                                        padding: '9px 14px',
-                                        borderRadius: '9999px',
-                                        border: 'none',
-                                        backgroundColor: isSelected
-                                          ? (isDark ? 'rgba(16, 185, 129, 0.15)' : '#ecfdf5')
-                                          : 'transparent',
-                                        color: isSelected
-                                          ? (isDark ? '#34d399' : '#059669')
-                                          : (isDark ? '#E8EAED' : '#1e293b'),
-                                        fontSize: '0.86rem',
-                                        fontWeight: isSelected ? '700' : '600',
-                                        fontFamily: 'inherit',
-                                        cursor: 'pointer',
-                                        textAlign: 'left',
-                                        transition: 'background-color 0.15s ease, color 0.15s ease'
-                                      }}
-                                      onMouseOver={(e) => {
-                                        if (!isSelected) {
-                                          e.currentTarget.style.backgroundColor = isDark ? 'rgba(255, 255, 255, 0.06)' : '#f1f5f9';
-                                        }
-                                      }}
-                                      onMouseOut={(e) => {
-                                        if (!isSelected) {
-                                          e.currentTarget.style.backgroundColor = 'transparent';
-                                        }
-                                      }}
-                                    >
-                                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                        {act.title}
-                                      </span>
-                                    </button>
-                                  );
-                                })}
-                              </motion.div>
-                            )}
-                          </AnimatePresence>
-                        </div>
-                      </div>
-
-                      <div style={styles.gradingColumnsLayout}>
-                        <div style={styles.gradingRosterCol}>
-                          <div style={styles.rosterHeaderBox}>
-                            <h4 style={{ margin: 0, fontSize: '0.92rem', color: isDark ? '#E8EAED' : '#1e293b', fontWeight: '700' }}>
-                              Turned In ({gradingStudents.length})
-                            </h4>
-                          </div>
-
-                          <div style={styles.gradingStudentList}>
-                            {gradingStudents.length === 0 ? (
-                              <div style={{ padding: '30px 12px', textAlign: 'center', color: isDark ? '#a3a3a3' : '#94a3b8', fontStyle: 'italic', fontSize: '0.88rem' }}>
-                                No students have submitted this activity yet.
-                              </div>
-                            ) : (
-                              gradingStudents.map(s => {
-                                const curGrade = getStudentGrade(gradingGrades, s);
-                                const isEvaluated = isStudentGraded(gradingGrades, s);
-                                const isSelected = selectedStudentId === s.id;
-                                return (
-                                  <div
-                                    key={s.id}
-                                    onClick={() => setSelectedStudentId(s.id)}
-                                    style={{
-                                      ...styles.gradingStudentRow,
-                                      backgroundColor: isSelected ? (isDark ? '#193326' : '#ecfdf5') : (isDark ? '#383838' : '#ffffff'),
-                                      borderColor: isSelected ? '#10b981' : (isDark ? '#4A4A4A' : '#e2e8f0'),
-                                    }}
-                                  >
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', overflow: 'hidden' }}>
-                                      <div style={{
-                                        width: '28px',
-                                        height: '28px',
-                                        borderRadius: '50%',
-                                        backgroundColor: isEvaluated ? '#10b981' : '#3b82f6',
-                                        color: 'white',
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        justifyContent: 'center',
-                                        fontSize: '0.75rem',
-                                        fontWeight: '700',
-                                        flexShrink: 0
-                                      }}>
-                                        {s.name.charAt(0).toUpperCase()}
-                                      </div>
-                                      <span style={{ fontWeight: '600', color: isDark ? '#E8EAED' : '#1e293b', fontSize: '0.88rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                        {s.name}
-                                      </span>
-                                    </div>
-
-                                    <div style={{ flexShrink: 0 }}>
-                                      {isEvaluated ? (
-                                        <span style={styles.gradeBadgeGraded}>
-                                          {curGrade?.grade ?? maxPoints}/{maxPoints}
-                                        </span>
-                                      ) : (
-                                        <span style={styles.gradeBadgeTurnedIn}>
-                                          Turned In
-                                        </span>
-                                      )}
-                                    </div>
-                                  </div>
-                                );
-                              })
-                            )}
-                          </div>
-                        </div>
-
-                        <div style={styles.gradingEvalCol}>
-                          {selectedStudentId && gradingStudents.some(s => s.id === selectedStudentId) ? (
-                            (() => {
-                              const curStudent = gradingStudents.find(s => s.id === selectedStudentId);
-                              return (
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
-                                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: isDark ? '1px solid #4A4A4A' : '1px solid #f1f5f9', paddingBottom: '14px' }}>
-                                    <div>
-                                      <h3 style={{ margin: 0, color: isDark ? '#E8EAED' : '#1e293b', fontSize: '1.2rem', fontWeight: '700' }}>
-                                        {curStudent.name}
-                                      </h3>
-                                      <div style={{ fontSize: '0.8rem', color: isDark ? '#a3a3a3' : '#64748b', marginTop: '4px' }}>
-                                        Submitted {formatShortDate(curStudent.submittedAt) || 'recently'}
-                                      </div>
-                                    </div>
-
-                                    <div style={{ display: 'flex', gap: '8px' }}>
-                                      <button
-                                        onClick={() => {
-                                          try {
-                                            sessionStorage.setItem(`verity_teacher_classwork_tab_${classroom?.id || 'default'}`, activeTab);
-                                            sessionStorage.setItem('verity_teacher_classwork_tab_active', activeTab);
-                                          } catch {}
-                                          onOpenPlayback && onOpenPlayback(activeGradingActivity, curStudent);
-                                        }}
-                                        style={styles.playbackActionBtn}
-                                        title="Open recording playback"
-                                      >
-                                        <PlayCircle size={15} /> Playback
-                                      </button>
-                                    </div>
-                                  </div>
-
-                                  <div>
-                                    <label style={styles.fieldLabel}>Submitted Code:</label>
-                                    <pre style={styles.codePreviewPre}>
-                                      {curStudent.finalCode || '// No code submitted or recorded.'}
-                                    </pre>
-                                  </div>
-
-                                  <div style={{ display: 'flex', gap: '20px', alignItems: 'flex-start' }}>
-                                    <div style={{ width: '130px' }}>
-                                      <label style={styles.fieldLabel}>Grade ({maxPoints} max):</label>
-                                      <input
-                                        type="number"
-                                        min="0"
-                                        max={maxPoints}
-                                        value={studentGradeInput}
-                                        disabled={isClassroomArchivedState}
-                                        onChange={(e) => setStudentGradeInput(e.target.value)}
-                                        style={{ ...styles.input, opacity: isClassroomArchivedState ? 0.7 : 1 }}
-                                      />
-                                    </div>
-                                    <div style={{ flex: 1 }}>
-                                      <label style={styles.fieldLabel}>Private Feedback:</label>
-                                      <textarea
-                                        rows={2}
-                                        value={studentFeedbackInput}
-                                        disabled={isClassroomArchivedState}
-                                        onChange={(e) => setStudentFeedbackInput(e.target.value)}
-                                        placeholder="Add feedback for this student…"
-                                        style={{ ...styles.input, resize: 'vertical', opacity: isClassroomArchivedState ? 0.7 : 1 }}
-                                      />
-                                    </div>
-                                  </div>
-
-                                  {!isClassroomArchivedState && (
-                                    <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '6px' }}>
-                                      <button
-                                        onClick={handleSaveIndividualGrade}
-                                        disabled={indivSaveStatus === 'saving'}
-                                        style={{
-                                          ...styles.saveGradeBtn,
-                                          backgroundColor: indivSaveStatus === 'saved' ? '#10b981' : (indivSaveStatus === 'error' ? '#ef4444' : styles.saveGradeBtn.backgroundColor),
-                                          cursor: indivSaveStatus === 'saving' ? 'wait' : 'pointer',
-                                          opacity: indivSaveStatus === 'saving' ? 0.75 : 1,
-                                          display: 'flex',
-                                          alignItems: 'center',
-                                          gap: '6px'
-                                        }}
-                                      >
-                                        {indivSaveStatus === 'saving' && 'Saving...'}
-                                        {indivSaveStatus === 'saved' && (
-                                          <>
-                                            <Check size={15} /> Saved
-                                          </>
-                                        )}
-                                        {indivSaveStatus === 'error' && (indivSaveError || 'Error')}
-                                        {indivSaveStatus === 'idle' && 'Save Grade'}
-                                      </button>
-                                    </div>
-                                  )}
-                                </div>
-                              );
-                            })()
-                          ) : (
-                            <div style={{ padding: '50px 20px', textAlign: 'center', color: '#94a3b8' }}>
-                              Select a student from the left roster to evaluate their submission.
-                            </div>
-                          )}
-                        </div>
-
-                      </div>
-                    </>
-                  )}
-                </div>
+                <TeacherGradesTab
+                  isDark={isDark}
+                  isMobile={isMobile}
+                  styles={styles}
+                  displayClassroom={displayClassroom}
+                  bulkToastMsg={bulkToastMsg}
+                  isClassroomArchivedState={isClassroomArchivedState}
+                  gradingStudents={gradingStudents}
+                  setShowBulkGradeModal={setShowBulkGradeModal}
+                  loadingClasswork={loadingClasswork}
+                  visibleClasswork={visibleClasswork}
+                  gradesActivityDropdownRef={gradesActivityDropdownRef}
+                  isGradesActivityDropdownOpen={isGradesActivityDropdownOpen}
+                  setIsGradesActivityDropdownOpen={setIsGradesActivityDropdownOpen}
+                  activeGradingActivity={activeGradingActivity}
+                  setSelectedGradingActivityId={setSelectedGradingActivityId}
+                  gradingGrades={gradingGrades}
+                  selectedStudentId={selectedStudentId}
+                  setSelectedStudentId={setSelectedStudentId}
+                  maxPoints={maxPoints}
+                  classroom={classroom}
+                  activeTab={activeTab}
+                  onOpenPlayback={onOpenPlayback}
+                  studentGradeInput={studentGradeInput}
+                  setStudentGradeInput={setStudentGradeInput}
+                  studentFeedbackInput={studentFeedbackInput}
+                  setStudentFeedbackInput={setStudentFeedbackInput}
+                  handleSaveIndividualGrade={handleSaveIndividualGrade}
+                  indivSaveStatus={indivSaveStatus}
+                  indivSaveError={indivSaveError}
+                />
               )}
               </motion.div>
               </AnimatePresence>
@@ -3753,1894 +2424,106 @@ export default function TeacherClasswork({
           </div>
         </div>
 
-      {/* ═══ MODAL: BANNER CUSTOMIZATION ═══ */}
-      {isCustomizeOpen && (
-        <div style={styles.modalOverlay} onClick={() => setIsCustomizeOpen(false)}>
-          <div style={styles.modalCard} onClick={(e) => e.stopPropagation()}>
-            <div style={styles.modalHeader}>
-              <div>
-                <h2 style={{ margin: 0, color: isDark ? '#E8EAED' : '#1e293b', fontSize: '1.3rem' }}>Customize Appearance</h2>
-                <p style={{ margin: '4px 0 0 0', color: isDark ? '#a3a3a3' : '#64748b', fontSize: '0.85rem' }}>
-                  Choose a theme color, background graphic, or image for this class banner.
-                </p>
-              </div>
-              <button onClick={() => setIsCustomizeOpen(false)} style={styles.closeModalBtn}>
-                <X size={20} />
-              </button>
-            </div>
-
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '16px' }}>
-              <label style={styles.fieldLabel}>Select Theme Preset:</label>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(135px, 1fr))', gap: '12px' }}>
-                {THEME_PRESETS.map((preset) => (
-                  <div
-                    key={preset.id}
-                    onClick={() => setBannerTheme(preset)}
-                    style={{
-                      borderRadius: '12px',
-                      padding: '10px',
-                      border: bannerTheme.id === preset.id ? '2px solid #10b981' : (isDark ? '2px solid #4A4A4A' : '2px solid #e2e8f0'),
-                      cursor: 'pointer',
-                      display: 'flex',
-                      flexDirection: 'column',
-                      gap: '8px',
-                      backgroundColor: bannerTheme.id === preset.id ? (isDark ? '#193326' : '#f0fdf4') : (isDark ? '#383838' : 'white'),
-                      transition: 'all 0.2s ease'
-                    }}
-                  >
-                    <div style={{
-                      height: '42px',
-                      borderRadius: '8px',
-                      background: `linear-gradient(135deg, ${preset.primary}, ${preset.secondary})`,
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      color: 'white'
-                    }}>
-                      {bannerTheme.id === preset.id && <Check size={18} />}
-                    </div>
-                    <span style={{ fontSize: '0.85rem', fontWeight: '700', color: isDark ? '#E8EAED' : '#1e293b' }}>
-                      {preset.name}
-                    </span>
-                  </div>
-                ))}
-              </div>
-
-              <div style={{ marginTop: '16px' }}>
-                <label style={styles.fieldLabel}>Or use Custom Header Image (URL):</label>
-                <div style={{ display: 'flex', gap: '8px', marginTop: '6px' }}>
-                  <input
-                    type="url"
-                    placeholder="https://images.unsplash.com/photo-..."
-                    value={bannerTheme.customImageUrl || ''}
-                    onChange={(e) => setBannerTheme({ ...bannerTheme, customImageUrl: e.target.value })}
-                    style={styles.input}
-                  />
-                  {bannerTheme.customImageUrl && (
-                    <button
-                      onClick={() => setBannerTheme({ ...bannerTheme, customImageUrl: '' })}
-                      style={{ padding: '0 12px', border: isDark ? '1px solid #4A4A4A' : '1px solid #cbd5e1', borderRadius: '8px', background: isDark ? '#3A3A3A' : 'white', color: isDark ? '#a3a3a3' : '#64748b', cursor: 'pointer' }}
-                    >
-                      Clear
-                    </button>
-                  )}
-                </div>
-              </div>
-
-              <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '20px', gap: '10px' }}>
-                <button
-                  onClick={() => {
-                    setBannerTheme(originalBannerTheme || bannerTheme);
-                    setIsCustomizeOpen(false);
-                  }}
-                  style={styles.cancelBtn}
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={() => {
-                    saveClassroomTheme(classroom, bannerTheme, socket);
-                    setIsCustomizeOpen(false);
-                  }}
-                  style={styles.saveGradeBtn}
-                >
-                  Save
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ═══ MODAL: DISPLAY LARGE CLASS CODE ═══ */}
-      {isClassCodeModalOpen && (
-        <div style={styles.modalOverlay} onClick={() => setIsClassCodeModalOpen(false)}>
-          <div style={{ ...styles.modalCard, maxWidth: '440px', textAlign: 'center' }} onClick={(e) => e.stopPropagation()}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
-              <span style={{ fontSize: '1rem', fontWeight: '700', color: isDark ? '#E8EAED' : '#1e293b' }}>Class code</span>
-              <button onClick={() => setIsClassCodeModalOpen(false)} style={styles.closeModalBtn}>
-                <X size={20} />
-              </button>
-            </div>
-
-            <div style={{
-              fontSize: '3.5rem',
-              fontWeight: '900',
-              letterSpacing: '0.08em',
-              color: '#10b981',
-              padding: '24px 0',
-              fontFamily: 'monospace',
-              userSelect: 'all'
-            }}>
-              {classCode}
-            </div>
-
-            <p style={{ color: isDark ? '#a3a3a3' : '#64748b', fontSize: '0.9rem', margin: '0 0 24px 0' }}>
-              Share this code with your students so they can join this class from their student dashboard.
-            </p>
-
-            <div style={{ display: 'flex', justifyContent: 'center', gap: '12px' }}>
-              <button
-                onClick={() => copyToClipboard(classCode)}
-                style={{
-                  ...styles.addButton,
-                  backgroundColor: codeCopied ? '#059669' : '#10b981',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '8px'
-                }}
-              >
-                {codeCopied ? <Check size={18} /> : <Copy size={18} />}
-                {codeCopied ? 'Copied Code!' : 'Copy Code'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ═══ MODAL: CLASS INFO (i) ═══ */}
-      {isClassInfoModalOpen && (
-        <div style={styles.modalOverlay} onClick={() => setIsClassInfoModalOpen(false)}>
-          <div style={{ ...styles.modalCard, maxWidth: '440px' }} onClick={(e) => e.stopPropagation()}>
-            <div style={styles.modalHeader}>
-              <h3 style={{ margin: 0, color: isDark ? '#E8EAED' : '#1e293b', fontSize: '1.2rem' }}>About Class</h3>
-              <button onClick={() => setIsClassInfoModalOpen(false)} style={styles.closeModalBtn}>
-                <X size={20} />
-              </button>
-            </div>
-
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', marginTop: '14px' }}>
-              <div style={styles.infoFieldRow}>
-                <span style={styles.infoFieldLabel}>Class Name</span>
-                <span style={styles.infoFieldValue}>{displayClassroom?.name || 'Verity'}</span>
-              </div>
-              {displayClassroom?.description && (
-                <div style={styles.infoFieldRow}>
-                  <span style={styles.infoFieldLabel}>Description</span>
-                  <span style={styles.infoFieldValue}>{displayClassroom.description}</span>
-                </div>
-              )}
-              <div style={styles.infoFieldRow}>
-                <span style={styles.infoFieldLabel}>Section</span>
-                <span style={styles.infoFieldValue}>{displayClassroom?.section || '2'}</span>
-              </div>
-              <div style={styles.infoFieldRow}>
-                <span style={styles.infoFieldLabel}>Subject</span>
-                <span style={styles.infoFieldValue}>{displayClassroom?.subject || 'Computer Science'}</span>
-              </div>
-              <div style={styles.infoFieldRow}>
-                <span style={styles.infoFieldLabel}>Class Code</span>
-                <span style={{ ...styles.infoFieldValue, color: classSettings.inviteCodes === 'Turned off' ? '#9ca3af' : '#10b981', fontWeight: '700' }}>
-                  {classSettings.inviteCodes === 'Turned off' ? 'Turned off' : classCode}
-                </span>
-              </div>
-              <div style={styles.infoFieldRow}>
-                <span style={styles.infoFieldLabel}>Instructor</span>
-                <span style={styles.infoFieldValue}>{displayClassroom?.instructor || currentUser?.name || 'Instructor'}</span>
-              </div>
-            </div>
-
-            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '20px' }}>
-              <button onClick={() => setIsClassInfoModalOpen(false)} style={styles.saveGradeBtn}>
-                Close
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ═══ MODAL: CLASSROOM SETTINGS (Gear Icon) ═══ */}
-      {isSettingsModalOpen && (
-        <ClassroomSettings
-          classroom={displayClassroom}
-          onClose={() => setIsSettingsModalOpen(false)}
-          onUpdate={handleUpdateClassroom}
-          role="teacher"
-        />
-      )}
-
-      {/* ═══ MODAL: BULK GRADING FOR SUBMITTED STUDENTS ═══ */}
-      {showBulkGradeModal && (
-        <div style={styles.modalOverlay} onClick={() => setShowBulkGradeModal(false)}>
-          <div style={{ ...styles.modalCard, maxWidth: '450px' }} onClick={(e) => e.stopPropagation()}>
-            <div style={styles.modalHeader}>
-              <div>
-                <h3 style={{ margin: 0, color: isDark ? '#E8EAED' : '#1e293b', fontSize: '1.2rem' }}>Bulk Grade All Submitted</h3>
-                <p style={{ margin: '4px 0 0 0', color: isDark ? '#a3a3a3' : '#64748b', fontSize: '0.85rem' }}>
-                  Assign grades to all {gradingStudents.length} student(s) who turned in this activity.
-                </p>
-              </div>
-              <button onClick={() => setShowBulkGradeModal(false)} style={styles.closeModalBtn}>
-                <X size={20} />
-              </button>
-            </div>
-
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', marginTop: '16px' }}>
-              <div>
-                <label style={styles.fieldLabel}>Grade (out of {maxPoints}):</label>
-                <input
-                  type="number"
-                  min="0"
-                  max={maxPoints}
-                  value={bulkGradeVal}
-                  onChange={(e) => setBulkGradeVal(e.target.value)}
-                  style={{ ...styles.input, marginTop: '6px' }}
-                />
-              </div>
-
-              <div>
-                <label style={styles.fieldLabel}>Feedback for all submitted:</label>
-                <textarea
-                  value={bulkFeedbackVal}
-                  onChange={(e) => setBulkFeedbackVal(e.target.value)}
-                  style={{ ...styles.input, height: '80px', marginTop: '6px', resize: 'vertical' }}
-                  placeholder="e.g. Great job on this activity!"
-                />
-              </div>
-
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '14px' }}>
-                <button
-                  type="button"
-                  onClick={() => setShowBulkGradeModal(false)}
-                  style={styles.cancelBtn}
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={handleApplyBulkGrade}
-                  style={styles.saveGradeBtn}
-                >
-                  Apply to All ({gradingStudents.length})
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ═══ MODAL: CREATE / MODIFY ASSIGNMENT ═══ */}
-      {isModalOpen && (
-        <div style={styles.modalOverlay}>
-          <div style={styles.modalCard}>
-            <div style={styles.modalHeader}>
-              <h2 style={{ margin: 0, color: isDark ? '#E8EAED' : '#1f2937' }}>{editingId ? `Modify ${form.activityType}` : `Create ${form.activityType}`}</h2>
-              <button onClick={() => setIsModalOpen(false)} style={styles.closeModalBtn}>
-                <X size={24} />
-              </button>
-            </div>
-
-            <form onSubmit={handleSubmit} style={styles.form}>
-              <label style={styles.fieldLabel}>Title</label>
-              <input
-                type="text"
-                required
-                value={form.title}
-                onChange={(e) => setForm({ ...form, title: e.target.value })}
-                style={styles.input}
-              />
-
-              {form.activityType !== 'Material' && (
-                <>
-                  <div style={styles.labelRow}>
-                    <label style={styles.fieldLabel}>Due Date</label>
-                    <label style={styles.checkboxLabel}>
-                      <input
-                        type="checkbox"
-                        checked={form.noDueDate}
-                        onChange={(e) => setForm({ ...form, noDueDate: e.target.checked })}
-                      />
-                      No Due Date
-                    </label>
-                  </div>
-                  <input
-                    type="date"
-                    disabled={form.noDueDate}
-                    value={form.dueDate}
-                    onChange={(e) => setForm({ ...form, dueDate: e.target.value })}
-                    style={{ ...styles.input, opacity: form.noDueDate ? 0.5 : 1 }}
-                  />
-                </>
-              )}
-
-              <div style={styles.labelRow}>
-                <label style={styles.fieldLabel}>Instruction</label>
-                <div style={styles.attachIcons}>
-                  <Link2 size={18} style={styles.attachIcon} title="Add link (Ctrl+K)" onMouseDown={(e) => handleAttachmentClick(e, handleAddLink)} />
-                  <Image size={18} style={styles.attachIcon} title="Upload image" onMouseDown={(e) => handleAttachmentClick(e, () => imageInputRef.current?.click())} />
-                  <Video size={18} style={styles.attachIcon} title="Upload video" onMouseDown={(e) => handleAttachmentClick(e, () => videoInputRef.current?.click())} />
-                  <FileText size={18} style={styles.attachIcon} title="Upload document (PDF, DOC)" onMouseDown={(e) => handleAttachmentClick(e, () => docInputRef.current?.click())} />
-                </div>
-              </div>
-              <div onDragOverCapture={(e) => e.preventDefault()} onDropCapture={handleDropCapture} onPasteCapture={handlePasteCapture}>
-                <JoditEditor
-                  ref={joditRef}
-                  value={form.instruction}
-                  config={joditConfig}
-                  onBlur={newContent => setForm(prev => ({ ...prev, instruction: newContent }))}
-                />
-              </div>
-
-              <input ref={imageInputRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={(e) => handleFilePicked(e, 'image')} />
-              <input ref={videoInputRef} type="file" accept="video/*,.mp4,.webm,.mov,.m4v,.mkv" style={{ display: 'none' }} onChange={(e) => handleFilePicked(e, 'video')} />
-              <input ref={docInputRef} type="file" accept=".pdf,.doc,.docx,.txt" style={{ display: 'none' }} onChange={(e) => handleFilePicked(e, 'document')} />
-
-              {uploading && <span style={{ fontSize: '0.8rem', color: '#6b7280' }}>Uploading…</span>}
-
-              {form.attachments?.length > 0 && (
-                <div style={styles.attachmentList}>
-                  {form.attachments.map((att, i) => (
-                    <AttachmentCard
-                      key={i}
-                      att={att}
-                      isDark={isDark}
-                      onRemove={() => removeAttachment(i)}
-                      onClick={(clickedAtt) => {
-                        const targetName = (clickedAtt.name || clickedAtt.url || '').toLowerCase();
-                        const isImg = clickedAtt.type === 'image' || /\.(png|jpe?g|gif|webp|svg)(\?.*)?$/i.test(targetName);
-                        const isVid = clickedAtt.type === 'video' || /\.(mp4|webm|mov|m4v|mkv|avi)(\?.*)?$/i.test(targetName);
-                        if (isImg) setPreviewImage(clickedAtt);
-                        else if (isVid) setPreviewVideo(clickedAtt);
-                        else setPreviewIframe(clickedAtt);
-                      }}
-                    />
-                  ))}
-                </div>
-              )}
-
-              {form.activityType !== 'Material' && (
-                <>
-                  <label style={styles.fieldLabel}>Points</label>
-                  <select
-                    value={form.points}
-                    onChange={(e) => setForm({ ...form, points: e.target.value })}
-                    style={{ ...styles.input, width: '120px' }}
-                  >
-                    <option value="10">10</option>
-                    <option value="20">20</option>
-                    <option value="50">50</option>
-                    <option value="100">100</option>
-                  </select>
-
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px', marginTop: '10px' }}>
-                    <div>
-                      <label style={styles.fieldLabel}>Time Limit (Minutes)</label>
-                      <input
-                        type="number"
-                        min="5" max="300"
-                        value={form.duration}
-                        onChange={(e) => setForm({ ...form, duration: parseInt(e.target.value) || 60 })}
-                        style={styles.input}
-                      />
-                    </div>
-                    <div>
-                      <label style={styles.fieldLabel}>Auto-Save Interval</label>
-                      <select
-                        value={form.autoSaveInterval}
-                        onChange={(e) => setForm({ ...form, autoSaveInterval: e.target.value })}
-                        style={styles.input}
-                      >
-                        <option value="10s">10 Seconds</option>
-                        <option value="30s">30 Seconds</option>
-                        <option value="1m">1 Minute</option>
-                      </select>
-                    </div>
-                  </div>
-                  <div style={{ ...styles.labelRow, marginTop: '5px', marginBottom: '6px' }}>
-                    <label style={styles.checkboxLabel}>
-                      <input
-                        type="checkbox"
-                        checked={form.treatWarningsAsErrors}
-                        onChange={(e) => setForm({ ...form, treatWarningsAsErrors: e.target.checked })}
-                      />
-                      Treat compiler warnings as errors
-                    </label>
-                  </div>
-                  <div
-                    onClick={() => setForm({ ...form, disableBack: !form.disableBack })}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      padding: '12px 14px',
-                      borderRadius: '10px',
-                      cursor: 'pointer',
-                      backgroundColor: form.disableBack
-                        ? (isDark ? 'rgba(16, 185, 129, 0.12)' : '#ecfdf5')
-                        : (isDark ? '#232323' : '#f8fafc'),
-                      border: form.disableBack
-                        ? '1px solid #10b981'
-                        : (isDark ? '1px solid #383838' : '1px solid #e2e8f0'),
-                      transition: 'all 0.2s ease',
-                      marginTop: '6px',
-                      marginBottom: '14px'
-                    }}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                      <div style={{
-                        width: '32px',
-                        height: '32px',
-                        borderRadius: '8px',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        backgroundColor: form.disableBack ? '#10b981' : (isDark ? '#333' : '#e2e8f0'),
-                        color: form.disableBack ? '#ffffff' : (isDark ? '#9ca3af' : '#64748b'),
-                        transition: 'all 0.2s',
-                        flexShrink: 0
-                      }}>
-                        {form.disableBack ? <Lock size={16} /> : <Unlock size={16} />}
-                      </div>
-                      <div>
-                        <div style={{
-                          fontSize: '0.85rem',
-                          fontWeight: '700',
-                          color: form.disableBack
-                            ? (isDark ? '#a7f3d0' : '#065f46')
-                            : (isDark ? '#E8EAED' : '#1e293b')
-                        }}>
-                          Strict Lockdown: Disable Student Back Navigation
-                        </div>
-                        <div style={{ fontSize: '0.74rem', color: isDark ? '#9ca3af' : '#64748b', marginTop: '2px' }}>
-                          Students cannot leave workspace until they submit; unsubmitting is locked.
-                        </div>
-                      </div>
-                    </div>
-
-                    <button
-                      type="button"
-                      aria-pressed={!!form.disableBack}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setForm({ ...form, disableBack: !form.disableBack });
-                      }}
-                      style={{
-                        width: '44px',
-                        height: '24px',
-                        borderRadius: '12px',
-                        backgroundColor: form.disableBack ? '#10b981' : (isDark ? '#404040' : '#cbd5e1'),
-                        position: 'relative',
-                        border: 'none',
-                        cursor: 'pointer',
-                        padding: '2px',
-                        transition: 'background-color 0.2s ease',
-                        outline: 'none',
-                        flexShrink: 0
-                      }}
-                    >
-                      <span
-                        style={{
-                          display: 'block',
-                          width: '20px',
-                          height: '20px',
-                          borderRadius: '50%',
-                          backgroundColor: '#ffffff',
-                          transform: form.disableBack ? 'translateX(20px)' : 'translateX(0)',
-                          transition: 'transform 0.2s ease',
-                          boxShadow: '0 1px 3px rgba(0,0,0,0.2)'
-                        }}
-                      />
-                    </button>
-                  </div>
-                {/* Automated Test Cases */}
-                  <div style={{ marginTop: '12px', marginBottom: '14px', padding: '12px', backgroundColor: isDark ? '#262626' : '#f8fafc', borderRadius: '8px', border: isDark ? '1px solid #3c3c3c' : '1px solid #e2e8f0' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                    <div>
-                      <span style={{ fontSize: '0.85rem', fontWeight: '700', color: isDark ? '#E8EAED' : '#1e293b' }}>Automated Test Cases (Optional)</span>
-                      <p style={{ margin: '2px 0 0', fontSize: '0.75rem', color: isDark ? '#9ca3af' : '#64748b' }}>Pre-configured test cases for students to validate their code against.</p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const list = Array.isArray(form.testCases) ? [...form.testCases] : [];
-                        list.push({ id: `tc-${Date.now()}`, name: `Case ${list.length + 1}`, input: '', expectedOutput: '' });
-                        setForm({ ...form, testCases: list });
-                      }}
-                      style={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: '4px',
-                        padding: '4px 10px',
-                        backgroundColor: isDark ? '#064e3b' : '#ecfdf5',
-                        border: '1px solid #10b981',
-                        borderRadius: '5px',
-                        color: isDark ? '#6ee7b7' : '#059669',
-                        fontSize: '0.78rem',
-                        fontWeight: '600',
-                        cursor: 'pointer'
-                      }}
-                    >
-                      + Add Test Case
-                    </button>
-                  </div>
-
-                  {Array.isArray(form.testCases) && form.testCases.map((tc, idx) => (
-                    <div key={tc.id || idx} style={{ display: 'flex', gap: '8px', alignItems: 'center', marginTop: '8px' }}>
-
-                      <input
-                        type="text"
-                        placeholder="Expected Output (stdout)"
-                        value={tc.expectedOutput || ''}
-                        onChange={(e) => {
-                          const list = [...form.testCases];
-                          list[idx] = { ...list[idx], expectedOutput: e.target.value };
-                          setForm({ ...form, testCases: list });
-                        }}
-                        style={{ ...styles.input, flex: 1, margin: 0, fontSize: '0.82rem' }}
-                      />
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const list = form.testCases.filter((_, i) => i !== idx);
-                          setForm({ ...form, testCases: list });
-                        }}
-                        style={{
-                          background: 'transparent',
-                          border: 'none',
-                          color: '#ef4444',
-                          cursor: 'pointer',
-                          padding: '4px',
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          borderRadius: '4px'
-                        }}
-                        title="Remove test case"
-                      >
-                        <X size={15} />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-                </>
-              )}
-
-              <div style={styles.bottomRow}>
-                {form.activityType !== 'Material' ? (
-                  <div style={styles.gradingGroup}>
-                    <span style={styles.fieldLabel}>Grading:</span>
-                    <label style={styles.radioLabel}>
-                      <input
-                        type="radio"
-                        name="grading"
-                        checked={form.grading === 'On'}
-                        onChange={() => setForm({ ...form, grading: 'On' })}
-                      />
-                      On
-                    </label>
-                    <label style={styles.radioLabel}>
-                      <input
-                        type="radio"
-                        name="grading"
-                        checked={form.grading === 'Off'}
-                        onChange={() => setForm({ ...form, grading: 'Off' })}
-                      />
-                      Off
-                    </label>
-                  </div>
-                ) : <div />}
-                <button type="submit" style={styles.assignBtn}>{editingId ? 'Save' : 'Assign'}</button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {previewImage && (
-        <ImagePreviewModal
-          src={previewImage.url}
-          alt={previewImage.name}
-          onClose={() => setPreviewImage(null)}
-        />
-      )}
-
-      <AddLinkModal
-        isOpen={isLinkModalOpen}
-        onClose={() => setIsLinkModalOpen(false)}
-        onAdd={handleSaveLink}
+      <TeacherClassworkSecondaryModals
         isDark={isDark}
+        styles={styles}
+        classroom={classroom}
+        displayClassroom={displayClassroom}
+        classCode={classCode}
+        classSettings={classSettings}
+        currentUser={currentUser}
+        socket={socket}
+        isCustomizeOpen={isCustomizeOpen}
+        setIsCustomizeOpen={setIsCustomizeOpen}
+        bannerTheme={bannerTheme}
+        setBannerTheme={setBannerTheme}
+        originalBannerTheme={originalBannerTheme}
+        isClassCodeModalOpen={isClassCodeModalOpen}
+        setIsClassCodeModalOpen={setIsClassCodeModalOpen}
+        codeCopied={codeCopied}
+        copyToClipboard={copyToClipboard}
+        isClassInfoModalOpen={isClassInfoModalOpen}
+        setIsClassInfoModalOpen={setIsClassInfoModalOpen}
+        isSettingsModalOpen={isSettingsModalOpen}
+        setIsSettingsModalOpen={setIsSettingsModalOpen}
+        handleUpdateClassroom={handleUpdateClassroom}
+        showBulkGradeModal={showBulkGradeModal}
+        setShowBulkGradeModal={setShowBulkGradeModal}
+        gradingStudents={gradingStudents}
+        maxPoints={maxPoints}
+        bulkGradeVal={bulkGradeVal}
+        setBulkGradeVal={setBulkGradeVal}
+        bulkFeedbackVal={bulkFeedbackVal}
+        setBulkFeedbackVal={setBulkFeedbackVal}
+        handleApplyBulkGrade={handleApplyBulkGrade}
       />
 
-      {previewVideo && (
-        <VideoPreviewModal
-          src={previewVideo.url}
-          name={previewVideo.name}
-          onClose={() => setPreviewVideo(null)}
-        />
-      )}
-
-      {previewIframe && (
-        <IframePreviewModal
-          url={previewIframe.url}
-          title={previewIframe.name}
-          type={previewIframe.type}
-          onClose={() => setPreviewIframe(null)}
-        />
-      )}
-
-      {/* ═══ MODAL: PASTE AS CODE? ═══ */}
-      <PasteAsCodeModal
-        isOpen={Boolean(pasteCodeModal)}
+      <TeacherActivityFormModal
+        isOpen={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
         isDark={isDark}
-        data={pasteCodeModal}
-        onPasteCode={() => {
-          if (pasteCodeModal?.callback) {
-            pasteCodeModal.callback('as-code');
-          }
-          setPasteCodeModal(null);
-        }}
-        onPasteHtml={() => {
-          if (pasteCodeModal?.callback) {
-            pasteCodeModal.callback('as-html');
-          }
-          setPasteCodeModal(null);
-        }}
-        onPasteText={() => {
-          if (pasteCodeModal?.callback) {
-            pasteCodeModal.callback('as-text');
-          }
-          setPasteCodeModal(null);
-        }}
-        onPasteOnlyText={() => {
-          if (pasteCodeModal?.callback) {
-            pasteCodeModal.callback('only-text');
-          }
-          setPasteCodeModal(null);
-        }}
-        onClose={() => {
-          if (pasteCodeModal?.callback) {
-            try {
-              pasteCodeModal.callback('cancel');
-            } catch {}
-          }
-          setPasteCodeModal(null);
-        }}
+        styles={styles}
+        editingId={editingId}
+        form={form}
+        setForm={setForm}
+        handleSubmit={handleSubmit}
+        handleAttachmentClick={handleAttachmentClick}
+        handleAddLink={handleAddLink}
+        imageInputRef={imageInputRef}
+        videoInputRef={videoInputRef}
+        docInputRef={docInputRef}
+        handleFilePicked={handleFilePicked}
+        handleDropCapture={handleDropCapture}
+        handlePasteCapture={handlePasteCapture}
+        joditRef={joditRef}
+        joditConfig={joditConfig}
+        uploading={uploading}
+        removeAttachment={removeAttachment}
+        onPreviewImage={setPreviewImage}
+        onPreviewVideo={setPreviewVideo}
+        onPreviewIframe={setPreviewIframe}
       />
 
-      <AddStudentModal
-        isOpen={isAddStudentOpen}
-        onClose={() => setIsAddStudentOpen(false)}
+      <TeacherClassworkDetailModals
+        isDark={isDark}
+        styles={styles}
         classroomId={classroom?.id}
         classCode={classCode}
-        onSuccess={() => setRefreshStudentsKey(k => k + 1)}
-        isDark={isDark}
+        isClassroomArchivedState={isClassroomArchivedState}
+        previewImage={previewImage}
+        setPreviewImage={setPreviewImage}
+        isLinkModalOpen={isLinkModalOpen}
+        setIsLinkModalOpen={setIsLinkModalOpen}
+        handleSaveLink={handleSaveLink}
+        previewVideo={previewVideo}
+        setPreviewVideo={setPreviewVideo}
+        previewIframe={previewIframe}
+        setPreviewIframe={setPreviewIframe}
+        pasteCodeModal={pasteCodeModal}
+        setPasteCodeModal={setPasteCodeModal}
+        isAddStudentOpen={isAddStudentOpen}
+        setIsAddStudentOpen={setIsAddStudentOpen}
+        onStudentAdded={() => setRefreshStudentsKey(k => k + 1)}
+        deleteClassworkConfirm={deleteClassworkConfirm}
+        setDeleteClassworkConfirm={setDeleteClassworkConfirm}
+        handleExecuteDeleteClasswork={handleExecuteDeleteClasswork}
+        archiveClassworkConfirm={archiveClassworkConfirm}
+        setArchiveClassworkConfirm={setArchiveClassworkConfirm}
+        handleExecuteArchiveClasswork={handleExecuteArchiveClasswork}
+        viewingMaterialModal={viewingMaterialModal}
+        setViewingMaterialModal={setViewingMaterialModal}
+        handleInstructionClick={handleInstructionClick}
+        openModify={openModify}
       />
 
-      {/* In-System Delete Classwork Confirmation Modal */}
-      <AnimatePresence>
-        {deleteClassworkConfirm && (
-          <div
-            className="fixed inset-0 flex items-center justify-center p-5 z-[99999]"
-            style={{
-              position: 'fixed',
-              inset: 0,
-              backgroundColor: isDark ? 'rgba(17, 17, 17, 0.75)' : 'rgba(235, 235, 235, 0.75)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              zIndex: 99999,
-              backdropFilter: 'blur(5px)',
-              padding: '20px'
-            }}
-            onClick={() => setDeleteClassworkConfirm(null)}
-          >
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95, y: 15 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 15 }}
-              transition={{ type: 'spring', damping: 25, stiffness: 300 }}
-              onClick={e => e.stopPropagation()}
-              className="w-full max-w-[440px] text-left rounded-3xl p-7 shadow-2xl relative"
-              style={{
-                backgroundColor: isDark ? '#1C1C1E' : '#FFFFFF',
-                border: isDark ? '1px solid #2C2C2E' : '1px solid #E5E7EB',
-                borderRadius: '24px',
-                padding: '28px',
-                maxWidth: '440px',
-                width: '100%',
-                textAlign: 'left',
-                boxShadow: isDark
-                  ? '0 25px 50px -12px rgba(0, 0, 0, 0.7)'
-                  : '0 20px 40px -10px rgba(0, 0, 0, 0.12)',
-                position: 'relative'
-              }}
-            >
-              {/* Top-Right Close Button */}
-              <button
-                type="button"
-                onClick={() => setDeleteClassworkConfirm(null)}
-                aria-label="Close dialog"
-                style={{
-                  position: 'absolute',
-                  top: '20px',
-                  right: '20px',
-                  background: 'none',
-                  border: 'none',
-                  color: isDark ? '#9CA3AF' : '#64748B',
-                  cursor: 'pointer',
-                  padding: '6px',
-                  borderRadius: '8px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  transition: 'background-color 0.15s ease, color 0.15s ease'
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.backgroundColor = isDark ? '#2C2C2E' : '#F1F5F9';
-                  e.currentTarget.style.color = isDark ? '#F3F4F6' : '#0F172A';
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.backgroundColor = 'transparent';
-                  e.currentTarget.style.color = isDark ? '#9CA3AF' : '#64748B';
-                }}
-              >
-                <X size={18} />
-              </button>
-
-              <div style={{ display: 'flex', alignItems: 'center', gap: '14px', marginBottom: '16px', paddingRight: '28px' }}>
-                <div style={{
-                  width: '42px',
-                  height: '42px',
-                  borderRadius: '50%',
-                  backgroundColor: isDark ? 'rgba(239, 68, 68, 0.15)' : '#FEE2E2',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  color: isDark ? '#F87171' : '#DC2626',
-                  flexShrink: 0
-                }}>
-                  <AlertTriangle size={22} />
-                </div>
-                <div style={{ textAlign: 'left' }}>
-                  <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: '700', color: isDark ? '#F9FAFB' : '#111827', textAlign: 'left' }}>
-                    Delete classwork?
-                  </h3>
-                  <p style={{ margin: '2px 0 0', fontSize: '0.82rem', color: isDark ? '#9CA3AF' : '#64748B' }}>
-                    Permanent removal confirmation
-                  </p>
-                </div>
-              </div>
-
-              <div
-                className="text-left"
-                style={{
-                  marginBottom: '24px',
-                  color: isDark ? '#D1D5DB' : '#374151',
-                  fontSize: '0.9rem',
-                  lineHeight: '1.55',
-                  textAlign: 'left'
-                }}
-              >
-                <p style={{ margin: 0 }}>
-                  Are you sure you want to permanently delete{' '}
-                  <span
-                    className="font-semibold"
-                    style={{
-                      fontWeight: 600,
-                      color: isDark ? '#F87171' : '#DC2626'
-                    }}
-                  >
-                    {deleteClassworkConfirm.title}
-                  </span>
-                  ? This action cannot be undone.
-                </p>
-              </div>
-
-              {/* Right-aligned footer buttons: justify-end gap-3 */}
-              <div
-                className="flex justify-end gap-3"
-                style={{
-                  display: 'flex',
-                  justifyContent: 'flex-end',
-                  gap: '12px'
-                }}
-              >
-                <button
-                  type="button"
-                  onClick={() => setDeleteClassworkConfirm(null)}
-                  style={{
-                    padding: '9px 18px',
-                    borderRadius: '10px',
-                    border: isDark ? '1px solid #3A3A3C' : '1px solid #D1D5DB',
-                    backgroundColor: isDark ? '#2C2C2E' : '#FFFFFF',
-                    color: isDark ? '#D1D5DB' : '#374151',
-                    fontWeight: '600',
-                    fontSize: '0.88rem',
-                    cursor: 'pointer',
-                    transition: 'all 0.15s ease'
-                  }}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.backgroundColor = isDark ? '#3A3A3C' : '#F3F4F6';
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.backgroundColor = isDark ? '#2C2C2E' : '#FFFFFF';
-                  }}
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={handleExecuteDeleteClasswork}
-                  style={{
-                    padding: '9px 20px',
-                    borderRadius: '10px',
-                    border: 'none',
-                    backgroundColor: '#DC2626',
-                    color: '#FFFFFF',
-                    fontWeight: '600',
-                    fontSize: '0.88rem',
-                    cursor: 'pointer',
-                    boxShadow: '0 4px 12px rgba(220, 38, 38, 0.35)',
-                    transition: 'all 0.15s ease'
-                  }}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.backgroundColor = '#B91C1C';
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.backgroundColor = '#DC2626';
-                  }}
-                >
-                  Delete classwork
-                </button>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-
-      <ArchiveConfirmModal
-        isOpen={Boolean(archiveClassworkConfirm)}
-        itemName={archiveClassworkConfirm?.title}
-        title={archiveClassworkConfirm?.itemType === 'material' ? 'Archive material?' : 'Archive activity?'}
-        subtitle="Hide from active classwork and stream"
-        confirmLabel={archiveClassworkConfirm?.itemType === 'material' ? 'Archive material' : 'Archive activity'}
-        description={
-          <p style={{ margin: 0 }}>
-            Are you sure you want to archive{' '}
-            <span style={{ fontWeight: 600, color: isDark ? '#FBBF24' : '#B45309' }}>
-              {archiveClassworkConfirm?.title || 'this item'}
-            </span>
-            ? It will be hidden from the active classroom stream and classwork list.
-          </p>
-        }
-        isDark={isDark}
-        onCancel={() => setArchiveClassworkConfirm(null)}
-        onConfirm={handleExecuteArchiveClasswork}
-      />
-
-      {/* ═══ MODAL: VIEW MATERIAL DETAILS ═══ */}
-      <AnimatePresence>
-        {viewingMaterialModal && (
-          <div
-            style={{
-              position: 'fixed',
-              inset: 0,
-              backgroundColor: 'rgba(0, 0, 0, 0.65)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              zIndex: 99999,
-              backdropFilter: 'blur(5px)',
-              padding: '20px'
-            }}
-            onClick={() => setViewingMaterialModal(null)}
-          >
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95, y: 15 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 15 }}
-              transition={{ type: 'spring', damping: 25, stiffness: 300 }}
-              style={{
-                ...styles.modalCard,
-                maxWidth: '750px',
-                padding: '32px'
-              }}
-              onClick={(e) => e.stopPropagation()}
-            >
-              {/* Header with Type Icon, Title, and Close Button */}
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '16px', marginBottom: '20px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '16px', minWidth: 0 }}>
-                  <div style={{
-                    width: '46px',
-                    height: '46px',
-                    borderRadius: '12px',
-                    backgroundColor: isDark ? 'rgba(16, 185, 129, 0.15)' : '#dcfce7',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    color: '#10b981',
-                    flexShrink: 0
-                  }}>
-                    {(() => {
-                      const lType = getLessonType(viewingMaterialModal);
-                      if (lType === 'video') return <Video size={24} color={isDark ? '#fbbf24' : '#d97706'} />;
-                      if (lType === 'link') return <Link2 size={24} color={isDark ? '#38bdf8' : '#0284c7'} />;
-                      return <FileText size={24} color="#10b981" />;
-                    })()}
-                  </div>
-                  <div>
-                    <span style={{ fontSize: '0.72rem', fontWeight: '700', color: isDark ? '#94a3b8' : '#64748b', letterSpacing: '0.05em', textTransform: 'uppercase' }}>
-                      MATERIAL DETAILS
-                    </span>
-                    <h2 style={{ margin: '2px 0 0 0', fontSize: '1.4rem', fontWeight: '800', color: isDark ? '#f8fafc' : '#0f172a', wordBreak: 'break-word' }}>
-                      {viewingMaterialModal.title}
-                    </h2>
-                  </div>
-                </div>
-                <button
-                  onClick={() => setViewingMaterialModal(null)}
-                  style={{
-                    ...styles.closeModalBtn,
-                    padding: '8px',
-                    borderRadius: '8px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center'
-                  }}
-                  title="Close"
-                >
-                  <X size={20} />
-                </button>
-              </div>
-
-              {/* Material Overview / Content — hidden when no description exists */}
-              {(() => {
-                const rawDetails = String(viewingMaterialModal.details || '');
-                const hasMedia = /<(img|video|iframe|svg|audio|embed|object)\b/i.test(rawDetails);
-                const plainText = rawDetails
-                  .replace(/<[^>]*>/g, ' ')
-                  .replace(/&nbsp;/gi, ' ')
-                  .replace(/\s+/g, ' ')
-                  .trim();
-                if (!hasMedia && !plainText) return null;
-                return (
-                  <div style={{ marginBottom: '24px' }}>
-                    <h4 style={{ margin: '0 0 12px 0', fontSize: '0.95rem', fontWeight: '700', color: isDark ? '#f1f5f9' : '#1e293b' }}>
-                      Material Content & Description
-                    </h4>
-                    <div style={{
-                      backgroundColor: isDark ? '#262626' : '#ffffff',
-                      border: isDark ? '1px solid #3e3e3e' : '1px solid #e2e8f0',
-                      borderRadius: '12px',
-                      padding: '20px',
-                      maxHeight: '520px',
-                      overflowY: 'auto'
-                    }}>
-                      <RichInstruction
-                        html={viewingMaterialModal.details}
-                        style={{ color: isDark ? '#d1d5db' : '#334155', fontSize: '0.95rem', lineHeight: 1.6 }}
-                        onClick={handleInstructionClick}
-                      />
-                    </div>
-                  </div>
-                );
-              })()}
-
-              {/* Attachments Section */}
-              {viewingMaterialModal.attachments?.length > 0 && (
-                <div style={{ marginBottom: '24px' }}>
-                  <h4 style={{ margin: '0 0 12px 0', fontSize: '0.95rem', fontWeight: '700', color: isDark ? '#f1f5f9' : '#1e293b' }}>
-                    Attached Resources ({viewingMaterialModal.attachments.length})
-                  </h4>
-                  <div style={styles.cardAttachments}>
-                    {viewingMaterialModal.attachments.map((att, i) => (
-                      <AttachmentCard
-                        key={i}
-                        att={att}
-                        isDark={isDark}
-                        onClick={(clickedAtt) => {
-                          const targetName = (clickedAtt.name || clickedAtt.url || '').toLowerCase();
-                          const isImg = clickedAtt.type === 'image' || /\.(png|jpe?g|gif|webp|svg)(\?.*)?$/i.test(targetName);
-                          const isVid = clickedAtt.type === 'video' || /\.(mp4|webm|mov|m4v|mkv|avi)(\?.*)?$/i.test(targetName);
-                          if (isImg) setPreviewImage(clickedAtt);
-                          else if (isVid) setPreviewVideo(clickedAtt);
-                          else setPreviewIframe(clickedAtt);
-                        }}
-                      />
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Footer Actions */}
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '24px', paddingTop: '16px', borderTop: isDark ? '1px solid #3e3e3e' : '1px solid #e2e8f0' }}>
-                <button
-                  type="button"
-                  onClick={() => setViewingMaterialModal(null)}
-                  style={styles.cancelBtn}
-                >
-                  Close
-                </button>
-                {!isClassroomArchivedState && (
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      const toEdit = viewingMaterialModal;
-                      setViewingMaterialModal(null);
-                      openModify(e, toEdit);
-                    }}
-                    style={{
-                      ...styles.saveGradeBtn,
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: '6px'
-                    }}
-                  >
-                    <Edit3 size={15} /> Edit Material
-                  </button>
-                )}
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-
-      {/* MOBILE BOTTOM NAVIGATION */}
       {isMobile && (
-        <nav style={{
-          display: 'flex',
-          justifyContent: 'space-around',
-          alignItems: 'center',
-          backgroundColor: isDark ? '#262626' : '#ffffff',
-          borderTop: isDark ? '1px solid #3f3f46' : '1px solid #e5e7eb',
-          height: '65px',
-          flexShrink: 0,
-          paddingBottom: 'env(safe-area-inset-bottom, 0px)',
-          position: 'sticky',
-          bottom: 0,
-          zIndex: 60
-        }}>
-          {[
-            { id: 'classrooms', Icon: Home, label: 'Home' },
-            { id: 'calendar', Icon: Calendar, label: 'Calendar' },
-            { id: 'archived', Icon: Archive, label: 'Archived' },
-            { id: 'settings', Icon: Settings, label: 'Settings' }
-          ].map(({ id, Icon, label }) => {
-            return (
-              <button
-                key={id}
-                onClick={() => {
-                  if (id === 'settings') {
-                    setIsSettingsModalOpen(true);
-                  } else if (onNavigateView) {
-                    onNavigateView(id);
-                  } else {
-                    onBack();
-                  }
-                }}
-                style={{
-                  display: 'flex',
-                  flexDirection: 'column',
-                  alignItems: 'center',
-                  background: 'none',
-                  border: 'none',
-                  color: isDark ? '#a3a3a3' : '#64748b',
-                  cursor: 'pointer',
-                  padding: '8px',
-                  minWidth: '64px'
-                }}
-              >
-                <Icon size={20} style={{ marginBottom: '4px' }} />
-                <span style={{ fontSize: '0.65rem', fontWeight: '600' }}>{label}</span>
-              </button>
-            );
-          })}
-        </nav>
+        <TeacherClassworkMobileNav
+          isDark={isDark}
+          onOpenSettings={() => setIsSettingsModalOpen(true)}
+          onNavigateView={onNavigateView}
+          onBack={onBack}
+        />
       )}
     </motion.div>
   );
 }
-
-// STYLES
-const getStyles = (isDark) => ({
-  container: {
-    height: '100vh',
-    minHeight: '100vh',
-    width: '100%',
-    display: 'flex',
-    flexDirection: 'column',
-    backgroundColor: isDark ? '#141615' : '#f4f5f7',
-    fontFamily: "'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif",
-    position: 'relative',
-    overflow: 'hidden',
-    transition: 'background-color 0.25s ease'
-  },
-  header: {
-    height: '72px',
-    flexShrink: 0,
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: '0 24px',
-    backgroundColor: isDark ? '#3C3C3C' : '#EEF0F3',
-    zIndex: 50,
-    transition: 'background-color 0.25s ease'
-  },
-  sidebar: (collapsed) => ({
-    width: collapsed ? '84px' : '240px',
-    minWidth: collapsed ? '84px' : '240px',
-    padding: '20px 14px 20px',
-    display: 'flex',
-    flexDirection: 'column',
-    flexShrink: 0,
-    transition: 'all 0.28s cubic-bezier(0.16, 1, 0.3, 1)',
-    background: 'transparent',
-    overflowY: 'auto',
-    overflowX: 'hidden'
-  }),
-  sidebarBtn: (collapsed) => ({
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'flex-start',
-    gap: '16px',
-    padding: '10px 18px',
-    width: '100%',
-    height: '42px',
-    borderRadius: '14px',
-    border: 'none',
-    backgroundColor: 'transparent',
-    cursor: 'pointer',
-    transition: 'all 0.2s ease',
-    overflow: 'hidden',
-    whiteSpace: 'nowrap',
-    position: 'relative',
-    zIndex: 1
-  }),
-  sidebarBtnText: {
-    fontSize: '0.85rem',
-    fontWeight: '600',
-    color: isDark ? '#E8EAED' : '#334155',
-    overflow: 'hidden',
-    textOverflow: 'ellipsis'
-  },
-  badge: {
-    fontSize: '0.7rem',
-    backgroundColor: isDark ? '#4A4A4A' : '#EEF0F3',
-    color: isDark ? '#E8EAED' : '#475569',
-    padding: '3px 8px',
-    borderRadius: '10px',
-    marginLeft: '6px',
-    fontStyle: 'normal',
-    transform: 'translateY(-5px)',
-    border: isDark ? '1px solid #5A5A5A' : '1px solid #cbd5e1'
-  },
-  
-  // MAIN CONTENT & BIG BOX CONTAINER
-  mainContent: {
-    flex: 1,
-    padding: '20px 24px 24px',
-    display: 'flex',
-    flexDirection: 'column',
-    minWidth: 0,
-    overflow: 'hidden'
-  },
-  bigBoxContainer: {
-    backgroundColor: isDark ? '#323232' : '#ffffff',
-    flex: 1,
-    borderRadius: '24px',
-    boxShadow: isDark ? '0 10px 30px rgba(0,0,0,0.25)' : '0 10px 25px rgba(0,0,0,0.05)',
-    border: isDark ? '1px solid #4A4A4A' : 'none',
-    display: 'flex',
-    flexDirection: 'column',
-    overflow: 'hidden',
-    minWidth: 0,
-    transition: 'background-color 0.25s ease'
-  },
-
-  // TOP NAVIGATION BAR INSIDE THE BIG BOX
-  classroomNavHeader: {
-    height: '56px',
-    padding: '0 28px',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: isDark ? '#323232' : '#ffffff',
-    borderBottom: isDark ? '1px solid #4A4A4A' : '1px solid #e2e8f0',
-    flexShrink: 0,
-    zIndex: 10,
-    transition: 'background-color 0.25s ease'
-  },
-  classroomTabsGroup: {
-    display: 'flex',
-    alignItems: 'center',
-    height: '100%',
-    gap: '8px'
-  },
-  classroomTabBtn: {
-    background: 'none',
-    border: 'none',
-    height: '100%',
-    padding: '0 18px',
-    fontSize: '0.94rem',
-    fontWeight: '700',
-    cursor: 'pointer',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    transition: 'color 0.2s ease, border-bottom 0.2s ease'
-  },
-  iconActionBtn: {
-    background: 'none',
-    border: 'none',
-    padding: '8px',
-    borderRadius: '50%',
-    cursor: 'pointer',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    transition: 'background 0.2s ease'
-  },
-
-  // INNER SCROLL AREA INSIDE THE BIG BOX
-  bigBoxInnerScroll: {
-    flex: 1,
-    overflowY: 'auto',
-    overflowX: 'hidden',
-    padding: '24px 28px 32px 28px'
-  },
-
-  // STREAM LAYOUT
-  streamContainer: {
-    maxWidth: '960px',
-    margin: '0 auto',
-    width: '100%',
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '24px'
-  },
-  bannerCard: {
-    height: '240px',
-    borderRadius: '16px',
-    position: 'relative',
-    overflow: 'hidden',
-    display: 'flex',
-    flexDirection: 'column',
-    justifyContent: 'flex-end',
-    padding: '24px 28px',
-    boxShadow: '0 4px 16px rgba(0,0,0,0.06)'
-  },
-  bannerInfo: {
-    position: 'relative',
-    zIndex: 5
-  },
-  bannerTitle: {
-    margin: 0,
-    color: '#ffffff',
-    fontSize: '2.4rem',
-    fontWeight: '800',
-    letterSpacing: '-0.02em',
-    textShadow: '0 2px 4px rgba(0,0,0,0.2)'
-  },
-  bannerSubtitle: {
-    margin: '4px 0 0 0',
-    color: 'rgba(255,255,255,0.92)',
-    fontSize: '1.25rem',
-    fontWeight: '600',
-    textShadow: '0 1px 3px rgba(0,0,0,0.2)'
-  },
-  customizeBtn: {
-    position: 'absolute',
-    top: '20px',
-    right: '20px',
-    backgroundColor: isDark ? '#3A3A3A' : '#ffffff',
-    border: isDark ? '1px solid #4A4A4A' : 'none',
-    borderRadius: '50px',
-    padding: '8px 18px',
-    display: 'flex',
-    alignItems: 'center',
-    gap: '8px',
-    fontSize: '0.85rem',
-    fontWeight: '700',
-    color: isDark ? '#E8EAED' : '#1e293b',
-    cursor: 'pointer',
-    boxShadow: isDark 
-      ? '0 0 14px rgba(255, 255, 255, 0.08), 0 2px 8px rgba(0,0,0,0.45)' 
-      : '0 2px 8px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.04)',
-    zIndex: 10,
-    transition: 'transform 0.18s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.18s cubic-bezier(0.16, 1, 0.3, 1), filter 0.18s ease'
-  },
-  infoBtn: {
-    position: 'absolute',
-    bottom: '18px',
-    right: '20px',
-    background: 'none',
-    border: 'none',
-    cursor: 'pointer',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: '4px',
-    zIndex: 10,
-    opacity: 0.85,
-    transition: 'opacity 0.2s'
-  },
-
-  streamBodyGrid: {
-    display: 'flex',
-    gap: '24px',
-    alignItems: 'flex-start'
-  },
-  streamLeftCol: {
-    width: '210px',
-    flexShrink: 0,
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '16px'
-  },
-  streamRightCol: {
-    flex: 1,
-    minWidth: 0,
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '16px'
-  },
-
-  streamSideCard: {
-    backgroundColor: isDark ? '#383838' : '#ffffff',
-    borderRadius: '12px',
-    border: isDark ? '1px solid #4A4A4A' : '1px solid #e2e8f0',
-    padding: '16px',
-    boxShadow: isDark ? '0 4px 12px rgba(0,0,0,0.3)' : '0 1px 3px rgba(0,0,0,0.02)'
-  },
-  sideCardHeaderRow: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center'
-  },
-  sideCardLabel: {
-    fontSize: '0.85rem',
-    fontWeight: '700',
-    color: isDark ? '#E8EAED' : '#1e293b'
-  },
-  cardTinyActionBtn: {
-    background: 'none',
-    border: 'none',
-    cursor: 'pointer',
-    padding: '3px',
-    borderRadius: '4px',
-    display: 'flex',
-    alignItems: 'center'
-  },
-  classCodeDisplay: {
-    fontSize: '1.25rem',
-    fontWeight: '800',
-    color: '#10b981',
-    marginTop: '10px',
-    letterSpacing: '0.04em',
-    cursor: 'pointer'
-  },
-  noWorkText: {
-    fontSize: '0.82rem',
-    color: isDark ? '#a3a3a3' : '#64748b'
-  },
-  upcomingItemRow: {
-    display: 'flex',
-    flexDirection: 'column',
-    cursor: 'pointer'
-  },
-  upcomingItemDate: {
-    fontSize: '0.72rem',
-    color: '#10b981',
-    fontWeight: '700'
-  },
-  upcomingItemTitle: {
-    fontSize: '0.82rem',
-    color: isDark ? '#E8EAED' : '#1e293b',
-    fontWeight: '600',
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-    whiteSpace: 'nowrap'
-  },
-  viewAllLink: {
-    fontSize: '0.82rem',
-    fontWeight: '700',
-    color: '#10b981',
-    cursor: 'pointer'
-  },
-
-  announceCard: {
-    backgroundColor: isDark ? '#383838' : '#ffffff',
-    borderRadius: '12px',
-    border: isDark ? '1px solid #4A4A4A' : '1px solid #e2e8f0',
-    padding: '16px',
-    boxShadow: isDark ? '0 4px 12px rgba(0,0,0,0.2)' : '0 1px 4px rgba(0,0,0,0.02)'
-  },
-  announceCollapsed: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '14px',
-    cursor: 'pointer'
-  },
-  teacherAvatarSmall: {
-    width: '36px',
-    height: '36px',
-    borderRadius: '50%',
-    backgroundColor: '#10b981',
-    color: 'white',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    fontSize: '0.9rem',
-    fontWeight: '800',
-    flexShrink: 0
-  },
-  announcePlaceholder: {
-    fontSize: '0.9rem',
-    color: isDark ? '#a3a3a3' : '#64748b',
-    fontWeight: '500'
-  },
-  announceTextarea: {
-    width: '100%',
-    borderRadius: '8px',
-    border: isDark ? '1px solid #4A4A4A' : '1px solid #cbd5e1',
-    backgroundColor: isDark ? '#323232' : '#ffffff',
-    color: isDark ? '#E8EAED' : '#1e293b',
-    padding: '10px',
-    fontSize: '0.9rem',
-    fontFamily: 'inherit',
-    outline: 'none',
-    boxSizing: 'border-box'
-  },
-  cancelBtn: {
-    padding: '8px 16px',
-    borderRadius: '8px',
-    border: 'none',
-    background: isDark ? '#464646' : '#f1f5f9',
-    color: isDark ? '#E8EAED' : '#475569',
-    fontWeight: '700',
-    cursor: 'pointer'
-  },
-  postBtn: {
-    padding: '8px 22px',
-    borderRadius: '8px',
-    border: 'none',
-    background: '#10b981',
-    color: 'white',
-    fontWeight: '700',
-    cursor: 'pointer'
-  },
-
-  streamFeedCard: {
-    backgroundColor: isDark ? '#383838' : '#ffffff',
-    borderRadius: '12px',
-    border: isDark ? '1px solid #4A4A4A' : '1px solid #e2e8f0',
-    padding: '18px 20px',
-    boxShadow: isDark ? '0 4px 12px rgba(0,0,0,0.3)' : '0 1px 3px rgba(0,0,0,0.02)'
-  },
-  
-
-  assignmentStreamCard: {
-    backgroundColor: isDark ? '#383838' : '#ffffff',
-    borderRadius: '12px',
-    border: isDark ? '1px solid #4A4A4A' : '1px solid #e2e8f0',
-    padding: '16px 20px',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    cursor: 'pointer',
-    transition: 'all 0.15s ease',
-    boxShadow: isDark ? '0 4px 12px rgba(0,0,0,0.3)' : '0 1px 3px rgba(0,0,0,0.02)'
-  },
-  assignmentIconBadge: {
-    width: '42px',
-    height: '42px',
-    borderRadius: '50%',
-    backgroundColor: isDark ? '#1c2d24' : '#e6f4ea',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexShrink: 0
-  },
-  assignmentStreamTitle: {
-    fontSize: '0.92rem',
-    fontWeight: '700',
-    color: isDark ? '#E8EAED' : '#1f2937'
-  },
-  assignmentStreamDate: {
-    fontSize: '0.78rem',
-    color: isDark ? '#a3a3a3' : '#64748b',
-    marginTop: '3px'
-  },
-  streamCardDots: {
-    display: 'flex',
-    alignItems: 'center',
-    padding: '6px'
-  },
-  emptyFeedBox: {
-    padding: '32px 20px',
-    borderRadius: '12px',
-    border: isDark ? '1px dashed #4A4A4A' : '1px dashed #cbd5e1',
-    textAlign: 'center'
-  },
-
-  // Classwork Layout
-  headerRow: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: '0 0 20px 0',
-    borderBottom: isDark ? '1px solid #4A4A4A' : '1px solid #e2e8f0',
-    marginBottom: '24px'
-  },
-  addButton: { 
-    display: 'flex', 
-    alignItems: 'center', 
-    padding: '10px 24px', 
-    backgroundColor: '#10b981', 
-    border: 'none', 
-    borderRadius: '50px', 
-    color: 'white', 
-    fontWeight: 'bold', 
-    fontSize: '0.95rem', 
-    cursor: 'pointer', 
-    boxShadow: isDark 
-      ? '0 0 16px rgba(16, 185, 129, 0.35), 0 2px 6px rgba(0, 0, 0, 0.35)' 
-      : '0 2px 6px rgba(16, 185, 129, 0.24), 0 1px 2px rgba(0, 0, 0, 0.05)',
-    transition: 'transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.2s cubic-bezier(0.16, 1, 0.3, 1), filter 0.2s ease'
-  },
-  list: { display: 'flex', flexDirection: 'column', gap: '20px' },
-  itemWrapper: { display: 'flex', flexDirection: 'column', gap: '10px' },
-  itemHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
-  titlePill: { display: 'flex', alignItems: 'center', backgroundColor: isDark ? '#383838' : '#f1f5f9', padding: '10px 20px', borderRadius: '50px', color: isDark ? '#E8EAED' : '#1e293b', fontWeight: '700', cursor: 'pointer', userSelect: 'none', transition: 'background 0.15s', border: isDark ? '1px solid #4A4A4A' : 'none' },
-  itemDuePill: { marginLeft: '12px', fontSize: '0.75rem', color: isDark ? '#a3a3a3' : '#64748b', fontWeight: '600' },
-  threeDots: { color: isDark ? '#a3a3a3' : '#9ca3af', cursor: 'pointer', display: 'flex', alignItems: 'center', position: 'relative' },
-  dropdownMenu: { position: 'absolute', top: '28px', right: '0', backgroundColor: isDark ? '#323232' : '#ffffff', border: isDark ? '1px solid #4A4A4A' : '1px solid #e2e8f0', borderRadius: '12px', padding: '8px', display: 'flex', flexDirection: 'column', gap: '4px', boxShadow: isDark ? '0 8px 24px rgba(0,0,0,0.4)' : '0 8px 24px rgba(0,0,0,0.12)', zIndex: 30, minWidth: '130px' },
-  dropdownItem: { padding: '8px 14px', color: isDark ? '#E8EAED' : '#1e293b', fontSize: '0.85rem', fontWeight: '600', cursor: 'pointer', textAlign: 'left', borderRadius: '6px' },
-
-  detailCard: { backgroundColor: isDark ? '#323232' : 'white', borderRadius: '16px', padding: '0', border: isDark ? '1px solid #4A4A4A' : '1px solid #e2e8f0', boxShadow: isDark ? '0 4px 12px rgba(0,0,0,0.2)' : '0 4px 12px rgba(0,0,0,0.04)', overflow: 'hidden' },
-  detailHeaderBar: { display: 'flex', alignItems: 'center', gap: '18px', backgroundColor: isDark ? '#383838' : '#f8fafc', padding: '18px 24px', borderRadius: '12px', margin: '12px', border: isDark ? '1px solid #4A4A4A' : '1px solid #e2e8f0' },
-  detailTitle: { fontSize: '1.25rem', fontWeight: 'bold', color: isDark ? '#E8EAED' : '#1e293b' },
-  detailDue: { fontSize: '0.85rem', color: isDark ? '#a3a3a3' : '#64748b', marginTop: '2px' },
-  detailBody: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '20px', padding: '5px 28px 20px 28px' },
-  detailLeft: { flex: 1 },
-  postedText: { fontSize: '0.8rem', color: isDark ? '#a3a3a3' : '#94a3b8', marginBottom: '8px' },
-  detailInstruction: { margin: 0, color: isDark ? '#E8EAED' : '#334155', fontSize: '0.98rem', lineHeight: 1.5 },
-  detailStats: { display: 'flex', alignItems: 'stretch', gap: '0', paddingLeft: '20px' },
-  statCol: { display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-end', padding: '0 20px', minWidth: '70px' },
-  statColDivider: { width: '1px', backgroundColor: isDark ? '#4A4A4A' : '#e2e8f0', alignSelf: 'stretch' },
-  statNum: { fontSize: '1.4rem', fontWeight: 'bold', color: isDark ? '#E8EAED' : '#1e293b' },
-  statLabel: { fontSize: '0.85rem', color: isDark ? '#a3a3a3' : '#64748b', marginTop: '4px' },
-  detailDivider: { height: '1px', backgroundColor: isDark ? '#4A4A4A' : '#e2e8f0', margin: '0 28px' },
-  detailFooter: { 
-    display: 'flex', 
-    justifyContent: 'space-between', 
-    alignItems: 'center', 
-    padding: '16px 28px',
-    gap: '12px',
-    flexWrap: 'wrap'
-  },
-  viewActivityLink: { color: '#10b981', fontSize: '0.95rem', cursor: 'pointer', fontWeight: '700' },
-  viewGradingBtn: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '8px',
-    padding: '9px 12px',
-    backgroundColor: 'transparent',
-    border: 'none',
-    borderRadius: '8px',
-    color: isDark ? '#34d399' : '#059669',
-    fontWeight: '700',
-    fontSize: '0.88rem',
-    cursor: 'pointer',
-    transition: 'all 0.2s cubic-bezier(0.16, 1, 0.3, 1)',
-    boxShadow: 'none'
-  },
-  liveMonitorBtn: { 
-    display: 'flex', 
-    alignItems: 'center', 
-    gap: '7px', 
-    padding: '9px 22px', 
-    backgroundColor: '#10b981', 
-    border: 'none', 
-    borderRadius: '50px', 
-    color: '#ffffff', 
-    fontWeight: '700', 
-    fontSize: '0.88rem', 
-    cursor: 'pointer', 
-    boxShadow: isDark 
-      ? '0 0 16px rgba(16, 185, 129, 0.35), 0 2px 6px rgba(0, 0, 0, 0.3)' 
-      : '0 2px 8px rgba(16, 185, 129, 0.25), 0 1px 2px rgba(0, 0, 0, 0.05)',
-    transition: 'transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.2s cubic-bezier(0.16, 1, 0.3, 1), filter 0.2s ease'
-  },
-
-  // People Tab
-  peopleSectionHeader: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingBottom: '12px',
-    borderBottom: '2px solid #10b981',
-    marginBottom: '16px'
-  },
-  peopleSectionTitle: {
-    margin: 0,
-    fontSize: '1.5rem',
-    fontWeight: '800',
-    color: isDark ? '#E8EAED' : '#1e293b'
-  },
-  peopleList: {
-    display: 'flex',
-    flexDirection: 'column'
-  },
-  peopleRow: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '16px',
-    padding: '12px 14px',
-    borderBottom: isDark ? '1px solid #4A4A4A' : '1px solid #f1f5f9'
-  },
-  peopleAvatarGreen: {
-    width: '38px',
-    height: '38px',
-    borderRadius: '50%',
-    backgroundColor: '#10b981',
-    color: 'white',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    fontSize: '0.95rem',
-    fontWeight: '800'
-  },
-  peopleAvatarBlue: {
-    width: '38px',
-    height: '38px',
-    borderRadius: '50%',
-    backgroundColor: '#3b82f6',
-    color: 'white',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    fontSize: '0.95rem',
-    fontWeight: '800'
-  },
-
-  // Grades Tab
-  activitySelectionRow: {
-    display: 'flex',
-    flexWrap: 'wrap',
-    alignItems: 'center',
-    gap: '10px',
-    marginBottom: '20px',
-    width: '100%'
-  },
-  activityChipBtn: {
-    padding: '7px 16px',
-    borderRadius: '50px',
-    border: 'none',
-    fontSize: '0.84rem',
-    cursor: 'pointer',
-    maxWidth: '100%',
-    lineHeight: 1.35,
-    whiteSpace: 'normal',
-    textAlign: 'left',
-    transition: 'all 0.15s ease'
-  },
-  bulkGradeActionBtn: {
-    padding: '8px 16px',
-    borderRadius: '8px',
-    border: 'none',
-    backgroundColor: '#10b981',
-    color: 'white',
-    fontWeight: '700',
-    fontSize: '0.82rem',
-    cursor: 'pointer',
-    display: 'flex',
-    alignItems: 'center',
-    gap: '6px',
-    boxShadow: '0 2px 6px rgba(16,185,129,0.25)'
-  },
-  gradingColumnsLayout: {
-    display: 'flex',
-    gap: '24px',
-    alignItems: 'flex-start'
-  },
-  gradingRosterCol: {
-    width: '280px',
-    flexShrink: 0,
-    borderRadius: '12px',
-    border: isDark ? '1px solid #4A4A4A' : '1px solid #e2e8f0',
-    overflow: 'hidden',
-    backgroundColor: isDark ? '#383838' : '#f8fafc'
-  },
-  rosterHeaderBox: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: '12px 16px',
-    borderBottom: isDark ? '1px solid #4A4A4A' : '1px solid #e2e8f0',
-    backgroundColor: isDark ? '#323232' : '#ffffff'
-  },
-  gradingStudentList: {
-    display: 'flex',
-    flexDirection: 'column',
-    maxHeight: '480px',
-    overflowY: 'auto'
-  },
-  gradingStudentRow: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: '10px 14px',
-    borderBottom: isDark ? '1px solid #4A4A4A' : '1px solid #f1f5f9',
-    cursor: 'pointer',
-    borderLeftWidth: '3px',
-    borderLeftStyle: 'solid',
-    transition: 'all 0.15s'
-  },
-  gradeBadgeGraded: {
-    fontSize: '0.75rem',
-    color: isDark ? '#34d399' : '#059669',
-    fontWeight: '700',
-    backgroundColor: isDark ? '#133527' : '#ecfdf5',
-    padding: '3px 8px',
-    borderRadius: '6px'
-  },
-  gradeBadgeTurnedIn: {
-    fontSize: '0.72rem',
-    color: isDark ? '#60a5fa' : '#2563eb',
-    fontWeight: '700',
-    backgroundColor: isDark ? '#1e2d42' : '#eff6ff',
-    padding: '3px 8px',
-    borderRadius: '6px'
-  },
-  gradingEvalCol: {
-    flex: 1,
-    minWidth: 0,
-    borderRadius: '12px',
-    border: isDark ? '1px solid #4A4A4A' : '1px solid #e2e8f0',
-    padding: '24px',
-    backgroundColor: isDark ? '#323232' : '#ffffff'
-  },
-  codePreviewPre: {
-    backgroundColor: '#0f172a',
-    color: '#e2e8f0',
-    padding: '16px',
-    borderRadius: '10px',
-    fontFamily: 'Consolas, Monaco, monospace',
-    fontSize: '0.85rem',
-    maxHeight: '220px',
-    overflow: 'auto',
-    margin: '6px 0 0 0'
-  },
-  playbackActionBtn: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '6px',
-    padding: '6px 14px',
-    borderRadius: '6px',
-    border: isDark ? '1px solid #4A4A4A' : '1px solid #cbd5e1',
-    background: isDark ? '#3A3A3A' : 'white',
-    color: isDark ? '#E8EAED' : '#334155',
-    fontWeight: '700',
-    fontSize: '0.8rem',
-    cursor: 'pointer'
-  },
-  saveGradeBtn: {
-    padding: '9px 24px',
-    backgroundColor: '#10b981',
-    color: 'white',
-    border: 'none',
-    borderRadius: '8px',
-    fontWeight: '700',
-    fontSize: '0.9rem',
-    cursor: 'pointer',
-    boxShadow: '0 2px 6px rgba(16,185,129,0.3)'
-  },
-
-  // Modal Common Styles
-  modalOverlay: { 
-    position: 'fixed', 
-    top: 0, 
-    left: 0, 
-    right: 0, 
-    bottom: 0, 
-    backgroundColor: 'rgba(0,0,0,0.55)', 
-    display: 'flex', 
-    justifyContent: 'center', 
-    alignItems: 'center', 
-    zIndex: 100, 
-    backdropFilter: 'blur(4px)',
-    padding: '24px 16px',
-    boxSizing: 'border-box'
-  },
-  modalCard: { 
-    backgroundColor: isDark ? '#323232' : 'white', 
-    padding: '28px 32px', 
-    borderRadius: '20px', 
-    width: '90%', 
-    maxWidth: '800px', 
-    maxHeight: '88vh',
-    overflowY: 'auto',
-    scrollbarWidth: 'none',
-    msOverflowStyle: 'none',
-    boxShadow: isDark ? '0 20px 40px rgba(0,0,0,0.5)' : '0 20px 40px rgba(0,0,0,0.2)', 
-    border: isDark ? '1px solid #4A4A4A' : 'none' 
-  },
-  modalHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' },
-  closeModalBtn: { background: 'transparent', border: 'none', cursor: 'pointer', color: isDark ? '#a3a3a3' : '#9ca3af', padding: '4px' },
-  form: { display: 'flex', flexDirection: 'column', gap: '8px' },
-  input: { width: '100%', padding: '10px 14px', borderRadius: '8px', border: isDark ? '1px solid #4A4A4A' : '1px solid #d1d5db', backgroundColor: isDark ? '#3A3A3A' : 'white', color: isDark ? '#E8EAED' : '#1e293b', fontSize: '0.95rem', boxSizing: 'border-box' },
-  fieldLabel: { fontSize: '0.85rem', fontWeight: 'bold', color: isDark ? '#E8EAED' : '#475569', marginTop: '6px' },
-  labelRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '6px' },
-  checkboxLabel: { display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.82rem', color: isDark ? '#E8EAED' : '#4b5563', cursor: 'pointer' },
-  attachIcons: { display: 'flex', gap: '12px', color: isDark ? '#a3a3a3' : '#6b7280' },
-  attachIcon: { cursor: 'pointer' },
-  attachmentList: { 
-    display: 'grid', 
-    gridTemplateColumns: 'repeat(auto-fill, minmax(210px, 1fr))', 
-    gap: '10px', 
-    marginTop: '6px',
-    width: '100%'
-  },
-  cardAttachments: { 
-    display: 'grid', 
-    gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', 
-    gap: '12px', 
-    marginTop: '15px', 
-    width: '100%'
-  },
-  attachThumb: { 
-    maxWidth: '240px', 
-    maxHeight: '160px', 
-    borderRadius: '8px', 
-    objectFit: 'cover', 
-    display: 'block',
-    border: isDark ? '1px solid #4A4A4A' : '1px solid #e2e8f0'
-  },
-  attachVideo: { 
-    maxWidth: '380px', 
-    maxHeight: '220px', 
-    width: '100%',
-    borderRadius: '8px', 
-    backgroundColor: '#000' 
-  },
-  attachLink: { 
-    display: 'inline-flex', 
-    alignItems: 'center', 
-    gap: '8px',
-    color: isDark ? '#34d399' : '#059669', 
-    backgroundColor: isDark ? '#3A3A3A' : '#f8fafc',
-    border: isDark ? '1px solid #4A4A4A' : '1px solid #e2e8f0',
-    borderRadius: '8px',
-    padding: '8px 14px',
-    textDecoration: 'none', 
-    fontSize: '0.88rem', 
-    fontWeight: '500',
-    maxWidth: '100%',
-    wordBreak: 'break-all',
-    boxSizing: 'border-box'
-  },
-  bottomRow: { 
-    display: 'flex', 
-    justifyContent: 'space-between', 
-    alignItems: 'center', 
-    marginTop: '20px',
-    paddingBottom: '4px'
-  },
-  gradingGroup: { display: 'flex', alignItems: 'center', gap: '15px' },
-  radioLabel: { display: 'flex', alignItems: 'center', gap: '5px', fontSize: '0.9rem', color: isDark ? '#E8EAED' : '#4b5563', cursor: 'pointer' },
-  assignBtn: { padding: '10px 32px', backgroundColor: '#10b981', border: 'none', borderRadius: '50px', color: 'white', fontWeight: 'bold', fontSize: '0.95rem', cursor: 'pointer', boxShadow: '0 4px 6px rgba(16,185,129,0.2)' },
-  infoFieldRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: isDark ? '1px solid #4A4A4A' : '1px solid #f1f5f9' },
-  infoFieldLabel: { fontSize: '0.85rem', color: isDark ? '#a3a3a3' : '#64748b' },
-  infoFieldValue: { fontSize: '0.92rem', color: isDark ? '#E8EAED' : '#1e293b', fontWeight: '600' }
-});

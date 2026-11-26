@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { User, LogOut, Moon, Sun } from 'lucide-react';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { useCurrentUser } from '../hooks/useCurrentUser';
@@ -14,7 +14,7 @@ export default function ProfileMenu({ onLogout, currentUser: propUser }) {
   const { isDark, toggle } = useDarkMode();
   const { currentUser: hookUser } = useCurrentUser();
   const [open, setOpen] = useState(false);
-  const [imgError, setImgError] = useState(false);
+  const [failedAvatarUrl, setFailedAvatarUrl] = useState(null);
   const ref = useRef(null);
 
   // Dynamic user resolution with fallback chain
@@ -31,10 +31,7 @@ export default function ProfileMenu({ onLogout, currentUser: propUser }) {
   const role = currentUser?.role || '';
   const email = currentUser?.email || '';
   const avatarUrl = currentUser?.avatar || currentUser?.profilePicture;
-
-  useEffect(() => {
-    setImgError(false);
-  }, [avatarUrl]);
+  const imgError = Boolean(avatarUrl) && failedAvatarUrl === avatarUrl;
 
   // Close the dropdown when clicking anywhere outside it.
   useEffect(() => {
@@ -107,7 +104,7 @@ export default function ProfileMenu({ onLogout, currentUser: propUser }) {
           <img
             src={avatarUrl}
             alt={name}
-            onError={() => setImgError(true)}
+            onError={() => setFailedAvatarUrl(avatarUrl)}
             style={{
               width: '100%',
               height: '100%',
@@ -145,7 +142,7 @@ export default function ProfileMenu({ onLogout, currentUser: propUser }) {
                 <img
                   src={avatarUrl}
                   alt={name}
-                  onError={() => setImgError(true)}
+                  onError={() => setFailedAvatarUrl(avatarUrl)}
                   style={{
                     width: '100%',
                     height: '100%',

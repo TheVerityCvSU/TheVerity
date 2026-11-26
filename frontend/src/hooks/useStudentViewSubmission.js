@@ -142,7 +142,7 @@ export function useStudentViewSubmission({
     const curHistory = codeHistoryRef.current?.length > 0 ? codeHistoryRef.current : [];
     const lastHistEntry = curHistory[curHistory.length - 1];
     const subHistory =
-      lastHistEntry && Date.now() - (lastHistEntry.time || 0) > 1000
+      curHistory.length === 0 || lastHistEntry?.code !== curCode
         ? [...curHistory, { time: Date.now(), code: curCode }]
         : curHistory;
     persistHistoryFn(subHistory, curCode);

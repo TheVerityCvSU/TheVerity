@@ -44,7 +44,7 @@ export const setCustomLanServer = async (url) => {
   }
 
   // Pre-test the health of the target server (supports both Online Cloud Server and Local LAN Server)
-  let healthData = null;
+  let healthData;
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), isLocalOrLan ? 3500 : 6000);
@@ -57,7 +57,7 @@ export const setCustomLanServer = async (url) => {
     if (!healthData || healthData.app !== 'the-verity') {
       return { success: false, error: 'Target reachable, but not a Verity server' };
     }
-  } catch (err) {
+  } catch {
     return {
       success: false,
       error: isLocalOrLan

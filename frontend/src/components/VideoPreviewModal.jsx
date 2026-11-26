@@ -1,31 +1,17 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Download, AlertCircle, Video } from 'lucide-react';
 import { resolveMediaUrl } from '../utils/mediaUrl';
 import { triggerDirectDownload } from '../utils/downloadFile';
 
 /**
- * Helper to determine the best MIME type for a video URL or name
- */
-export const getVideoType = (url = '', name = '') => {
-  const target = (url + ' ' + name).toLowerCase();
-  if (target.includes('.webm')) return 'video/webm';
-  if (target.includes('.mov') || target.includes('.quicktime')) return 'video/quicktime';
-  if (target.includes('.ogg') || target.includes('.ogv')) return 'video/ogg';
-  return 'video/mp4';
-};
-
-/**
  * VideoPreviewModal
  * Fullscreen pop-up lightbox for playing uploaded MP4, WebM, and MOV videos.
  */
 export default function VideoPreviewModal({ src, name, onClose }) {
-  const [hasError, setHasError] = useState(false);
+  const [failedSrc, setFailedSrc] = useState(null);
   const resolvedSrc = useMemo(() => resolveMediaUrl(src), [src]);
-
-  useEffect(() => {
-    setHasError(false);
-  }, [resolvedSrc]);
+  const hasError = Boolean(resolvedSrc) && failedSrc === resolvedSrc;
 
   // Keyboard navigation (Escape to close)
   useEffect(() => {
@@ -100,7 +86,7 @@ export default function VideoPreviewModal({ src, name, onClose }) {
               playsInline
               preload="metadata"
               style={modalStyles.video}
-              onError={() => setHasError(true)}
+              onError={() => setFailedSrc(resolvedSrc)}
             >
               Your browser does not support playing this video.
             </video>

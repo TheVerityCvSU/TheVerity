@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { BookOpen } from 'lucide-react';
 import Skeleton from '../Skeleton';
 import ClassworkItemCard from './ClassworkItemCard';

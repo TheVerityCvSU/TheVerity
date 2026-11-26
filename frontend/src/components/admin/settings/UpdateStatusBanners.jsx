@@ -1,4 +1,3 @@
-import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { CheckCircle2, Download, Sparkles, AlertCircle } from 'lucide-react';
 

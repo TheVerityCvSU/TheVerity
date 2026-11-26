@@ -32,28 +32,31 @@ export function useStudentViewFiles({
   });
 
   const codeRef = useRef(code);
-  codeRef.current = code;
-
   useEffect(() => {
+    codeRef.current = code;
+  }, [code]);
+
+  const starterSyncKey = `${draftKey}|${assignment?.starterCode || ''}`;
+  const [prevStarterSyncKey, setPrevStarterSyncKey] = useState(starterSyncKey);
+  if (starterSyncKey !== prevStarterSyncKey) {
+    setPrevStarterSyncKey(starterSyncKey);
     if (assignment?.starterCode && (!code || code === initialCode)) {
+      let restored = null;
       try {
         const savedCode = localStorage.getItem(draftKey);
-        if (savedCode && !savedCode.includes('UserInputApp')) {
-          setCode(savedCode);
-          codeRef.current = savedCode;
-          return;
-        }
+        if (savedCode && !savedCode.includes('UserInputApp')) restored = savedCode;
       } catch {}
-      setCode(assignment.starterCode);
-      codeRef.current = assignment.starterCode;
+      setCode(restored || assignment.starterCode);
     }
-  }, [assignment?.starterCode, draftKey, initialCode]);
+  }
 
   const [codeHistory, setCodeHistory] = useState(() =>
     propCodeHistory || loadInitialHistory(classroomId, assignmentId, studentId, safeUsername, currentUser, code)
   );
   const internalCodeHistoryRef = useRef(codeHistory);
-  internalCodeHistoryRef.current = codeHistory;
+  useEffect(() => {
+    internalCodeHistoryRef.current = codeHistory;
+  }, [codeHistory]);
   const activeCodeHistoryRef = propCodeHistoryRef || internalCodeHistoryRef;
 
   const persistHistoryFn = useCallback((hist, currentCodeVal) => {
@@ -109,7 +112,7 @@ export function useStudentViewFiles({
 
   const handleRenameFile = (id, newName) => {
     if (submitted) return;
-    const safeName = newName.replace(/[^a-zA-Z0-9_\-]/g, '').slice(0, 40) || 'File';
+    const safeName = newName.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 40) || 'File';
     const updated = extraFiles.map((f) => (f.id === id ? { ...f, name: safeName } : f));
     setExtraFiles(updated);
     persistExtraFiles(updated);

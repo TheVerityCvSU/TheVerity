@@ -16,8 +16,6 @@ export default function TeacherViewTimelineScrubber({
   progressLineRef,
   progressThumbRef,
   timeDisplayRef,
-  smoothProgressRef,
-  currentAnimTimeRef,
   activeStudentWarnings = [],
   theme,
   isDark,
@@ -32,10 +30,8 @@ export default function TeacherViewTimelineScrubber({
       : totalPlaybackDuration > 0
       ? Math.min(Math.max(((cumulativeTimes[currIndex] ?? 0) / totalPlaybackDuration) * 100, 0), 100)
       : 0;
-  const displayPercent =
-    isPlaying && typeof smoothProgressRef.current === 'number'
-      ? smoothProgressRef.current
-      : progressPercent;
+  const displayPercent = progressPercent;
+  const activeStepMs = cumulativeTimes[currIndex] ?? 0;
 
   // Build sorted timeline alert flags with playback time, percent, and exact clock time
   const alertFlags = useMemo(() => {
@@ -196,7 +192,7 @@ export default function TeacherViewTimelineScrubber({
             ref={timeDisplayRef}
             style={{ color: theme.textMuted, fontWeight: '600', fontSize: '0.75rem' }}
           >
-            Keystroke {currIndex + 1} / {history.length} ({formatTimeMs(currentAnimTimeRef.current || 0)} / {formatTimeMs(totalPlaybackDuration)})
+            Keystroke {currIndex + 1} / {history.length} ({formatTimeMs(activeStepMs)} / {formatTimeMs(totalPlaybackDuration)})
           </span>
         </div>
       </div>
@@ -346,11 +342,9 @@ export default function TeacherViewTimelineScrubber({
           max={totalPlaybackDuration}
           step="any"
           value={
-            isPlaying && typeof currentAnimTimeRef.current === 'number'
-              ? currentAnimTimeRef.current
-              : playbackIndex < 0
+            playbackIndex < 0
               ? totalPlaybackDuration
-              : cumulativeTimes[currIndex] ?? 0
+              : activeStepMs
           }
           onChange={(e) => handleScrub(parseFloat(e.target.value))}
           style={{

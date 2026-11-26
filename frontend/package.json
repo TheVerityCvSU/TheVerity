@@ -14,6 +14,7 @@
     "@monaco-editor/react": "^4.7.0",
     "@react-oauth/google": "^0.13.5",
     "docx-preview": "^0.4.1",
+    "dompurify": "^3.5.0",
     "framer-motion": "^13.2.0",
     "jodit": "^4.15.16",
     "jodit-react": "^5.5.22",

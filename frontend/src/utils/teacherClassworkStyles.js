@@ -38,7 +38,7 @@ export const getStyles = (isDark) => ({
     overflowY: 'auto',
     overflowX: 'hidden'
   }),
-  sidebarBtn: (collapsed) => ({
+  sidebarBtn: () => ({
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'flex-start',
@@ -214,14 +214,14 @@ export const getStyles = (isDark) => ({
   detailTitle: { fontSize: '1.25rem', fontWeight: 'bold', color: isDark ? '#E8EAED' : '#1e293b' },
   detailDue: { fontSize: '0.85rem', color: isDark ? '#a3a3a3' : '#64748b', marginTop: '2px' },
   detailBody: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '20px', padding: '5px 28px 20px 28px' },
-  detailLeft: { flex: 1 },
+  detailLeft: { flex: 1, minWidth: 0, overflow: 'hidden' },
   postedText: { fontSize: '0.8rem', color: isDark ? '#a3a3a3' : '#94a3b8', marginBottom: '8px' },
-  detailInstruction: { margin: 0, color: isDark ? '#E8EAED' : '#334155', fontSize: '0.98rem', lineHeight: 1.5 },
-  detailStats: { display: 'flex', alignItems: 'stretch', gap: '0', paddingLeft: '20px' },
+  detailInstruction: { margin: 0, color: isDark ? '#E8EAED' : '#334155', fontSize: '0.98rem', lineHeight: 1.5, minWidth: 0, maxWidth: '100%' },
+  detailStats: { display: 'flex', alignItems: 'stretch', gap: '0', paddingLeft: '20px', flexShrink: 0 },
   statCol: { display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-end', padding: '0 20px', minWidth: '70px' },
   statColDivider: { width: '1px', backgroundColor: isDark ? '#4A4A4A' : '#e2e8f0', alignSelf: 'stretch' },
-  statNum: { fontSize: '1.4rem', fontWeight: 'bold', color: isDark ? '#E8EAED' : '#1e293b' },
-  statLabel: { fontSize: '0.85rem', color: isDark ? '#a3a3a3' : '#64748b', marginTop: '4px' },
+  statNum: { fontSize: '1.4rem', fontWeight: 'bold', color: isDark ? '#E8EAED' : '#1e293b', fontVariantNumeric: 'tabular-nums' },
+  statLabel: { fontSize: '0.85rem', color: isDark ? '#a3a3a3' : '#64748b', marginTop: '4px', whiteSpace: 'nowrap' },
   detailDivider: { height: '1px', backgroundColor: isDark ? '#4A4A4A' : '#e2e8f0', margin: '0 28px' },
   detailFooter: {
     display: 'flex',

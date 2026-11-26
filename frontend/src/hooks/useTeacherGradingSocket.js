@@ -3,6 +3,7 @@ import { deleteGradeApi } from '../data/teacherGradingService';
 
 export function useTeacherGradingSocket({
   assignmentId,
+  classroomId,
   socket,
   loadData,
   setStudents,
@@ -14,6 +15,11 @@ export function useTeacherGradingSocket({
     window.addEventListener('storage', onStorage);
 
     const onNewSubmission = () => loadData();
+    const onSubmissionUpdated = (data) => {
+      if (!data || !assignmentId || String(data.assignmentId) === String(assignmentId)) {
+        loadData();
+      }
+    };
 
     const onUnsubmit = (data) => {
       if (data?.studentName || data?.studentId) {
@@ -67,8 +73,21 @@ export function useTeacherGradingSocket({
       });
     };
 
+    const joinGradingRoom = () => {
+      if (!socket || !assignmentId) return;
+      const token = localStorage.getItem('verity_token') || localStorage.getItem('token');
+      socket.emit('teacher_join', {
+        classroomId: classroomId || 'none',
+        assignmentId,
+        token
+      });
+    };
+
     if (socket) {
+      socket.on('connect', joinGradingRoom);
+      if (socket.connected) joinGradingRoom();
       socket.on('teacher_receive_submission', onNewSubmission);
+      socket.on('submission_updated', onSubmissionUpdated);
       socket.on('teacher_student_unsubmitted', onUnsubmit);
       socket.on('student_unsubmitted', onUnsubmit);
       socket.on('grade_updated', onGradeUpdated);
@@ -79,13 +98,18 @@ export function useTeacherGradingSocket({
     return () => {
       window.removeEventListener('storage', onStorage);
       if (socket) {
+        socket.off('connect', joinGradingRoom);
         socket.off('teacher_receive_submission', onNewSubmission);
+        socket.off('submission_updated', onSubmissionUpdated);
         socket.off('teacher_student_unsubmitted', onUnsubmit);
         socket.off('student_unsubmitted', onUnsubmit);
         socket.off('grade_updated', onGradeUpdated);
         socket.off('bulk_grades_updated', onBulkGradesUpdated);
         socket.off('grade_deleted', onGradeDeleted);
+        try {
+          socket.emit('teacher_leave', { classroomId: classroomId || 'none', assignmentId });
+        } catch (_) {}
       }
     };
-  }, [assignmentId, socket, loadData, setStudents, setSelectedId, setGrades]);
+  }, [assignmentId, classroomId, socket, loadData, setStudents, setSelectedId, setGrades]);
 }

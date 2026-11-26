@@ -23,7 +23,7 @@ export const getLayoutStyles = (isDark) => ({
     overflowY: 'auto',
     overflowX: 'hidden'
   }),
-  sidebarBtn: (collapsed) => ({
+  sidebarBtn: () => ({
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'flex-start',

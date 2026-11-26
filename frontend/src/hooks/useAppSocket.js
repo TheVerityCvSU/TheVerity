@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { io } from 'socket.io-client';
 import { subscribeConnectionStatus, getActiveSocketUrl } from '../data/api';
-import { saveClassroomTheme } from '../data/classroomTheme';
+import { applyClassroomThemeLocally } from '../data/classroomTheme';
 
 export const createVeritySocket = (targetUrl) => {
   const url = targetUrl || getActiveSocketUrl();
@@ -107,7 +107,7 @@ export function useAppSocket({ currentUser, setCurrentUser, normalizeSavedUser, 
         section: data.code || data.section
       };
 
-      saveClassroomTheme(targetClassroom, data.theme, null);
+      applyClassroomThemeLocally(targetClassroom, data.theme, { emitWindowEvent: true });
 
       setActiveClassroom(prev => {
         if (!prev) return prev;

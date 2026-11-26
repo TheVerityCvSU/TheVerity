@@ -196,6 +196,8 @@ const BANNED_CODE_PATTERNS = [
   { pattern: /\b(NativeLibrary|GCHandle|Marshal)\s*\./i, rule: 'NATIVE_INTEROP', message: 'Restricted API: Native memory/library interop is prohibited.' },
   { pattern: /\bSystem\s*\.\s*Runtime\s*\.\s*CompilerServices\s*\.\s*Unsafe\b/i, rule: 'UNSAFE_CODE', message: 'Restricted API: CompilerServices.Unsafe is prohibited.' },
   { pattern: /\bunsafe\b/i, rule: 'UNSAFE_CODE', message: 'Restricted API: Unsafe code blocks are prohibited.' },
+  { pattern: /\bstackalloc\b/i, rule: 'UNSAFE_CODE', message: 'Restricted API: stackalloc memory allocation is prohibited.' },
+  { pattern: /\busing\s+[A-Za-z_][A-Za-z0-9_]*\s*=\s*System\s*\.\s*(?:Diagnostics|IO|Net|Reflection|Runtime)\b/i, rule: 'NAMESPACE_ALIAS_BYPASS', message: 'Restricted API: Namespace aliases for restricted System APIs are prohibited.' },
   { pattern: /\bSystem\s*\.\s*Reflection\b/i, rule: 'REFLECTION', message: 'Restricted API: System.Reflection is prohibited.' },
   { pattern: /\bSystem\s*\.\s*Runtime\s*\.\s*Loader\b/i, rule: 'REFLECTION', message: 'Restricted API: AssemblyLoadContext/Runtime.Loader is prohibited.' },
   { pattern: /\bAssemblyLoadContext\b/i, rule: 'REFLECTION', message: 'Restricted API: Dynamic AssemblyLoadContext loading is prohibited.' },
@@ -204,13 +206,15 @@ const BANNED_CODE_PATTERNS = [
   { pattern: /\bActivator\s*\.\s*CreateInstance\b/i, rule: 'REFLECTION', message: 'Restricted API: Dynamic Activator is prohibited.' },
   { pattern: /\bSystem\s*\.\s*Net\b/i, rule: 'NETWORK_ACCESS', message: 'Restricted API: System.Net networking is prohibited.' },
   { pattern: /\b(HttpClient|TcpClient|UdpClient|WebClient|WebRequest|HttpWebRequest|Socket|TcpListener|RestClient)\b/i, rule: 'NETWORK_ACCESS', message: 'Restricted API: Network socket/HTTP calls are prohibited in sandbox.' },
-  { pattern: /\bSystem\s*\.\s*IO\s*\.\s*(File|Directory|FileStream|StreamReader|StreamWriter|FileInfo|DirectoryInfo|DriveInfo|FileSystemWatcher|MemoryMappedFiles|Pipes)\b/i, rule: 'FILESYSTEM_IO', message: 'Restricted API: Direct filesystem or pipe I/O is prohibited in sandbox.' },
+  { pattern: /\bSystem\s*\.\s*IO\s*\.\s*(File|Directory|FileStream|StreamReader|StreamWriter|FileInfo|DirectoryInfo|DriveInfo|FileSystemWatcher|MemoryMappedFiles|Pipes|Compression)\b/i, rule: 'FILESYSTEM_IO', message: 'Restricted API: Direct filesystem, compression, or pipe I/O is prohibited in sandbox.' },
+  { pattern: /\b(ZipFile|ZipArchive|GZipStream|DeflateStream)\b/i, rule: 'FILESYSTEM_IO', message: 'Restricted API: Archive/compression stream I/O is prohibited in sandbox.' },
+  { pattern: /\b(XDocument|XmlDocument|XmlReader|XmlTextReader)\s*\.\s*(Load|Create)\b/i, rule: 'FILESYSTEM_IO', message: 'Restricted API: External XML loader APIs are prohibited in sandbox.' },
   { pattern: /\b(File|Directory)\s*\.\s*(Read|Write|Append|Open|Create|Delete|Move|Copy|Exists|GetFiles|GetDirectories|Enumerate|SetAttributes|Replace)\w*/i, rule: 'FILESYSTEM_IO', message: 'Restricted API: Direct filesystem access is prohibited in sandbox.' },
-  { pattern: /\bnew\s+(FileStream|StreamReader|StreamWriter|FileInfo|DirectoryInfo|DriveInfo|FileSystemWatcher|NamedPipeClientStream|NamedPipeServerStream)\b/i, rule: 'FILESYSTEM_IO', message: 'Restricted API: Direct file/stream/pipe handles are prohibited in sandbox.' },
+  { pattern: /\bnew\s+(FileStream|StreamReader|StreamWriter|FileInfo|DirectoryInfo|DriveInfo|FileSystemWatcher|NamedPipeClientStream|NamedPipeServerStream|ZipArchive|GZipStream|DeflateStream|XmlTextReader)\b/i, rule: 'FILESYSTEM_IO', message: 'Restricted API: Direct file/stream/pipe handles are prohibited in sandbox.' },
   { pattern: /\bMemoryMappedFile\b/i, rule: 'FILESYSTEM_IO', message: 'Restricted API: MemoryMappedFile is prohibited in sandbox.' },
   { pattern: /\bMicrosoft\s*\.\s*Win32\s*\.\s*Registry\b/i, rule: 'SYSTEM_TAMPER', message: 'Restricted API: Registry access is prohibited.' },
   { pattern: /\bRegistryKey\b/i, rule: 'SYSTEM_TAMPER', message: 'Restricted API: RegistryKey access is prohibited.' },
-  { pattern: /\bEnvironment\s*\.\s*(GetEnvironmentVariable|GetEnvironmentVariables|SetEnvironmentVariable|GetFolderPath|MachineName|UserName|CurrentDirectory)\b/i, rule: 'ENV_ACCESS', message: 'Restricted API: Reading or modifying host environment/OS paths is prohibited in sandbox.' },
+  { pattern: /\bEnvironment\s*\.\s*(GetEnvironmentVariable|GetEnvironmentVariables|SetEnvironmentVariable|GetFolderPath|MachineName|UserName|CurrentDirectory|GetCommandLineArgs|CommandLine|OSVersion|GetLogicalDrives|ExpandEnvironmentVariables|SystemDirectory)\b/i, rule: 'ENV_ACCESS', message: 'Restricted API: Reading or modifying host environment/OS paths is prohibited in sandbox.' },
   { pattern: /\bEnvironment\s*\.\s*Exit\b/i, rule: 'PROCESS_KILL', message: 'Restricted API: Environment.Exit is prohibited in classroom IDE.' },
   { pattern: /\bEnvironment\s*\.\s*FailFast\b/i, rule: 'PROCESS_KILL', message: 'Restricted API: Environment.FailFast is prohibited.' },
   { pattern: /\bAppDomain\s*\.\s*CurrentDomain\b/i, rule: 'SYSTEM_TAMPER', message: 'Restricted API: AppDomain manipulation is prohibited.' }
@@ -275,6 +279,32 @@ function scanSingleFile(code, fileName = 'Program.cs') {
           line: strObj.line,
           column: strObj.col
         };
+      }
+    }
+  }
+
+  // Also detect simple split-string literal concatenation (e.g., "po" + "wershell", "cmd" + ".exe")
+  const foldedLiteralCode = code.replace(/"([^"\\\r\n]*)"(?:\s*\+\s*"([^"\\\r\n]*)")+/g, (match) => {
+    const joined = Array.from(match.matchAll(/"([^"\\\r\n]*)"/g), m => m[1]).join('');
+    for (const check of BANNED_STRING_PATTERNS) {
+      if (check.pattern.test(joined)) return `"${joined}"`;
+    }
+    return match;
+  });
+  if (foldedLiteralCode !== code) {
+    const folded = maskCommentsAndStrings(foldedLiteralCode);
+    for (const strObj of folded.strings) {
+      for (const check of BANNED_STRING_PATTERNS) {
+        if (check.pattern.test(strObj.value)) {
+          return {
+            isSafe: false,
+            rule: check.rule,
+            message: check.message,
+            fileName,
+            line: strObj.line,
+            column: strObj.col
+          };
+        }
       }
     }
   }

@@ -1,4 +1,3 @@
-import React from 'react';
 
 export default function ClassDetailsSection({ formData, setFormData, nameError = '', role, isDark, styles }) {
   return (

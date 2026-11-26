@@ -1,4 +1,3 @@
-import React from 'react';
 import { Users, Sparkles, Check, Search, X, AlertCircle } from 'lucide-react';
 import { formatShortDate } from '../../utils/dateUtils';
 import { getStudentGrade, isStudentGraded } from '../../utils/gradeUtils';

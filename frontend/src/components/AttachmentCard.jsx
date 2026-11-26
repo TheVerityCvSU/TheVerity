@@ -20,19 +20,17 @@ function AttachmentCard({
   const [mediaError, setMediaError] = useState(false);
   const [posterError, setPosterError] = useState(false);
 
-  if (!att) return null;
-
-  const type = att.type || 'file';
-  const name = att.name || (type === 'link' ? att.url : 'Attachment');
-  const rawUrl = att.url || '';
+  const type = att?.type || 'file';
+  const name = att?.name || (type === 'link' ? att?.url : 'Attachment');
+  const rawUrl = att?.url || '';
   const resolvedUrl = useMemo(() => resolveMediaUrl(rawUrl), [rawUrl]);
 
   // Infer media type from extension if not strictly defined
   const fileExtension = useMemo(() => {
-    const target = (rawUrl || att.name || '').split('?')[0].split('#')[0];
+    const target = (rawUrl || att?.name || '').split('?')[0].split('#')[0];
     const match = target.match(/\.([0-9a-z]+)$/i);
     return match ? match[1].toLowerCase() : '';
-  }, [rawUrl, att.name]);
+  }, [rawUrl, att?.name]);
 
   const isImage = useMemo(() => {
     return type === 'image' || ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'avif'].includes(fileExtension);
@@ -47,12 +45,13 @@ function AttachmentCard({
   }, [type, fileExtension]);
 
   const isLink = type === 'link' && !isImage && !isVideo;
+  const rawThumbnailUrl = att?.thumbnailUrl || '';
 
   const posterUrl = useMemo(() => {
     if (!isVideo) return null;
-    if (att.thumbnailUrl) return resolveMediaUrl(att.thumbnailUrl);
+    if (rawThumbnailUrl) return resolveMediaUrl(rawThumbnailUrl);
     return getVideoThumbnailUrl(resolvedUrl);
-  }, [isVideo, att.thumbnailUrl, resolvedUrl]);
+  }, [isVideo, rawThumbnailUrl, resolvedUrl]);
 
   // Ensure link URLs always have http:// or https:// so they open external sites
   const targetUrl = useMemo(() => {
@@ -64,6 +63,8 @@ function AttachmentCard({
     }
     return resolvedUrl;
   }, [isLink, resolvedUrl]);
+
+  if (!att) return null;
 
   let typeLabel = 'File';
   if (isImage) typeLabel = 'Image';

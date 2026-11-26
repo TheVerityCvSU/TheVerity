@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Database, Clipboard, Download, Server, RefreshCw, Check, Globe, Wifi } from 'lucide-react';
 import { tabVariants } from '../../../data/adminSettings';
@@ -48,7 +48,7 @@ export default function SystemDataTab({ data, onChange, currentUserName = 'Admin
       switchToCloudMode();
       setServerFeedback({ type: 'success', message: 'Switched to Online Cloud Server.' });
       logSecurityEvent({ user: currentUserName, type: 'Server Switch', severity: 'Normal', desc: 'Switched active server to Online Cloud Server' });
-    } catch (e) {
+    } catch {
       setServerFeedback({ type: 'error', message: 'Failed to switch to Online Cloud Server.' });
     } finally {
       setSwitchingMode(false);
@@ -67,7 +67,7 @@ export default function SystemDataTab({ data, onChange, currentUserName = 'Admin
       } else {
         setServerFeedback({ type: 'error', message: 'Could not connect to Local Server. Please check that local server is running.' });
       }
-    } catch (e) {
+    } catch {
       setServerFeedback({ type: 'error', message: 'Failed to switch to Local Server.' });
     } finally {
       setSwitchingMode(false);
@@ -114,7 +114,7 @@ export default function SystemDataTab({ data, onChange, currentUserName = 'Admin
       } else {
         setSyncResultMsg(json?.error || 'Sync completed with warnings.');
       }
-    } catch (e) {
+    } catch {
       setSyncResultMsg('Sync failed: Server connection error.');
     } finally {
       setIsSyncingData(false);

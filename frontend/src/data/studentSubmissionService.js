@@ -150,7 +150,7 @@ export function resolveSubmissionHistory(hKeys, currentCode, priorSubmission) {
     resolvedHistory = [{ time: Date.now(), code: currentCode }];
   } else {
     const lastEntry = resolvedHistory[resolvedHistory.length - 1];
-    if (lastEntry && Date.now() - (lastEntry.time || 0) > 1000) {
+    if (lastEntry?.code !== currentCode) {
       resolvedHistory = [...resolvedHistory, { time: Date.now(), code: currentCode }];
     }
   }
@@ -251,7 +251,6 @@ export function unsubmitStudentAssignment({
   studentId,
   safeUsername,
   priorSubmission,
-  allKeys,
   hKeys,
   socket,
   currentUser

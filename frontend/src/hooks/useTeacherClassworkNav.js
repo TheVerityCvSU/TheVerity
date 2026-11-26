@@ -33,22 +33,20 @@ export function useTeacherClassworkNav({ classroom, onEnterClassroom, activeClas
   const [tabDirection, setTabDirection] = useState(1);
   const [transitionMode, setTransitionMode] = useState('tab'); // 'classroom' | 'tab'
   const [classroomDirection, setClassroomDirection] = useState(1);
-  const prevClassroomIdRef = useRef(classroom?.id);
+  const [prevClassroomId, setPrevClassroomId] = useState(classroom?.id);
 
-  useEffect(() => {
-    if (classroom?.id && prevClassroomIdRef.current !== classroom?.id) {
-      prevClassroomIdRef.current = classroom?.id;
-      setTransitionMode('classroom');
-      try {
-        const savedTab =
-          sessionStorage.getItem(`verity_teacher_classwork_tab_${classroom.id}`) ||
-          sessionStorage.getItem('verity_teacher_classwork_tab_active');
-        if (savedTab && TAB_ORDER[savedTab] !== undefined) {
-          setActiveTab(savedTab);
-        }
-      } catch {}
-    }
-  }, [classroom?.id]);
+  if (classroom?.id && prevClassroomId !== classroom?.id) {
+    setPrevClassroomId(classroom.id);
+    setTransitionMode('classroom');
+    try {
+      const savedTab =
+        sessionStorage.getItem(`verity_teacher_classwork_tab_${classroom.id}`) ||
+        sessionStorage.getItem('verity_teacher_classwork_tab_active');
+      if (savedTab && TAB_ORDER[savedTab] !== undefined) {
+        setActiveTab(savedTab);
+      }
+    } catch {}
+  }
 
   useEffect(() => {
     try {

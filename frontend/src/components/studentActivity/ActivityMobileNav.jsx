@@ -1,4 +1,3 @@
-import React from 'react';
 import { Home, Calendar, TerminalSquare, Archive, Settings } from 'lucide-react';
 
 export default function ActivityMobileNav({ isDark, onBack, onNavigateView }) {

@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { Shield, Lock, Moon, Sun, KeyRound, AlertTriangle, Eye, EyeOff } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Shield, Moon, Sun, KeyRound, AlertTriangle, Eye, EyeOff } from 'lucide-react';
 import { loginAdmin } from '../../data/adminAuth';
 import { useDarkMode } from '../../hooks/useDarkMode';
 import { styles } from './adminLoginStyles';

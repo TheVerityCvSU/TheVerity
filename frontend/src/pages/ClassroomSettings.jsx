@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { X } from 'lucide-react';
 import { apiFetch } from '../data/api';
 import { generateClassCode, normalizeClassroomSettings } from '../utils/classroomList';
@@ -25,7 +25,10 @@ export default function ClassroomSettings({ classroom, onClose, onUpdate, role =
   const [saveError, setSaveError] = useState('');
   const [isSaving, setIsSaving] = useState(false);
 
-  useEffect(() => {
+  const settingsSyncKey = `${classroom?.id ?? ''}|${classroom?.name ?? ''}|${classroom?.description ?? ''}|${classroom?.section ?? ''}|${classroom?.subject ?? ''}|${classroom?.code ?? ''}|${typeof classroom?.settings === 'string' ? classroom.settings : JSON.stringify(classroom?.settings || null)}`;
+  const [prevSettingsSyncKey, setPrevSettingsSyncKey] = useState(settingsSyncKey);
+  if (settingsSyncKey !== prevSettingsSyncKey) {
+    setPrevSettingsSyncKey(settingsSyncKey);
     setFormData({
       name: classroom?.name || '',
       description: classroom?.description || '',
@@ -36,7 +39,7 @@ export default function ClassroomSettings({ classroom, onClose, onUpdate, role =
     setGeneral(normalizeClassroomSettings(classroom?.settings));
     setNameError('');
     setSaveError('');
-  }, [classroom?.id, classroom?.name, classroom?.description, classroom?.section, classroom?.subject, classroom?.code, classroom?.settings]);
+  }
 
   const handleRegenerateCode = () => {
     const newCode = generateClassCode(formData.code ? [formData.code] : []);
@@ -109,7 +112,7 @@ export default function ClassroomSettings({ classroom, onClose, onUpdate, role =
         await onUpdate(savedClassroom);
       }
       onClose();
-    } catch (err) {
+    } catch {
       // Offline fallback: update local UI state so changes apply offline and sync on reconnect
       const fallbackClassroom = {
         ...(classroom || {}),

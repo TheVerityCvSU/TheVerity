@@ -1,5 +1,4 @@
-import React from 'react';
-import { BookOpen, ArrowLeft, ArrowRight, CheckCircle2, TerminalSquare, Code2, Lock } from 'lucide-react';
+import { ArrowRight, CheckCircle2, TerminalSquare, Code2, Lock } from 'lucide-react';
 import { formatFullDate } from '../../utils/dateUtils';
 
 export default function ActivitySubmissionSection({
@@ -12,11 +11,9 @@ export default function ActivitySubmissionSection({
   assignment,
   submission,
   gradeData,
-  onSubmit,
   onUnsubmit,
   onStartCoding,
-  onViewCode,
-  onBackToClassroom
+  onViewCode
 }) {
   const displayScore = gradeData?.grade != null ? gradeData.grade : null;
   const feedbackText = gradeData?.feedback || (gradeData?.grade != null 

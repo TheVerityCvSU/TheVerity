@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { useMediaQuery } from '../hooks/useMediaQuery';
@@ -30,15 +30,11 @@ export default function StudentActivityDetail({
   const isMobile = useMediaQuery('(max-width: 768px)');
   const styles = getActivityStyles(isDark, isMobile);
 
-  const [loading, setLoading] = useState(!assignment);
+  const loading = !assignment;
   const [previewImage, setPreviewImage] = useState(null);
   const [previewVideo, setPreviewVideo] = useState(null);
   const [previewIframe, setPreviewIframe] = useState(null);
   const [showStrictLockModal, setShowStrictLockModal] = useState(false);
-
-  useEffect(() => {
-    setLoading(!assignment);
-  }, [assignment]);
 
   const {
     submission,
@@ -105,7 +101,7 @@ export default function StudentActivityDetail({
 
       {/* ═══ MAIN LAYOUT ═══ */}
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
-        <div style={{ flex: 1, padding: '40px', display: 'flex', flexDirection: 'column', backgroundColor: isDark ? '#141414' : '#f8fafc', overflowY: 'auto' }}>
+        <div style={{ flex: 1, padding: '40px', display: 'flex', flexDirection: 'column', backgroundColor: isDark ? '#1a1a1a' : '#f8f9fa', overflowY: 'auto' }}>
           {loading || !assignment ? (
             <Skeleton.ActivityDetail />
           ) : (

@@ -8,7 +8,9 @@ CREATE TABLE IF NOT EXISTS users (
     role VARCHAR(50) NOT NULL,
     lastlogin TEXT,
     status VARCHAR(50) DEFAULT 'Active',
-    avatar TEXT
+    avatar TEXT,
+    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    deleted_at TIMESTAMPTZ
 );
 
 CREATE TABLE IF NOT EXISTS classrooms (
@@ -22,7 +24,9 @@ CREATE TABLE IF NOT EXISTS classrooms (
     description TEXT,
     settings TEXT,
     theme TEXT,
-    archived INTEGER DEFAULT 0
+    archived INTEGER DEFAULT 0,
+    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    deleted_at TIMESTAMPTZ
 );
 
 CREATE TABLE IF NOT EXISTS enrollments (
@@ -32,6 +36,8 @@ CREATE TABLE IF NOT EXISTS enrollments (
     student_name VARCHAR(255),
     student_email VARCHAR(255),
     enrolled_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    deleted_at TIMESTAMPTZ,
     UNIQUE(classroom_id, student_email)
 );
 
@@ -42,7 +48,9 @@ CREATE TABLE IF NOT EXISTS classwork (
     description TEXT,
     duedate TEXT,
     type VARCHAR(50) DEFAULT 'Assignment',
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    deleted_at TIMESTAMPTZ
 );
 
 CREATE TABLE IF NOT EXISTS submissions (
@@ -50,7 +58,9 @@ CREATE TABLE IF NOT EXISTS submissions (
     assignment_id BIGINT,
     student_name VARCHAR(255) NOT NULL,
     history TEXT,
-    submittedat TEXT
+    submittedat TEXT,
+    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    deleted_at TIMESTAMPTZ
 );
 
 CREATE TABLE IF NOT EXISTS security_flags (
@@ -99,6 +109,8 @@ CREATE TABLE IF NOT EXISTS grades (
     grade VARCHAR(50),
     feedback TEXT,
     graded_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    deleted_at TIMESTAMPTZ,
     UNIQUE(assignment_id, student_id)
 );
 
@@ -133,7 +145,16 @@ CREATE TABLE IF NOT EXISTS announcements (
     details TEXT,
     author TEXT,
     posted BIGINT,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    deleted_at TIMESTAMPTZ
+);
+
+CREATE TABLE IF NOT EXISTS sync_deletions (
+    table_name VARCHAR(64) NOT NULL,
+    record_key VARCHAR(255) NOT NULL,
+    deleted_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (table_name, record_key)
 );
 
 CREATE INDEX IF NOT EXISTS idx_announcements_classroom ON announcements(classroom_id);
@@ -155,11 +176,7 @@ CREATE TABLE IF NOT EXISTS admin_users (
     avatar TEXT
 );
 
--- Default Admin Account in isolated admin_users table
-INSERT INTO admin_users (name, email, password, role, status)
-VALUES ('System Admin', 'admin@verity.com', 'admin', 'Admin', 'Active')
-ON CONFLICT (email) DO NOTHING;
-
+-- Default admin accounts should be provisioned via VERITY_BOOTSTRAP_ADMIN_EMAIL / VERITY_BOOTSTRAP_ADMIN_PASSWORD
 -- Ensure admin accounts do not exist in users table
 DELETE FROM users WHERE role = 'Admin';
 
@@ -177,6 +194,26 @@ CREATE TABLE IF NOT EXISTS uploaded_file_chunks (
     chunk_index INTEGER NOT NULL,
     data BYTEA NOT NULL,
     PRIMARY KEY (filename, chunk_index)
+);
+
+CREATE TABLE IF NOT EXISTS email_notifications_log (
+    id BIGSERIAL PRIMARY KEY,
+    notification_type VARCHAR(64) NOT NULL,
+    classroom_id BIGINT,
+    assignment_id BIGINT,
+    student_email VARCHAR(255) NOT NULL,
+    due_date_snapshot TEXT,
+    status VARCHAR(32) DEFAULT 'sent',
+    sent_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(notification_type, assignment_id, student_email)
+);
+
+CREATE INDEX IF NOT EXISTS idx_email_notif_lookup ON email_notifications_log(notification_type, assignment_id, student_email);
+
+CREATE TABLE IF NOT EXISTS user_notification_preferences (
+    user_email VARCHAR(255) PRIMARY KEY,
+    preferences TEXT NOT NULL,
+    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 
 

@@ -1,9 +1,11 @@
-import React from 'react';
+import { lazy, Suspense } from 'react';
 import ProtectedRoute from '../ProtectedRoute';
+import PageLoader from '../PageLoader';
 import StudentDashboard from '../../pages/StudentDashboard';
-import ClassroomView from '../../pages/ClassroomView';
-import StudentActivityDetail from '../../pages/StudentActivityDetail';
-import StudentView from '../../pages/StudentView';
+
+const ClassroomView = lazy(() => import('../../pages/ClassroomView'));
+const StudentActivityDetail = lazy(() => import('../../pages/StudentActivityDetail'));
+const StudentView = lazy(() => import('../../pages/StudentView'));
 
 export default function AppStudentRoutes({
   currentScreen,
@@ -20,7 +22,7 @@ export default function AppStudentRoutes({
   verifyEnvironmentBeforeExam,
 }) {
   return (
-    <>
+    <Suspense fallback={<PageLoader />}>
       {currentScreen === 'student_dashboard' && (
         <ProtectedRoute currentUser={currentUser} setCurrentScreen={setCurrentScreen}>
           <StudentDashboard
@@ -139,6 +141,6 @@ export default function AppStudentRoutes({
           />
         </ProtectedRoute>
       )}
-    </>
+    </Suspense>
   );
 }

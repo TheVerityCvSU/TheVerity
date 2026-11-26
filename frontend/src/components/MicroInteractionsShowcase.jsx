@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { motion } from 'framer-motion';
 
 // Common showcase styles matching Apple / Material Design minimalism
@@ -49,7 +49,6 @@ const st = {
 // 1. Button Hover
 const ButtonHover = () => {
   const [hover, setHover] = useState(false);
-  const [press, setPress] = useState(false);
 
   return (
     <div style={st.card}>

@@ -92,7 +92,7 @@ export default function SecurityAuditLogsTab() {
   };
 
   useEffect(() => {
-    fetchLogs();
+    Promise.resolve().then(fetchLogs);
     const interval = setInterval(() => {
       if (typeof document !== 'undefined' && document.hidden) return;
       fetchLogs();

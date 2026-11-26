@@ -1,10 +1,5 @@
 export const normalizeSavedUser = (u) => {
   if (!u || typeof u !== 'object') return u;
-  const emailLower = String(u.email || '').trim().toLowerCase();
-  const nameLower = String(u.name || '').trim().toLowerCase();
-  if (emailLower === 'kimfabie123@gmail.com' && (nameLower === 'kim fabie' || nameLower === 'kimfabie' || nameLower === 'kimfabie123@gmail.com')) {
-    return { ...u, name: 'MIKOOOOO' };
-  }
   return u;
 };
 

@@ -18,19 +18,8 @@ export const toSentenceCase = (str) => {
   return s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
 };
 
-export const normalizeReplayStudentName = (rawName, rawEmail = '') => {
-  const trimmed = String(rawName || '').trim();
-  const lower = trimmed.toLowerCase();
-  const emailLower = String(rawEmail || '').trim().toLowerCase();
-  if (
-    emailLower === 'kimfabie123@gmail.com' ||
-    lower === 'kimfabie123@gmail.com' ||
-    lower === 'kimfabie' ||
-    lower === 'kim fabie'
-  ) {
-    return 'MIKOOOOO';
-  }
-  return trimmed;
+export const normalizeReplayStudentName = (rawName) => {
+  return String(rawName || '').trim();
 };
 
 export const formatTimeMs = (ms) => {

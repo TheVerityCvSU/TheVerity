@@ -1,16 +1,71 @@
+import { useEffect, useRef } from 'react';
 import { Terminal as TerminalIcon, Maximize2, Minimize2, ChevronDown, ChevronUp } from 'lucide-react';
+
+function renderFormattedOutput(rawText, isDark) {
+  if (!rawText) return null;
+  return rawText.split('\n').map((line, idx) => {
+    let color = isDark ? '#e4e4e7' : '#18181b';
+    let fontWeight = 'normal';
+    let fontStyle = 'normal';
+
+    if (/error CS\d+/i.test(line) || /Build failed/i.test(line) || /\[Process terminated/i.test(line) || /^Error:/i.test(line)) {
+      color = isDark ? '#f87171' : '#dc2626';
+      fontWeight = '600';
+    } else if (/warning CS\d+/i.test(line)) {
+      color = isDark ? '#fbbf24' : '#d97706';
+      fontWeight = '600';
+    } else if (/Initializing compiler environment/i.test(line) || /Compiling\.\.\./i.test(line) || /Running\.\.\./i.test(line)) {
+      color = isDark ? '#38bdf8' : '#0284c7';
+    } else if (/\[Process exited with code 0\]/i.test(line)) {
+      color = isDark ? '#34d399' : '#059669';
+      fontWeight = '600';
+    } else if (/\[Process exited with code/i.test(line)) {
+      color = isDark ? '#f87171' : '#dc2626';
+      fontWeight = '600';
+    } else if (/\[Process stopped by user\]/i.test(line)) {
+      color = isDark ? '#9ca3af' : '#6b7280';
+      fontStyle = 'italic';
+    }
+
+    return (
+      <div
+        key={idx}
+        style={{
+          color,
+          fontWeight,
+          fontStyle,
+          whiteSpace: 'pre-wrap',
+          wordBreak: 'break-word',
+          padding: '1px 0'
+        }}
+      >
+        {line || '\u00A0'}
+      </div>
+    );
+  });
+}
 
 export default function TeacherViewTerminal({
   terminalMode,
   setTerminalMode,
   evaluating,
+  programStarted,
   evalOutput,
   setEvalOutput,
+  inputValue = '',
+  setInputValue,
+  handleTerminalInput,
   activeStudent,
   theme,
   isDark,
   isMobile
 }) {
+  const terminalEndRef = useRef(null);
+
+  useEffect(() => {
+    terminalEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [evalOutput, evaluating, programStarted]);
+
   if (terminalMode === 'collapsed') {
     return (
       <div
@@ -155,20 +210,62 @@ export default function TeacherViewTerminal({
           backgroundColor: isDark ? '#141416' : '#ffffff'
         }}
       >
-        <pre
-          style={{
-            margin: 0,
-            whiteSpace: 'pre-wrap',
-            wordBreak: 'break-word',
-            fontFamily: 'inherit'
-          }}
-        >
-          {evalOutput
-            ? evalOutput
-            : activeStudent.status === 'Submitted'
-            ? 'Exam completed. Click "Run" in the toolbar to execute the submitted code.'
-            : activeStudent.terminal || 'Monitoring student terminal activity in real-time...'}
-        </pre>
+        {evalOutput ? (
+          <div style={{ margin: 0, fontFamily: 'inherit' }}>
+            {renderFormattedOutput(evalOutput, isDark)}
+          </div>
+        ) : (
+          <pre
+            style={{
+              margin: 0,
+              whiteSpace: 'pre-wrap',
+              wordBreak: 'break-word',
+              fontFamily: 'inherit',
+              color: evaluating ? (isDark ? '#38bdf8' : '#0284c7') : undefined
+            }}
+          >
+            {evaluating
+              ? 'Starting compiler...'
+              : activeStudent.status === 'Submitted' || activeStudent.status === 'Graded'
+              ? 'Exam completed. Click "Run" in the toolbar to execute the submitted code.'
+              : activeStudent.terminal || 'Monitoring student terminal activity in real-time...'}
+          </pre>
+        )}
+
+        {evaluating && programStarted && typeof handleTerminalInput === 'function' && (
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              marginTop: '6px',
+              padding: '4px 8px',
+              borderRadius: '6px',
+              backgroundColor: isDark ? '#202023' : '#f1f5f9',
+              border: `1px solid ${theme.border}`
+            }}
+          >
+            <span style={{ marginRight: '8px', color: '#10b981', fontWeight: '700' }}>{'>'}</span>
+            <input
+              type="text"
+              value={inputValue}
+              onChange={(e) => setInputValue?.(e.target.value)}
+              onKeyDown={handleTerminalInput}
+              autoFocus
+              placeholder="Type input here and press Enter..."
+              style={{
+                flex: 1,
+                background: 'transparent',
+                border: 'none',
+                outline: 'none',
+                color: isDark ? '#e4e4e7' : '#18181b',
+                fontFamily: 'inherit',
+                fontSize: 'inherit'
+              }}
+            />
+          </div>
+        )}
+
+        <div ref={terminalEndRef} />
       </div>
     </div>
   );

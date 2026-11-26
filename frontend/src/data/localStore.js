@@ -67,7 +67,7 @@ export const localStore = {
         try {
             localStorage.setItem('verity_cached_classrooms', JSON.stringify(classrooms));
             return { success: true };
-        } catch (e) {
+        } catch {
             return { success: false };
         }
     },
@@ -79,7 +79,7 @@ export const localStore = {
         try {
             const item = localStorage.getItem('verity_cached_classrooms');
             return item ? JSON.parse(item) : [];
-        } catch (e) {
+        } catch {
             return [];
         }
     },
@@ -92,7 +92,7 @@ export const localStore = {
         try {
             localStorage.setItem(`verity_cached_classwork_${classroomId}`, JSON.stringify(classwork));
             return { success: true };
-        } catch (e) {
+        } catch {
             return { success: false };
         }
     },
@@ -104,7 +104,7 @@ export const localStore = {
         try {
             const item = localStorage.getItem(`verity_cached_classwork_${classroomId}`);
             return item ? JSON.parse(item) : [];
-        } catch (e) {
+        } catch {
             return [];
         }
     },
@@ -134,7 +134,7 @@ export const localStore = {
         try {
             const queueStr = localStorage.getItem('verity_sync_queue') || '[]';
             return JSON.parse(queueStr);
-        } catch (e) {
+        } catch {
             return [];
         }
     },
@@ -148,7 +148,7 @@ export const localStore = {
             const queue = JSON.parse(queueStr).filter(item => item.id !== id);
             localStorage.setItem('verity_sync_queue', JSON.stringify(queue));
             return { success: true };
-        } catch (e) {
+        } catch {
             return { success: false };
         }
     },
@@ -161,7 +161,7 @@ export const localStore = {
         try {
             localStorage.setItem(`verity_kv_${key}`, JSON.stringify(value));
             return { success: true };
-        } catch (e) {
+        } catch {
             return { success: false };
         }
     },
@@ -173,7 +173,7 @@ export const localStore = {
         try {
             const item = localStorage.getItem(`verity_kv_${key}`);
             return item ? JSON.parse(item) : null;
-        } catch (e) {
+        } catch {
             return null;
         }
     }

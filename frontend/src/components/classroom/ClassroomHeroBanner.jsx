@@ -1,4 +1,3 @@
-import React from 'react';
 import { ArrowLeft } from 'lucide-react';
 import ClassroomBannerIllustration from '../ClassroomBannerIllustration';
 import { isClassroomArchived, normalizeClassroomSettings } from '../../utils/classroomList';

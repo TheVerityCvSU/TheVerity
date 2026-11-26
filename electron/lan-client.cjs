@@ -2,7 +2,7 @@ const dgram = require('dgram');
 const os = require('os');
 const http = require('http');
 const net = require('net');
-const { execSync } = require('child_process');
+const { execFile } = require('child_process');
 
 const DISCOVERY_PORT = 39123;
 const APP_TAG = 'the-verity';
@@ -12,6 +12,7 @@ let queryTimer = null;
 let backgroundScanTimer = null;
 let watchdogTimer = null;
 let isScanning = false;
+let isWatchdogRunning = false;
 let discoveredServer = null;
 let mainWindowGetter = null;
 let localDb = null;
@@ -57,7 +58,7 @@ function getBroadcastAddresses() {
                 try {
                     const ipParts = iface.address.split('.').map(Number);
                     const maskParts = iface.netmask.split('.').map(Number);
-                    const bcastParts = ipParts.map((part, i) => (part | (~maskParts[i] & 255)) >>> 0);
+                    const bcastParts = ipParts.map((part, i) => ((part | (~maskParts[i] & 255)) & 255) >>> 0);
                     broadcasts.add(bcastParts.join('.'));
                 } catch (_) {}
             }
@@ -100,23 +101,72 @@ function testTcpPort(host, port = 3001, timeoutMs = 600) {
     });
 }
 
-// Extract active router devices from Windows ARP table instantly (0-5ms)
-function getArpIps() {
-    try {
-        const out = execSync('arp -a', { timeout: 1500, windowsHide: true }).toString();
-        const myIps = getMyIps();
-        const matches = Array.from(new Set(out.match(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g) || []));
-        return matches.filter(ip => 
-            !ip.startsWith('224.') && 
-            !ip.startsWith('239.') && 
-            !ip.startsWith('255.') && 
-            !ip.endsWith('.255') && 
-            !ip.startsWith('127.') &&
-            !myIps.has(ip)
-        );
-    } catch (_) {
-        return [];
+// Extract active router devices from Windows ARP table asynchronously (non-blocking)
+function getArpIpsAsync() {
+    return new Promise((resolve) => {
+        execFile('arp', ['-a'], { timeout: 1500, windowsHide: true }, (err, stdout) => {
+            if (err || !stdout) return resolve([]);
+            try {
+                const myIps = getMyIps();
+                const matches = Array.from(new Set(String(stdout).match(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g) || []));
+                resolve(matches.filter(ip =>
+                    !ip.startsWith('224.') &&
+                    !ip.startsWith('239.') &&
+                    !ip.startsWith('255.') &&
+                    !ip.endsWith('.255') &&
+                    !ip.startsWith('127.') &&
+                    !myIps.has(ip)
+                ));
+            } catch (_) {
+                resolve([]);
+            }
+        });
+    });
+}
+
+function ipToInt(ip) {
+    const parts = String(ip || '').split('.').map(Number);
+    if (parts.length !== 4 || parts.some(p => !Number.isInteger(p) || p < 0 || p > 255)) return null;
+    return (((parts[0] << 24) | (parts[1] << 16) | (parts[2] << 8) | parts[3]) >>> 0);
+}
+
+function intToIp(num) {
+    return [
+        (num >>> 24) & 255,
+        (num >>> 16) & 255,
+        (num >>> 8) & 255,
+        num & 255
+    ].join('.');
+}
+
+function getSubnetSweepIps(ip, netmask, myIps, priorityOctets) {
+    const ipInt = ipToInt(ip);
+    const maskInt = ipToInt(netmask || '255.255.255.0');
+    if (ipInt === null || maskInt === null) return [];
+
+    const network = (ipInt & maskInt) >>> 0;
+    const broadcast = (network | (~maskInt >>> 0)) >>> 0;
+    const hostCount = broadcast > network + 1 ? (broadcast - network - 1) : 0;
+
+    // For /24 or smaller subnets sweep the exact subnet; for wider subnets (/16, /22, etc.) scan the local /24 block around `ip`
+    let start = network + 1;
+    let end = broadcast - 1;
+    if (hostCount > 512) {
+        const local24Mask = 0xffffff00;
+        const local24Net = (ipInt & local24Mask) >>> 0;
+        start = local24Net + 1;
+        end = local24Net + 254;
     }
+
+    const prioritySet = new Set(priorityOctets);
+    const ips = [];
+    for (let cur = start; cur <= end; cur++) {
+        const octet = cur & 255;
+        if (prioritySet.has(octet)) continue;
+        const candidate = intToIp(cur >>> 0);
+        if (!myIps.has(candidate)) ips.push(candidate);
+    }
+    return ips;
 }
 
 function normalizeHttpUrl(url) {
@@ -178,22 +228,20 @@ async function verifyHttpServer(url, timeoutMs = 1500, allowSelfIfHost = true) {
 
     try {
         const parsedUrl = new URL(cleanUrl);
+        if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') return false;
         const host = parsedUrl.hostname;
         const myIps = getMyIps();
         const isSelf = myIps.has(host);
 
         const health = await fetchServerHealth(cleanUrl, timeoutMs);
-        if (!health) return false;
+        if (!health || health.statusCode < 200 || health.statusCode >= 400) return false;
 
-        const { statusCode, parsed } = health;
-        if (parsed && (parsed.app === APP_TAG || parsed.status === 'operational')) {
-            // If testing on self, only accept if running as designated host
-            if (isSelf && !allowSelfIfHost) return false;
-            if (isSelf && parsed.isHost !== true) return false;
-            return true;
-        }
-        if (isSelf) return false;
-        return statusCode >= 200 && statusCode < 400;
+        const { parsed } = health;
+        if (!parsed || parsed.app !== APP_TAG) return false;
+
+        if (isSelf && !allowSelfIfHost) return false;
+        if (isSelf && parsed.isHost !== true) return false;
+        return true;
     } catch (_) {
         return false;
     }
@@ -341,7 +389,7 @@ async function runDiscoveryScan(force = false) {
         }
 
         // 1. ARP Cache: all active devices currently communicating on the router
-        const arpIps = getArpIps();
+        const arpIps = await getArpIpsAsync();
         if (arpIps.length > 0) {
             for (const ip of arpIps) {
                 if (discoveredServer && !force) break;
@@ -389,14 +437,15 @@ async function runDiscoveryScan(force = false) {
                     !iface.address.startsWith('169.254.') &&
                     !iface.address.startsWith('192.168.56.')
                 ) {
-                    activeSubnets.push(iface.address);
+                    activeSubnets.push({ address: iface.address, netmask: iface.netmask || '255.255.255.0' });
                 }
             }
         }
 
         const priorityOctets = [100, 101, 10, 1, 2, 20, 50, 254];
 
-        for (const myIp of activeSubnets) {
+        for (const subnet of activeSubnets) {
+            const myIp = subnet.address;
             if (discoveredServer && !force) break;
             const prefix = myIp.substring(0, myIp.lastIndexOf('.') + 1);
             const priorityIps = priorityOctets
@@ -413,14 +462,8 @@ async function runDiscoveryScan(force = false) {
             }));
             if (discoveredServer && !force) return;
 
-            // 4. Fast Subnet Sweep in parallel batches of 35 using TCP connect probe
-            const remaining = [];
-            for (let i = 1; i <= 254; i++) {
-                if (!priorityOctets.includes(i)) {
-                    const testIp = `${prefix}${i}`;
-                    if (!myIps.has(testIp)) remaining.push(testIp);
-                }
-            }
+            // 4. Fast Subnet Sweep in parallel batches of 35 using TCP connect probe (true netmask bounded)
+            const remaining = getSubnetSweepIps(myIp, subnet.netmask, myIps, priorityOctets);
 
             const batchSize = 35;
             for (let b = 0; b < remaining.length; b += batchSize) {
@@ -442,9 +485,9 @@ async function runDiscoveryScan(force = false) {
 
         // 5. Fallback for single-PC Host testing: check this machine's own non-loopback LAN IPs (accepted only if isHost === true)
         if (!discoveredServer) {
-            for (const myIp of activeSubnets) {
+            for (const subnet of activeSubnets) {
                 if (discoveredServer) break;
-                const testUrl = `http://${myIp}:3001`;
+                const testUrl = `http://${subnet.address}:3001`;
                 const ok = await verifyHttpServer(testUrl, 500, true);
                 if (ok) {
                     await setDiscoveredServer(testUrl);
@@ -495,11 +538,22 @@ function initLanClient(getWin, dbAPI) {
             try {
                 const data = JSON.parse(msg.toString());
                 if (data && data.app === APP_TAG && data.type === 'beacon') {
+                    const portNum = Number(data.port || 3001);
+                    if (!Number.isInteger(portNum) || portNum < 1 || portNum > 65535) return;
+                    const isValidBeaconUrl = (raw) => {
+                        try {
+                            const u = new URL(normalizeHttpUrl(raw));
+                            if (u.protocol !== 'http:' || u.username || u.password) return false;
+                            return Boolean(ipToInt(u.hostname));
+                        } catch (_) {
+                            return false;
+                        }
+                    };
                     const candidates = [
-                        `http://${rinfo.address}:${data.port || 3001}`,
-                        data.serverUrl,
-                        ...(data.candidateUrls || []),
-                        ...(data.ips || []).map(ip => `http://${ip}:${data.port || 3001}`)
+                        `http://${rinfo.address}:${portNum}`,
+                        ...(typeof data.serverUrl === 'string' && isValidBeaconUrl(data.serverUrl) ? [data.serverUrl] : []),
+                        ...((Array.isArray(data.candidateUrls) ? data.candidateUrls : []).filter(u => typeof u === 'string' && isValidBeaconUrl(u))),
+                        ...((Array.isArray(data.ips) ? data.ips : []).filter(ip => typeof ip === 'string' && ipToInt(ip) !== null).map(ip => `http://${ip}:${portNum}`))
                     ].filter(Boolean);
 
                     await tryCandidates(candidates);
@@ -542,39 +596,43 @@ function initLanClient(getWin, dbAPI) {
     }, 3000);
 
     // 4. Watchdog: every 2 seconds verify that locked server is still reachable.
-    // If router disconnects, Wi-Fi is toggled off, or host shuts down, immediately unlock and resume scanning.
+    // Guard against overlapping runs when network probes exceed the interval.
     watchdogTimer = setInterval(async () => {
-        const interfaces = os.networkInterfaces();
-        let hasActiveInterface = false;
-        for (const name of Object.keys(interfaces)) {
-            for (const iface of interfaces[name]) {
-                if (iface.family === 'IPv4' && !iface.internal && iface.address && !iface.address.startsWith('127.') && !iface.address.startsWith('169.254.')) {
-                    hasActiveInterface = true;
-                    break;
+        if (isWatchdogRunning) return;
+        isWatchdogRunning = true;
+        try {
+            const interfaces = os.networkInterfaces();
+            let hasActiveInterface = false;
+            for (const name of Object.keys(interfaces)) {
+                for (const iface of interfaces[name]) {
+                    if (iface.family === 'IPv4' && !iface.internal && iface.address && !iface.address.startsWith('127.') && !iface.address.startsWith('169.254.')) {
+                        hasActiveInterface = true;
+                        break;
+                    }
                 }
+                if (hasActiveInterface) break;
             }
-            if (hasActiveInterface) break;
-        }
 
-        if (!hasActiveInterface) {
-            // Wi-Fi is turned off or disconnected
+            if (!hasActiveInterface) {
+                if (discoveredServer) {
+                    console.log('⚠️ [LAN Client] No network connection detected. Disconnecting LAN server...');
+                    await setDiscoveredServer(null);
+                }
+                return;
+            }
+
             if (discoveredServer) {
-                console.log('⚠️ [LAN Client] No network connection detected. Disconnecting LAN server...');
-                await setDiscoveredServer(null);
+                const alive = await verifyHttpServer(discoveredServer, 1000);
+                if (!alive) {
+                    console.log(`⚠️ [LAN Client] Lost contact with host (${discoveredServer}). Resuming discovery...`);
+                    await setDiscoveredServer(null);
+                    await runDiscoveryScan();
+                }
+            } else {
+                await runDiscoveryScan();
             }
-            return;
-        }
-
-        if (discoveredServer) {
-            const alive = await verifyHttpServer(discoveredServer, 1000);
-            if (!alive) {
-                console.log(`⚠️ [LAN Client] Lost contact with host (${discoveredServer}). Resuming discovery...`);
-                await setDiscoveredServer(null);
-                runDiscoveryScan();
-            }
-        } else {
-            // Unlocked and network interface is active: actively discover!
-            runDiscoveryScan();
+        } finally {
+            isWatchdogRunning = false;
         }
     }, 2000);
 }
@@ -609,5 +667,6 @@ module.exports = {
     verifyHttpServer,
     resolveLanHostUrl,
     runDiscoveryScan,
-    stopLanClient
+    stopLanClient,
+    getSubnetSweepIps
 };

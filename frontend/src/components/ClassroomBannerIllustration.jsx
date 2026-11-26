@@ -1,4 +1,3 @@
-import React from 'react';
 
 /**
  * Reusable banner illustration SVG component for classroom cards and headers.

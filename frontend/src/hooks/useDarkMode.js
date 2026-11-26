@@ -16,7 +16,6 @@ export function useDarkMode() {
     };
 
     themeListeners.add(handleChange);
-    setIsDark(getIsDark());
 
     return () => {
       themeListeners.delete(handleChange);

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Clipboard, Globe } from 'lucide-react';
 import AddLinkHeader from './addLink/AddLinkHeader';
@@ -15,26 +15,33 @@ export default function AddLinkModal({ isOpen, onClose, onAdd, isDark = false })
   const [clipboardAvailable, setClipboardAvailable] = useState(false);
   const inputRef = useRef(null);
 
-  // Check clipboard API availability & auto-read if valid URL
-  useEffect(() => {
+  const [prevOpen, setPrevOpen] = useState(isOpen);
+  if (isOpen !== prevOpen) {
+    setPrevOpen(isOpen);
     if (isOpen) {
       setUrl('');
       setTitle('');
       setError('');
-      setTimeout(() => inputRef.current?.focus(), 80);
-
-      if (navigator.clipboard && navigator.clipboard.readText) {
-        setClipboardAvailable(true);
-        navigator.clipboard.readText()
-          .then((clipText) => {
-            const trimmed = (clipText || '').trim();
-            if (/^https?:\/\/[^\s]+$/i.test(trimmed)) {
-              setUrl(trimmed);
-            }
-          })
-          .catch(() => {});
-      }
+      setClipboardAvailable(Boolean(navigator.clipboard && navigator.clipboard.readText));
     }
+  }
+
+  // Check clipboard API availability & auto-read if valid URL
+  useEffect(() => {
+    if (!isOpen) return;
+    const focusTimer = setTimeout(() => inputRef.current?.focus(), 80);
+
+    if (navigator.clipboard && navigator.clipboard.readText) {
+      navigator.clipboard.readText()
+        .then((clipText) => {
+          const trimmed = (clipText || '').trim();
+          if (/^https?:\/\/[^\s]+$/i.test(trimmed)) {
+            setUrl(trimmed);
+          }
+        })
+        .catch(() => {});
+    }
+    return () => clearTimeout(focusTimer);
   }, [isOpen]);
 
   // Keyboard navigation: Escape to close

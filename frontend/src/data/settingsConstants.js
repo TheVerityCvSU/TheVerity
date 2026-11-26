@@ -95,9 +95,12 @@ export const SECTIONS = {
     {
       icon: Bell,
       title: 'Notifications',
-      blurb: 'Manage preferences for receiving alerts regarding upcoming deadlines, grades, or instructor announcements.',
+      blurb: 'Manage preferences for receiving email alerts for classwork, materials, upcoming deadlines, and missed activities.',
       fields: [
+        { label: 'New Classwork Email Alerts', type: 'toggle', default: true },
+        { label: 'New Materials Email Alerts', type: 'toggle', default: true },
         { label: 'Upcoming Deadline Alerts', type: 'toggle', default: true },
+        { label: 'Missed Activity Alerts', type: 'toggle', default: true },
         { label: 'Grade Notifications', type: 'toggle', default: true },
         { label: 'Instructor Announcements', type: 'toggle', default: false },
         { label: 'Reminder Lead Time', placeholder: 'e.g. 24 hours before' },

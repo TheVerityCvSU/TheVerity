@@ -1,4 +1,3 @@
-import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Code2, FileCode, FileText, X } from 'lucide-react';
 

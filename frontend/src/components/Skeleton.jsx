@@ -1,4 +1,3 @@
-import React from 'react';
 
 /**
  * Skeleton — comprehensive shimmer placeholder components for loading states.
@@ -114,7 +113,7 @@ Skeleton.Person = function SkeletonPerson({ isDark, style = {} }) {
 Skeleton.PeopleRow = Skeleton.Person;
 
 // Generic list row: avatar circle + two text lines + action pill
-Skeleton.Row = function SkeletonRow({ cols = 7 }) {
+Skeleton.Row = function SkeletonRow() {
   return (
     <div className="skeleton-row">
       {/* Avatar / checkbox placeholder */}

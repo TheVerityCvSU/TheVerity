@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { 
   getConnectionStatus, 
   subscribeConnectionStatus, 
@@ -35,8 +35,10 @@ export default function NetworkStatusIndicator({ hidden = false, position = 'rig
     return () => unsub();
   }, []);
 
-  // Pre-fill input with discovered or cached non-loopback LAN server (unless actively connected in LAN mode)
-  useEffect(() => {
+  const lanSyncKey = `${status.activeMode}|${status.localUrl}|${isOpen}`;
+  const [prevLanSyncKey, setPrevLanSyncKey] = useState(null);
+  if (lanSyncKey !== prevLanSyncKey) {
+    setPrevLanSyncKey(lanSyncKey);
     let currentLan = '';
     try {
       const savedLan = localStorage.getItem('verity_lan_server') || '';
@@ -51,7 +53,7 @@ export default function NetworkStatusIndicator({ hidden = false, position = 'rig
       currentLan = status.localUrl || getLocalApiUrl();
     }
     setCustomIp(currentLan);
-  }, [status.activeMode, status.localUrl, isOpen]);
+  }
 
   // Close popover when clicking outside
   useEffect(() => {
@@ -139,7 +141,7 @@ export default function NetworkStatusIndicator({ hidden = false, position = 'rig
       } else {
         setFeedback({ type: 'error', message: 'Auto-scan is only available in the desktop app. Enter IP manually.' });
       }
-    } catch (err) {
+    } catch {
       setFeedback({ type: 'error', message: 'Scan failed. Please enter host IP manually.' });
     } finally {
       setIsScanning(false);
@@ -167,7 +169,7 @@ export default function NetworkStatusIndicator({ hidden = false, position = 'rig
           setFeedback(null);
         }, 1200);
       }
-    } catch (err) {
+    } catch {
       setFeedback({ type: 'error', message: 'Could not connect to Local ComLab Server.' });
     } finally {
       setIsConnecting(false);
@@ -195,7 +197,7 @@ export default function NetworkStatusIndicator({ hidden = false, position = 'rig
       } else {
         setFeedback({ type: 'error', message: 'Sync completed with warnings or offline status.' });
       }
-    } catch (err) {
+    } catch {
       setFeedback({ type: 'error', message: 'Sync failed: Server unreachable.' });
     } finally {
       setIsSyncing(false);

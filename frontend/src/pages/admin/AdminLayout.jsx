@@ -1,4 +1,4 @@
-import React, { useState, useLayoutEffect, useRef } from 'react';
+import { useState, useLayoutEffect, useRef } from 'react';
 import { BarChart3, Users, Home, Shield, Settings } from 'lucide-react';
 import { useDarkMode } from '../../hooks/useDarkMode';
 import { markNotificationsAsRead } from '../../data/adminNotifications';
@@ -13,19 +13,10 @@ export default function AdminLayout({
   setActiveTab,
   sidebarCollapsed,
   setSidebarCollapsed,
-  query,
-  setQuery,
-  dashboardSearchFocused,
-  setDashboardSearchFocused,
   notifications,
   setNotifications,
   showNotifications,
   setShowNotifications,
-  isModalOpen,
-  setIsModalOpen,
-  newUser,
-  setNewUser,
-  handleAddUser,
   currentUser,
   onLogout,
   showSelectUsersPopup,

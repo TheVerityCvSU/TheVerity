@@ -5,7 +5,6 @@ export default function TeacherViewWarningsList({
   setSelectedStudentId,
   mode,
   onSeekToWarning,
-  isDark,
   theme,
   isCompact,
   setSidebarOpen

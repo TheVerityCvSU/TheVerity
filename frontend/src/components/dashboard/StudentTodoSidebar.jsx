@@ -1,7 +1,6 @@
-import React from 'react';
+import { useState } from 'react';
 import { Calendar as CalendarIcon } from 'lucide-react';
 import VideoLessonCard from './VideoLessonCard';
-import Skeleton from '../Skeleton';
 
 export default function StudentTodoSidebar({
   isDark,
@@ -14,12 +13,16 @@ export default function StudentTodoSidebar({
   currentVideoDuration,
   onStartSession,
   onDurationLoaded,
-  loadingActivities,
   displayedUpcomingActivities,
   classrooms,
   onOpenAssignment,
   onEnterClassroom
 }) {
+  const [weekRangeLabel] = useState(() => {
+    const start = new Date();
+    const end = new Date(start.getTime() + 7 * 24 * 60 * 60 * 1000);
+    return `${start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} — ${end.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
+  });
   return (
     <aside style={{
       flex: isMobile ? '1 1 auto' : '0 0 380px',
@@ -37,7 +40,7 @@ export default function StudentTodoSidebar({
         <div>
           <h2 style={{ fontSize: '1.25rem', fontWeight: 'bold', margin: 0 }}>This week</h2>
           <p style={{ fontSize: '0.8rem', color: textMuted, margin: '4px 0 0', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-            {new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} — {new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+            {weekRangeLabel}
           </p>
         </div>
         <div style={{ padding: '8px', backgroundColor: isDark ? '#333' : '#f3f4f6', borderRadius: '50%' }}>

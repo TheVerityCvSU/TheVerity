@@ -64,19 +64,13 @@ export function useStudentSubmission({ classroom, assignment, currentUser, socke
           const targetId = String(studentId || '').toLowerCase().trim();
           const targetEmail = String(currentUser?.email || '').toLowerCase().trim();
           const targetUserName = String(currentUser?.name || '').toLowerCase().trim();
-          const kimAliases = ['kim fabie', 'kimfabie', 'mikooooo', 'kimfabie123@gmail.com', 'kimfabie159@gmail.com'];
 
           const mySub = data.submissions.find(s => {
             const sName = String(s.student_name || s.studentName || '').toLowerCase().trim();
             const sId = String(s.student_id || s.studentId || '').toLowerCase().trim();
 
-            if (sName === targetName || sName === targetId || sName === targetEmail || sName === targetUserName) return true;
+            if (sName && (sName === targetName || sName === targetId || sName === targetEmail || sName === targetUserName)) return true;
             if (sId && (sId === targetName || sId === targetId || sId === targetEmail || sId === targetUserName)) return true;
-
-            if ((kimAliases.includes(targetEmail) || kimAliases.includes(targetName) || kimAliases.includes(targetUserName)) &&
-                (kimAliases.includes(sName) || kimAliases.includes(sId))) {
-              return true;
-            }
 
             if (currentUser?.role === 'Student' && data.submissions.length === 1) {
               return true;
@@ -151,7 +145,19 @@ export function useStudentSubmission({ classroom, assignment, currentUser, socke
     };
 
     const handleServerSubDeleted = (data) => {
-      if (data?.assignmentId && String(data.assignmentId) === String(assignmentId)) {
+      if (!data?.assignmentId || String(data.assignmentId) !== String(assignmentId)) return;
+      const targetName = String(safeUsername || '').toLowerCase().trim();
+      const targetId = String(studentId || '').toLowerCase().trim();
+      const targetEmail = String(currentUser?.email || '').toLowerCase().trim();
+      const targetUserName = String(currentUser?.name || '').toLowerCase().trim();
+      const eventName = String(data.studentName || '').toLowerCase().trim();
+      const eventId = String(data.studentId || '').toLowerCase().trim();
+
+      const matchesSelf =
+        (eventName && (eventName === targetName || eventName === targetId || eventName === targetEmail || eventName === targetUserName)) ||
+        (eventId && (eventId === targetName || eventId === targetId || eventId === targetEmail || eventId === targetUserName));
+
+      if (matchesSelf) {
         setSubmission(null);
         clearAllSubmissionStorage(assignmentId, classroomId, currentUser, studentId, safeUsername);
       }

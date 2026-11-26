@@ -98,6 +98,7 @@ Function confirmPageCreate
     Pop $confirmPath
   ${EndIf}
 
+  !if "${PRODUCT_NAME}" != "The Verity Admin"
   # --- Microsoft .NET SDK Choice Option (Bundled Inside Same Installer) ---
   ${If} $isDotnetAlreadyInstalled == "1"
     ${NSD_CreateCheckbox} 0 58u 100% 14u "Install Microsoft .NET SDK (Already detected on this computer)"
@@ -116,6 +117,7 @@ Function confirmPageCreate
     ${NSD_CreateLabel} 12u 74u 95% 16u "Bundled inside this setup package. Enables student C# offline programming and assessments."
     Pop $hwndDotnetDesc
   ${EndIf}
+  !endif
 
   ${NSD_CreateLabel} 0 94u 100% 20u "Click Install to begin the installation, or click Back to review your settings."
   Pop $0
@@ -185,6 +187,7 @@ FunctionEnd
   StrCpy $isDotnetAlreadyInstalled "0"
   StrCpy $installDotnetChoice "0"
 
+  !if "${PRODUCT_NAME}" != "The Verity Admin"
   ${If} ${FileExists} "$PROGRAMFILES64\dotnet\dotnet.exe"
     StrCpy $isDotnetAlreadyInstalled "1"
   ${ElseIf} ${FileExists} "$PROGRAMFILES\dotnet\dotnet.exe"
@@ -193,9 +196,11 @@ FunctionEnd
     # Pre-select by default so C# compiler works out of the box, with choice for user to uncheck
     StrCpy $installDotnetChoice "1"
   ${EndIf}
+  !endif
 !macroend
 
 !macro customInstall
+  !if "${PRODUCT_NAME}" != "The Verity Admin"
   ${If} $isVerityUpdate == "1"
     # Never prompt or re-install .NET during app updates - it's already installed
     StrCpy $installDotnetChoice "0"
@@ -223,6 +228,7 @@ FunctionEnd
     Delete "$PLUGINSDIR\dotnet-sdk-win-x64.exe"
     DetailPrint "--------------------------------------------------------"
   ${EndIf}
+  !endif
 !macroend
 
 !endif

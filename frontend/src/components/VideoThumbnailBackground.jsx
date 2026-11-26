@@ -1,4 +1,4 @@
-  import React, { useState, useRef, useMemo, useEffect } from 'react';
+  import { useState, useRef, useMemo } from 'react';
 import { Film } from 'lucide-react';
 import { getVideoThumbnailUrl, resolveMediaUrl } from '../utils/mediaUrl';
 
@@ -14,10 +14,14 @@ export default function VideoThumbnailBackground({
   onDurationLoaded = null,
   style = {}
 }) {
-  const [mediaLoaded, setMediaLoaded] = useState(false);
-  const [loadError, setLoadError] = useState(false);
+  const [loadedSrc, setLoadedSrc] = useState(null);
+  const [failedSrc, setFailedSrc] = useState(null);
+  const [failedThumbSrc, setFailedThumbSrc] = useState(null);
   const videoRef = useRef(null);
   const resolvedSrc = useMemo(() => resolveMediaUrl(src), [src]);
+  const mediaLoaded = Boolean(resolvedSrc) && loadedSrc === resolvedSrc;
+  const loadError = Boolean(resolvedSrc) && failedSrc === resolvedSrc;
+  const imageThumbError = Boolean(resolvedSrc) && failedThumbSrc === resolvedSrc;
 
   // Check if src is YouTube
   const youtubeId = useMemo(() => {
@@ -31,7 +35,7 @@ export default function VideoThumbnailBackground({
     return getVideoThumbnailUrl(resolvedSrc);
   }, [resolvedSrc]);
 
-  const [imageThumbError, setImageThumbError] = useState(false);
+  // Derived from resolvedSrc via imageThumbError / mediaLoaded / loadError above.
 
   // Handle HTML5 video metadata
   const handleLoadedMetadata = () => {
@@ -49,18 +53,11 @@ export default function VideoThumbnailBackground({
       if (onDurationLoaded && video.duration && !isNaN(video.duration)) {
         onDurationLoaded(video.duration);
       }
-    } catch (e) {
+    } catch {
       // Continue gracefully if browser limits seeking before user interaction
     }
-    setMediaLoaded(true);
+    setLoadedSrc(resolvedSrc);
   };
-
-  // Reset states when src changes
-  useEffect(() => {
-    setMediaLoaded(false);
-    setLoadError(false);
-    setImageThumbError(false);
-  }, [resolvedSrc]);
 
   const activeThumbImage = youtubeId ? `https://img.youtube.com/vi/${youtubeId}/hqdefault.jpg` : (!imageThumbError ? inferredThumbUrl : null);
 
@@ -103,12 +100,12 @@ export default function VideoThumbnailBackground({
         <img
           src={activeThumbImage}
           alt={title}
-          onLoad={() => setMediaLoaded(true)}
+          onLoad={() => setLoadedSrc(resolvedSrc)}
           onError={() => {
             if (inferredThumbUrl && !youtubeId) {
-              setImageThumbError(true);
+              setFailedThumbSrc(resolvedSrc);
             } else {
-              setLoadError(true);
+              setFailedSrc(resolvedSrc);
             }
           }}
           style={{
@@ -132,9 +129,9 @@ export default function VideoThumbnailBackground({
           playsInline
           preload="metadata"
           onLoadedMetadata={handleLoadedMetadata}
-          onSeeked={() => setMediaLoaded(true)}
-          onLoadedData={() => setMediaLoaded(true)}
-          onError={() => setLoadError(true)}
+          onSeeked={() => setLoadedSrc(resolvedSrc)}
+          onLoadedData={() => setLoadedSrc(resolvedSrc)}
+          onError={() => setFailedSrc(resolvedSrc)}
           style={{
             position: 'absolute',
             top: 0,

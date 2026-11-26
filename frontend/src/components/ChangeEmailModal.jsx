@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { AlertCircle } from 'lucide-react';
 import { sendEmailChangeOtp, verifyEmailChange } from '../data/emailChange';
@@ -76,20 +76,32 @@ export default function ChangeEmailModal({
       setLoading(false);
     }
   };
-  handleVerifyRef.current = handleVerifyCode;
-
   useEffect(() => {
+    handleVerifyRef.current = handleVerifyCode;
+  });
+
+  const [prevOpen, setPrevOpen] = useState(isOpen);
+  if (isOpen !== prevOpen) {
+    setPrevOpen(isOpen);
     if (isOpen) {
       setStep(1);
       setNewEmail('');
-      resetOtp();
       setError('');
       setDevOtp(null);
       setLoading(false);
       setCountdown(0);
-      setTimeout(() => emailInputRef.current?.focus(), 80);
     }
-  }, [isOpen]);
+  }
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const t = setTimeout(() => resetOtp(), 0);
+    const focusTimer = setTimeout(() => emailInputRef.current?.focus(), 80);
+    return () => {
+      clearTimeout(t);
+      clearTimeout(focusTimer);
+    };
+  }, [isOpen, resetOtp]);
 
   useEffect(() => {
     if (!isOpen) return;

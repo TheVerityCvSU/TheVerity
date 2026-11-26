@@ -1,4 +1,3 @@
-import React from 'react';
 import { motion } from 'framer-motion';
 import TeacherCourseCard from './TeacherCourseCard';
 import { getCardColSpan } from '../../data/teacherDashboardConstants';

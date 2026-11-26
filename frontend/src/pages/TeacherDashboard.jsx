@@ -1,16 +1,11 @@
-import React, { useState, useRef } from 'react';
+import { useState, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import SettingsPanel from './SettingsPanel';
 import TeacherCalendar from './TeacherCalendar';
 import ClassroomSettings from './ClassroomSettings';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { useMediaQuery } from '../hooks/useMediaQuery';
-import {
-  isPhantomClassroom,
-  mergeClassroomsPreservingOrder,
-  generateClassCode,
-  sortClassroomsAlphabetically
-} from '../utils/classroomList';
+import { sortClassroomsAlphabetically } from '../utils/classroomList';
 import { useTeacherClassrooms } from '../hooks/useTeacherClassrooms';
 import { VIEW_ORDER, drillVariants } from '../data/teacherDashboardConstants';
 import TeacherDashboardHeader from '../components/dashboard/TeacherDashboardHeader';
@@ -20,8 +15,6 @@ import TeacherMobileNav from '../components/dashboard/TeacherMobileNav';
 import CreateClassModal from '../components/dashboard/CreateClassModal';
 import DeleteClassModal from '../components/dashboard/DeleteClassModal';
 import ArchiveConfirmModal from '../components/ArchiveConfirmModal';
-
-export { isPhantomClassroom, mergeClassroomsPreservingOrder, generateClassCode };
 
 export default function TeacherDashboard({ currentUser, onLogout, onEnterClassroom, socket }) {
   const { isDark } = useDarkMode();

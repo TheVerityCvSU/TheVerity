@@ -1,4 +1,3 @@
-import React from 'react';
 import { Loader2, Eye, EyeOff } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import DesktopNoticeBanner from './DesktopNoticeBanner';

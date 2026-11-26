@@ -1,6 +1,7 @@
 const path = require('path');
 const fs = require('fs');
 const { openSqliteDatabase } = require('./sqlite-adapter');
+const { hashPassword, isHashedPassword } = require('../utils/passwordHash');
 
 const envCandidates = [
     process.env.ENV_FILE_PATH,
@@ -13,11 +14,13 @@ const envCandidates = [
     path.join(process.cwd(), '.env'),
 ].filter(Boolean);
 
-for (const p of envCandidates) {
-    if (fs.existsSync(p)) {
-        try {
-            require('dotenv').config({ path: p });
-        } catch (_) { }
+if (process.env.VERITY_SKIP_DOTENV !== '1') {
+    for (const p of envCandidates) {
+        if (fs.existsSync(p)) {
+            try {
+                require('dotenv').config({ path: p });
+            } catch (_) { }
+        }
     }
 }
 
@@ -102,8 +105,12 @@ function seedFromDatabaseJson(adapter, dataDir) {
             const insertUser = adapter.prepare('INSERT OR IGNORE INTO users (id, name, email, password, role, lastLogin, status) VALUES (?, ?, ?, ?, ?, ?, ?)');
             const insertUserNoId = adapter.prepare('INSERT OR IGNORE INTO users (name, email, password, role, lastLogin, status) VALUES (?, ?, ?, ?, ?, ?)');
             data.users.forEach(u => {
-                if (u.id) insertUser.run(u.id, u.name, u.email, u.password, u.role, u.lastLogin, u.status);
-                else insertUserNoId.run(u.name, u.email, u.password, u.role, u.lastLogin, u.status);
+                const rawPass = String(u.password || '');
+                const safePass = (rawPass === 'google_sso_user' || isHashedPassword(rawPass))
+                    ? rawPass
+                    : hashPassword(rawPass || 'TempChangeMe!2026');
+                if (u.id) insertUser.run(u.id, u.name, u.email, safePass, u.role, u.lastLogin, u.status);
+                else insertUserNoId.run(u.name, u.email, safePass, u.role, u.lastLogin, u.status);
             });
             console.log(`[Database] Seeded ${data.users.length} users into SQLite from database.json.`);
         }
@@ -352,12 +359,72 @@ function initSqlite() {
             avatar TEXT
         );
 
-        INSERT OR IGNORE INTO admin_users (name, email, password, role, status)
-        VALUES ('System Admin', 'admin@verity.com', 'admin', 'Admin', 'Active');
+        CREATE TABLE IF NOT EXISTS sync_deletions (
+            table_name TEXT NOT NULL,
+            record_key TEXT NOT NULL,
+            deleted_at TEXT NOT NULL,
+            PRIMARY KEY (table_name, record_key)
+        );
 
-        INSERT OR IGNORE INTO admin_users (name, email, password, role, status)
-        VALUES ('System Admin', 'admin@verity.com', 'admin', 'Admin', 'Active');
+        CREATE TABLE IF NOT EXISTS email_notifications_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            notification_type TEXT NOT NULL,
+            classroom_id INTEGER,
+            assignment_id INTEGER,
+            student_email TEXT NOT NULL,
+            due_date_snapshot TEXT,
+            status TEXT DEFAULT 'sent',
+            sent_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(notification_type, assignment_id, student_email)
+        );
+
+        CREATE TABLE IF NOT EXISTS user_notification_preferences (
+            user_email TEXT PRIMARY KEY,
+            preferences TEXT NOT NULL,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+        );
     `);
+
+        // Idempotent LWW / soft-delete timestamp columns across synced SQLite tables
+        for (const tbl of ['users', 'admin_users', 'classrooms', 'enrollments', 'classwork', 'submissions', 'grades', 'announcements']) {
+            try { sqliteDb.exec(`ALTER TABLE ${tbl} ADD COLUMN updated_at TEXT;`); } catch (_) { }
+            try { sqliteDb.exec(`ALTER TABLE ${tbl} ADD COLUMN deleted_at TEXT;`); } catch (_) { }
+        }
+        for (const trigCfg of [
+            { tbl: 'users', pk: 'id' },
+            { tbl: 'classrooms', pk: 'id' },
+            { tbl: 'enrollments', pk: 'id' },
+            { tbl: 'classwork', pk: 'id' },
+            { tbl: 'submissions', pk: 'id' },
+            { tbl: 'grades', pk: 'id' },
+            { tbl: 'announcements', pk: 'id' }
+        ]) {
+            try {
+                sqliteDb.exec(`
+                    CREATE TRIGGER IF NOT EXISTS trg_${trigCfg.tbl}_updated_at
+                    AFTER UPDATE ON ${trigCfg.tbl}
+                    WHEN COALESCE(NEW.updated_at, '') = COALESCE(OLD.updated_at, '')
+                    BEGIN
+                        UPDATE ${trigCfg.tbl} SET updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE ${trigCfg.pk} = NEW.${trigCfg.pk};
+                    END;
+                `);
+            } catch (_) { }
+        }
+
+        // Opt-in initial admin bootstrap via environment variables only (no hardcoded default credentials)
+        const bootstrapEmail = (process.env.VERITY_BOOTSTRAP_ADMIN_EMAIL || '').trim().toLowerCase();
+        const bootstrapPass = (process.env.VERITY_BOOTSTRAP_ADMIN_PASSWORD || '').trim();
+        const bootstrapName = (process.env.VERITY_BOOTSTRAP_ADMIN_NAME || 'System Admin').trim();
+        if (bootstrapEmail && bootstrapPass) {
+            const adminCount = sqliteDb.prepare('SELECT count(*) as c FROM admin_users').get()?.c || 0;
+            if (adminCount === 0) {
+                const hashedPass = isHashedPassword(bootstrapPass) ? bootstrapPass : hashPassword(bootstrapPass);
+                sqliteDb.prepare(
+                    `INSERT OR IGNORE INTO admin_users (name, email, password, role, status) VALUES (?, ?, ?, 'Admin', 'Active')`
+                ).run(bootstrapName, bootstrapEmail, hashedPass);
+                console.log(`[Database] Provisioned bootstrap admin account for ${bootstrapEmail}.`);
+            }
+        }
 
         try { sqliteDb.exec(`ALTER TABLE classrooms ADD COLUMN instructor_email TEXT;`); } catch (e) { }
         try { sqliteDb.exec(`ALTER TABLE classrooms ADD COLUMN description TEXT;`); } catch (e) { }
@@ -501,8 +568,12 @@ async function initPostgres(connStr = cleanedUrl) {
         // Check if schema already exists
         const tableCheck = await client.query("SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'users' LIMIT 1;").catch(() => ({ rows: [] }));
         if (!tableCheck.rows || tableCheck.rows.length === 0) {
-            const schemaPath = path.join(__dirname, 'schema.sql');
-            if (fs.existsSync(schemaPath)) {
+            const schemaPath = [
+                path.join(__dirname, 'schema.sql'),
+                path.join(__dirname, 'db', 'schema.sql'),
+                path.join(__dirname, '..', 'server', 'db', 'schema.sql')
+            ].find((p) => fs.existsSync(p));
+            if (schemaPath) {
                 const schemaSql = fs.readFileSync(schemaPath, 'utf8');
                 await client.query(schemaSql).catch(err => console.warn('[Database] Initial schema note:', err.message));
             }
@@ -512,6 +583,53 @@ async function initPostgres(connStr = cleanedUrl) {
         await client.query('ALTER TABLE classrooms ADD COLUMN IF NOT EXISTS archived INTEGER DEFAULT 0;').catch(() => {});
         await client.query('ALTER TABLE classrooms ADD COLUMN IF NOT EXISTS description TEXT;').catch(() => {});
         await client.query('ALTER TABLE classrooms ADD COLUMN IF NOT EXISTS settings TEXT;').catch(() => {});
+        for (const tbl of ['users', 'admin_users', 'classrooms', 'enrollments', 'classwork', 'submissions', 'grades', 'announcements']) {
+            await client.query(`ALTER TABLE ${tbl} ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP;`).catch(() => {});
+            await client.query(`ALTER TABLE ${tbl} ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;`).catch(() => {});
+        }
+        await client.query(`
+            CREATE TABLE IF NOT EXISTS sync_deletions (
+                table_name VARCHAR(64) NOT NULL,
+                record_key VARCHAR(255) NOT NULL,
+                deleted_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (table_name, record_key)
+            );
+        `).catch(() => {});
+        await client.query(`
+            CREATE TABLE IF NOT EXISTS email_notifications_log (
+                id BIGSERIAL PRIMARY KEY,
+                notification_type VARCHAR(64) NOT NULL,
+                classroom_id BIGINT,
+                assignment_id BIGINT,
+                student_email VARCHAR(255) NOT NULL,
+                due_date_snapshot TEXT,
+                status VARCHAR(32) DEFAULT 'sent',
+                sent_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(notification_type, assignment_id, student_email)
+            );
+        `).catch(() => {});
+        await client.query(`
+            CREATE TABLE IF NOT EXISTS user_notification_preferences (
+                user_email VARCHAR(255) PRIMARY KEY,
+                preferences TEXT NOT NULL,
+                updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+            );
+        `).catch(() => {});
+
+        const pgBootstrapEmail = (process.env.VERITY_BOOTSTRAP_ADMIN_EMAIL || '').trim().toLowerCase();
+        const pgBootstrapPass = (process.env.VERITY_BOOTSTRAP_ADMIN_PASSWORD || '').trim();
+        const pgBootstrapName = (process.env.VERITY_BOOTSTRAP_ADMIN_NAME || 'System Admin').trim();
+        if (pgBootstrapEmail && pgBootstrapPass) {
+            const pgAdminCount = await client.query('SELECT count(*) AS c FROM admin_users').catch(() => ({ rows: [{ c: 0 }] }));
+            if (Number(pgAdminCount.rows?.[0]?.c || 0) === 0) {
+                const hashedPass = isHashedPassword(pgBootstrapPass) ? pgBootstrapPass : hashPassword(pgBootstrapPass);
+                await client.query(
+                    `INSERT INTO admin_users (name, email, password, role, status) VALUES ($1, $2, $3, 'Admin', 'Active') ON CONFLICT (email) DO NOTHING`,
+                    [pgBootstrapName, pgBootstrapEmail, hashedPass]
+                ).catch(() => {});
+            }
+        }
+
         provider = 'postgres';
 
         // Synchronize active Postgres users with local SQLite so offline cache matches the primary database
@@ -884,6 +1002,47 @@ const db = {
         }
     },
 
+    async recordSyncDeletion(tableName, recordKey) {
+        if (!tableName || recordKey == null) return;
+        const t = String(tableName).trim().toLowerCase();
+        const k = String(recordKey).trim();
+        if (!t || !k) return;
+        const ts = new Date().toISOString();
+        try {
+            await readyPromise;
+            if (sqliteDb) {
+                sqliteDb.prepare(`
+                    INSERT INTO sync_deletions (table_name, record_key, deleted_at)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(table_name, record_key) DO UPDATE SET deleted_at = excluded.deleted_at
+                `).run(t, k, ts);
+            }
+            if (provider === 'postgres' && pgPool) {
+                await pgPool.query(`
+                    INSERT INTO sync_deletions (table_name, record_key, deleted_at)
+                    VALUES ($1, $2, $3)
+                    ON CONFLICT (table_name, record_key) DO UPDATE SET deleted_at = EXCLUDED.deleted_at
+                `, [t, k, ts]).catch(() => { });
+            }
+        } catch (_) { }
+    },
+
+    async clearSyncDeletion(tableName, recordKey) {
+        if (!tableName || recordKey == null) return;
+        const t = String(tableName).trim().toLowerCase();
+        const k = String(recordKey).trim();
+        if (!t || !k) return;
+        try {
+            await readyPromise;
+            if (sqliteDb) {
+                sqliteDb.prepare('DELETE FROM sync_deletions WHERE table_name = ? AND record_key = ?').run(t, k);
+            }
+            if (provider === 'postgres' && pgPool) {
+                await pgPool.query('DELETE FROM sync_deletions WHERE table_name = $1 AND record_key = $2', [t, k]).catch(() => { });
+            }
+        } catch (_) { }
+    },
+
     // Execute query and return all matching rows as Array
     async all(sql, ...args) {
         await readyPromise;
@@ -937,7 +1096,7 @@ const db = {
                 let pgSql = convertPlaceholders(sql);
                 const isInsert = /^\s*INSERT\s+INTO/i.test(pgSql);
                 const hasReturning = /RETURNING/i.test(pgSql);
-                const isIdLessTable = /INSERT\s+INTO\s+(?:system_settings|security_flags)\b/i.test(pgSql);
+                const isIdLessTable = /INSERT\s+INTO\s+(?:system_settings|security_flags|user_notification_preferences)\b/i.test(pgSql);
                 if (isInsert && !hasReturning && !isIdLessTable) {
                     pgSql += ' RETURNING id';
                 }
@@ -990,7 +1149,7 @@ const db = {
                     let pgSql = convertPlaceholders(sql);
                     const isInsert = /^\s*INSERT\s+INTO/i.test(pgSql);
                     const hasReturning = /RETURNING/i.test(pgSql);
-                    const isIdLessTable = /INSERT\s+INTO\s+(?:system_settings|security_flags)\b/i.test(pgSql);
+                    const isIdLessTable = /INSERT\s+INTO\s+(?:system_settings|security_flags|user_notification_preferences)\b/i.test(pgSql);
                     if (isInsert && !hasReturning && !isIdLessTable) {
                         pgSql += ' RETURNING id';
                     }

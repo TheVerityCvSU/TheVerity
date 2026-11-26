@@ -1,9 +1,11 @@
-import React from 'react';
+import { lazy, Suspense } from 'react';
 import ProtectedRoute from '../ProtectedRoute';
+import PageLoader from '../PageLoader';
 import TeacherDashboard from '../../pages/TeacherDashboard';
-import TeacherClasswork from '../../pages/TeacherClasswork';
-import TeacherGrading from '../../pages/TeacherGrading';
-import TeacherView from '../../pages/TeacherView';
+
+const TeacherClasswork = lazy(() => import('../../pages/TeacherClasswork'));
+const TeacherGrading = lazy(() => import('../../pages/TeacherGrading'));
+const TeacherView = lazy(() => import('../../pages/TeacherView'));
 
 export default function AppTeacherRoutes({
   currentScreen,
@@ -23,7 +25,7 @@ export default function AppTeacherRoutes({
   navigateTo,
 }) {
   return (
-    <>
+    <Suspense fallback={<PageLoader />}>
       {currentScreen === 'teacher_dashboard' && (
         <ProtectedRoute currentUser={currentUser} setCurrentScreen={setCurrentScreen}>
           <TeacherDashboard
@@ -146,6 +148,6 @@ export default function AppTeacherRoutes({
           />
         </ProtectedRoute>
       )}
-    </>
+    </Suspense>
   );
 }

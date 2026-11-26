@@ -63,14 +63,20 @@ let cachedResult = null;
 let detectionPromise = null;
 let lastCheckTime = 0;
 
+const HOST_VIRTUAL_ADAPTER_RE = /\b(?:vethernet|wsl|hyper-v|vmnet|host-only|virtualbox host|loopback|docker|vboxnet|tailscale|zerotier|tun|tap)\b/i;
+
 /**
  * Checks system network interfaces for MAC addresses belonging to VM vendors.
+ * Ignores host-side virtual adapters (WSL2, Docker, Hyper-V vEthernet, VMware VMnet, VirtualBox Host-Only)
+ * so physical development or lab laptops are not falsely blocked as virtual machines.
  */
 function checkMacAddresses() {
   const interfaces = os.networkInterfaces();
   const detected = [];
 
   for (const [ifaceName, addrs] of Object.entries(interfaces)) {
+    if (HOST_VIRTUAL_ADAPTER_RE.test(String(ifaceName || ''))) continue;
+
     for (const item of (addrs || [])) {
       if (!item.mac || item.mac === '00:00:00:00:00:00') continue;
       const cleanMac = item.mac.toLowerCase();
@@ -301,9 +307,13 @@ function checkHardwareWmi() {
           if (biosVer.includes(kw.pattern)) detected.push({ type: 'hardware_bios', vendor: kw.vendor, reason: `BIOS Version indicates ${kw.vendor}: "${data.biosVersion}"` });
         }
 
-        // HypervisorPresent flag (standard Windows hypervisor check)
-        if (data.hypervisor === true && (csMan.includes('microsoft') || csMod.includes('virtual') || csMan.includes('vmware') || csMod.includes('vmware'))) {
-          detected.push({ type: 'hardware_hypervisor', vendor: 'Hypervisor', reason: `Windows Hypervisor is active on system (${data.csModel || 'Virtual Environment'})` });
+        // HypervisorPresent flag — only flag when combined with known VM chassis/model indicators
+        // (avoids false positives on physical Microsoft Surface / Windows 11 PCs with VBS or WSL2 enabled)
+        if (
+          data.hypervisor === true &&
+          (csMod.includes('virtual') || csMod.includes('hyper-v') || csMan.includes('vmware') || csMod.includes('vmware') || csMan.includes('innotek') || csMan.includes('qemu'))
+        ) {
+          detected.push({ type: 'hardware_hypervisor', vendor: 'Hypervisor', reason: `Windows Hypervisor VM detected (${data.csModel || 'Virtual Environment'})` });
         }
 
         // Microsoft Hyper-V detection
@@ -371,25 +381,29 @@ async function detectVirtualMachine() {
 }
 
 /**
- * Initializes VM detection at system startup (synchronous trigger, runs async in background).
+ * Initializes VM detection at system startup without blocking the initial UI boot thread.
  */
 function initStartupVmDetection(logger = console.log) {
   logger('[vm-detect] Initializing startup VM detection check...');
   if (!detectionPromise) {
-    detectionPromise = detectVirtualMachine()
-      .then((res) => {
-        if (res.isVm) {
-          logger(`[vm-detect] WARNING: VIRTUAL MACHINE DETECTED! Reasons:\n  - ${res.reasons.join('\n  - ')}`);
-        } else {
-          logger('[vm-detect] Physical machine verified. Safe for exam execution.');
-        }
-        return res;
-      })
-      .catch((err) => {
-        logger(`[vm-detect] Error running VM detection: ${err.message}`);
-        cachedResult = { isVm: false, error: err.message, reasons: [] };
-        return cachedResult;
-      });
+    detectionPromise = new Promise((resolve) => {
+      setTimeout(() => {
+        detectVirtualMachine()
+          .then((res) => {
+            if (res.isVm) {
+              logger(`[vm-detect] WARNING: VIRTUAL MACHINE DETECTED! Reasons:\n  - ${res.reasons.join('\n  - ')}`);
+            } else {
+              logger('[vm-detect] Physical machine verified. Safe for exam execution.');
+            }
+            resolve(res);
+          })
+          .catch((err) => {
+            logger(`[vm-detect] Error running VM detection: ${err.message}`);
+            cachedResult = { isVm: false, error: err.message, reasons: [] };
+            resolve(cachedResult);
+          });
+      }, 50);
+    });
   }
   return detectionPromise;
 }

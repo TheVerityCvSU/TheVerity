@@ -1,4 +1,3 @@
-import React from 'react';
 import { 
   ClipboardList, CheckCircle2, Calendar, Award, Clock, ArrowUpRight, ArrowRight, AlertCircle, Lock
 } from 'lucide-react';

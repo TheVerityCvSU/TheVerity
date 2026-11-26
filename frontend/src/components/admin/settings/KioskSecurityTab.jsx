@@ -1,4 +1,3 @@
-import React from 'react';
 import { motion } from 'framer-motion';
 import { Monitor, KeyRound } from 'lucide-react';
 import { tabVariants } from '../../../data/adminSettings';

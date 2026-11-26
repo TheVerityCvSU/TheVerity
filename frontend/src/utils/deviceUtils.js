@@ -124,7 +124,7 @@ export const isMobileDevice = () => {
  *
  * When set to false, ComLab & PC web browser access is strictly blocked for students.
  */
-export const DISABLE_DESKTOP_WEB_BLOCKER = true;
+export const DISABLE_DESKTOP_WEB_BLOCKER = Boolean(import.meta.env?.DEV);
 
 /**
  * Checks if the user is running in a desktop or laptop web browser

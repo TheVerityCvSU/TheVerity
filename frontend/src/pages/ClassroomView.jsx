@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { useMediaQuery } from '../hooks/useMediaQuery';
@@ -44,15 +44,18 @@ export default function ClassroomView({
   const [isClassInfoModalOpen, setIsClassInfoModalOpen] = useState(false);
   const [archivedOverride, setArchivedOverride] = useState(null);
   const [classroomOverride, setClassroomOverride] = useState(null);
+  const [prevClassroomId, setPrevClassroomId] = useState(classroom?.id);
+  const classroomRef = useRef(classroom);
 
-  useEffect(() => {
-    setIsFadingOut(false);
-  }, []);
-
-  useEffect(() => {
+  if (classroom?.id !== prevClassroomId) {
+    setPrevClassroomId(classroom?.id);
     setArchivedOverride(null);
     setClassroomOverride(null);
-  }, [classroom?.id]);
+  }
+
+  useEffect(() => {
+    classroomRef.current = classroom;
+  }, [classroom]);
 
   useEffect(() => {
     const handleArchivedEvent = (e) => {
@@ -67,7 +70,7 @@ export default function ClassroomView({
       const incoming = e?.detail?.classroom;
       if (!incoming || classroom?.id == null) return;
       if (String(incoming.id) === String(classroom.id)) {
-        setClassroomOverride(prev => ({ ...(prev || classroom), ...incoming }));
+        setClassroomOverride(prev => ({ ...(prev || classroomRef.current), ...incoming }));
       }
     };
     window.addEventListener('verity:classroom-archived', handleArchivedEvent);
@@ -110,11 +113,11 @@ export default function ClassroomView({
     setExpandedInstructionId,
     markMaterialsAsSeen,
     markSingleMaterialAsSeen
-  } = useClassroomClasswork({ classroom, currentUser, socket, activeTab });
+  } = useClassroomClasswork({ classroom: effectiveClassroom, currentUser, socket, activeTab });
 
   const { submittedTasks, submissionTimestamps, checkedTasks, handleUnsubmitAssignment } = useClassroomSubmissions({
     assignments,
-    classroom,
+    classroom: effectiveClassroom,
     currentUser,
     socket,
     isMaterialItem
@@ -254,7 +257,7 @@ export default function ClassroomView({
                 setPreviewImage={setPreviewImage}
                 setPreviewVideo={setPreviewVideo}
                 setPreviewIframe={setPreviewIframe}
-                classroom={classroom}
+                classroom={effectiveClassroom}
                 isDark={isDark}
                 styles={styles}
               />
