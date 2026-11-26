@@ -5,9 +5,10 @@ export const sendEmailChangeOtp = async (cleanEmail) => {
   const res = await apiFetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/users/send-email-change-otp`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ newEmail: cleanEmail })
+    body: JSON.stringify({ newEmail: cleanEmail }),
+    timeoutMs: 35000
   });
-  const data = await res.json();
+  const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     throw new Error(data.message || 'Failed to send verification code.');
   }

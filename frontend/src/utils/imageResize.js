@@ -1,7 +1,7 @@
 /**
  * Helper to process and resize avatar images using HTML5 Canvas
  */
-export function processAvatarImage(file, maxDim = 256, quality = 0.88) {
+export function processAvatarImage(file, maxDim = 128, quality = 0.75) {
   return new Promise((resolve, reject) => {
     if (!file) {
       return reject(new Error('No file provided.'));

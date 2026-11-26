@@ -27,7 +27,7 @@ export function useStudentViewKiosk({
     violationThreshold: 3,
     sessionTimeout: '30m',
     cognitivePauseThreshold: 45,
-    enforceSingleMonitor: false,
+    enforceSingleMonitor: true,
     disableWindowsKeyAltTab: true,
     blockVirtualMachine: true
   });

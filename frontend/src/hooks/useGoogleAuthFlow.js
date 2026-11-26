@@ -65,7 +65,7 @@ export function useGoogleAuthFlow({ onSuccess, onError }) {
     cleanupAuth();
 
     const sessionId = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
-    const activeCloud = getCloudUrl() || 'https://verity-2z4v.onrender.com';
+    const activeCloud = getCloudUrl() || 'https://the-verity.onrender.com';
     const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
     const authOrigin = isOnline ? 'cloud' : 'lan';
     const backendUrl = isOnline ? activeCloud : getLocalApiUrl();

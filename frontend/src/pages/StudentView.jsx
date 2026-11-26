@@ -325,8 +325,13 @@ export default function StudentView({
   const proctorLogs = kioskHook.proctorLogs;
 
   // Broadcast live presence on mount, reconnect, and periodic heartbeat
+<<<<<<< HEAD
   const emitPresence = useCallback(() => {
     if (isSandbox || isSubmitted) return;
+=======
+  const emitPresence = useCallback((isInitialOrReconnect = false) => {
+    if (isSandbox || submissionHook.submitted) return;
+>>>>>>> 3b82a0e04c7a495c9e05ceca4205e12acdacce60
     const resolvedClassroomId =
       (clsId != null ? String(clsId) : null) ||
       (classroomId !== 'none' ? classroomId : null) ||
@@ -336,22 +341,42 @@ export default function StudentView({
     const resolvedAssignmentId = effAssignId || assignmentId;
     if (!resolvedAssignmentId || resolvedAssignmentId === 'unassigned') return;
 
-    const payload = {
+    const basePayload = {
       studentId: studentActualId,
       id: studentActualId,
       name: studentDisplayName || safeUsername,
       studentName: studentDisplayName || safeUsername,
+<<<<<<< HEAD
       email: userEmail,
       avatar: userAvatar,
       code: latestCodeRef.current || '',
+=======
+      email: currentUser?.email || '',
+      code: filesHook.codeRef?.current || filesHook.code || '',
+>>>>>>> 3b82a0e04c7a495c9e05ceca4205e12acdacce60
       classroomId: resolvedClassroomId,
       classCode: clsCode || clsSection || effAssignClassCode || '',
       assignmentId: resolvedAssignmentId,
+<<<<<<< HEAD
       logs: proctorLogs || [],
       timestamp: Date.now()
     };
     emitToSockets('student_enter_activity', payload);
     emitToSockets('student_typing', payload);
+=======
+      timestamp: Date.now()
+    };
+
+    if (isInitialOrReconnect) {
+      compilerHook.emitToSockets('student_enter_activity', {
+        ...basePayload,
+        avatar: currentUser?.avatar || '',
+        logs: kioskHook.proctorLogs || []
+      });
+    } else {
+      compilerHook.emitToSockets('student_typing', basePayload);
+    }
+>>>>>>> 3b82a0e04c7a495c9e05ceca4205e12acdacce60
   }, [
     isSandbox,
     isSubmitted,
@@ -375,19 +400,20 @@ export default function StudentView({
 
   useEffect(() => {
     if (isSandbox || submissionHook.submitted) return;
-    emitPresence();
+    emitPresence(true);
 
+    const handleConnectPresence = () => emitPresence(true);
     const locSock = compilerHook.localSocket;
     const secSock = compilerHook.secondarySocket;
-    if (socket) socket.on('connect', emitPresence);
-    if (locSock) locSock.on('connect', emitPresence);
-    if (secSock) secSock.on('connect', emitPresence);
+    if (socket) socket.on('connect', handleConnectPresence);
+    if (locSock) locSock.on('connect', handleConnectPresence);
+    if (secSock) secSock.on('connect', handleConnectPresence);
 
-    const presenceInterval = setInterval(emitPresence, 5000);
+    const presenceInterval = setInterval(() => emitPresence(false), 10000);
     return () => {
-      if (socket) socket.off('connect', emitPresence);
-      if (locSock) locSock.off('connect', emitPresence);
-      if (secSock) secSock.off('connect', emitPresence);
+      if (socket) socket.off('connect', handleConnectPresence);
+      if (locSock) locSock.off('connect', handleConnectPresence);
+      if (secSock) secSock.off('connect', handleConnectPresence);
       clearInterval(presenceInterval);
     };
   }, [isSandbox, submissionHook.submitted, emitPresence, socket, compilerHook.localSocket, compilerHook.secondarySocket]);

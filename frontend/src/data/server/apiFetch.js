@@ -18,7 +18,17 @@ const isAuthTokenPath = (pathWithQuery) =>
     pathWithQuery.startsWith('/login') ||
     pathWithQuery.startsWith('/register') ||
     pathWithQuery.startsWith('/verify-otp') ||
+    pathWithQuery.startsWith('/auth/verify-otp') ||
     pathWithQuery.startsWith('/auth/google')
+  );
+
+// Email-delivery auth endpoints require cloud credentials (Brevo/Resend/SMTP) that packaged desktop apps do not ship.
+const isEmailDeliveryAuthPath = (pathWithQuery) =>
+  Boolean(pathWithQuery) && (
+    pathWithQuery.startsWith('/auth/send-otp') ||
+    pathWithQuery.startsWith('/auth/resend-otp') ||
+    pathWithQuery.startsWith('/auth/verify-otp') ||
+    pathWithQuery.startsWith('/users/send-email-change-otp')
   );
 
 const recordAuthOrigin = (pathWithQuery, response, origin) => {
@@ -197,10 +207,13 @@ export const apiFetch = async (url, options = {}) => {
     tokenOrigin = localStorage.getItem('verity_token_origin');
   } catch (_) {}
 
+  const isEmailAuth = isEmailDeliveryAuthPath(pathWithQuery);
+  const isNavOnlineNow = typeof navigator === 'undefined' ? true : navigator.onLine !== false;
+
   const preferLanOrDevDb =
     state.userPreferredMode === 'lan' ||
-    (state.userPreferredMode !== 'cloud' && hasDedicatedLanOrLocalDb()) ||
-    (state.userPreferredMode !== 'cloud' && tokenOrigin === 'lan' && hadAuthHeader && !isAuthTokenPath(pathWithQuery));
+    (!isEmailAuth && state.userPreferredMode !== 'cloud' && hasDedicatedLanOrLocalDb()) ||
+    (!isEmailAuth && state.userPreferredMode !== 'cloud' && tokenOrigin === 'lan' && hadAuthHeader && !isAuthTokenPath(pathWithQuery));
 
   // 2. Local Dev DB / Explicit or Auto-Discovered ComLab LAN Host:
   // Prioritize Local/LAN server first for instant response!
@@ -224,8 +237,8 @@ export const apiFetch = async (url, options = {}) => {
     }
   }
 
-  const isNavOffline = typeof navigator !== 'undefined' && navigator.onLine === false;
-  const shouldBypassCloudProbe = isNavOffline || (state.isCloudDown && Date.now() - state.lastCloudCheckTime < 8000);
+  const isNavOffline = !isNavOnlineNow;
+  const shouldBypassCloudProbe = isNavOffline || (!isEmailAuth && state.isCloudDown && Date.now() - state.lastCloudCheckTime < 8000);
 
   // When offline / cloud recently down, route to embedded local fallback immediately
   if (shouldBypassCloudProbe) {
@@ -280,10 +293,17 @@ export const apiFetch = async (url, options = {}) => {
 
     // If cloud returns 5xx (server error / cold start timeout), try local fallback
     if (response.status >= 500) {
+      let cloudEmailFailure = false;
+      if (isEmailAuth) {
+        try {
+          const cloudBody = await response.clone().json();
+          cloudEmailFailure = Boolean(cloudBody?.emailDeliveryFailed);
+        } catch (_) {}
+      }
       console.warn(`[apiFetch] Cloud returned HTTP ${response.status}. Attempting local fallback: ${localFallbackUrl}`);
       try {
         const localRes = await fetch(localFallbackUrl, { ...fetchOptions, headers });
-        if (localRes.ok || localRes.status < 500) {
+        if (cloudEmailFailure ? localRes.ok : (localRes.ok || localRes.status < 500)) {
           if (localRes.ok && shouldQueueClientOfflineMutation(pathWithQuery, method) && !state.localHealthData?.hasCloudDb) {
             queueOfflineMutation(pathWithQuery, method, fetchOptions.body);
           } else if (isMutation && state.localHealthData?.hasCloudDb) {

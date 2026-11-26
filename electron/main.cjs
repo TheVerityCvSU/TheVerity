@@ -427,6 +427,11 @@ function createWindow() {
     try {
       const parsedUrl = new URL(navigationUrl);
       if (parsedUrl.protocol === 'http:' || parsedUrl.protocol === 'https:') {
+<<<<<<< HEAD
+=======
+        // Packaged Electron serves dist/ on http://localhost:5173 via protocol.handle('http', ...),
+        // so in-app navigation/reloads on localhost:5173 must stay inside Electron rather than opening a browser.
+>>>>>>> 3b82a0e04c7a495c9e05ceca4205e12acdacce60
         if (parsedUrl.host === 'localhost:5173') {
           return;
         }
@@ -671,10 +676,19 @@ app.whenReady().then(() => {
       try {
         const url = new URL(request.url);
         if (url.hostname === 'localhost' && url.port === '5173') {
+<<<<<<< HEAD
           const distDir = path.join(__dirname, '../dist');
           let { safe, filePath } = resolveSafeDistFile(distDir, url.pathname === '/' ? '/index.html' : url.pathname);
           if (!safe || !fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) {
             filePath = path.join(distDir, 'index.html');
+=======
+          let reqPath = decodeURIComponent(url.pathname);
+          if (reqPath === '/' || reqPath === '') reqPath = '/index.html';
+          
+          let file = path.join(__dirname, '../dist', reqPath);
+          if (!fs.existsSync(file) || fs.statSync(file).isDirectory()) {
+            file = path.join(__dirname, '../dist/index.html');
+>>>>>>> 3b82a0e04c7a495c9e05ceca4205e12acdacce60
           }
           return net.fetch(pathToFileURL(filePath).href);
         }

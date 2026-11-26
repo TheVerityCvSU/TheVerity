@@ -9,7 +9,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, __dirname, '');
   const isProd = mode === 'production' || process.env.NODE_ENV === 'production';
-  const defaultApi = isProd ? 'https://verity-2z4v.onrender.com' : 'http://localhost:3001';
+  const defaultApi = isProd ? 'https://the-verity.onrender.com' : 'http://localhost:3001';
   const apiUrl = (env.VITE_API_URL || process.env.VITE_API_URL || defaultApi).replace(/\/$/, '');
   const socketUrl = (env.VITE_SOCKET_URL || process.env.VITE_SOCKET_URL || apiUrl).replace(/\/$/, '');
 
@@ -66,7 +66,7 @@ export default defineConfig(({ mode }) => {
       'import.meta.env.VITE_APP_VERSION': JSON.stringify(appVersion),
       'import.meta.env.VITE_API_URL': JSON.stringify(apiUrl),
       'import.meta.env.VITE_SOCKET_URL': JSON.stringify(socketUrl),
-      'import.meta.env.VITE_GOOGLE_CLIENT_ID': JSON.stringify(env.VITE_GOOGLE_CLIENT_ID || process.env.VITE_GOOGLE_CLIENT_ID || '228468530633-cc2hnruslpc1sh0o7fd2s7hgjipsibil.apps.googleusercontent.com')
+      'import.meta.env.VITE_GOOGLE_CLIENT_ID': JSON.stringify(env.VITE_GOOGLE_CLIENT_ID || process.env.VITE_GOOGLE_CLIENT_ID || '224892595118-lbmp59pc67u3e7968qhi78qdluvqt8kr.apps.googleusercontent.com')
     }
   };
 })

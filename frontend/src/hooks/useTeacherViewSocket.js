@@ -188,8 +188,13 @@ export function useTeacherViewSocket({
           altTarget = String(cloudUrl).replace(/\/+$/, '');
         }
       } else {
+<<<<<<< HEAD
         if (!conn.isWebHosted && localUrl && !localUrl.includes('verity-2z4v')) {
           altTarget = String(localUrl).replace(/\/+$/, '');
+=======
+        if (!conn.isWebHosted && localUrl && !localUrl.includes('onrender.com')) {
+          altTarget = localUrl;
+>>>>>>> 3b82a0e04c7a495c9e05ceca4205e12acdacce60
         }
       }
 

@@ -8,7 +8,9 @@ import {
   fetchPasswordPolicies,
   sendRegisterOtp,
   verifyRegisterOtp,
-  resendRegisterOtp
+  resendRegisterOtp,
+  isValidCvsuEmail,
+  CVSU_EMAIL_ERROR
 } from '../data/registerService';
 import RegisterFormCard from '../components/auth/RegisterFormCard';
 import RegisterOtpCard from '../components/auth/RegisterOtpCard';
@@ -36,6 +38,10 @@ export default function Register({ onBackToLogin, onLogin }) {
 
   const handleVerifyOtp = async (e, codeOverride = null) => {
     if (e) e.preventDefault();
+    if (!isValidCvsuEmail(formData.email)) {
+      setMessage({ type: 'error', text: CVSU_EMAIL_ERROR });
+      return;
+    }
     const cleanOtp = (codeOverride || otpDigits.join('')).trim();
     if (!cleanOtp || cleanOtp.length < 6) {
       setMessage({ type: 'error', text: 'Please enter all 6 digits of the verification code.' });
@@ -140,6 +146,10 @@ export default function Register({ onBackToLogin, onLogin }) {
   const handleInitiateOtp = async (e) => {
     e.preventDefault();
     setMessage(null);
+    if (!isValidCvsuEmail(formData.email)) {
+      setMessage({ type: 'error', text: CVSU_EMAIL_ERROR });
+      return;
+    }
     if (formData.password !== formData.confirmPassword) {
       setMessage({ type: 'error', text: 'Passwords do not match. Please try again.' });
       return;
@@ -162,7 +172,7 @@ export default function Register({ onBackToLogin, onLogin }) {
 
     const payload = {
       name: `${formData.firstName} ${formData.lastName}`.trim(),
-      email: formData.email.trim(),
+      email: formData.email.trim().toLowerCase(),
       password: formData.password,
       role: formData.role
     };
@@ -173,7 +183,7 @@ export default function Register({ onBackToLogin, onLogin }) {
       if (ok) {
         setStep('otp');
         resetOtp();
-        setMessage({ type: 'info', text: `A 6-digit verification code has been sent to ${payload.email}.` });
+        setMessage({ type: 'info', text: data?.message || `A 6-digit verification code has been sent to ${payload.email}.` });
         setResendCooldown(30);
       } else {
         setMessage({ type: 'error', text: data?.message || 'Failed to send verification code.' });
@@ -187,6 +197,10 @@ export default function Register({ onBackToLogin, onLogin }) {
 
   const handleResendOtp = async () => {
     if (resendCooldown > 0 || resending) return;
+    if (!isValidCvsuEmail(formData.email)) {
+      setMessage({ type: 'error', text: CVSU_EMAIL_ERROR });
+      return;
+    }
     setResending(true);
     setMessage(null);
     try {

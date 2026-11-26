@@ -118,13 +118,15 @@ export const isMobileDevice = () => {
 };
 
 /**
- * Global toggle to disable the desktop web browser blocker for testing and inspection.
- * Set to true so developers and evaluators can test and view the system in standard web browsers
- * without needing to install or run the official The Verity (.exe) desktop application.
- *
- * When set to false, ComLab & PC web browser access is strictly blocked for students.
+ * Global toggle to disable the desktop web browser blocker for local testing/inspection.
+ * Keep false in production so ComLab & PC web browser access is strictly blocked for students
+ * while genuine mobile phones/tablets and the official The Verity (.exe) app remain allowed.
  */
+<<<<<<< HEAD
 export const DISABLE_DESKTOP_WEB_BLOCKER = Boolean(import.meta.env?.DEV);
+=======
+export const DISABLE_DESKTOP_WEB_BLOCKER = false;
+>>>>>>> 3b82a0e04c7a495c9e05ceca4205e12acdacce60
 
 /**
  * Checks if the user is running in a desktop or laptop web browser

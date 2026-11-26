@@ -17,8 +17,8 @@ export function useStudentViewFiles({
   currentUser,
   classroom,
   classroomId,
-  proctorLogsRef,
-  proctorLogs
+  proctorLogsRef: _proctorLogsRef,
+  proctorLogs: _proctorLogs
 }) {
   const draftKey = `verity_code_${assignmentId}_${studentId}`;
   const initialCode = `using System;\n\nnamespace HelloWorld\n{\n    class Program\n    {\n        static void Main(string[] args)\n        {\n            Console.WriteLine("Hello, World!");\n        }\n    }\n}`;
@@ -171,14 +171,12 @@ export function useStudentViewFiles({
         name: studentDisplayName,
         studentName: studentDisplayName,
         email: currentUser?.email || '',
-        avatar: currentUser?.avatar || '',
         code: currentCode,
         classroomId:
           (classroom?.id != null ? String(classroom.id) : null) ||
           (classroomId !== 'none' ? classroomId : null) ||
           'none',
-        assignmentId: assignment?.id || assignmentId,
-        logs: proctorLogsRef?.current || proctorLogs || []
+        assignmentId: assignment?.id || assignmentId
       });
     }
 

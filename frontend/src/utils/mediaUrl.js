@@ -23,6 +23,22 @@ export function getActiveUploadBaseUrl() {
   }
 }
 
+<<<<<<< HEAD
+=======
+function isKnownVerityHost(hostname) {
+  if (!hostname) return false;
+  if (isPrivateHost(hostname)) return true;
+  if (hostname === 'the-verity.onrender.com') return true;
+  try {
+    if (new URL(getCloudUrl()).hostname === hostname) return true;
+  } catch (_) { }
+  try {
+    if (new URL(getLocalApiUrl()).hostname === hostname) return true;
+  } catch (_) { }
+  return false;
+}
+
+>>>>>>> 3b82a0e04c7a495c9e05ceca4205e12acdacce60
 /**
  * Extracts a canonical `/uploads/<filename>` path if the URL belongs to a Verity server
  * (relative path, localhost, LAN IP, or Render cloud URL). Returns null for external links.
