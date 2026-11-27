@@ -22,6 +22,20 @@ export default defineConfig(({ mode }) => {
   return {
     base: './', // relative asset paths so the build works from file:// in Electron
     plugins: [react()],
+    optimizeDeps: {
+      include: [
+        'docx-preview',
+        'jszip',
+        'dompurify',
+        'framer-motion',
+        'lucide-react',
+        'react-router-dom',
+        'socket.io-client',
+        '@microsoft/signalr',
+        '@monaco-editor/react',
+        'jodit-react',
+      ],
+    },
     server: {
       host: true, // Listen on all network interfaces including LAN (0.0.0.0)
       port: 5173,

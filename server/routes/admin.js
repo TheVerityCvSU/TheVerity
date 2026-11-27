@@ -218,11 +218,11 @@ function registerAdminRoutes(app, { db, io, DATA_DIR, authMiddleware, settingsSe
                     });
                 }
 
-                io.emit('admin_security_alert', {
+                io.to('role:admin').emit('admin_security_alert', {
                     user, name: user, studentId: user, type: safeType, desc: safeDesc, action: safeDesc,
                     isAltTabCopyPaste, isSystemExit, timestamp
                 });
-                io.emit('admin_stats_update');
+                io.to('role:admin').emit('admin_stats_update');
             }
 
             res.status(201).json({ message: 'Log entry saved', timestamp });

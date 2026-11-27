@@ -542,8 +542,8 @@ async function initPostgres(connStr = cleanedUrl) {
     pgPool = new Pool({
         connectionString: connStr,
         ssl: sslConfig,
-        max: 5,
-        idleTimeoutMillis: 30000,
+        max: 3,
+        idleTimeoutMillis: 10000,
         connectionTimeoutMillis: 10000,
         statement_timeout: 4000,
         query_timeout: 8000,
@@ -922,6 +922,15 @@ function isNetworkError(err) {
         code === 'ENOTFOUND' ||
         code === 'EAI_AGAIN' ||
         code === '57P01' ||
+        code === '53300' ||
+        code === '08001' ||
+        code === '08003' ||
+        code === '08004' ||
+        code === '08006' ||
+        msg.includes('max clients reached') ||
+        msg.includes('emaxconnsession') ||
+        msg.includes('too many clients') ||
+        msg.includes('remaining connection slots') ||
         msg.includes('connection terminated') ||
         msg.includes('client has already been closed') ||
         msg.includes('timeout') ||
@@ -1313,8 +1322,8 @@ const db = {
                         connectionString: DATABASE_URL,
                         ssl: { rejectUnauthorized: false },
                         connectionTimeoutMillis: 4000,
-                        idleTimeoutMillis: 20000,
-                        max: 3
+                        idleTimeoutMillis: 5000,
+                        max: 1
                     });
                     pgPool = pool;
                 } catch (_) { }
@@ -1394,8 +1403,8 @@ const db = {
                         connectionString: DATABASE_URL,
                         ssl: { rejectUnauthorized: false },
                         connectionTimeoutMillis: 4000,
-                        idleTimeoutMillis: 20000,
-                        max: 3
+                        idleTimeoutMillis: 5000,
+                        max: 1
                     });
                     pgPool = pool;
                 } catch (_) { }

@@ -3,7 +3,7 @@
  * Tries the cloud server first and falls back to the local/LAN server automatically.
  */
 import { state } from './connectionState';
-import { DEFAULT_CLOUD_API_URL, getCloudUrl, getLocalApiUrl, isHostedWebEnv } from './serverUrls';
+import { DEFAULT_CLOUD_API_URL, getCloudUrl, getLocalApiUrl, isHostedWebEnv, isLoopbackUrl } from './serverUrls';
 import { notifyListeners, hasDedicatedLanOrLocalDb } from './connectionStatus';
 import { waitForLanServer } from './lanDiscovery';
 import { buildRequestPath } from './buildRequestPath';
@@ -72,6 +72,7 @@ const shouldQueueClientOfflineMutation = (pathWithQuery, method) => {
 // Asks the local server to sync with the cloud (fire-and-forget)
 const pingSync = (baseUrl) => {
   const token = typeof localStorage !== 'undefined' ? (localStorage.getItem('verity_token') || localStorage.getItem('token')) : null;
+  if (!token && !isLoopbackUrl(baseUrl)) return;
   fetch(`${baseUrl}/api/sync`, {
     method: 'POST',
     headers: token ? { Authorization: `Bearer ${token}` } : {}

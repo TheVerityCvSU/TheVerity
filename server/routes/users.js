@@ -116,6 +116,21 @@ function registerUserRoutes(app, { db, io, JWT_SECRET, authMiddleware, settingsS
             const updatedName = name && name.trim() ? name.trim() : current.name;
             const updatedEmail = current.email;
             const updatedAvatar = avatar !== undefined ? avatar : current.avatar;
+            const nameChanged = updatedName.trim().toLowerCase() !== String(current.name || '').trim().toLowerCase();
+
+            if (!isAdmin && nameChanged) {
+                const nameOwner = await db.get(
+                    'SELECT id FROM users WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) AND id != ?',
+                    updatedName, targetUserId
+                ).catch(() => null);
+                const adminNameOwner = await db.get(
+                    'SELECT id FROM admin_users WHERE LOWER(TRIM(name)) = LOWER(TRIM(?))',
+                    updatedName
+                ).catch(() => null);
+                if (nameOwner || adminNameOwner) {
+                    return res.status(409).json({ message: 'This display name is already in use by another account.' });
+                }
+            }
 
             if (isAdmin) {
                 await db.run('UPDATE admin_users SET name = ?, avatar = ? WHERE id = ?', updatedName, updatedAvatar, targetUserId);
@@ -124,7 +139,7 @@ function registerUserRoutes(app, { db, io, JWT_SECRET, authMiddleware, settingsS
 
                 if (current.role === 'Teacher') {
                     await db.run(
-                        'UPDATE classrooms SET instructor = ? WHERE LOWER(instructor_email) = LOWER(?) OR instructor = ?',
+                        'UPDATE classrooms SET instructor = ? WHERE LOWER(instructor_email) = LOWER(?) OR (COALESCE(instructor_email, \'\') = \'\' AND instructor = ?)',
                         updatedName, current.email, current.name
                     ).catch(() => { });
                 } else if (current.role === 'Student' && updatedName !== current.name) {
@@ -132,10 +147,21 @@ function registerUserRoutes(app, { db, io, JWT_SECRET, authMiddleware, settingsS
                         'UPDATE enrollments SET student_name = ? WHERE LOWER(student_email) = LOWER(?) OR student_id = ?',
                         updatedName, current.email, targetUserId
                     ).catch(() => { });
-                    await db.run(
-                        'UPDATE submissions SET student_name = ? WHERE LOWER(TRIM(student_name)) = LOWER(TRIM(?)) OR LOWER(TRIM(student_name)) = LOWER(TRIM(?))',
-                        updatedName, current.name, current.email
-                    ).catch(() => { });
+                    const otherSameName = await db.get(
+                        'SELECT id FROM users WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) AND id != ?',
+                        current.name, targetUserId
+                    ).catch(() => null);
+                    if (!otherSameName) {
+                        await db.run(
+                            'UPDATE submissions SET student_name = ? WHERE LOWER(TRIM(student_name)) = LOWER(TRIM(?)) OR LOWER(TRIM(student_name)) = LOWER(TRIM(?))',
+                            updatedName, current.name, current.email
+                        ).catch(() => { });
+                    } else {
+                        await db.run(
+                            'UPDATE submissions SET student_name = ? WHERE LOWER(TRIM(student_name)) = LOWER(TRIM(?))',
+                            updatedName, current.email
+                        ).catch(() => { });
+                    }
                 }
             }
 
@@ -199,8 +225,8 @@ function registerUserRoutes(app, { db, io, JWT_SECRET, authMiddleware, settingsS
             if (info.changes === 0) return res.status(404).json({ message: 'User not found' });
             await db.recordSyncDeletion('users', email.trim().toLowerCase());
             try {
-                io.emit('users_updated');
-                io.emit('admin_stats_update');
+                io.to('role:admin').emit('users_updated');
+                io.to('role:admin').emit('admin_stats_update');
                 db.triggerSync();
             } catch (_) { }
             res.status(200).json({ message: 'User deleted' });
@@ -217,8 +243,8 @@ function registerUserRoutes(app, { db, io, JWT_SECRET, authMiddleware, settingsS
             const info = await db.run('UPDATE users SET status = ? WHERE LOWER(email) = LOWER(?)', status, email);
             if (info.changes === 0) return res.status(404).json({ message: 'User not found' });
             try {
-                io.emit('users_updated');
-                io.emit('admin_stats_update');
+                io.to('role:admin').emit('users_updated');
+                io.to('role:admin').emit('admin_stats_update');
             } catch (_) { }
             res.status(200).json({ message: 'User status updated' });
         } catch (e) {
@@ -262,8 +288,8 @@ function registerUserRoutes(app, { db, io, JWT_SECRET, authMiddleware, settingsS
 
             await syncUserEmailAcrossData(existing.id, existing.email, newEmail, newName, newRole);
             try {
-                io.emit('users_updated');
-                io.emit('admin_stats_update');
+                io.to('role:admin').emit('users_updated');
+                io.to('role:admin').emit('admin_stats_update');
                 db.triggerSync();
             } catch (_) { }
 

@@ -140,11 +140,11 @@ function registerSubmissionRoutes(app, { db, io, IS_RENDER_CLOUD, authMiddleware
                         `INSERT INTO security_flags (date_string, count, alt_tab_copy_paste_count) VALUES (?, 1, 0) ON CONFLICT(date_string) DO UPDATE SET count = COALESCE(security_flags.count, 0) + 1`,
                         todayKey()
                     ).catch(() => { });
-                    io.emit('admin_security_alert', {
+                    io.to('role:admin').emit('admin_security_alert', {
                         user: name, name, studentId: name, type: 'Malicious Script Attempt',
                         severity: 'High', desc, isMaliciousScript: true, timestamp: nowIso
                     });
-                    io.emit('admin_stats_update');
+                    io.to('role:admin').emit('admin_stats_update');
                     return res.status(400).json({ message: `Submission rejected: Malicious code detected [${secCheck.rule}]. This incident has been logged in Security Audit Logs.` });
                 }
             }

@@ -7,6 +7,8 @@ export function useGoogleAuthFlow({ onSuccess, onError }) {
   const socketRef = useRef(null);
   const authTimeoutRef = useRef(null);
   const authWindowRef = useRef(null);
+  const messageHandlerRef = useRef(null);
+  const focusResetTimerRef = useRef(null);
 
   const cleanupAuth = useCallback(() => {
     if (socketRef.current) {
@@ -17,6 +19,15 @@ export function useGoogleAuthFlow({ onSuccess, onError }) {
       clearTimeout(authTimeoutRef.current);
       authTimeoutRef.current = null;
     }
+    if (focusResetTimerRef.current) {
+      clearTimeout(focusResetTimerRef.current);
+      focusResetTimerRef.current = null;
+    }
+    if (messageHandlerRef.current && typeof window !== 'undefined') {
+      window.removeEventListener('message', messageHandlerRef.current);
+      messageHandlerRef.current = null;
+    }
+    authWindowRef.current = null;
     if (window.electronAPI?.closeGoogleAuth) {
       window.electronAPI.closeGoogleAuth();
     }
@@ -35,22 +46,46 @@ export function useGoogleAuthFlow({ onSuccess, onError }) {
     }
   }, [cleanupAuth]);
 
-  // When mainWindow regains focus, check if auth window was closed
+  // When mainWindow regains focus, check if auth window was closed (without touching cross-origin popup.closed)
   useEffect(() => {
     const handleFocus = async () => {
-      if (isGoogleLoading && window.electronAPI?.checkGoogleAuthStatus) {
+      if (!isGoogleLoading) return;
+      if (window.electronAPI?.checkGoogleAuthStatus) {
         try {
           const isOpen = await window.electronAPI.checkGoogleAuthStatus();
           if (!isOpen) {
             setIsGoogleLoading(false);
             cleanupAuth();
           }
-        } catch (_) {}
+        } catch (_) { }
+        return;
+      }
+      if (authWindowRef.current) {
+        if (focusResetTimerRef.current) clearTimeout(focusResetTimerRef.current);
+        focusResetTimerRef.current = setTimeout(() => {
+          focusResetTimerRef.current = null;
+          setIsGoogleLoading(false);
+        }, 1200);
+      }
+    };
+
+    const handleBlur = () => {
+      if (focusResetTimerRef.current) {
+        clearTimeout(focusResetTimerRef.current);
+        focusResetTimerRef.current = null;
       }
     };
 
     window.addEventListener('focus', handleFocus);
-    return () => window.removeEventListener('focus', handleFocus);
+    window.addEventListener('blur', handleBlur);
+    return () => {
+      window.removeEventListener('focus', handleFocus);
+      window.removeEventListener('blur', handleBlur);
+      if (focusResetTimerRef.current) {
+        clearTimeout(focusResetTimerRef.current);
+        focusResetTimerRef.current = null;
+      }
+    };
   }, [isGoogleLoading, cleanupAuth]);
 
   // Clean up any pending socket or timer on unmount
@@ -64,7 +99,14 @@ export function useGoogleAuthFlow({ onSuccess, onError }) {
     setIsGoogleLoading(true);
     cleanupAuth();
 
-    const sessionId = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+    const randomBytes = new Uint8Array(16);
+    let sessionId = '';
+    if (typeof window !== 'undefined' && window.crypto?.getRandomValues) {
+      window.crypto.getRandomValues(randomBytes);
+      sessionId = Array.from(randomBytes, (b) => b.toString(16).padStart(2, '0')).join('');
+    } else {
+      sessionId = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+    }
     const activeCloud = getCloudUrl() || 'https://the-verity.onrender.com';
     const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
     const authOrigin = isOnline ? 'cloud' : 'lan';
@@ -79,9 +121,9 @@ export function useGoogleAuthFlow({ onSuccess, onError }) {
         try {
           localStorage.setItem('verity_token_origin', authOrigin);
           if (window.electronAPI?.localDB?.setLocal) {
-            window.electronAPI.localDB.setLocal('verity_saved_session_token_origin', authOrigin).catch(() => {});
+            window.electronAPI.localDB.setLocal('verity_saved_session_token_origin', authOrigin).catch(() => { });
           }
-        } catch (_) {}
+        } catch (_) { }
         setIsGoogleLoading(false);
         onSuccess(data.user, data.token, data);
       } else {
@@ -101,7 +143,7 @@ export function useGoogleAuthFlow({ onSuccess, onError }) {
     let expectedBackendOrigin = '';
     try {
       expectedBackendOrigin = new URL(backendUrl).origin;
-    } catch (_) {}
+    } catch (_) { }
 
     const handlePopupMessage = (event) => {
       if (expectedBackendOrigin && event?.origin !== expectedBackendOrigin) return;
@@ -114,19 +156,26 @@ export function useGoogleAuthFlow({ onSuccess, onError }) {
       }
     };
 
+    messageHandlerRef.current = handlePopupMessage;
     window.addEventListener('message', handlePopupMessage);
 
     const socket = io(backendUrl, { transports: ['websocket', 'polling'] });
     socketRef.current = socket;
+
+    const joinSessionRoom = () => {
+      socket.emit('join_google_auth_session', sessionId);
+    };
+    socket.on('connect', joinSessionRoom);
+    if (socket.connected) joinSessionRoom();
 
     socket.on(`google-login-success-${sessionId}`, handleAuthSuccessData);
     socket.on(`google-login-error-${sessionId}`, handleAuthErrorData);
 
     const safeParams =
       extraParams &&
-      typeof extraParams === 'object' &&
-      !extraParams.nativeEvent &&
-      !extraParams._reactName
+        typeof extraParams === 'object' &&
+        !extraParams.nativeEvent &&
+        !extraParams._reactName
         ? { ...extraParams }
         : {};
     if (typeof window !== 'undefined' && /^https?:\/\//i.test(window.location?.origin || '')) {
@@ -145,17 +194,6 @@ export function useGoogleAuthFlow({ onSuccess, onError }) {
       const popup = window.open(url, '_blank', 'width=520,height=650');
       if (popup) {
         authWindowRef.current = popup;
-        const pollTimer = setInterval(() => {
-          if (!popup || popup.closed) {
-            clearInterval(pollTimer);
-            setTimeout(() => {
-              if (!completed) {
-                cleanupAuth();
-                setIsGoogleLoading(false);
-              }
-            }, 1200);
-          }
-        }, 500);
       } else {
         cleanupAuth();
         setIsGoogleLoading(false);

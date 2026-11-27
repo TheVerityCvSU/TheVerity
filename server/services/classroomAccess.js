@@ -159,12 +159,20 @@ function createClassroomHelpers({ db, io, onClassworkCreated } = {}) {
         }
     };
 
+    const isNumericId = (v) => v !== null && v !== undefined && v !== '' && /^-?\d+$/.test(String(v).trim());
+
     async function checkClassroomAccess(req, classroomId) {
+        if (classroomId == null || classroomId === '') return false;
         const roleLower = String(req.user?.role || '').toLowerCase();
         if (roleLower === 'admin') return true;
 
+        const cidStr = String(classroomId).trim();
+        const cidNum = isNumericId(cidStr) ? Number(cidStr) : null;
+
         if (roleLower === 'teacher' || roleLower === 'instructor') {
-            const c = await db.get('SELECT id, instructor_email, instructor, name FROM classrooms WHERE id = ? OR CAST(id AS TEXT) = ?', classroomId, String(classroomId));
+            const c = cidNum !== null
+                ? await db.get('SELECT id, instructor_email, instructor, name FROM classrooms WHERE id = ? OR CAST(id AS TEXT) = ?', cidNum, cidStr)
+                : await db.get('SELECT id, instructor_email, instructor, name FROM classrooms WHERE CAST(id AS TEXT) = ?', cidStr);
             if (!c) return false;
             const teacherEmail = (req.user.email || '').trim().toLowerCase();
             const teacherName = (req.user.name || '').trim().toLowerCase();
@@ -172,7 +180,14 @@ function createClassroomHelpers({ db, io, onClassworkCreated } = {}) {
             const cName = (c.instructor || '').trim().toLowerCase();
 
             const matchesEmail = Boolean(teacherEmail && cEmail && cEmail === teacherEmail);
-            const matchesName = Boolean(!cEmail && teacherName && cName && cName === teacherName);
+            let matchesName = false;
+            if (!cEmail && teacherName && cName && cName !== 'instructor' && cName === teacherName) {
+                const otherTeacher = await db.get(
+                    "SELECT id FROM users WHERE LOWER(TRIM(name)) = ? AND LOWER(role) IN ('teacher', 'instructor') AND id != ?",
+                    teacherName, isNumericId(req.user.id) ? Number(req.user.id) : -1
+                ).catch(() => null);
+                matchesName = !otherTeacher;
+            }
 
             if (matchesEmail || matchesName) {
                 if (teacherEmail && cEmail !== teacherEmail) {
@@ -185,36 +200,94 @@ function createClassroomHelpers({ db, io, onClassworkCreated } = {}) {
         if (roleLower === 'student') {
             const studentEmail = (req.user.email || '').trim().toLowerCase();
             const studentName = (req.user.name || '').trim().toLowerCase();
-            const studentId = req.user.id || 0;
+            const studentId = req.user.id ?? 0;
+            const sidStr = String(studentId);
+            const sidNum = isNumericId(sidStr) ? Number(sidStr) : null;
+
+            const cidCond = cidNum !== null ? '(classroom_id = ? OR CAST(classroom_id AS TEXT) = ?)' : 'CAST(classroom_id AS TEXT) = ?';
+            const cidParams = cidNum !== null ? [cidNum, cidStr] : [cidStr];
+            const sidCond = sidNum !== null ? '(student_id = ? OR CAST(student_id AS TEXT) = ?)' : 'CAST(student_id AS TEXT) = ?';
+            const sidParams = sidNum !== null ? [sidNum, sidStr] : [sidStr];
 
             const e = await db.get(
                 `SELECT 1 FROM enrollments 
-                 WHERE (classroom_id = ? OR CAST(classroom_id AS TEXT) = CAST(? AS TEXT))
+                 WHERE ${cidCond}
                    AND ((student_email IS NOT NULL AND LOWER(TRIM(student_email)) = ?) 
-                     OR (student_id IS NOT NULL AND (student_id = ? OR CAST(student_id AS TEXT) = CAST(? AS TEXT)))
-                     OR (student_name IS NOT NULL AND (LOWER(TRIM(student_name)) = ? OR LOWER(TRIM(student_name)) = ?)))`,
-                classroomId, String(classroomId), studentEmail, studentId, String(studentId), studentName, studentEmail
+                     OR (student_id IS NOT NULL AND ${sidCond})
+                     OR (COALESCE(TRIM(student_email), '') = '' AND student_id IS NULL AND student_name IS NOT NULL AND (LOWER(TRIM(student_name)) = ? OR LOWER(TRIM(student_name)) = ?)))`,
+                ...cidParams, studentEmail, ...sidParams, studentName, studentEmail
             );
             if (e) return true;
 
+            const cwCidCond = cidNum !== null ? '(cw.classroom_id = ? OR CAST(cw.classroom_id AS TEXT) = ?)' : 'CAST(cw.classroom_id AS TEXT) = ?';
             const sub = await db.get(
-                `SELECT 1 FROM submissions 
-                 WHERE (classroom_id = ? OR CAST(classroom_id AS TEXT) = CAST(? AS TEXT))
-                   AND (student_name = ? OR LOWER(TRIM(student_name)) = ? OR LOWER(TRIM(student_name)) = ? OR student_id = ?)`,
-                classroomId, String(classroomId), req.user.name || '', studentName, studentEmail, String(studentId)
+                `SELECT 1 FROM submissions s
+                 INNER JOIN classwork cw ON cw.id = s.assignment_id
+                 WHERE ${cwCidCond}
+                   AND (s.student_name = ? OR LOWER(TRIM(s.student_name)) = ? OR LOWER(TRIM(s.student_name)) = ? OR s.student_name = ?)`,
+                ...cidParams, req.user.name || '', studentName, studentEmail, sidStr
             ).catch(() => null);
             if (sub) {
-                db.run(
-                    `INSERT INTO enrollments (classroom_id, student_id, student_name, student_email, enrolled_at)
-                     VALUES (?, ?, ?, ?, ?)
-                     ON CONFLICT(classroom_id, student_email) DO NOTHING`,
-                    classroomId, studentId, req.user.name || 'Student', studentEmail, new Date().toISOString()
-                ).catch(() => { });
+                if (cidNum !== null) {
+                    db.run(
+                        `INSERT INTO enrollments (classroom_id, student_id, student_name, student_email, enrolled_at)
+                         VALUES (?, ?, ?, ?, ?)
+                         ON CONFLICT(classroom_id, student_email) DO NOTHING`,
+                        cidNum, sidNum, req.user.name || 'Student', studentEmail, new Date().toISOString()
+                    ).catch(() => { });
+                }
                 return true;
             }
             return false;
         }
         return false;
+    }
+
+    async function getStudentAccessibleClassroomIds(req) {
+        const studentEmail = (req.user?.email || '').trim().toLowerCase();
+        const studentName = (req.user?.name || '').trim().toLowerCase();
+        const studentId = req.user?.id ?? 0;
+        const sidStr = String(studentId);
+        const sidNum = isNumericId(sidStr) ? Number(sidStr) : null;
+        const sidCond = sidNum !== null ? '(student_id = ? OR CAST(student_id AS TEXT) = ?)' : 'CAST(student_id AS TEXT) = ?';
+        const sidParams = sidNum !== null ? [sidNum, sidStr] : [sidStr];
+
+        const enrolledRows = await db.all(
+            `SELECT DISTINCT classroom_id FROM enrollments
+             WHERE (student_email IS NOT NULL AND LOWER(TRIM(student_email)) = ?)
+                OR (student_id IS NOT NULL AND ${sidCond})
+                OR (COALESCE(TRIM(student_email), '') = '' AND student_id IS NULL AND student_name IS NOT NULL AND (LOWER(TRIM(student_name)) = ? OR LOWER(TRIM(student_name)) = ?))`,
+            studentEmail, ...sidParams, studentName, studentEmail
+        );
+
+        const allowed = new Set();
+        for (const row of (enrolledRows || [])) {
+            if (row?.classroom_id != null) allowed.add(String(row.classroom_id));
+        }
+
+        const subRows = await db.all(
+            `SELECT DISTINCT cw.classroom_id FROM submissions s
+             INNER JOIN classwork cw ON cw.id = s.assignment_id
+             WHERE s.student_name = ? OR LOWER(TRIM(s.student_name)) = ? OR LOWER(TRIM(s.student_name)) = ? OR s.student_name = ?`,
+            req.user?.name || '', studentName, studentEmail, sidStr
+        ).catch(() => []);
+
+        for (const row of (subRows || [])) {
+            if (row?.classroom_id == null) continue;
+            const cidStr = String(row.classroom_id);
+            if (!allowed.has(cidStr)) {
+                allowed.add(cidStr);
+                if (isNumericId(cidStr)) {
+                    db.run(
+                        `INSERT INTO enrollments (classroom_id, student_id, student_name, student_email, enrolled_at)
+                         VALUES (?, ?, ?, ?, ?)
+                         ON CONFLICT(classroom_id, student_email) DO NOTHING`,
+                        Number(cidStr), sidNum, req.user?.name || 'Student', studentEmail, new Date().toISOString()
+                    ).catch(() => { });
+                }
+            }
+        }
+        return allowed;
     }
 
     async function checkAssignmentAccess(req, assignmentId) {
@@ -397,6 +470,7 @@ function createClassroomHelpers({ db, io, onClassworkCreated } = {}) {
         getClassworkFromDb,
         saveClassworkToDb,
         checkClassroomAccess,
+        getStudentAccessibleClassroomIds,
         checkAssignmentAccess,
         resolveCanonicalStudent,
         syncUserEmailAcrossData,

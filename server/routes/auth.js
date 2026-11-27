@@ -24,6 +24,7 @@ function registerAuthRoutes(app, { db, io, JWT_SECRET, authMiddleware, settingsS
         checkOtpSendRateLimit,
         adminIpWhitelist,
         adminLoginRateLimiter,
+        loginRateLimiter,
         authenticateToken,
         requireRole
     } = authMiddleware;
@@ -57,7 +58,8 @@ function registerAuthRoutes(app, { db, io, JWT_SECRET, authMiddleware, settingsS
 
             const cleanEmail = (email || '').trim().toLowerCase();
             const trimmedName = (name || '').trim();
-            if (!checkOtpSendRateLimit(`send:${cleanEmail}`)) {
+            const clientIp = req.ip || req.socket?.remoteAddress || 'unknown';
+            if (!checkOtpSendRateLimit(`send-ip:${clientIp}`, 20) || !checkOtpSendRateLimit(`send:${cleanEmail}`)) {
                 return res.status(429).json({ message: 'Too many OTP requests. Please wait before requesting another code.' });
             }
 
@@ -197,9 +199,9 @@ function registerAuthRoutes(app, { db, io, JWT_SECRET, authMiddleware, settingsS
             const userToken = jwt.sign({ id: user.id, email: user.email, role: user.role, name: user.name }, JWT_SECRET, { expiresIn: '7d' });
 
             try {
-                io.emit('users_updated');
-                io.emit('admin_security_alert');
-                io.emit('admin_stats_update');
+                io.to('role:admin').emit('users_updated');
+                io.to('role:admin').emit('admin_security_alert');
+                io.to('role:admin').emit('admin_stats_update');
             } catch (_) { }
 
             try {
@@ -239,7 +241,8 @@ function registerAuthRoutes(app, { db, io, JWT_SECRET, authMiddleware, settingsS
             if (!isValidCvsuEmail(cleanEmail)) {
                 return res.status(400).json({ message: CVSU_EMAIL_ERROR_MSG });
             }
-            if (!checkOtpSendRateLimit(`send:${cleanEmail}`)) {
+            const clientIp = req.ip || req.socket?.remoteAddress || 'unknown';
+            if (!checkOtpSendRateLimit(`send-ip:${clientIp}`, 20) || !checkOtpSendRateLimit(`send:${cleanEmail}`)) {
                 return res.status(429).json({ message: 'Too many OTP resend requests. Please wait before trying again.' });
             }
 
@@ -332,9 +335,9 @@ function registerAuthRoutes(app, { db, io, JWT_SECRET, authMiddleware, settingsS
             const userToken = jwt.sign({ id: user.id, email: user.email, role: user.role, name: user.name }, JWT_SECRET, { expiresIn: '7d' });
 
             try {
-                io.emit('users_updated');
-                io.emit('admin_security_alert');
-                io.emit('admin_stats_update');
+                io.to('role:admin').emit('users_updated');
+                io.to('role:admin').emit('admin_security_alert');
+                io.to('role:admin').emit('admin_stats_update');
             } catch (_) { }
 
             try {
@@ -359,7 +362,7 @@ function registerAuthRoutes(app, { db, io, JWT_SECRET, authMiddleware, settingsS
         }
     });
 
-    app.post('/login', async (req, res) => {
+    app.post('/login', loginRateLimiter, async (req, res) => {
         try {
             const maintenance = await getMaintenanceStatus();
             if (maintenance.enabled) {
@@ -387,6 +390,7 @@ function registerAuthRoutes(app, { db, io, JWT_SECRET, authMiddleware, settingsS
                 String(isAdminAcc.name || '').toLowerCase() === cleanIdentifier ||
                 (safeLocalPart && String(isAdminAcc.email || '').split('@')[0].toLowerCase() === cleanIdentifier)
             )) {
+                req.loginRateMeta?.recordFailure();
                 return res.status(401).json({ message: 'Invalid credentials. No account found with this email or username.' });
             }
 
@@ -402,15 +406,18 @@ function registerAuthRoutes(app, { db, io, JWT_SECRET, authMiddleware, settingsS
                 (safeLocalPart && String(userCandidate.email || '').split('@')[0].toLowerCase() === cleanIdentifier)
             ) ? userCandidate : null;
             if (!userExists) {
+                req.loginRateMeta?.recordFailure();
                 return res.status(401).json({ message: 'Invalid credentials. No account found with this username or email address.' });
             }
 
             let user = null;
             if (userExists.password === 'google_sso_user') {
+                req.loginRateMeta?.recordFailure();
                 return res.status(401).json({ message: 'This account uses Google Sign-In. Please sign in with Google.' });
             } else {
                 const check = verifyPassword(rawPassword, userExists.password);
                 if (!check.valid) {
+                    req.loginRateMeta?.recordFailure();
                     return res.status(401).json({ message: 'Invalid credentials. Please verify your password.' });
                 }
                 user = userExists;
@@ -423,6 +430,7 @@ function registerAuthRoutes(app, { db, io, JWT_SECRET, authMiddleware, settingsS
 
             if (user.role === 'Admin' || user.role === 'admin') {
                 try { await db.run('DELETE FROM users WHERE id = ?', user.id); } catch (_) { }
+                req.loginRateMeta?.recordFailure();
                 return res.status(401).json({ message: 'Invalid credentials. No account found with this email address.' });
             }
             if (user.status === 'Pending') {
@@ -432,6 +440,7 @@ function registerAuthRoutes(app, { db, io, JWT_SECRET, authMiddleware, settingsS
                 return res.status(403).json({ message: `Your account is ${String(user.status).toLowerCase()}. Please contact an administrator.` });
             }
 
+            req.loginRateMeta?.clearSuccess();
             user.lastLogin = new Date().toISOString();
             db.run('UPDATE users SET lastLogin = ? WHERE id = ?', user.lastLogin, user.id).catch(() => { });
             checkAndFlagMultipleLogins(user, req).catch(() => { });
@@ -532,8 +541,11 @@ function registerAuthRoutes(app, { db, io, JWT_SECRET, authMiddleware, settingsS
     app.get('/auth/google/external', (req, res) => {
         const sessionId = req.query.sessionId;
         if (!sessionId) return res.status(400).send('Missing sessionId');
+        const emitGoogleRoom = (event, data) => {
+            if (sessionId) io.to(`google-auth:${sessionId}`).emit(event, data);
+        };
         if (!GOOGLE_CLIENT_SECRET) {
-            io.emit(`google-login-error-${sessionId}`, { message: 'Google Sign-In requires the online Cloud server.' });
+            emitGoogleRoom(`google-login-error-${sessionId}`, { message: 'Google Sign-In requires the online Cloud server.' });
             return res.status(503).send('<h2>Google Sign-In Unavailable Locally</h2><p>Google Sign-In requires an active connection to the online Cloud server, or sign in with email and password.</p>');
         }
         const requestedRole = req.query.role === 'Teacher' ? 'Teacher' : 'Student';
@@ -584,6 +596,10 @@ function registerAuthRoutes(app, { db, io, JWT_SECRET, authMiddleware, settingsS
             requestedRole = stateParts[1] === 'Teacher' ? 'Teacher' : 'Student';
         }
 
+        const emitGoogleRoom = (targetSessionId, event, data) => {
+            if (targetSessionId) io.to(`google-auth:${targetSessionId}`).emit(event, data);
+        };
+
         try {
             const host = req.headers['x-forwarded-host'] || req.get('host');
             const isLocal = host.includes('localhost') || host.includes('127.0.0.1');
@@ -597,7 +613,7 @@ function registerAuthRoutes(app, { db, io, JWT_SECRET, authMiddleware, settingsS
             const name = payload.name;
 
             if (!cleanEmail.endsWith('@cvsu.edu.ph')) {
-                io.emit(`google-login-error-${sessionId}`, { message: 'Access restricted: Only official @cvsu.edu.ph Google accounts can register or sign in.' });
+                emitGoogleRoom(sessionId, `google-login-error-${sessionId}`, { message: 'Access restricted: Only official @cvsu.edu.ph Google accounts can register or sign in.' });
                 return res.status(403).send(`
                     <html>
                         <body style="font-family: sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; background: #1a1a1a; color: white; margin: 0; padding: 20px;">
@@ -618,21 +634,25 @@ function registerAuthRoutes(app, { db, io, JWT_SECRET, authMiddleware, settingsS
 
             const maintenance = await getMaintenanceStatus();
             if (maintenance.enabled) {
-                io.emit(`google-login-error-${sessionId}`, { message: maintenance.message });
+                emitGoogleRoom(sessionId, `google-login-error-${sessionId}`, { message: maintenance.message });
                 return res.send(`<h2>System Maintenance</h2><p>${maintenance.message}</p>`);
             }
 
             const isAdminAcc = await db.get('SELECT id FROM admin_users WHERE LOWER(email) = ?', cleanEmail);
             if (isAdminAcc) {
-                io.emit(`google-login-error-${sessionId}`, { message: 'Invalid credentials. No account found with this email address.' });
+                emitGoogleRoom(sessionId, `google-login-error-${sessionId}`, { message: 'Invalid credentials. No account found with this email address.' });
                 return res.send('<h2>Error</h2><p>Invalid credentials. No account found with this email address.</p>');
             }
 
             let user = await db.get('SELECT * FROM users WHERE LOWER(email) = ?', cleanEmail);
             if (user) {
                 if (user.status === 'Pending') {
-                    io.emit(`google-login-error-${sessionId}`, { message: 'Your account is pending admin approval' });
+                    emitGoogleRoom(sessionId, `google-login-error-${sessionId}`, { message: 'Your account is pending admin approval' });
                     return res.send('<h2>Account Pending</h2><p>Your account is pending admin approval.</p>');
+                }
+                if (user.status === 'Disabled' || user.status === 'Suspended') {
+                    emitGoogleRoom(sessionId, `google-login-error-${sessionId}`, { message: `Your account is ${String(user.status).toLowerCase()}. Please contact an administrator.` });
+                    return res.send(`<h2>Account ${user.status}</h2><p>Your account is ${String(user.status).toLowerCase()}.</p>`);
                 }
                 if (user.password === 'google_sso_user' && initialPass && initialPass.trim()) {
                     user.password = hashPassword(initialPass.trim());
@@ -677,7 +697,7 @@ function registerAuthRoutes(app, { db, io, JWT_SECRET, authMiddleware, settingsS
                 }
 
                 if (status === 'Pending') {
-                    io.emit(`google-login-error-${sessionId}`, { message: 'Your instructor account has been created and is pending administrator approval.' });
+                    emitGoogleRoom(sessionId, `google-login-error-${sessionId}`, { message: 'Your instructor account has been created and is pending administrator approval.' });
                     return res.send(`
                         <html>
                             <body style="font-family: sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; background: #1a1a1a; color: white; margin: 0; padding: 20px;">
@@ -696,7 +716,7 @@ function registerAuthRoutes(app, { db, io, JWT_SECRET, authMiddleware, settingsS
 
             const safeUser = sanitizeUser(user);
             const token = jwt.sign({ id: safeUser.id, email: safeUser.email, role: safeUser.role, name: safeUser.name }, JWT_SECRET, { expiresIn: '7d' });
-            io.emit(`google-login-success-${sessionId}`, { user: safeUser, token });
+            emitGoogleRoom(sessionId, `google-login-success-${sessionId}`, { user: safeUser, token });
             const safePayload = JSON.stringify({
                 type: 'verity-google-auth-success', sessionId, user: safeUser, token
             }).replace(/</g, '\\u003c');
@@ -723,8 +743,8 @@ function registerAuthRoutes(app, { db, io, JWT_SECRET, authMiddleware, settingsS
             `);
         } catch (err) {
             console.error('Google OAuth Callback Error:', err);
-            const sessionToNotify = (req.query?.state || '').split(':')[0];
-            if (sessionToNotify) io.emit(`google-login-error-${sessionToNotify}`, { message: 'Google authentication failed' });
+            const sessionToNotify = sessionId || (req.query?.state || '').split(':')[0];
+            if (sessionToNotify) emitGoogleRoom(sessionToNotify, `google-login-error-${sessionToNotify}`, { message: 'Google authentication failed' });
             res.status(500).send('<h2>Authentication Failed</h2><p>An error occurred during Google sign-in. Please try again.</p>');
         }
     });
@@ -739,7 +759,16 @@ function registerAuthRoutes(app, { db, io, JWT_SECRET, authMiddleware, settingsS
 
             let email, name;
             if (access_token) {
-                const userInfoRes = await fetch(`https://www.googleapis.com/oauth2/v3/userinfo?access_token=${access_token}`);
+                const tokenInfoRes = await fetch(`https://oauth2.googleapis.com/tokeninfo?access_token=${encodeURIComponent(access_token)}`);
+                if (!tokenInfoRes.ok) return res.status(401).json({ message: 'Invalid Google token' });
+                const tokenInfo = await tokenInfoRes.json();
+                const tokenAud = tokenInfo?.aud || tokenInfo?.azp || '';
+                if (!ALLOWED_GOOGLE_AUDIENCES.includes(tokenAud)) {
+                    return res.status(401).json({ message: 'Google token audience mismatch' });
+                }
+                const userInfoRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+                    headers: { Authorization: `Bearer ${access_token}` }
+                });
                 if (!userInfoRes.ok) return res.status(401).json({ message: 'Invalid Google token' });
                 const userInfo = await userInfoRes.json();
                 email = userInfo.email;

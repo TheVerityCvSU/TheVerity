@@ -1,10 +1,11 @@
-import { useState, useEffect, lazy, Suspense } from 'react';
+import { useState, useEffect, Suspense } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import SettingsPanel from './SettingsPanel';
 import StudentCalendar from './StudentCalendar';
 import PageLoader from '../components/PageLoader';
+import { lazyWithRetry } from '../utils/lazyWithRetry';
 
-const CompilerView = lazy(() => import('./CompilerView'));
+const CompilerView = lazyWithRetry(() => import('./CompilerView'));
 import VideoPreviewModal from '../components/VideoPreviewModal';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { useMediaQuery } from '../hooks/useMediaQuery';

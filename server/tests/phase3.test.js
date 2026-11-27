@@ -639,6 +639,86 @@ test('security hardening: blocks google_sso_user takeover, wildcard login, numer
       body: JSON.stringify({ code: 'EXACT99' }),
     });
     assert.equal(joinByCode.status, 200);
+
+    // 5. Additional C# scanner bypasses (\x hex escapes, XmlDocument/XPathDocument/ReadXml)
+    assert.equal(scanCSharpCode('var doc = new System.Xml.XmlDocument(); doc.Load("x");').isSafe, false);
+    assert.equal(scanCSharpCode('var xp = new System.Xml.XPath.XPathDocument("x");').isSafe, false);
+    assert.equal(scanCSharpCode('ds.ReadXml("x");').isSafe, false);
+    assert.equal(scanCSharpCode('var p = "\\x2e\\x2e\\x2fsecret";').isSafe, false);
+
+    // 6. PUT /users/profile blocks renaming to an existing user's display name (IDOR prevention)
+    const renameCollision = await fetch(`${baseUrl}/users/profile`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${studentToken}` },
+      body: JSON.stringify({ name: 'Google Teacher' }),
+    });
+    assert.equal(renameCollision.status, 409);
+
+    // 7. POST /login rate-limits repeated failed attempts
+    for (let i = 0; i < 8; i++) {
+      const failRes = await fetch(`${baseUrl}/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: 'active@cvsu.edu.ph', password: 'WrongPassword!' }),
+      });
+      assert.equal(failRes.status, 401);
+    }
+    const rateLimitedRes = await fetch(`${baseUrl}/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'active@cvsu.edu.ph', password: 'WrongPassword!' }),
+    });
+    assert.equal(rateLimitedRes.status, 429);
+
+    // 8. Socket.IO rejects suspended JWT & does not leak admin_security_alert to anonymous sockets
+    const { io: ioc } = require('socket.io-client');
+    await new Promise((resolve, reject) => {
+      const anonSock = ioc(baseUrl, { transports: ['websocket'] });
+      const suspSock = ioc(baseUrl, { transports: ['websocket'], auth: { token: suspendedToken } });
+      let sawAdminLeak = false;
+      let sawSuspCompileOk = false;
+      const timer = setTimeout(() => {
+        anonSock.disconnect();
+        suspSock.disconnect();
+        if (sawAdminLeak) return reject(new Error('Anonymous socket received admin_security_alert'));
+        if (sawSuspCompileOk) return reject(new Error('Suspended socket was allowed to compile'));
+        resolve();
+      }, 450);
+
+      anonSock.on('admin_security_alert', () => { sawAdminLeak = true; });
+      suspSock.on('program_started', () => { sawSuspCompileOk = true; });
+      suspSock.on('connect', () => {
+        suspSock.emit('compile_code', { code: 'Console.WriteLine(1);', language: 'csharp' });
+      });
+      anonSock.on('connect', () => {
+        fetch(`${baseUrl}/audit-logs`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${studentToken}` },
+          body: JSON.stringify({ type: 'Exit Tab Violation', severity: 'Warning', desc: 'test alert' }),
+        }).catch(() => {});
+      });
+    });
+
+    // 9. POST /upload-raw rejects oversized Content-Length (> 200 MB)
+    await new Promise((resolve, reject) => {
+      const u = new URL(`${baseUrl}/upload-raw?filename=huge.mp4`);
+      const req = http.request({
+        hostname: u.hostname,
+        port: u.port,
+        path: u.pathname + u.search,
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${studentToken}`,
+          'Content-Length': String(250 * 1024 * 1024),
+        },
+      }, (res) => {
+        res.resume();
+        if (res.statusCode === 413) resolve();
+        else reject(new Error(`Expected 413 for oversized upload, got ${res.statusCode}`));
+      });
+      req.on('error', reject);
+      req.end();
+    });
   } finally {
     await stop();
   }

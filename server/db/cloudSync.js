@@ -88,8 +88,8 @@ function getPool() {
         pgPool = new Pool({
             connectionString,
             ssl: sslConfig,
-            max: 3,
-            idleTimeoutMillis: 30000,
+            max: 2,
+            idleTimeoutMillis: 10000,
             connectionTimeoutMillis: 3500,
             statement_timeout: 4500,
             query_timeout: 4500

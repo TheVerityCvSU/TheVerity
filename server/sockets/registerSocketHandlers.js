@@ -45,12 +45,55 @@ function registerSocketHandlers(io, {
     } = activeStudentsService;
 
     let currentInstruction = '';
+    const activeCompilesByUser = new Map();
+    const MAX_CONCURRENT_COMPILES_PER_USER = 2;
 
-    io.use((socket, next) => {
+    const acquireUserCompileSlot = (userKey) => {
+        const cur = activeCompilesByUser.get(userKey) || 0;
+        if (cur >= MAX_CONCURRENT_COMPILES_PER_USER) return false;
+        activeCompilesByUser.set(userKey, cur + 1);
+        return true;
+    };
+
+    const releaseUserCompileSlot = (userKey) => {
+        const cur = activeCompilesByUser.get(userKey) || 0;
+        if (cur <= 1) activeCompilesByUser.delete(userKey);
+        else activeCompilesByUser.set(userKey, cur - 1);
+    };
+
+    const isSocketUserActiveInDb = async (verifiedUser) => {
+        if (!verifiedUser) return false;
+        const roleLower = String(verifiedUser.role || '').toLowerCase();
+        const tbl = roleLower === 'admin' ? 'admin_users' : 'users';
+        const lookupEmail = String(verifiedUser.email || '').trim().toLowerCase();
+        try {
+            const row = lookupEmail
+                ? await db.get(`SELECT id, status FROM ${tbl} WHERE id = ? OR LOWER(email) = ?`, verifiedUser.id ?? -1, lookupEmail)
+                : await db.get(`SELECT id, status FROM ${tbl} WHERE id = ?`, verifiedUser.id ?? -1);
+            if (!row) return false;
+            const statusLower = String(row.status || 'Active').toLowerCase();
+            return statusLower !== 'disabled' && statusLower !== 'suspended' && statusLower !== 'pending';
+        } catch (_) {
+            return true;
+        }
+    };
+
+    const joinSocketRoleRooms = (targetSocket, user) => {
+        if (!targetSocket || !user) return;
+        targetSocket.join('role:authenticated');
+        const r = String(user.role || '').toLowerCase();
+        if (r === 'admin') targetSocket.join('role:admin');
+        if (r === 'teacher' || r === 'instructor') targetSocket.join('role:teacher');
+    };
+
+    io.use(async (socket, next) => {
         const token = socket.handshake.auth?.token || socket.handshake.query?.token;
         if (token) {
             const user = verifySessionToken(token);
-            if (user) socket.user = user;
+            if (user && await isSocketUserActiveInDb(user)) {
+                socket.user = user;
+                joinSocketRoleRooms(socket, user);
+            }
         }
         if (isValidCloudRelaySecret(socket.handshake.auth?.relaySecret)) {
             socket.isCloudRelay = true;
@@ -60,6 +103,12 @@ function registerSocketHandlers(io, {
 
     io.on('connection', (socket) => {
         console.log('[Workspace] Student Connected: ' + socket.id);
+
+        socket.on('join_google_auth_session', (sessionId) => {
+            if (typeof sessionId === 'string' && /^[a-zA-Z0-9_-]{12,64}$/.test(sessionId)) {
+                socket.join(`google-auth:${sessionId}`);
+            }
+        });
 
         socket.on('get_active_activities', (data) => {
             socket.emit('active_activities_update', {
@@ -104,12 +153,16 @@ function registerSocketHandlers(io, {
 
         let activeProcess = null;
 
-        const authenticateSocket = (targetSocket, token) => {
-            if (targetSocket.user) return targetSocket.user;
+        const authenticateSocket = async (targetSocket, token) => {
+            if (targetSocket.user) {
+                joinSocketRoleRooms(targetSocket, targetSocket.user);
+                return targetSocket.user;
+            }
             if (token && typeof token === 'string') {
                 const verified = verifySessionToken(token);
-                if (verified) {
+                if (verified && await isSocketUserActiveInDb(verified)) {
                     targetSocket.user = verified;
+                    joinSocketRoleRooms(targetSocket, verified);
                     targetSocket.emit('authenticated', { user: { id: verified.id, email: verified.email, role: verified.role } });
                     return targetSocket.user;
                 }
@@ -122,9 +175,9 @@ function registerSocketHandlers(io, {
             return r === 'teacher' || r === 'instructor' || r === 'admin';
         };
 
-        const ensureSocketAuthOrRelay = (targetSocket, payload) => {
+        const ensureSocketAuthOrRelay = async (targetSocket, payload) => {
             if (targetSocket.isCloudRelay || targetSocket.user) return true;
-            if (payload?.token && authenticateSocket(targetSocket, payload.token)) return true;
+            if (payload?.token && await authenticateSocket(targetSocket, payload.token)) return true;
             return false;
         };
 
@@ -141,17 +194,18 @@ function registerSocketHandlers(io, {
 
         const handshakeToken = socket.handshake.auth?.token;
         if (handshakeToken) {
-            authenticateSocket(socket, handshakeToken);
-            if (socket.user) {
-                getKioskSettings().then(cfg => socket.emit('kiosk_settings', cfg)).catch(() => { });
-            }
+            authenticateSocket(socket, handshakeToken).then((u) => {
+                if (u) {
+                    getKioskSettings().then(cfg => socket.emit('kiosk_settings', cfg)).catch(() => { });
+                }
+            }).catch(() => { });
         }
 
-        socket.on('authenticate', (data) => {
+        socket.on('authenticate', async (data) => {
             if (!data) return;
             let u = null;
-            if (typeof data === 'string') u = authenticateSocket(socket, data);
-            else if (typeof data === 'object') u = authenticateSocket(socket, data.token);
+            if (typeof data === 'string') u = await authenticateSocket(socket, data);
+            else if (typeof data === 'object') u = await authenticateSocket(socket, data.token);
             if (u) {
                 checkAndFlagMultipleLogins(u, socket, socket.id).catch(() => { });
                 getKioskSettings().then(cfg => socket.emit('kiosk_settings', cfg)).catch(() => { });
@@ -198,7 +252,7 @@ function registerSocketHandlers(io, {
 
         socket.on('teacher_join', async (data) => {
             const { classroomId, assignmentId } = data || {};
-            if (!socket.user) authenticateSocket(socket, data?.token || socket.handshake.auth?.token);
+            if (!socket.user) await authenticateSocket(socket, data?.token || socket.handshake.auth?.token);
             if (!socket.user || !isSocketInstructorOrAdmin(socket.user)) {
                 return socket.emit('error', { message: 'Access denied: Teacher role required.' });
             }
@@ -355,7 +409,13 @@ function registerSocketHandlers(io, {
             io.emit('announcement_deleted', { classroomId: Number(classroomId), announcementId: Number(announcementId) });
         });
 
-        async function compileStudentCode(projectDir, code, extraFiles = []) {
+        async function compileStudentCode(projectDir, code, extraFiles = [], onFinished = null) {
+            let slotReleased = false;
+            const finishSlot = () => {
+                if (slotReleased) return;
+                slotReleased = true;
+                if (typeof onFinished === 'function') onFinished();
+            };
             fs.writeFileSync(path.join(projectDir, 'Program.cs'), code || '', 'utf8');
             const extraNames = new Set();
             for (const ef of extraFiles) {
@@ -407,6 +467,7 @@ function registerSocketHandlers(io, {
                     socket.emit('terminal_output', '\n[Compilation timed out]\n');
                     socket.emit('process_exit', { code: 1 });
                     activeProcess = null;
+                    finishSlot();
                 }
             }, 15000);
 
@@ -415,17 +476,22 @@ function registerSocketHandlers(io, {
                 socket.emit('terminal_output', `\n[Compiler launch error: ${err.message}]\n`);
                 socket.emit('process_exit', { code: 1 });
                 activeProcess = null;
+                finishSlot();
             });
 
             buildProcess.on('close', (buildCode) => {
                 clearTimeout(buildTimeout);
-                if (activeProcess !== buildProcess) return;
+                if (activeProcess !== buildProcess) {
+                    finishSlot();
+                    return;
+                }
 
                 socket.emit('compiler_diagnostics', parseCompilerDiagnostics(rawCompilerOutput));
                 if (buildCode !== 0 || !fs.existsSync(dllPath)) {
                     socket.emit('terminal_output', rawCompilerOutput + '\n[Build failed. Fix the build errors and run again.]\n');
                     socket.emit('process_exit', { code: 1 });
                     activeProcess = null;
+                    finishSlot();
                     return;
                 }
 
@@ -436,6 +502,7 @@ function registerSocketHandlers(io, {
                 const sandboxEnv = createSandboxedRunEnv(sandboxRunDir);
                 const runProcess = spawn('dotnet', [dllPath], { cwd: sandboxRunDir, env: sandboxEnv });
                 runProcess._sandboxRunDir = sandboxRunDir;
+                runProcess._finishSlot = finishSlot;
                 activeProcess = runProcess;
 
                 let totalOutputBytes = 0;
@@ -449,6 +516,7 @@ function registerSocketHandlers(io, {
                         socket.emit('terminal_output', '\n[Process terminated: Execution limit of 20s exceeded]\n');
                         socket.emit('process_exit', { code: 1 });
                         activeProcess = null;
+                        finishSlot();
                     }
                 }, 20000);
 
@@ -458,6 +526,7 @@ function registerSocketHandlers(io, {
                     socket.emit('terminal_output', `\n[Execution error: ${err.message}]\n`);
                     socket.emit('process_exit', { code: 1 });
                     activeProcess = null;
+                    finishSlot();
                 });
 
                 const handleRunOutput = (data) => {
@@ -470,6 +539,7 @@ function registerSocketHandlers(io, {
                         socket.emit('terminal_output', '\n\n[Process terminated: Execution output exceeded 128 KB limit (Infinite output loop detected)]\n');
                         socket.emit('process_exit', { code: 1 });
                         activeProcess = null;
+                        finishSlot();
                         return;
                     }
                     socket.emit('terminal_output', data.toString());
@@ -483,13 +553,14 @@ function registerSocketHandlers(io, {
                     socket.emit('terminal_output', `\n[Process exited with code ${runCode ?? 0}]\n`);
                     socket.emit('process_exit', { code: runCode ?? 0 });
                     activeProcess = null;
+                    finishSlot();
                 });
             });
         }
 
         socket.on('compile_code', async (data) => {
             try {
-                if (!socket.user) authenticateSocket(socket, data?.token || socket.handshake.auth?.token);
+                if (!socket.user) await authenticateSocket(socket, data?.token || socket.handshake.auth?.token);
                 if (!socket.user) {
                     socket.emit('terminal_output', 'Error: Authentication required to execute code. Please log in.\n');
                     return socket.emit('process_exit', { code: 1 });
@@ -527,6 +598,19 @@ function registerSocketHandlers(io, {
                     ? `u_${socket.user.id}`
                     : (socket.user?.email ? `e_${socket.user.email.replace(/[^a-zA-Z0-9]/g, '_')}` : `s_${socket.id.replace(/[^a-zA-Z0-9]/g, '')}`);
 
+                if (activeProcess) {
+                    const prevFinish = activeProcess._finishSlot;
+                    try { killProcessTree(activeProcess); } catch (_) { }
+                    activeProcess = null;
+                    if (typeof prevFinish === 'function') prevFinish();
+                }
+
+                if (!acquireUserCompileSlot(studentKey)) {
+                    socket.emit('terminal_output', '\n[Compiler busy: Too many concurrent executions for this account. Please wait.]\n');
+                    return socket.emit('process_exit', { code: 1 });
+                }
+                const releaseThisSlot = () => releaseUserCompileSlot(studentKey);
+
                 let projectDir = sessionWorkspaces.get(studentKey)?.projectDir;
                 if (!projectDir) {
                     projectDir = path.join(os.tmpdir(), `verity_ws_${studentKey}`);
@@ -548,23 +632,19 @@ function registerSocketHandlers(io, {
                     } catch (_) { }
                 }
 
-                if (activeProcess) {
-                    try { killProcessTree(activeProcess); } catch (_) { }
-                    activeProcess = null;
-                }
-
                 if (isFirstCompile) {
                     socket.emit('terminal_output', 'Initializing compiler environment...\n');
                     try {
                         await ensureBaseTemplate();
                         if (!fs.existsSync(projectDir)) fs.mkdirSync(projectDir, { recursive: true });
                         fs.cpSync(COMPILER_BASE_DIR, projectDir, { recursive: true });
-                        await compileStudentCode(projectDir, code, extraFiles);
+                        await compileStudentCode(projectDir, code, extraFiles, releaseThisSlot);
                     } catch (err) {
                         console.warn('Fast template clone failed, falling back to dotnet new:', err.message);
                         exec(`dotnet new console -n verity_base --no-restore --framework ${targetFramework} -o "${projectDir}"`, { env: OFFLINE_DOTNET_ENV }, async (newErr) => {
                             if (newErr) {
                                 sessionWorkspaces.delete(studentKey);
+                                releaseThisSlot();
                                 socket.emit('terminal_output', 'Error: Could not initialize .NET compiler.\n');
                                 return socket.emit('process_exit', { code: 1 });
                             }
@@ -572,11 +652,11 @@ function registerSocketHandlers(io, {
                                 fs.writeFileSync(path.join(projectDir, 'nuget.config'), OFFLINE_NUGET_CONFIG, 'utf8');
                                 execSync(`dotnet restore "${path.join(projectDir, 'verity_base.csproj')}" --ignore-failed-sources -v q`, { cwd: projectDir, env: OFFLINE_DOTNET_ENV });
                             } catch (_) { }
-                            await compileStudentCode(projectDir, code, extraFiles);
+                            await compileStudentCode(projectDir, code, extraFiles, releaseThisSlot);
                         });
                     }
                 } else {
-                    await compileStudentCode(projectDir, code, extraFiles);
+                    await compileStudentCode(projectDir, code, extraFiles, releaseThisSlot);
                 }
             } catch (error) {
                 console.error('Compiler error:', error);
@@ -592,17 +672,20 @@ function registerSocketHandlers(io, {
         socket.on('stop_code', () => {
             if (activeProcess) {
                 const dirToClean = activeProcess._sandboxRunDir;
+                const finish = activeProcess._finishSlot;
                 try { killProcessTree(activeProcess); } catch (_) { }
                 cleanupEphemeralSandboxDir(dirToClean);
                 socket.emit('terminal_output', '\n[Process stopped by user]\n');
                 socket.emit('process_exit', { code: 0 });
                 activeProcess = null;
+                if (typeof finish === 'function') finish();
             }
         });
 
         socket.on('run_test_cases', async (data) => {
+            let acquiredTestKey = null;
             try {
-                if (!socket.user) authenticateSocket(socket, data?.token || socket.handshake.auth?.token);
+                if (!socket.user) await authenticateSocket(socket, data?.token || socket.handshake.auth?.token);
                 const { code, extraFiles = [], testCases = [], language } = data || {};
                 if (!socket.user) {
                     return socket.emit('test_cases_results', {
@@ -651,6 +734,16 @@ function registerSocketHandlers(io, {
                 const studentKey = socket.user?.id
                     ? `u_${socket.user.id}`
                     : (socket.user?.email ? `e_${socket.user.email.replace(/[^a-zA-Z0-9]/g, '_')}` : `s_${socket.id.replace(/[^a-zA-Z0-9]/g, '')}`);
+
+                if (!acquireUserCompileSlot(studentKey)) {
+                    return socket.emit('test_cases_results', {
+                        results: testCases.map(tc => ({
+                            id: tc.id, status: 'error', passed: false, actualOutput: '',
+                            expectedOutput: tc.expectedOutput || '', error: 'Compiler busy: Too many concurrent test runs for this account.'
+                        }))
+                    });
+                }
+                acquiredTestKey = studentKey;
 
                 let ws = sessionWorkspaces.get(studentKey);
                 let projectDir = ws?.projectDir;
@@ -840,6 +933,8 @@ function registerSocketHandlers(io, {
             } catch (error) {
                 console.error('Test case error:', error);
                 socket.emit('test_cases_results', { results: [] });
+            } finally {
+                if (acquiredTestKey) releaseUserCompileSlot(acquiredTestKey);
             }
         });
 
@@ -848,7 +943,7 @@ function registerSocketHandlers(io, {
         const ACTIVITY_META_TTL_MS = 30000;
 
         const handleStudentActivity = async (data, isExplicitEnter = false) => {
-            if (!ensureSocketAuthOrRelay(socket, data)) {
+            if (!(await ensureSocketAuthOrRelay(socket, data))) {
                 return socket.emit('error', { message: 'Authentication required.' });
             }
             if (!data || (!data.studentId && !data.name && !socket.user) || data.submitted) return;
@@ -965,7 +1060,7 @@ function registerSocketHandlers(io, {
         socket.on('student_typing', (data) => handleStudentActivity(data, false));
 
         socket.on('proctor_alert', async (data) => {
-            if (!ensureSocketAuthOrRelay(socket, data)) {
+            if (!(await ensureSocketAuthOrRelay(socket, data))) {
                 return socket.emit('error', { message: 'Authentication required.' });
             }
             const isStudentCaller = !socket.isCloudRelay && socket.user && String(socket.user.role || '').toLowerCase() === 'student';
@@ -1074,13 +1169,13 @@ function registerSocketHandlers(io, {
                     );
                 }
 
-                io.emit('admin_security_alert', { ...data, isCrash, isAltTabCopyPaste, isSystemExit, timestamp: nowIso });
-                io.emit('admin_stats_update');
+                io.to('role:admin').emit('admin_security_alert', { ...data, isCrash, isAltTabCopyPaste, isSystemExit, timestamp: nowIso });
+                io.to('role:admin').emit('admin_stats_update');
             } catch (e) { console.error(e); }
         });
 
         socket.on('submit_exam', async (data) => {
-            if (!ensureSocketAuthOrRelay(socket, data)) {
+            if (!(await ensureSocketAuthOrRelay(socket, data))) {
                 return socket.emit('error', { message: 'Authentication required.' });
             }
             if (!data) return;
@@ -1117,7 +1212,9 @@ function registerSocketHandlers(io, {
             socket.to(roomName).emit('teacher_receive_submission', payload);
             if (assignmentId && assignmentId !== 'unassigned') socket.to(`assignment:${assignmentId}`).emit('teacher_receive_submission', payload);
             socket.to(roomName).emit('teacher_student_left', { studentId: targetId, studentName: authenticatedName, studentIdNum: authenticatedId, reason: 'submitted', assignmentId, classroomId });
-            io.emit('teacher_student_left', { studentId: targetId, studentName: authenticatedName, studentIdNum: authenticatedId, reason: 'submitted', assignmentId, classroomId });
+            if (assignmentId && assignmentId !== 'unassigned') socket.to(`assignment:${assignmentId}`).emit('teacher_student_left', { studentId: targetId, studentName: authenticatedName, studentIdNum: authenticatedId, reason: 'submitted', assignmentId, classroomId });
+            io.to('role:teacher').emit('teacher_student_left', { studentId: targetId, studentName: authenticatedName, studentIdNum: authenticatedId, reason: 'submitted', assignmentId, classroomId });
+            io.to('role:admin').emit('teacher_student_left', { studentId: targetId, studentName: authenticatedName, studentIdNum: authenticatedId, reason: 'submitted', assignmentId, classroomId });
             relaySubmitExam(payload);
             relayStudentLeft({ studentId: targetId, studentName: authenticatedName, studentIdNum: authenticatedId, reason: 'submitted', assignmentId, classroomId });
 
@@ -1137,7 +1234,7 @@ function registerSocketHandlers(io, {
         });
 
         socket.on('unsubmit_exam', async (data) => {
-            if (!ensureSocketAuthOrRelay(socket, data)) {
+            if (!(await ensureSocketAuthOrRelay(socket, data))) {
                 return socket.emit('unsubmit_error', { message: 'Authentication required.', assignmentId: data?.assignmentId });
             }
             if (!data) return;
@@ -1180,23 +1277,25 @@ function registerSocketHandlers(io, {
             relayUnsubmitExam({ studentName, assignmentId, studentId: safeStudentId, classroomId });
         });
 
-        socket.on('student_terminal_update', (data) => {
-            if (!ensureSocketAuthOrRelay(socket, data)) return;
+        socket.on('student_terminal_update', async (data) => {
+            if (!(await ensureSocketAuthOrRelay(socket, data))) return;
             let payload = data;
             if (!socket.isCloudRelay && socket.user && String(socket.user.role || '').toLowerCase() === 'student' && data) {
                 const { studentId, studentName } = resolveSocketStudentIdentity(socket, data);
                 payload = { ...data, studentId, id: studentId, name: studentName, studentName };
             }
             if (payload?.classroomId && payload?.assignmentId) io.to(`classroom:${payload.classroomId}:assignment:${payload.assignmentId}`).emit('teacher_terminal_update', payload);
-            else socket.broadcast.emit('teacher_terminal_update', payload);
+            else if (payload?.assignmentId && payload.assignmentId !== 'none') io.to(`assignment:${payload.assignmentId}`).emit('teacher_terminal_update', payload);
             relayTerminalUpdate(payload);
         });
 
-        socket.on('student_leave_workspace', (data) => {
-            if (!ensureSocketAuthOrRelay(socket, data)) return;
+        socket.on('student_leave_workspace', async (data) => {
+            if (!(await ensureSocketAuthOrRelay(socket, data))) return;
             if (activeProcess) {
+                const finish = activeProcess._finishSlot;
                 try { killProcessTree(activeProcess); } catch (_) { }
                 activeProcess = null;
+                if (typeof finish === 'function') finish();
             }
             const isStudentCaller = !socket.isCloudRelay && socket.user && String(socket.user.role || '').toLowerCase() === 'student';
             const studentId = isStudentCaller ? String(socket.user.id || socket.data.studentId || data?.studentId || '') : (socket.data.studentId || data?.studentId);
@@ -1213,7 +1312,8 @@ function registerSocketHandlers(io, {
                 io.to(roomName).emit('teacher_student_left', leftPayload);
                 socket.leave(roomName);
             }
-            socket.broadcast.emit('teacher_student_left', leftPayload);
+            io.to('role:teacher').emit('teacher_student_left', leftPayload);
+            io.to('role:admin').emit('teacher_student_left', leftPayload);
             relayStudentLeft(leftPayload);
 
             socket.data.studentKey = null;
@@ -1225,8 +1325,8 @@ function registerSocketHandlers(io, {
             broadcastActiveActivities();
         });
 
-        socket.on('teacher_student_left', (data) => {
-            if (!ensureSocketAuthOrRelay(socket, data)) return;
+        socket.on('teacher_student_left', async (data) => {
+            if (!(await ensureSocketAuthOrRelay(socket, data))) return;
             if (!data) return;
             const targetId = String(data.studentId || data.studentIdNum || '');
             const targetName = String(data.studentName || data.name || '');
@@ -1246,8 +1346,10 @@ function registerSocketHandlers(io, {
 
         socket.on('disconnect', async () => {
             if (activeProcess) {
+                const finish = activeProcess._finishSlot;
                 try { killProcessTree(activeProcess); } catch (_) { }
                 activeProcess = null;
+                if (typeof finish === 'function') finish();
             }
             const studentId = socket.data.studentId || socket.user?.id;
             const studentName = socket.data.studentName || socket.user?.name;
@@ -1259,7 +1361,8 @@ function registerSocketHandlers(io, {
 
             const leftPayload = { studentId, studentName, classroomId, assignmentId, reason: 'disconnected' };
             if (socket.data.roomName) io.to(socket.data.roomName).emit('teacher_student_left', leftPayload);
-            socket.broadcast.emit('teacher_student_left', leftPayload);
+            io.to('role:teacher').emit('teacher_student_left', leftPayload);
+            io.to('role:admin').emit('teacher_student_left', leftPayload);
             broadcastActiveActivities();
 
             if (socket.user && socket.user.role === 'Student') {
@@ -1279,12 +1382,12 @@ function registerSocketHandlers(io, {
                             nowIso, userName, 'System Exit Violation', 'Warning',
                             `Student exited the system: ${userName} closed or disconnected application (outside workspace)`
                         );
-                        io.emit('admin_security_alert', {
+                        io.to('role:admin').emit('admin_security_alert', {
                             user: userName, name: userName, studentId: socket.user.id || userName,
                             type: 'System Exit Violation', desc: `Student exited the system: ${userName} closed or disconnected application`,
                             severity: 'Warning', isAltTabCopyPaste: false, isSystemExit: true, timestamp: nowIso
                         });
-                        io.emit('admin_stats_update');
+                        io.to('role:admin').emit('admin_stats_update');
                     }
                 } catch (_) { }
             }

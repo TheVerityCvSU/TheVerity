@@ -62028,8 +62028,8 @@ var require_cloudSync = __commonJS({
         pgPool = new Pool({
           connectionString,
           ssl: sslConfig,
-          max: 3,
-          idleTimeoutMillis: 3e4,
+          max: 2,
+          idleTimeoutMillis: 1e4,
           connectionTimeoutMillis: 3500,
           statement_timeout: 4500,
           query_timeout: 4500
@@ -63503,8 +63503,8 @@ var require_db4 = __commonJS({
       pgPool = new Pool({
         connectionString: connStr,
         ssl: sslConfig,
-        max: 5,
-        idleTimeoutMillis: 3e4,
+        max: 3,
+        idleTimeoutMillis: 1e4,
         connectionTimeoutMillis: 1e4,
         statement_timeout: 4e3,
         query_timeout: 8e3
@@ -63864,7 +63864,7 @@ var require_db4 = __commonJS({
       const msg = String(err.message || "").toLowerCase();
       const code = String(err.code || "");
       if (code === "57014") return false;
-      return code === "ECONNREFUSED" || code === "ENETUNREACH" || code === "ECONNRESET" || code === "ETIMEDOUT" || code === "ENOTFOUND" || code === "EAI_AGAIN" || code === "57P01" || msg.includes("connection terminated") || msg.includes("client has already been closed") || msg.includes("timeout") || msg.includes("getaddrinfo") || msg.includes("connection error");
+      return code === "ECONNREFUSED" || code === "ENETUNREACH" || code === "ECONNRESET" || code === "ETIMEDOUT" || code === "ENOTFOUND" || code === "EAI_AGAIN" || code === "57P01" || code === "53300" || code === "08001" || code === "08003" || code === "08004" || code === "08006" || msg.includes("max clients reached") || msg.includes("emaxconnsession") || msg.includes("too many clients") || msg.includes("remaining connection slots") || msg.includes("connection terminated") || msg.includes("client has already been closed") || msg.includes("timeout") || msg.includes("getaddrinfo") || msg.includes("connection error");
     }
     var readyPromise = (async () => {
       initSqlite();
@@ -64231,8 +64231,8 @@ var require_db4 = __commonJS({
                 connectionString: DATABASE_URL,
                 ssl: { rejectUnauthorized: false },
                 connectionTimeoutMillis: 4e3,
-                idleTimeoutMillis: 2e4,
-                max: 3
+                idleTimeoutMillis: 5e3,
+                max: 1
               });
               pgPool = pool;
             } catch (_) {
@@ -64313,8 +64313,8 @@ var require_db4 = __commonJS({
                 connectionString: DATABASE_URL,
                 ssl: { rejectUnauthorized: false },
                 connectionTimeoutMillis: 4e3,
-                idleTimeoutMillis: 2e4,
-                max: 3
+                idleTimeoutMillis: 5e3,
+                max: 1
               });
               pgPool = pool;
             } catch (_) {
@@ -112019,6 +112019,7 @@ var require_authMiddleware = __commonJS({
     var jwt = require_jsonwebtoken();
     function createAuthMiddleware2({ JWT_SECRET: JWT_SECRET2, IS_RENDER_CLOUD: IS_RENDER_CLOUD2, db: db2 = null }) {
       const adminLoginAttempts = /* @__PURE__ */ new Map();
+      const userLoginAttempts = /* @__PURE__ */ new Map();
       const otpAttemptCounts = /* @__PURE__ */ new Map();
       const otpSendCooldowns = /* @__PURE__ */ new Map();
       const checkOtpSendRateLimit = (key, maxPerWindow = 5, windowMs = 15 * 60 * 1e3) => {
@@ -112081,6 +112082,53 @@ var require_authMiddleware = __commonJS({
         }
         req.adminRateRecord = record;
         req.clientIp = clientIp;
+        next();
+      };
+      const loginRateLimiter = (req, res, next) => {
+        const clientIp = req.ip || req.connection?.remoteAddress || "unknown";
+        const rawId = String(req.body?.email || req.body?.username || req.body?.identifier || "").trim().toLowerCase();
+        const now = Date.now();
+        const windowMs = 15 * 60 * 1e3;
+        const ipKey = `ip:${clientIp}`;
+        const ipRec = userLoginAttempts.get(ipKey) || { count: 0, resetTime: now + windowMs };
+        if (now > ipRec.resetTime) {
+          ipRec.count = 0;
+          ipRec.resetTime = now + windowMs;
+        }
+        if (ipRec.count >= 60) {
+          const remainingMinutes = Math.ceil((ipRec.resetTime - now) / 6e4);
+          return res.status(429).json({
+            message: `Too many failed login attempts from this network. Please wait ${remainingMinutes} minute(s).`
+          });
+        }
+        const acctKey = rawId ? `acct:${clientIp}:${rawId}` : null;
+        let acctRec = null;
+        if (acctKey) {
+          acctRec = userLoginAttempts.get(acctKey) || { count: 0, resetTime: now + windowMs };
+          if (now > acctRec.resetTime) {
+            acctRec.count = 0;
+            acctRec.resetTime = now + windowMs;
+          }
+          if (acctRec.count >= 8) {
+            const remainingMinutes = Math.ceil((acctRec.resetTime - now) / 6e4);
+            return res.status(429).json({
+              message: `Too many failed login attempts for this account. Please wait ${remainingMinutes} minute(s).`
+            });
+          }
+        }
+        req.loginRateMeta = {
+          recordFailure: () => {
+            ipRec.count += 1;
+            userLoginAttempts.set(ipKey, ipRec);
+            if (acctKey && acctRec) {
+              acctRec.count += 1;
+              userLoginAttempts.set(acctKey, acctRec);
+            }
+          },
+          clearSuccess: () => {
+            if (acctKey) userLoginAttempts.delete(acctKey);
+          }
+        };
         next();
       };
       const isLoopbackAddress = (ip) => {
@@ -112159,11 +112207,13 @@ var require_authMiddleware = __commonJS({
       };
       return {
         adminLoginAttempts,
+        userLoginAttempts,
         otpAttemptCounts,
         checkOtpSendRateLimit,
         isIpWhitelisted,
         adminIpWhitelist,
         adminLoginRateLimiter,
+        loginRateLimiter,
         isLoopbackAddress,
         verifySessionToken,
         authenticateToken,
@@ -112339,7 +112389,7 @@ var require_systemSettingsService = __commonJS({
                 ON CONFLICT(date_string) DO UPDATE SET count = security_flags.count + 1
             `, tKey).catch(() => {
           });
-          io2.emit("receive_alert", {
+          io2.to("role:admin").emit("receive_alert", {
             studentId: user.id || emailKey,
             studentName: user.name || emailKey,
             action: "Multiple Login",
@@ -112348,7 +112398,7 @@ var require_systemSettingsService = __commonJS({
             color: "#ef4444",
             time: (/* @__PURE__ */ new Date()).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
           });
-          io2.emit("admin_stats_update");
+          io2.to("role:admin").emit("admin_stats_update");
         } catch (_) {
         }
       };
@@ -112406,7 +112456,7 @@ var require_systemSettingsService = __commonJS({
               assignmentId
             });
           }
-          io2.emit("admin_security_alert", {
+          io2.to("role:admin").emit("admin_security_alert", {
             user: userName,
             name: userName,
             studentId,
@@ -113046,18 +113096,30 @@ var require_classroomAccess = __commonJS({
           });
         }
       };
+      const isNumericId = (v) => v !== null && v !== void 0 && v !== "" && /^-?\d+$/.test(String(v).trim());
       async function checkClassroomAccess(req, classroomId) {
+        if (classroomId == null || classroomId === "") return false;
         const roleLower = String(req.user?.role || "").toLowerCase();
         if (roleLower === "admin") return true;
+        const cidStr = String(classroomId).trim();
+        const cidNum = isNumericId(cidStr) ? Number(cidStr) : null;
         if (roleLower === "teacher" || roleLower === "instructor") {
-          const c5 = await db2.get("SELECT id, instructor_email, instructor, name FROM classrooms WHERE id = ? OR CAST(id AS TEXT) = ?", classroomId, String(classroomId));
+          const c5 = cidNum !== null ? await db2.get("SELECT id, instructor_email, instructor, name FROM classrooms WHERE id = ? OR CAST(id AS TEXT) = ?", cidNum, cidStr) : await db2.get("SELECT id, instructor_email, instructor, name FROM classrooms WHERE CAST(id AS TEXT) = ?", cidStr);
           if (!c5) return false;
           const teacherEmail = (req.user.email || "").trim().toLowerCase();
           const teacherName = (req.user.name || "").trim().toLowerCase();
           const cEmail = (c5.instructor_email || "").trim().toLowerCase();
           const cName = (c5.instructor || "").trim().toLowerCase();
           const matchesEmail = Boolean(teacherEmail && cEmail && cEmail === teacherEmail);
-          const matchesName = Boolean(!cEmail && teacherName && cName && cName === teacherName);
+          let matchesName = false;
+          if (!cEmail && teacherName && cName && cName !== "instructor" && cName === teacherName) {
+            const otherTeacher = await db2.get(
+              "SELECT id FROM users WHERE LOWER(TRIM(name)) = ? AND LOWER(role) IN ('teacher', 'instructor') AND id != ?",
+              teacherName,
+              isNumericId(req.user.id) ? Number(req.user.id) : -1
+            ).catch(() => null);
+            matchesName = !otherTeacher;
+          }
           if (matchesEmail || matchesName) {
             if (teacherEmail && cEmail !== teacherEmail) {
               db2.run("UPDATE classrooms SET instructor_email = ? WHERE id = ?", teacherEmail, c5.id).catch(() => {
@@ -113070,50 +113132,110 @@ var require_classroomAccess = __commonJS({
         if (roleLower === "student") {
           const studentEmail = (req.user.email || "").trim().toLowerCase();
           const studentName = (req.user.name || "").trim().toLowerCase();
-          const studentId = req.user.id || 0;
+          const studentId = req.user.id ?? 0;
+          const sidStr = String(studentId);
+          const sidNum = isNumericId(sidStr) ? Number(sidStr) : null;
+          const cidCond = cidNum !== null ? "(classroom_id = ? OR CAST(classroom_id AS TEXT) = ?)" : "CAST(classroom_id AS TEXT) = ?";
+          const cidParams = cidNum !== null ? [cidNum, cidStr] : [cidStr];
+          const sidCond = sidNum !== null ? "(student_id = ? OR CAST(student_id AS TEXT) = ?)" : "CAST(student_id AS TEXT) = ?";
+          const sidParams = sidNum !== null ? [sidNum, sidStr] : [sidStr];
           const e6 = await db2.get(
             `SELECT 1 FROM enrollments 
-                 WHERE (classroom_id = ? OR CAST(classroom_id AS TEXT) = CAST(? AS TEXT))
+                 WHERE ${cidCond}
                    AND ((student_email IS NOT NULL AND LOWER(TRIM(student_email)) = ?) 
-                     OR (student_id IS NOT NULL AND (student_id = ? OR CAST(student_id AS TEXT) = CAST(? AS TEXT)))
-                     OR (student_name IS NOT NULL AND (LOWER(TRIM(student_name)) = ? OR LOWER(TRIM(student_name)) = ?)))`,
-            classroomId,
-            String(classroomId),
+                     OR (student_id IS NOT NULL AND ${sidCond})
+                     OR (COALESCE(TRIM(student_email), '') = '' AND student_id IS NULL AND student_name IS NOT NULL AND (LOWER(TRIM(student_name)) = ? OR LOWER(TRIM(student_name)) = ?)))`,
+            ...cidParams,
             studentEmail,
-            studentId,
-            String(studentId),
+            ...sidParams,
             studentName,
             studentEmail
           );
           if (e6) return true;
+          const cwCidCond = cidNum !== null ? "(cw.classroom_id = ? OR CAST(cw.classroom_id AS TEXT) = ?)" : "CAST(cw.classroom_id AS TEXT) = ?";
           const sub = await db2.get(
-            `SELECT 1 FROM submissions 
-                 WHERE (classroom_id = ? OR CAST(classroom_id AS TEXT) = CAST(? AS TEXT))
-                   AND (student_name = ? OR LOWER(TRIM(student_name)) = ? OR LOWER(TRIM(student_name)) = ? OR student_id = ?)`,
-            classroomId,
-            String(classroomId),
+            `SELECT 1 FROM submissions s
+                 INNER JOIN classwork cw ON cw.id = s.assignment_id
+                 WHERE ${cwCidCond}
+                   AND (s.student_name = ? OR LOWER(TRIM(s.student_name)) = ? OR LOWER(TRIM(s.student_name)) = ? OR s.student_name = ?)`,
+            ...cidParams,
             req.user.name || "",
             studentName,
             studentEmail,
-            String(studentId)
+            sidStr
           ).catch(() => null);
           if (sub) {
-            db2.run(
-              `INSERT INTO enrollments (classroom_id, student_id, student_name, student_email, enrolled_at)
-                     VALUES (?, ?, ?, ?, ?)
-                     ON CONFLICT(classroom_id, student_email) DO NOTHING`,
-              classroomId,
-              studentId,
-              req.user.name || "Student",
-              studentEmail,
-              (/* @__PURE__ */ new Date()).toISOString()
-            ).catch(() => {
-            });
+            if (cidNum !== null) {
+              db2.run(
+                `INSERT INTO enrollments (classroom_id, student_id, student_name, student_email, enrolled_at)
+                         VALUES (?, ?, ?, ?, ?)
+                         ON CONFLICT(classroom_id, student_email) DO NOTHING`,
+                cidNum,
+                sidNum,
+                req.user.name || "Student",
+                studentEmail,
+                (/* @__PURE__ */ new Date()).toISOString()
+              ).catch(() => {
+              });
+            }
             return true;
           }
           return false;
         }
         return false;
+      }
+      async function getStudentAccessibleClassroomIds(req) {
+        const studentEmail = (req.user?.email || "").trim().toLowerCase();
+        const studentName = (req.user?.name || "").trim().toLowerCase();
+        const studentId = req.user?.id ?? 0;
+        const sidStr = String(studentId);
+        const sidNum = isNumericId(sidStr) ? Number(sidStr) : null;
+        const sidCond = sidNum !== null ? "(student_id = ? OR CAST(student_id AS TEXT) = ?)" : "CAST(student_id AS TEXT) = ?";
+        const sidParams = sidNum !== null ? [sidNum, sidStr] : [sidStr];
+        const enrolledRows = await db2.all(
+          `SELECT DISTINCT classroom_id FROM enrollments
+             WHERE (student_email IS NOT NULL AND LOWER(TRIM(student_email)) = ?)
+                OR (student_id IS NOT NULL AND ${sidCond})
+                OR (COALESCE(TRIM(student_email), '') = '' AND student_id IS NULL AND student_name IS NOT NULL AND (LOWER(TRIM(student_name)) = ? OR LOWER(TRIM(student_name)) = ?))`,
+          studentEmail,
+          ...sidParams,
+          studentName,
+          studentEmail
+        );
+        const allowed = /* @__PURE__ */ new Set();
+        for (const row of enrolledRows || []) {
+          if (row?.classroom_id != null) allowed.add(String(row.classroom_id));
+        }
+        const subRows = await db2.all(
+          `SELECT DISTINCT cw.classroom_id FROM submissions s
+             INNER JOIN classwork cw ON cw.id = s.assignment_id
+             WHERE s.student_name = ? OR LOWER(TRIM(s.student_name)) = ? OR LOWER(TRIM(s.student_name)) = ? OR s.student_name = ?`,
+          req.user?.name || "",
+          studentName,
+          studentEmail,
+          sidStr
+        ).catch(() => []);
+        for (const row of subRows || []) {
+          if (row?.classroom_id == null) continue;
+          const cidStr = String(row.classroom_id);
+          if (!allowed.has(cidStr)) {
+            allowed.add(cidStr);
+            if (isNumericId(cidStr)) {
+              db2.run(
+                `INSERT INTO enrollments (classroom_id, student_id, student_name, student_email, enrolled_at)
+                         VALUES (?, ?, ?, ?, ?)
+                         ON CONFLICT(classroom_id, student_email) DO NOTHING`,
+                Number(cidStr),
+                sidNum,
+                req.user?.name || "Student",
+                studentEmail,
+                (/* @__PURE__ */ new Date()).toISOString()
+              ).catch(() => {
+              });
+            }
+          }
+        }
+        return allowed;
       }
       async function checkAssignmentAccess(req, assignmentId) {
         const roleLower = String(req.user?.role || "").toLowerCase();
@@ -113318,6 +113440,7 @@ var require_classroomAccess = __commonJS({
         getClassworkFromDb,
         saveClassworkToDb,
         checkClassroomAccess,
+        getStudentAccessibleClassroomIds,
         checkAssignmentAccess,
         resolveCanonicalStudent,
         syncUserEmailAcrossData,
@@ -113426,7 +113549,8 @@ var require_activeStudentsService = __commonJS({
             reason: "switched_activity"
           };
           io2.to(roomName).emit("teacher_student_left", payload);
-          io2.emit("teacher_student_left", payload);
+          io2.to("role:teacher").emit("teacher_student_left", payload);
+          io2.to("role:admin").emit("teacher_student_left", payload);
         }
         if (removedRooms.length > 0) {
           broadcastActiveActivities();
@@ -127891,7 +128015,7 @@ var require_uploads = __commonJS({
         const isDownloadReq = Boolean(req.query && (req.query.download === "1" || req.query.download === "true"));
         const rawDownloadName = isDownloadReq ? typeof req.query.filename === "string" && req.query.filename.trim() ? req.query.filename.trim() : requestedName.replace(/^\d+_/, "") : "";
         const localTarget = path2.join(UPLOADS_DIR, requestedName);
-        if (IS_RENDER_CLOUD2 && r2Storage2.isR2Configured() && (req.method === "GET" || req.method === "HEAD") && req.query.proxy !== "1") {
+        if (IS_RENDER_CLOUD2 && r2Storage2.isR2Configured() && (req.method === "GET" || req.method === "HEAD") && req.query.proxy !== "1" && path2.extname(requestedName).toLowerCase() !== ".svg") {
           let inR2 = await r2Storage2.existsInR2Cached(requestedName).catch(() => false);
           if (!inR2 && !fs3.existsSync(localTarget)) {
             const restored = await db2.restoreUploadFromCloudDb(requestedName, localTarget).catch(() => false);
@@ -128189,9 +128313,14 @@ var require_uploads = __commonJS({
           console.warn("[Video Compression] Failed:", e6.message);
         }
       }
+      const MAX_RAW_UPLOAD_BYTES = 200 * 1024 * 1024;
       app2.post("/upload-raw", authenticateToken, (req, res) => {
         req.setTimeout(0);
         res.setTimeout(0);
+        const contentLength = Number(req.headers["content-length"] || 0);
+        if (Number.isFinite(contentLength) && contentLength > MAX_RAW_UPLOAD_BYTES) {
+          return res.status(413).json({ message: "Upload exceeds maximum 200 MB file size limit." });
+        }
         const rawFilename = req.query.filename || req.headers["x-filename"] || "file.mp4";
         const ext = path2.extname(rawFilename).toLowerCase();
         if (!ALLOWED_UPLOAD_EXTS.has(ext)) {
@@ -128202,6 +128331,7 @@ var require_uploads = __commonJS({
         const targetPath = path2.join(UPLOADS_DIR, unique);
         const writeStream = fs3.createWriteStream(targetPath);
         let finished = false;
+        let receivedBytes = 0;
         const cleanupPartial = () => {
           if (finished) return;
           finished = true;
@@ -128212,6 +128342,15 @@ var require_uploads = __commonJS({
           fs3.unlink(targetPath, () => {
           });
         };
+        req.on("data", (chunk) => {
+          receivedBytes += chunk.length;
+          if (receivedBytes > MAX_RAW_UPLOAD_BYTES) {
+            req.unpipe(writeStream);
+            cleanupPartial();
+            if (!res.headersSent) res.status(413).json({ message: "Upload exceeds maximum 200 MB file size limit." });
+            req.destroy();
+          }
+        });
         req.on("aborted", cleanupPartial);
         req.on("error", (err) => {
           console.error("Upload request error:", err);
@@ -145610,6 +145749,7 @@ var require_auth = __commonJS({
         checkOtpSendRateLimit,
         adminIpWhitelist,
         adminLoginRateLimiter,
+        loginRateLimiter,
         authenticateToken,
         requireRole
       } = authMiddleware2;
@@ -145638,7 +145778,8 @@ var require_auth = __commonJS({
           }
           const cleanEmail = (email || "").trim().toLowerCase();
           const trimmedName = (name || "").trim();
-          if (!checkOtpSendRateLimit(`send:${cleanEmail}`)) {
+          const clientIp = req.ip || req.socket?.remoteAddress || "unknown";
+          if (!checkOtpSendRateLimit(`send-ip:${clientIp}`, 20) || !checkOtpSendRateLimit(`send:${cleanEmail}`)) {
             return res.status(429).json({ message: "Too many OTP requests. Please wait before requesting another code." });
           }
           if (!EMAIL_FORMAT_REGEX.test(cleanEmail)) {
@@ -145770,9 +145911,9 @@ var require_auth = __commonJS({
           const user = sanitizeUser({ id: info.lastInsertRowid, name, email: cleanEmail, role: userRole, status });
           const userToken = jwt.sign({ id: user.id, email: user.email, role: user.role, name: user.name }, JWT_SECRET2, { expiresIn: "7d" });
           try {
-            io2.emit("users_updated");
-            io2.emit("admin_security_alert");
-            io2.emit("admin_stats_update");
+            io2.to("role:admin").emit("users_updated");
+            io2.to("role:admin").emit("admin_security_alert");
+            io2.to("role:admin").emit("admin_stats_update");
           } catch (_) {
           }
           try {
@@ -145819,7 +145960,8 @@ var require_auth = __commonJS({
           if (!isValidCvsuEmail(cleanEmail)) {
             return res.status(400).json({ message: CVSU_EMAIL_ERROR_MSG });
           }
-          if (!checkOtpSendRateLimit(`send:${cleanEmail}`)) {
+          const clientIp = req.ip || req.socket?.remoteAddress || "unknown";
+          if (!checkOtpSendRateLimit(`send-ip:${clientIp}`, 20) || !checkOtpSendRateLimit(`send:${cleanEmail}`)) {
             return res.status(429).json({ message: "Too many OTP resend requests. Please wait before trying again." });
           }
           const record = await db2.get(
@@ -145905,9 +146047,9 @@ var require_auth = __commonJS({
           const user = sanitizeUser({ id: info.lastInsertRowid, name, email: cleanEmail, role: userRole, status });
           const userToken = jwt.sign({ id: user.id, email: user.email, role: user.role, name: user.name }, JWT_SECRET2, { expiresIn: "7d" });
           try {
-            io2.emit("users_updated");
-            io2.emit("admin_security_alert");
-            io2.emit("admin_stats_update");
+            io2.to("role:admin").emit("users_updated");
+            io2.to("role:admin").emit("admin_security_alert");
+            io2.to("role:admin").emit("admin_stats_update");
           } catch (_) {
           }
           try {
@@ -145940,7 +146082,7 @@ var require_auth = __commonJS({
           res.status(500).json({ message: e6.message });
         }
       });
-      app2.post("/login", async (req, res) => {
+      app2.post("/login", loginRateLimiter, async (req, res) => {
         try {
           const maintenance = await getMaintenanceStatus();
           if (maintenance.enabled) {
@@ -145964,6 +146106,7 @@ var require_auth = __commonJS({
             emailLike
           );
           if (isAdminAcc && (String(isAdminAcc.email || "").toLowerCase() === cleanIdentifier || String(isAdminAcc.name || "").toLowerCase() === cleanIdentifier || safeLocalPart && String(isAdminAcc.email || "").split("@")[0].toLowerCase() === cleanIdentifier)) {
+            req.loginRateMeta?.recordFailure();
             return res.status(401).json({ message: "Invalid credentials. No account found with this email or username." });
           }
           const userCandidate = await db2.get(
@@ -145979,14 +146122,17 @@ var require_auth = __commonJS({
           );
           const userExists = userCandidate && (String(userCandidate.email || "").toLowerCase() === cleanIdentifier || String(userCandidate.name || "").toLowerCase() === cleanIdentifier || safeLocalPart && String(userCandidate.email || "").split("@")[0].toLowerCase() === cleanIdentifier) ? userCandidate : null;
           if (!userExists) {
+            req.loginRateMeta?.recordFailure();
             return res.status(401).json({ message: "Invalid credentials. No account found with this username or email address." });
           }
           let user = null;
           if (userExists.password === "google_sso_user") {
+            req.loginRateMeta?.recordFailure();
             return res.status(401).json({ message: "This account uses Google Sign-In. Please sign in with Google." });
           } else {
             const check = verifyPassword(rawPassword, userExists.password);
             if (!check.valid) {
+              req.loginRateMeta?.recordFailure();
               return res.status(401).json({ message: "Invalid credentials. Please verify your password." });
             }
             user = userExists;
@@ -146002,6 +146148,7 @@ var require_auth = __commonJS({
               await db2.run("DELETE FROM users WHERE id = ?", user.id);
             } catch (_) {
             }
+            req.loginRateMeta?.recordFailure();
             return res.status(401).json({ message: "Invalid credentials. No account found with this email address." });
           }
           if (user.status === "Pending") {
@@ -146010,6 +146157,7 @@ var require_auth = __commonJS({
           if (user.status === "Disabled" || user.status === "Suspended") {
             return res.status(403).json({ message: `Your account is ${String(user.status).toLowerCase()}. Please contact an administrator.` });
           }
+          req.loginRateMeta?.clearSuccess();
           user.lastLogin = (/* @__PURE__ */ new Date()).toISOString();
           db2.run("UPDATE users SET lastLogin = ? WHERE id = ?", user.lastLogin, user.id).catch(() => {
           });
@@ -146100,8 +146248,11 @@ var require_auth = __commonJS({
       app2.get("/auth/google/external", (req, res) => {
         const sessionId = req.query.sessionId;
         if (!sessionId) return res.status(400).send("Missing sessionId");
+        const emitGoogleRoom = (event, data) => {
+          if (sessionId) io2.to(`google-auth:${sessionId}`).emit(event, data);
+        };
         if (!GOOGLE_CLIENT_SECRET) {
-          io2.emit(`google-login-error-${sessionId}`, { message: "Google Sign-In requires the online Cloud server." });
+          emitGoogleRoom(`google-login-error-${sessionId}`, { message: "Google Sign-In requires the online Cloud server." });
           return res.status(503).send("<h2>Google Sign-In Unavailable Locally</h2><p>Google Sign-In requires an active connection to the online Cloud server, or sign in with email and password.</p>");
         }
         const requestedRole = req.query.role === "Teacher" ? "Teacher" : "Student";
@@ -146153,6 +146304,9 @@ var require_auth = __commonJS({
           sessionId = stateParts[0];
           requestedRole = stateParts[1] === "Teacher" ? "Teacher" : "Student";
         }
+        const emitGoogleRoom = (targetSessionId, event, data) => {
+          if (targetSessionId) io2.to(`google-auth:${targetSessionId}`).emit(event, data);
+        };
         try {
           const host = req.headers["x-forwarded-host"] || req.get("host");
           const isLocal = host.includes("localhost") || host.includes("127.0.0.1");
@@ -146164,7 +146318,7 @@ var require_auth = __commonJS({
           const cleanEmail = (payload.email || "").trim().toLowerCase();
           const name = payload.name;
           if (!cleanEmail.endsWith("@cvsu.edu.ph")) {
-            io2.emit(`google-login-error-${sessionId}`, { message: "Access restricted: Only official @cvsu.edu.ph Google accounts can register or sign in." });
+            emitGoogleRoom(sessionId, `google-login-error-${sessionId}`, { message: "Access restricted: Only official @cvsu.edu.ph Google accounts can register or sign in." });
             return res.status(403).send(`
                     <html>
                         <body style="font-family: sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; background: #1a1a1a; color: white; margin: 0; padding: 20px;">
@@ -146184,19 +146338,23 @@ var require_auth = __commonJS({
           }
           const maintenance = await getMaintenanceStatus();
           if (maintenance.enabled) {
-            io2.emit(`google-login-error-${sessionId}`, { message: maintenance.message });
+            emitGoogleRoom(sessionId, `google-login-error-${sessionId}`, { message: maintenance.message });
             return res.send(`<h2>System Maintenance</h2><p>${maintenance.message}</p>`);
           }
           const isAdminAcc = await db2.get("SELECT id FROM admin_users WHERE LOWER(email) = ?", cleanEmail);
           if (isAdminAcc) {
-            io2.emit(`google-login-error-${sessionId}`, { message: "Invalid credentials. No account found with this email address." });
+            emitGoogleRoom(sessionId, `google-login-error-${sessionId}`, { message: "Invalid credentials. No account found with this email address." });
             return res.send("<h2>Error</h2><p>Invalid credentials. No account found with this email address.</p>");
           }
           let user = await db2.get("SELECT * FROM users WHERE LOWER(email) = ?", cleanEmail);
           if (user) {
             if (user.status === "Pending") {
-              io2.emit(`google-login-error-${sessionId}`, { message: "Your account is pending admin approval" });
+              emitGoogleRoom(sessionId, `google-login-error-${sessionId}`, { message: "Your account is pending admin approval" });
               return res.send("<h2>Account Pending</h2><p>Your account is pending admin approval.</p>");
+            }
+            if (user.status === "Disabled" || user.status === "Suspended") {
+              emitGoogleRoom(sessionId, `google-login-error-${sessionId}`, { message: `Your account is ${String(user.status).toLowerCase()}. Please contact an administrator.` });
+              return res.send(`<h2>Account ${user.status}</h2><p>Your account is ${String(user.status).toLowerCase()}.</p>`);
             }
             if (user.password === "google_sso_user" && initialPass && initialPass.trim()) {
               user.password = hashPassword(initialPass.trim());
@@ -146249,7 +146407,7 @@ var require_auth = __commonJS({
               console.error("[Google SSO Callback] Failed to record registration audit log:", auditErr);
             }
             if (status === "Pending") {
-              io2.emit(`google-login-error-${sessionId}`, { message: "Your instructor account has been created and is pending administrator approval." });
+              emitGoogleRoom(sessionId, `google-login-error-${sessionId}`, { message: "Your instructor account has been created and is pending administrator approval." });
               return res.send(`
                         <html>
                             <body style="font-family: sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; background: #1a1a1a; color: white; margin: 0; padding: 20px;">
@@ -146267,7 +146425,7 @@ var require_auth = __commonJS({
           }
           const safeUser = sanitizeUser(user);
           const token = jwt.sign({ id: safeUser.id, email: safeUser.email, role: safeUser.role, name: safeUser.name }, JWT_SECRET2, { expiresIn: "7d" });
-          io2.emit(`google-login-success-${sessionId}`, { user: safeUser, token });
+          emitGoogleRoom(sessionId, `google-login-success-${sessionId}`, { user: safeUser, token });
           const safePayload = JSON.stringify({
             type: "verity-google-auth-success",
             sessionId,
@@ -146296,8 +146454,8 @@ var require_auth = __commonJS({
             `);
         } catch (err) {
           console.error("Google OAuth Callback Error:", err);
-          const sessionToNotify = (req.query?.state || "").split(":")[0];
-          if (sessionToNotify) io2.emit(`google-login-error-${sessionToNotify}`, { message: "Google authentication failed" });
+          const sessionToNotify = sessionId || (req.query?.state || "").split(":")[0];
+          if (sessionToNotify) emitGoogleRoom(sessionToNotify, `google-login-error-${sessionToNotify}`, { message: "Google authentication failed" });
           res.status(500).send("<h2>Authentication Failed</h2><p>An error occurred during Google sign-in. Please try again.</p>");
         }
       });
@@ -146310,7 +146468,16 @@ var require_auth = __commonJS({
           }
           let email, name;
           if (access_token) {
-            const userInfoRes = await fetch(`https://www.googleapis.com/oauth2/v3/userinfo?access_token=${access_token}`);
+            const tokenInfoRes = await fetch(`https://oauth2.googleapis.com/tokeninfo?access_token=${encodeURIComponent(access_token)}`);
+            if (!tokenInfoRes.ok) return res.status(401).json({ message: "Invalid Google token" });
+            const tokenInfo = await tokenInfoRes.json();
+            const tokenAud = tokenInfo?.aud || tokenInfo?.azp || "";
+            if (!ALLOWED_GOOGLE_AUDIENCES.includes(tokenAud)) {
+              return res.status(401).json({ message: "Google token audience mismatch" });
+            }
+            const userInfoRes = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", {
+              headers: { Authorization: `Bearer ${access_token}` }
+            });
             if (!userInfoRes.ok) return res.status(401).json({ message: "Invalid Google token" });
             const userInfo = await userInfoRes.json();
             email = userInfo.email;
@@ -146517,13 +146684,28 @@ var require_users = __commonJS({
           const updatedName = name && name.trim() ? name.trim() : current.name;
           const updatedEmail = current.email;
           const updatedAvatar = avatar !== void 0 ? avatar : current.avatar;
+          const nameChanged = updatedName.trim().toLowerCase() !== String(current.name || "").trim().toLowerCase();
+          if (!isAdmin && nameChanged) {
+            const nameOwner = await db2.get(
+              "SELECT id FROM users WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) AND id != ?",
+              updatedName,
+              targetUserId
+            ).catch(() => null);
+            const adminNameOwner = await db2.get(
+              "SELECT id FROM admin_users WHERE LOWER(TRIM(name)) = LOWER(TRIM(?))",
+              updatedName
+            ).catch(() => null);
+            if (nameOwner || adminNameOwner) {
+              return res.status(409).json({ message: "This display name is already in use by another account." });
+            }
+          }
           if (isAdmin) {
             await db2.run("UPDATE admin_users SET name = ?, avatar = ? WHERE id = ?", updatedName, updatedAvatar, targetUserId);
           } else {
             await db2.run("UPDATE users SET name = ?, avatar = ? WHERE id = ?", updatedName, updatedAvatar, targetUserId);
             if (current.role === "Teacher") {
               await db2.run(
-                "UPDATE classrooms SET instructor = ? WHERE LOWER(instructor_email) = LOWER(?) OR instructor = ?",
+                "UPDATE classrooms SET instructor = ? WHERE LOWER(instructor_email) = LOWER(?) OR (COALESCE(instructor_email, '') = '' AND instructor = ?)",
                 updatedName,
                 current.email,
                 current.name
@@ -146537,13 +146719,27 @@ var require_users = __commonJS({
                 targetUserId
               ).catch(() => {
               });
-              await db2.run(
-                "UPDATE submissions SET student_name = ? WHERE LOWER(TRIM(student_name)) = LOWER(TRIM(?)) OR LOWER(TRIM(student_name)) = LOWER(TRIM(?))",
-                updatedName,
+              const otherSameName = await db2.get(
+                "SELECT id FROM users WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) AND id != ?",
                 current.name,
-                current.email
-              ).catch(() => {
-              });
+                targetUserId
+              ).catch(() => null);
+              if (!otherSameName) {
+                await db2.run(
+                  "UPDATE submissions SET student_name = ? WHERE LOWER(TRIM(student_name)) = LOWER(TRIM(?)) OR LOWER(TRIM(student_name)) = LOWER(TRIM(?))",
+                  updatedName,
+                  current.name,
+                  current.email
+                ).catch(() => {
+                });
+              } else {
+                await db2.run(
+                  "UPDATE submissions SET student_name = ? WHERE LOWER(TRIM(student_name)) = LOWER(TRIM(?))",
+                  updatedName,
+                  current.email
+                ).catch(() => {
+                });
+              }
             }
           }
           const user = {
@@ -146601,8 +146797,8 @@ var require_users = __commonJS({
           if (info.changes === 0) return res.status(404).json({ message: "User not found" });
           await db2.recordSyncDeletion("users", email.trim().toLowerCase());
           try {
-            io2.emit("users_updated");
-            io2.emit("admin_stats_update");
+            io2.to("role:admin").emit("users_updated");
+            io2.to("role:admin").emit("admin_stats_update");
             db2.triggerSync();
           } catch (_) {
           }
@@ -146619,8 +146815,8 @@ var require_users = __commonJS({
           const info = await db2.run("UPDATE users SET status = ? WHERE LOWER(email) = LOWER(?)", status, email);
           if (info.changes === 0) return res.status(404).json({ message: "User not found" });
           try {
-            io2.emit("users_updated");
-            io2.emit("admin_stats_update");
+            io2.to("role:admin").emit("users_updated");
+            io2.to("role:admin").emit("admin_stats_update");
           } catch (_) {
           }
           res.status(200).json({ message: "User status updated" });
@@ -146670,8 +146866,8 @@ var require_users = __commonJS({
           }
           await syncUserEmailAcrossData(existing.id, existing.email, newEmail, newName, newRole);
           try {
-            io2.emit("users_updated");
-            io2.emit("admin_stats_update");
+            io2.to("role:admin").emit("users_updated");
+            io2.to("role:admin").emit("admin_stats_update");
             db2.triggerSync();
           } catch (_) {
           }
@@ -146944,18 +147140,34 @@ var require_classwork = __commonJS({
   "server/routes/classwork.js"(exports2, module2) {
     function registerClassworkRoutes2(app2, { db: db2, io: io2, authMiddleware: authMiddleware2, classroomHelpers: classroomHelpers2 }) {
       const { authenticateToken, requireRole } = authMiddleware2;
-      const { getClassworkFromDb, saveClassworkToDb, checkClassroomAccess } = classroomHelpers2;
+      const { getClassworkFromDb, saveClassworkToDb, checkClassroomAccess, getStudentAccessibleClassroomIds } = classroomHelpers2;
       app2.get("/classwork", authenticateToken, async (req, res) => {
         try {
           const classwork = await getClassworkFromDb();
-          if (req.user?.role === "Admin") {
+          const roleLower = String(req.user?.role || "").toLowerCase();
+          if (roleLower === "admin") {
             return res.status(200).json({ classwork });
           }
-          const isStudentUser = String(req.user?.role || "").toLowerCase() === "student";
+          const isStudentUser = roleLower === "student";
+          if (isStudentUser && typeof getStudentAccessibleClassroomIds === "function") {
+            const allowedClassroomIds = await getStudentAccessibleClassroomIds(req);
+            const filtered2 = classwork.filter(
+              (cw) => !cw.archived && !cw.deleted && cw.classroom_id != null && allowedClassroomIds.has(String(cw.classroom_id))
+            );
+            return res.status(200).json({ classwork: filtered2 });
+          }
+          const accessCache = /* @__PURE__ */ new Map();
           const filtered = [];
           for (const cw of classwork) {
             if (isStudentUser && (cw.archived || cw.deleted)) continue;
-            if (await checkClassroomAccess(req, cw.classroom_id)) filtered.push(cw);
+            if (cw.classroom_id == null) continue;
+            const key = String(cw.classroom_id);
+            let hasAccess = accessCache.get(key);
+            if (hasAccess === void 0) {
+              hasAccess = await checkClassroomAccess(req, cw.classroom_id);
+              accessCache.set(key, hasAccess);
+            }
+            if (hasAccess) filtered.push(cw);
           }
           res.status(200).json({ classwork: filtered });
         } catch (e6) {
@@ -147775,7 +147987,7 @@ var require_csharpSecurityScanner = __commonJS({
       return String(code).replace(/\\u([0-9a-fA-F]{4})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16))).replace(/\\U([0-9a-fA-F]{8})/g, (_, hex) => {
         const cp = parseInt(hex, 16);
         return cp <= 1114111 ? String.fromCodePoint(cp) : _;
-      });
+      }).replace(/\\x([0-9a-fA-F]{1,4})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
     }
     function maskCommentsAndStrings(code) {
       let maskedCode = "";
@@ -147960,7 +148172,8 @@ var require_csharpSecurityScanner = __commonJS({
       { pattern: /\b(HttpClient|TcpClient|UdpClient|WebClient|WebRequest|HttpWebRequest|Socket|TcpListener|RestClient)\b/i, rule: "NETWORK_ACCESS", message: "Restricted API: Network socket/HTTP calls are prohibited in sandbox." },
       { pattern: /\bSystem\s*\.\s*IO\s*\.\s*(File|Directory|FileStream|StreamReader|StreamWriter|FileInfo|DirectoryInfo|DriveInfo|FileSystemWatcher|MemoryMappedFiles|Pipes|Compression)\b/i, rule: "FILESYSTEM_IO", message: "Restricted API: Direct filesystem, compression, or pipe I/O is prohibited in sandbox." },
       { pattern: /\b(ZipFile|ZipArchive|GZipStream|DeflateStream)\b/i, rule: "FILESYSTEM_IO", message: "Restricted API: Archive/compression stream I/O is prohibited in sandbox." },
-      { pattern: /\b(XDocument|XmlDocument|XmlReader|XmlTextReader)\s*\.\s*(Load|Create)\b/i, rule: "FILESYSTEM_IO", message: "Restricted API: External XML loader APIs are prohibited in sandbox." },
+      { pattern: /\b(XDocument|XmlDocument|XmlReader|XmlTextReader|XPathDocument|XmlUrlResolver)\b/i, rule: "FILESYSTEM_IO", message: "Restricted API: External XML loader/resolver APIs are prohibited in sandbox." },
+      { pattern: /\.\s*ReadXml\s*\(/i, rule: "FILESYSTEM_IO", message: "Restricted API: External XML DataSet/DataTable loading is prohibited in sandbox." },
       { pattern: /\b(File|Directory)\s*\.\s*(Read|Write|Append|Open|Create|Delete|Move|Copy|Exists|GetFiles|GetDirectories|Enumerate|SetAttributes|Replace)\w*/i, rule: "FILESYSTEM_IO", message: "Restricted API: Direct filesystem access is prohibited in sandbox." },
       { pattern: /\bnew\s+(FileStream|StreamReader|StreamWriter|FileInfo|DirectoryInfo|DriveInfo|FileSystemWatcher|NamedPipeClientStream|NamedPipeServerStream|ZipArchive|GZipStream|DeflateStream|XmlTextReader)\b/i, rule: "FILESYSTEM_IO", message: "Restricted API: Direct file/stream/pipe handles are prohibited in sandbox." },
       { pattern: /\bMemoryMappedFile\b/i, rule: "FILESYSTEM_IO", message: "Restricted API: MemoryMappedFile is prohibited in sandbox." },
@@ -148214,7 +148427,7 @@ var require_submissions = __commonJS({
                 todayKey()
               ).catch(() => {
               });
-              io2.emit("admin_security_alert", {
+              io2.to("role:admin").emit("admin_security_alert", {
                 user: name,
                 name,
                 studentId: name,
@@ -148224,7 +148437,7 @@ var require_submissions = __commonJS({
                 isMaliciousScript: true,
                 timestamp: nowIso
               });
-              io2.emit("admin_stats_update");
+              io2.to("role:admin").emit("admin_stats_update");
               return res.status(400).json({ message: `Submission rejected: Malicious code detected [${secCheck.rule}]. This incident has been logged in Security Audit Logs.` });
             }
           }
@@ -148732,7 +148945,7 @@ var require_admin = __commonJS({
                 assignmentId: aId
               });
             }
-            io2.emit("admin_security_alert", {
+            io2.to("role:admin").emit("admin_security_alert", {
               user,
               name: user,
               studentId: user,
@@ -148743,7 +148956,7 @@ var require_admin = __commonJS({
               isSystemExit,
               timestamp
             });
-            io2.emit("admin_stats_update");
+            io2.to("role:admin").emit("admin_stats_update");
           }
           res.status(201).json({ message: "Log entry saved", timestamp });
         } catch (e6) {
@@ -148984,11 +149197,48 @@ var require_registerSocketHandlers = __commonJS({
         relayUnsubmitExam
       } = activeStudentsService2;
       let currentInstruction = "";
-      io2.use((socket, next) => {
+      const activeCompilesByUser = /* @__PURE__ */ new Map();
+      const MAX_CONCURRENT_COMPILES_PER_USER = 2;
+      const acquireUserCompileSlot = (userKey) => {
+        const cur = activeCompilesByUser.get(userKey) || 0;
+        if (cur >= MAX_CONCURRENT_COMPILES_PER_USER) return false;
+        activeCompilesByUser.set(userKey, cur + 1);
+        return true;
+      };
+      const releaseUserCompileSlot = (userKey) => {
+        const cur = activeCompilesByUser.get(userKey) || 0;
+        if (cur <= 1) activeCompilesByUser.delete(userKey);
+        else activeCompilesByUser.set(userKey, cur - 1);
+      };
+      const isSocketUserActiveInDb = async (verifiedUser) => {
+        if (!verifiedUser) return false;
+        const roleLower = String(verifiedUser.role || "").toLowerCase();
+        const tbl = roleLower === "admin" ? "admin_users" : "users";
+        const lookupEmail = String(verifiedUser.email || "").trim().toLowerCase();
+        try {
+          const row = lookupEmail ? await db2.get(`SELECT id, status FROM ${tbl} WHERE id = ? OR LOWER(email) = ?`, verifiedUser.id ?? -1, lookupEmail) : await db2.get(`SELECT id, status FROM ${tbl} WHERE id = ?`, verifiedUser.id ?? -1);
+          if (!row) return false;
+          const statusLower = String(row.status || "Active").toLowerCase();
+          return statusLower !== "disabled" && statusLower !== "suspended" && statusLower !== "pending";
+        } catch (_) {
+          return true;
+        }
+      };
+      const joinSocketRoleRooms = (targetSocket, user) => {
+        if (!targetSocket || !user) return;
+        targetSocket.join("role:authenticated");
+        const r6 = String(user.role || "").toLowerCase();
+        if (r6 === "admin") targetSocket.join("role:admin");
+        if (r6 === "teacher" || r6 === "instructor") targetSocket.join("role:teacher");
+      };
+      io2.use(async (socket, next) => {
         const token = socket.handshake.auth?.token || socket.handshake.query?.token;
         if (token) {
           const user = verifySessionToken(token);
-          if (user) socket.user = user;
+          if (user && await isSocketUserActiveInDb(user)) {
+            socket.user = user;
+            joinSocketRoleRooms(socket, user);
+          }
         }
         if (isValidCloudRelaySecret(socket.handshake.auth?.relaySecret)) {
           socket.isCloudRelay = true;
@@ -148997,6 +149247,11 @@ var require_registerSocketHandlers = __commonJS({
       });
       io2.on("connection", (socket) => {
         console.log("[Workspace] Student Connected: " + socket.id);
+        socket.on("join_google_auth_session", (sessionId) => {
+          if (typeof sessionId === "string" && /^[a-zA-Z0-9_-]{12,64}$/.test(sessionId)) {
+            socket.join(`google-auth:${sessionId}`);
+          }
+        });
         socket.on("get_active_activities", (data) => {
           socket.emit("active_activities_update", {
             counts: getActiveActivitiesMap(data?.classroomId),
@@ -149034,12 +149289,16 @@ var require_registerSocketHandlers = __commonJS({
           dotnetManager2.cancelInstallDotnet(io2);
         });
         let activeProcess = null;
-        const authenticateSocket = (targetSocket, token) => {
-          if (targetSocket.user) return targetSocket.user;
+        const authenticateSocket = async (targetSocket, token) => {
+          if (targetSocket.user) {
+            joinSocketRoleRooms(targetSocket, targetSocket.user);
+            return targetSocket.user;
+          }
           if (token && typeof token === "string") {
             const verified = verifySessionToken(token);
-            if (verified) {
+            if (verified && await isSocketUserActiveInDb(verified)) {
               targetSocket.user = verified;
+              joinSocketRoleRooms(targetSocket, verified);
               targetSocket.emit("authenticated", { user: { id: verified.id, email: verified.email, role: verified.role } });
               return targetSocket.user;
             }
@@ -149050,9 +149309,9 @@ var require_registerSocketHandlers = __commonJS({
           const r6 = String(user?.role || "").toLowerCase();
           return r6 === "teacher" || r6 === "instructor" || r6 === "admin";
         };
-        const ensureSocketAuthOrRelay = (targetSocket, payload) => {
+        const ensureSocketAuthOrRelay = async (targetSocket, payload) => {
           if (targetSocket.isCloudRelay || targetSocket.user) return true;
-          if (payload?.token && authenticateSocket(targetSocket, payload.token)) return true;
+          if (payload?.token && await authenticateSocket(targetSocket, payload.token)) return true;
           return false;
         };
         const resolveSocketStudentIdentity = (targetSocket, payload) => {
@@ -149067,17 +149326,19 @@ var require_registerSocketHandlers = __commonJS({
         };
         const handshakeToken = socket.handshake.auth?.token;
         if (handshakeToken) {
-          authenticateSocket(socket, handshakeToken);
-          if (socket.user) {
-            getKioskSettings().then((cfg) => socket.emit("kiosk_settings", cfg)).catch(() => {
-            });
-          }
+          authenticateSocket(socket, handshakeToken).then((u) => {
+            if (u) {
+              getKioskSettings().then((cfg) => socket.emit("kiosk_settings", cfg)).catch(() => {
+              });
+            }
+          }).catch(() => {
+          });
         }
-        socket.on("authenticate", (data) => {
+        socket.on("authenticate", async (data) => {
           if (!data) return;
           let u = null;
-          if (typeof data === "string") u = authenticateSocket(socket, data);
-          else if (typeof data === "object") u = authenticateSocket(socket, data.token);
+          if (typeof data === "string") u = await authenticateSocket(socket, data);
+          else if (typeof data === "object") u = await authenticateSocket(socket, data.token);
           if (u) {
             checkAndFlagMultipleLogins(u, socket, socket.id).catch(() => {
             });
@@ -149116,7 +149377,7 @@ var require_registerSocketHandlers = __commonJS({
         }
         socket.on("teacher_join", async (data) => {
           const { classroomId, assignmentId } = data || {};
-          if (!socket.user) authenticateSocket(socket, data?.token || socket.handshake.auth?.token);
+          if (!socket.user) await authenticateSocket(socket, data?.token || socket.handshake.auth?.token);
           if (!socket.user || !isSocketInstructorOrAdmin(socket.user)) {
             return socket.emit("error", { message: "Access denied: Teacher role required." });
           }
@@ -149273,7 +149534,13 @@ var require_registerSocketHandlers = __commonJS({
           }
           io2.emit("announcement_deleted", { classroomId: Number(classroomId), announcementId: Number(announcementId) });
         });
-        async function compileStudentCode(projectDir, code, extraFiles = []) {
+        async function compileStudentCode(projectDir, code, extraFiles = [], onFinished = null) {
+          let slotReleased = false;
+          const finishSlot = () => {
+            if (slotReleased) return;
+            slotReleased = true;
+            if (typeof onFinished === "function") onFinished();
+          };
           fs3.writeFileSync(path2.join(projectDir, "Program.cs"), code || "", "utf8");
           const extraNames = /* @__PURE__ */ new Set();
           for (const ef of extraFiles) {
@@ -149331,6 +149598,7 @@ var require_registerSocketHandlers = __commonJS({
               socket.emit("terminal_output", "\n[Compilation timed out]\n");
               socket.emit("process_exit", { code: 1 });
               activeProcess = null;
+              finishSlot();
             }
           }, 15e3);
           buildProcess.on("error", (err) => {
@@ -149340,15 +149608,20 @@ var require_registerSocketHandlers = __commonJS({
 `);
             socket.emit("process_exit", { code: 1 });
             activeProcess = null;
+            finishSlot();
           });
           buildProcess.on("close", (buildCode) => {
             clearTimeout(buildTimeout);
-            if (activeProcess !== buildProcess) return;
+            if (activeProcess !== buildProcess) {
+              finishSlot();
+              return;
+            }
             socket.emit("compiler_diagnostics", parseCompilerDiagnostics(rawCompilerOutput));
             if (buildCode !== 0 || !fs3.existsSync(dllPath)) {
               socket.emit("terminal_output", rawCompilerOutput + "\n[Build failed. Fix the build errors and run again.]\n");
               socket.emit("process_exit", { code: 1 });
               activeProcess = null;
+              finishSlot();
               return;
             }
             socket.emit("terminal_output", "Running...\n\n");
@@ -149357,6 +149630,7 @@ var require_registerSocketHandlers = __commonJS({
             const sandboxEnv = createSandboxedRunEnv(sandboxRunDir);
             const runProcess = spawn("dotnet", [dllPath], { cwd: sandboxRunDir, env: sandboxEnv });
             runProcess._sandboxRunDir = sandboxRunDir;
+            runProcess._finishSlot = finishSlot;
             activeProcess = runProcess;
             let totalOutputBytes = 0;
             const MAX_OUTPUT_BYTES = 128 * 1024;
@@ -149371,6 +149645,7 @@ var require_registerSocketHandlers = __commonJS({
                 socket.emit("terminal_output", "\n[Process terminated: Execution limit of 20s exceeded]\n");
                 socket.emit("process_exit", { code: 1 });
                 activeProcess = null;
+                finishSlot();
               }
             }, 2e4);
             runProcess.on("error", (err) => {
@@ -149381,6 +149656,7 @@ var require_registerSocketHandlers = __commonJS({
 `);
               socket.emit("process_exit", { code: 1 });
               activeProcess = null;
+              finishSlot();
             });
             const handleRunOutput = (data) => {
               if (isOutputCapped) return;
@@ -149395,6 +149671,7 @@ var require_registerSocketHandlers = __commonJS({
                 socket.emit("terminal_output", "\n\n[Process terminated: Execution output exceeded 128 KB limit (Infinite output loop detected)]\n");
                 socket.emit("process_exit", { code: 1 });
                 activeProcess = null;
+                finishSlot();
                 return;
               }
               socket.emit("terminal_output", data.toString());
@@ -149409,12 +149686,13 @@ var require_registerSocketHandlers = __commonJS({
 `);
               socket.emit("process_exit", { code: runCode ?? 0 });
               activeProcess = null;
+              finishSlot();
             });
           });
         }
         socket.on("compile_code", async (data) => {
           try {
-            if (!socket.user) authenticateSocket(socket, data?.token || socket.handshake.auth?.token);
+            if (!socket.user) await authenticateSocket(socket, data?.token || socket.handshake.auth?.token);
             if (!socket.user) {
               socket.emit("terminal_output", "Error: Authentication required to execute code. Please log in.\n");
               return socket.emit("process_exit", { code: 1 });
@@ -149453,6 +149731,20 @@ var require_registerSocketHandlers = __commonJS({
               return socket.emit("process_exit", { code: 1 });
             }
             const studentKey = socket.user?.id ? `u_${socket.user.id}` : socket.user?.email ? `e_${socket.user.email.replace(/[^a-zA-Z0-9]/g, "_")}` : `s_${socket.id.replace(/[^a-zA-Z0-9]/g, "")}`;
+            if (activeProcess) {
+              const prevFinish = activeProcess._finishSlot;
+              try {
+                killProcessTree(activeProcess);
+              } catch (_) {
+              }
+              activeProcess = null;
+              if (typeof prevFinish === "function") prevFinish();
+            }
+            if (!acquireUserCompileSlot(studentKey)) {
+              socket.emit("terminal_output", "\n[Compiler busy: Too many concurrent executions for this account. Please wait.]\n");
+              return socket.emit("process_exit", { code: 1 });
+            }
+            const releaseThisSlot = () => releaseUserCompileSlot(studentKey);
             let projectDir = sessionWorkspaces.get(studentKey)?.projectDir;
             if (!projectDir) {
               projectDir = path2.join(os3.tmpdir(), `verity_ws_${studentKey}`);
@@ -149475,25 +149767,19 @@ var require_registerSocketHandlers = __commonJS({
               } catch (_) {
               }
             }
-            if (activeProcess) {
-              try {
-                killProcessTree(activeProcess);
-              } catch (_) {
-              }
-              activeProcess = null;
-            }
             if (isFirstCompile) {
               socket.emit("terminal_output", "Initializing compiler environment...\n");
               try {
                 await ensureBaseTemplate();
                 if (!fs3.existsSync(projectDir)) fs3.mkdirSync(projectDir, { recursive: true });
                 fs3.cpSync(COMPILER_BASE_DIR, projectDir, { recursive: true });
-                await compileStudentCode(projectDir, code, extraFiles);
+                await compileStudentCode(projectDir, code, extraFiles, releaseThisSlot);
               } catch (err) {
                 console.warn("Fast template clone failed, falling back to dotnet new:", err.message);
                 exec(`dotnet new console -n verity_base --no-restore --framework ${targetFramework} -o "${projectDir}"`, { env: OFFLINE_DOTNET_ENV }, async (newErr) => {
                   if (newErr) {
                     sessionWorkspaces.delete(studentKey);
+                    releaseThisSlot();
                     socket.emit("terminal_output", "Error: Could not initialize .NET compiler.\n");
                     return socket.emit("process_exit", { code: 1 });
                   }
@@ -149502,11 +149788,11 @@ var require_registerSocketHandlers = __commonJS({
                     execSync(`dotnet restore "${path2.join(projectDir, "verity_base.csproj")}" --ignore-failed-sources -v q`, { cwd: projectDir, env: OFFLINE_DOTNET_ENV });
                   } catch (_) {
                   }
-                  await compileStudentCode(projectDir, code, extraFiles);
+                  await compileStudentCode(projectDir, code, extraFiles, releaseThisSlot);
                 });
               }
             } else {
-              await compileStudentCode(projectDir, code, extraFiles);
+              await compileStudentCode(projectDir, code, extraFiles, releaseThisSlot);
             }
           } catch (error2) {
             console.error("Compiler error:", error2);
@@ -149522,6 +149808,7 @@ var require_registerSocketHandlers = __commonJS({
         socket.on("stop_code", () => {
           if (activeProcess) {
             const dirToClean = activeProcess._sandboxRunDir;
+            const finish = activeProcess._finishSlot;
             try {
               killProcessTree(activeProcess);
             } catch (_) {
@@ -149530,11 +149817,13 @@ var require_registerSocketHandlers = __commonJS({
             socket.emit("terminal_output", "\n[Process stopped by user]\n");
             socket.emit("process_exit", { code: 0 });
             activeProcess = null;
+            if (typeof finish === "function") finish();
           }
         });
         socket.on("run_test_cases", async (data) => {
+          let acquiredTestKey = null;
           try {
-            if (!socket.user) authenticateSocket(socket, data?.token || socket.handshake.auth?.token);
+            if (!socket.user) await authenticateSocket(socket, data?.token || socket.handshake.auth?.token);
             const { code, extraFiles = [], testCases = [], language } = data || {};
             if (!socket.user) {
               return socket.emit("test_cases_results", {
@@ -149597,6 +149886,19 @@ var require_registerSocketHandlers = __commonJS({
               });
             }
             const studentKey = socket.user?.id ? `u_${socket.user.id}` : socket.user?.email ? `e_${socket.user.email.replace(/[^a-zA-Z0-9]/g, "_")}` : `s_${socket.id.replace(/[^a-zA-Z0-9]/g, "")}`;
+            if (!acquireUserCompileSlot(studentKey)) {
+              return socket.emit("test_cases_results", {
+                results: testCases.map((tc) => ({
+                  id: tc.id,
+                  status: "error",
+                  passed: false,
+                  actualOutput: "",
+                  expectedOutput: tc.expectedOutput || "",
+                  error: "Compiler busy: Too many concurrent test runs for this account."
+                }))
+              });
+            }
+            acquiredTestKey = studentKey;
             let ws = sessionWorkspaces.get(studentKey);
             let projectDir = ws?.projectDir;
             if (!projectDir) {
@@ -149813,13 +150115,15 @@ var require_registerSocketHandlers = __commonJS({
           } catch (error2) {
             console.error("Test case error:", error2);
             socket.emit("test_cases_results", { results: [] });
+          } finally {
+            if (acquiredTestKey) releaseUserCompileSlot(acquiredTestKey);
           }
         });
         const activityCwCache = /* @__PURE__ */ new Map();
         const activityClassCache = /* @__PURE__ */ new Map();
         const ACTIVITY_META_TTL_MS = 3e4;
         const handleStudentActivity = async (data, isExplicitEnter = false) => {
-          if (!ensureSocketAuthOrRelay(socket, data)) {
+          if (!await ensureSocketAuthOrRelay(socket, data)) {
             return socket.emit("error", { message: "Authentication required." });
           }
           if (!data || !data.studentId && !data.name && !socket.user || data.submitted) return;
@@ -149944,7 +150248,7 @@ var require_registerSocketHandlers = __commonJS({
         socket.on("student_enter_activity", (data) => handleStudentActivity(data, true));
         socket.on("student_typing", (data) => handleStudentActivity(data, false));
         socket.on("proctor_alert", async (data) => {
-          if (!ensureSocketAuthOrRelay(socket, data)) {
+          if (!await ensureSocketAuthOrRelay(socket, data)) {
             return socket.emit("error", { message: "Authentication required." });
           }
           const isStudentCaller = !socket.isCloudRelay && socket.user && String(socket.user.role || "").toLowerCase() === "student";
@@ -150073,14 +150377,14 @@ var require_registerSocketHandlers = __commonJS({
                 data.desc || (data.classroomId ? `${data.action || "Violation alert"} in classroom ${data.classroomId}` : data.action || "Violation alert")
               );
             }
-            io2.emit("admin_security_alert", { ...data, isCrash, isAltTabCopyPaste, isSystemExit, timestamp: nowIso });
-            io2.emit("admin_stats_update");
+            io2.to("role:admin").emit("admin_security_alert", { ...data, isCrash, isAltTabCopyPaste, isSystemExit, timestamp: nowIso });
+            io2.to("role:admin").emit("admin_stats_update");
           } catch (e6) {
             console.error(e6);
           }
         });
         socket.on("submit_exam", async (data) => {
-          if (!ensureSocketAuthOrRelay(socket, data)) {
+          if (!await ensureSocketAuthOrRelay(socket, data)) {
             return socket.emit("error", { message: "Authentication required." });
           }
           if (!data) return;
@@ -150118,7 +150422,9 @@ var require_registerSocketHandlers = __commonJS({
           socket.to(roomName).emit("teacher_receive_submission", payload);
           if (assignmentId && assignmentId !== "unassigned") socket.to(`assignment:${assignmentId}`).emit("teacher_receive_submission", payload);
           socket.to(roomName).emit("teacher_student_left", { studentId: targetId, studentName: authenticatedName, studentIdNum: authenticatedId, reason: "submitted", assignmentId, classroomId });
-          io2.emit("teacher_student_left", { studentId: targetId, studentName: authenticatedName, studentIdNum: authenticatedId, reason: "submitted", assignmentId, classroomId });
+          if (assignmentId && assignmentId !== "unassigned") socket.to(`assignment:${assignmentId}`).emit("teacher_student_left", { studentId: targetId, studentName: authenticatedName, studentIdNum: authenticatedId, reason: "submitted", assignmentId, classroomId });
+          io2.to("role:teacher").emit("teacher_student_left", { studentId: targetId, studentName: authenticatedName, studentIdNum: authenticatedId, reason: "submitted", assignmentId, classroomId });
+          io2.to("role:admin").emit("teacher_student_left", { studentId: targetId, studentName: authenticatedName, studentIdNum: authenticatedId, reason: "submitted", assignmentId, classroomId });
           relaySubmitExam(payload);
           relayStudentLeft({ studentId: targetId, studentName: authenticatedName, studentIdNum: authenticatedId, reason: "submitted", assignmentId, classroomId });
           try {
@@ -150144,7 +150450,7 @@ var require_registerSocketHandlers = __commonJS({
           }
         });
         socket.on("unsubmit_exam", async (data) => {
-          if (!ensureSocketAuthOrRelay(socket, data)) {
+          if (!await ensureSocketAuthOrRelay(socket, data)) {
             return socket.emit("unsubmit_error", { message: "Authentication required.", assignmentId: data?.assignmentId });
           }
           if (!data) return;
@@ -150196,25 +150502,27 @@ var require_registerSocketHandlers = __commonJS({
           socket.broadcast.emit("student_unsubmitted", { studentName, assignmentId, studentId: safeStudentId });
           relayUnsubmitExam({ studentName, assignmentId, studentId: safeStudentId, classroomId });
         });
-        socket.on("student_terminal_update", (data) => {
-          if (!ensureSocketAuthOrRelay(socket, data)) return;
+        socket.on("student_terminal_update", async (data) => {
+          if (!await ensureSocketAuthOrRelay(socket, data)) return;
           let payload = data;
           if (!socket.isCloudRelay && socket.user && String(socket.user.role || "").toLowerCase() === "student" && data) {
             const { studentId, studentName } = resolveSocketStudentIdentity(socket, data);
             payload = { ...data, studentId, id: studentId, name: studentName, studentName };
           }
           if (payload?.classroomId && payload?.assignmentId) io2.to(`classroom:${payload.classroomId}:assignment:${payload.assignmentId}`).emit("teacher_terminal_update", payload);
-          else socket.broadcast.emit("teacher_terminal_update", payload);
+          else if (payload?.assignmentId && payload.assignmentId !== "none") io2.to(`assignment:${payload.assignmentId}`).emit("teacher_terminal_update", payload);
           relayTerminalUpdate(payload);
         });
-        socket.on("student_leave_workspace", (data) => {
-          if (!ensureSocketAuthOrRelay(socket, data)) return;
+        socket.on("student_leave_workspace", async (data) => {
+          if (!await ensureSocketAuthOrRelay(socket, data)) return;
           if (activeProcess) {
+            const finish = activeProcess._finishSlot;
             try {
               killProcessTree(activeProcess);
             } catch (_) {
             }
             activeProcess = null;
+            if (typeof finish === "function") finish();
           }
           const isStudentCaller = !socket.isCloudRelay && socket.user && String(socket.user.role || "").toLowerCase() === "student";
           const studentId = isStudentCaller ? String(socket.user.id || socket.data.studentId || data?.studentId || "") : socket.data.studentId || data?.studentId;
@@ -150229,7 +150537,8 @@ var require_registerSocketHandlers = __commonJS({
             io2.to(roomName).emit("teacher_student_left", leftPayload);
             socket.leave(roomName);
           }
-          socket.broadcast.emit("teacher_student_left", leftPayload);
+          io2.to("role:teacher").emit("teacher_student_left", leftPayload);
+          io2.to("role:admin").emit("teacher_student_left", leftPayload);
           relayStudentLeft(leftPayload);
           socket.data.studentKey = null;
           socket.data.studentId = null;
@@ -150239,8 +150548,8 @@ var require_registerSocketHandlers = __commonJS({
           socket.data.roomName = null;
           broadcastActiveActivities();
         });
-        socket.on("teacher_student_left", (data) => {
-          if (!ensureSocketAuthOrRelay(socket, data)) return;
+        socket.on("teacher_student_left", async (data) => {
+          if (!await ensureSocketAuthOrRelay(socket, data)) return;
           if (!data) return;
           const targetId = String(data.studentId || data.studentIdNum || "");
           const targetName = String(data.studentName || data.name || "");
@@ -150257,11 +150566,13 @@ var require_registerSocketHandlers = __commonJS({
         });
         socket.on("disconnect", async () => {
           if (activeProcess) {
+            const finish = activeProcess._finishSlot;
             try {
               killProcessTree(activeProcess);
             } catch (_) {
             }
             activeProcess = null;
+            if (typeof finish === "function") finish();
           }
           const studentId = socket.data.studentId || socket.user?.id;
           const studentName = socket.data.studentName || socket.user?.name;
@@ -150271,7 +150582,8 @@ var require_registerSocketHandlers = __commonJS({
           if (studentId || studentName) removeStudentFromPreviousActivities(studentId, studentName);
           const leftPayload = { studentId, studentName, classroomId, assignmentId, reason: "disconnected" };
           if (socket.data.roomName) io2.to(socket.data.roomName).emit("teacher_student_left", leftPayload);
-          socket.broadcast.emit("teacher_student_left", leftPayload);
+          io2.to("role:teacher").emit("teacher_student_left", leftPayload);
+          io2.to("role:admin").emit("teacher_student_left", leftPayload);
           broadcastActiveActivities();
           if (socket.user && socket.user.role === "Student") {
             const userName = socket.user.name || socket.user.email || "Student";
@@ -150295,7 +150607,7 @@ var require_registerSocketHandlers = __commonJS({
                   "Warning",
                   `Student exited the system: ${userName} closed or disconnected application (outside workspace)`
                 );
-                io2.emit("admin_security_alert", {
+                io2.to("role:admin").emit("admin_security_alert", {
                   user: userName,
                   name: userName,
                   studentId: socket.user.id || userName,
@@ -150306,7 +150618,7 @@ var require_registerSocketHandlers = __commonJS({
                   isSystemExit: true,
                   timestamp: nowIso
                 });
-                io2.emit("admin_stats_update");
+                io2.to("role:admin").emit("admin_stats_update");
               }
             } catch (_) {
             }

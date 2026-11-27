@@ -1,11 +1,12 @@
-import { lazy, Suspense } from 'react';
+import { Suspense } from 'react';
 import ProtectedRoute from '../ProtectedRoute';
 import PageLoader from '../PageLoader';
 import StudentDashboard from '../../pages/StudentDashboard';
+import { lazyWithRetry } from '../../utils/lazyWithRetry';
 
-const ClassroomView = lazy(() => import('../../pages/ClassroomView'));
-const StudentActivityDetail = lazy(() => import('../../pages/StudentActivityDetail'));
-const StudentView = lazy(() => import('../../pages/StudentView'));
+const ClassroomView = lazyWithRetry(() => import('../../pages/ClassroomView'));
+const StudentActivityDetail = lazyWithRetry(() => import('../../pages/StudentActivityDetail'));
+const StudentView = lazyWithRetry(() => import('../../pages/StudentView'));
 
 export default function AppStudentRoutes({
   currentScreen,

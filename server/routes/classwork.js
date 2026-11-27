@@ -3,19 +3,36 @@
  */
 function registerClassworkRoutes(app, { db, io, authMiddleware, classroomHelpers }) {
     const { authenticateToken, requireRole } = authMiddleware;
-    const { getClassworkFromDb, saveClassworkToDb, checkClassroomAccess } = classroomHelpers;
+    const { getClassworkFromDb, saveClassworkToDb, checkClassroomAccess, getStudentAccessibleClassroomIds } = classroomHelpers;
 
     app.get('/classwork', authenticateToken, async (req, res) => {
         try {
             const classwork = await getClassworkFromDb();
-            if (req.user?.role === 'Admin') {
+            const roleLower = String(req.user?.role || '').toLowerCase();
+            if (roleLower === 'admin') {
                 return res.status(200).json({ classwork });
             }
-            const isStudentUser = String(req.user?.role || '').toLowerCase() === 'student';
+            const isStudentUser = roleLower === 'student';
+            if (isStudentUser && typeof getStudentAccessibleClassroomIds === 'function') {
+                const allowedClassroomIds = await getStudentAccessibleClassroomIds(req);
+                const filtered = classwork.filter(
+                    (cw) => !cw.archived && !cw.deleted && cw.classroom_id != null && allowedClassroomIds.has(String(cw.classroom_id))
+                );
+                return res.status(200).json({ classwork: filtered });
+            }
+
+            const accessCache = new Map();
             const filtered = [];
             for (const cw of classwork) {
                 if (isStudentUser && (cw.archived || cw.deleted)) continue;
-                if (await checkClassroomAccess(req, cw.classroom_id)) filtered.push(cw);
+                if (cw.classroom_id == null) continue;
+                const key = String(cw.classroom_id);
+                let hasAccess = accessCache.get(key);
+                if (hasAccess === undefined) {
+                    hasAccess = await checkClassroomAccess(req, cw.classroom_id);
+                    accessCache.set(key, hasAccess);
+                }
+                if (hasAccess) filtered.push(cw);
             }
             res.status(200).json({ classwork: filtered });
         } catch (e) {

@@ -280,7 +280,7 @@ function registerUploadRoutes(app, { db, DATA_DIR, IS_RENDER_CLOUD, r2Storage, a
 
         const localTarget = path.join(UPLOADS_DIR, requestedName);
 
-        if (IS_RENDER_CLOUD && r2Storage.isR2Configured() && (req.method === 'GET' || req.method === 'HEAD') && req.query.proxy !== '1') {
+        if (IS_RENDER_CLOUD && r2Storage.isR2Configured() && (req.method === 'GET' || req.method === 'HEAD') && req.query.proxy !== '1' && path.extname(requestedName).toLowerCase() !== '.svg') {
             let inR2 = await r2Storage.existsInR2Cached(requestedName).catch(() => false);
             if (!inR2 && !fs.existsSync(localTarget)) {
                 const restored = await db.restoreUploadFromCloudDb(requestedName, localTarget).catch(() => false);
@@ -500,9 +500,16 @@ function registerUploadRoutes(app, { db, DATA_DIR, IS_RENDER_CLOUD, r2Storage, a
         }
     }
 
+    const MAX_RAW_UPLOAD_BYTES = 200 * 1024 * 1024;
+
     app.post('/upload-raw', authenticateToken, (req, res) => {
         req.setTimeout(0);
         res.setTimeout(0);
+
+        const contentLength = Number(req.headers['content-length'] || 0);
+        if (Number.isFinite(contentLength) && contentLength > MAX_RAW_UPLOAD_BYTES) {
+            return res.status(413).json({ message: 'Upload exceeds maximum 200 MB file size limit.' });
+        }
 
         const rawFilename = req.query.filename || req.headers['x-filename'] || 'file.mp4';
         const ext = path.extname(rawFilename).toLowerCase();
@@ -515,6 +522,7 @@ function registerUploadRoutes(app, { db, DATA_DIR, IS_RENDER_CLOUD, r2Storage, a
         const targetPath = path.join(UPLOADS_DIR, unique);
         const writeStream = fs.createWriteStream(targetPath);
         let finished = false;
+        let receivedBytes = 0;
 
         const cleanupPartial = () => {
             if (finished) return;
@@ -522,6 +530,16 @@ function registerUploadRoutes(app, { db, DATA_DIR, IS_RENDER_CLOUD, r2Storage, a
             try { writeStream.destroy(); } catch (_) { }
             fs.unlink(targetPath, () => { });
         };
+
+        req.on('data', (chunk) => {
+            receivedBytes += chunk.length;
+            if (receivedBytes > MAX_RAW_UPLOAD_BYTES) {
+                req.unpipe(writeStream);
+                cleanupPartial();
+                if (!res.headersSent) res.status(413).json({ message: 'Upload exceeds maximum 200 MB file size limit.' });
+                req.destroy();
+            }
+        });
 
         req.on('aborted', cleanupPartial);
         req.on('error', (err) => {

@@ -4,7 +4,7 @@
  * re-checking in the background so the app recovers automatically.
  */
 import { state } from './connectionState';
-import { getLocalApiUrl, isHostedWebEnv } from './serverUrls';
+import { getLocalApiUrl, isHostedWebEnv, isLoopbackUrl } from './serverUrls';
 import { notifyListeners, getIsLanConnected } from './connectionStatus';
 import { checkCloudHealth, checkLocalHealth } from './healthChecks';
 import { attemptAutoLanReconnect } from './lanDiscovery';
@@ -12,8 +12,10 @@ import { attemptAutoLanReconnect } from './lanDiscovery';
 // Asks the local server to sync with the cloud (fire-and-forget)
 const pingLocalSync = () => {
   try {
+    const localUrl = getLocalApiUrl();
     const token = typeof localStorage !== 'undefined' ? (localStorage.getItem('verity_token') || localStorage.getItem('token')) : null;
-    fetch(`${getLocalApiUrl()}/api/sync`, {
+    if (!token && !isLoopbackUrl(localUrl)) return;
+    fetch(`${localUrl}/api/sync`, {
       method: 'POST',
       headers: token ? { Authorization: `Bearer ${token}` } : {}
     }).catch(() => {});

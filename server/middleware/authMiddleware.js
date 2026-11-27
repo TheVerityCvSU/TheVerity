@@ -5,6 +5,7 @@ const jwt = require('jsonwebtoken');
  */
 function createAuthMiddleware({ JWT_SECRET, IS_RENDER_CLOUD, db = null }) {
     const adminLoginAttempts = new Map();
+    const userLoginAttempts = new Map();
     const otpAttemptCounts = new Map();
     const otpSendCooldowns = new Map();
 
@@ -74,6 +75,57 @@ function createAuthMiddleware({ JWT_SECRET, IS_RENDER_CLOUD, db = null }) {
 
         req.adminRateRecord = record;
         req.clientIp = clientIp;
+        next();
+    };
+
+    const loginRateLimiter = (req, res, next) => {
+        const clientIp = req.ip || req.connection?.remoteAddress || 'unknown';
+        const rawId = String(req.body?.email || req.body?.username || req.body?.identifier || '').trim().toLowerCase();
+        const now = Date.now();
+        const windowMs = 15 * 60 * 1000;
+
+        const ipKey = `ip:${clientIp}`;
+        const ipRec = userLoginAttempts.get(ipKey) || { count: 0, resetTime: now + windowMs };
+        if (now > ipRec.resetTime) {
+            ipRec.count = 0;
+            ipRec.resetTime = now + windowMs;
+        }
+        if (ipRec.count >= 60) {
+            const remainingMinutes = Math.ceil((ipRec.resetTime - now) / 60000);
+            return res.status(429).json({
+                message: `Too many failed login attempts from this network. Please wait ${remainingMinutes} minute(s).`
+            });
+        }
+
+        const acctKey = rawId ? `acct:${clientIp}:${rawId}` : null;
+        let acctRec = null;
+        if (acctKey) {
+            acctRec = userLoginAttempts.get(acctKey) || { count: 0, resetTime: now + windowMs };
+            if (now > acctRec.resetTime) {
+                acctRec.count = 0;
+                acctRec.resetTime = now + windowMs;
+            }
+            if (acctRec.count >= 8) {
+                const remainingMinutes = Math.ceil((acctRec.resetTime - now) / 60000);
+                return res.status(429).json({
+                    message: `Too many failed login attempts for this account. Please wait ${remainingMinutes} minute(s).`
+                });
+            }
+        }
+
+        req.loginRateMeta = {
+            recordFailure: () => {
+                ipRec.count += 1;
+                userLoginAttempts.set(ipKey, ipRec);
+                if (acctKey && acctRec) {
+                    acctRec.count += 1;
+                    userLoginAttempts.set(acctKey, acctRec);
+                }
+            },
+            clearSuccess: () => {
+                if (acctKey) userLoginAttempts.delete(acctKey);
+            }
+        };
         next();
     };
 
@@ -163,11 +215,13 @@ function createAuthMiddleware({ JWT_SECRET, IS_RENDER_CLOUD, db = null }) {
 
     return {
         adminLoginAttempts,
+        userLoginAttempts,
         otpAttemptCounts,
         checkOtpSendRateLimit,
         isIpWhitelisted,
         adminIpWhitelist,
         adminLoginRateLimiter,
+        loginRateLimiter,
         isLoopbackAddress,
         verifySessionToken,
         authenticateToken,

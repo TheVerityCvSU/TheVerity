@@ -1,14 +1,15 @@
 import { useState, useEffect, useRef } from 'react';
-import { 
-  getConnectionStatus, 
-  subscribeConnectionStatus, 
-  setCustomLanServer, 
+import {
+  getConnectionStatus,
+  subscribeConnectionStatus,
+  setCustomLanServer,
   switchToCloudMode,
   switchToLanMode,
   getLocalApiUrl,
   getCloudUrl,
   apiFetch
 } from '../data/api';
+import { isLoopbackUrl } from '../data/server/serverUrls';
 import syncService from '../data/syncService';
 import { useDarkMode } from '../hooks/useDarkMode';
 import NetworkStatusDot from './networkStatus/NetworkStatusDot';
@@ -177,11 +178,16 @@ export default function NetworkStatusIndicator({ hidden = false, position = 'rig
   };
 
   const handleTriggerSync = async () => {
+    const token = localStorage.getItem('verity_token') || localStorage.getItem('token');
+    const targetIsLoopback = mode === 'lan' && isLoopbackUrl(status.localUrl || getLocalApiUrl());
+    if (!token && !targetIsLoopback) {
+      setFeedback({ type: 'error', message: 'Please sign in first to sync with the server.' });
+      return;
+    }
     setIsSyncing(true);
     setSyncCompleted(false);
     setFeedback(null);
     try {
-      const token = localStorage.getItem('verity_token') || localStorage.getItem('token');
       await syncService.syncOfflineQueue(token).catch(() => {});
       const res = await apiFetch('/api/sync', { method: 'POST' });
       if (res.ok) {

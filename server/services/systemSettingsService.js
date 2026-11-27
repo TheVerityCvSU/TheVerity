@@ -172,7 +172,7 @@ function createSystemSettingsService({ db, io, activeStudents }) {
                 ON CONFLICT(date_string) DO UPDATE SET count = security_flags.count + 1
             `, tKey).catch(() => { });
 
-            io.emit('receive_alert', {
+            io.to('role:admin').emit('receive_alert', {
                 studentId: user.id || emailKey,
                 studentName: user.name || emailKey,
                 action: 'Multiple Login',
@@ -181,7 +181,7 @@ function createSystemSettingsService({ db, io, activeStudents }) {
                 color: '#ef4444',
                 time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
             });
-            io.emit('admin_stats_update');
+            io.to('role:admin').emit('admin_stats_update');
         } catch (_) { }
     };
 
@@ -236,7 +236,7 @@ function createSystemSettingsService({ db, io, activeStudents }) {
                 });
             }
 
-            io.emit('admin_security_alert', {
+            io.to('role:admin').emit('admin_security_alert', {
                 user: userName,
                 name: userName,
                 studentId,

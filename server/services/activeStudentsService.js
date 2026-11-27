@@ -103,7 +103,8 @@ function createActiveStudentsService({ io }) {
                 reason: 'switched_activity'
             };
             io.to(roomName).emit('teacher_student_left', payload);
-            io.emit('teacher_student_left', payload);
+            io.to('role:teacher').emit('teacher_student_left', payload);
+            io.to('role:admin').emit('teacher_student_left', payload);
         }
 
         if (removedRooms.length > 0) {

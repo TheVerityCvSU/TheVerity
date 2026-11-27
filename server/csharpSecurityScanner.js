@@ -26,7 +26,8 @@ function decodeCSharpUnicodeEscapes(code) {
     .replace(/\\U([0-9a-fA-F]{8})/g, (_, hex) => {
       const cp = parseInt(hex, 16);
       return cp <= 0x10ffff ? String.fromCodePoint(cp) : _;
-    });
+    })
+    .replace(/\\x([0-9a-fA-F]{1,4})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
 }
 
 function maskCommentsAndStrings(code) {
@@ -226,7 +227,8 @@ const BANNED_CODE_PATTERNS = [
   { pattern: /\b(HttpClient|TcpClient|UdpClient|WebClient|WebRequest|HttpWebRequest|Socket|TcpListener|RestClient)\b/i, rule: 'NETWORK_ACCESS', message: 'Restricted API: Network socket/HTTP calls are prohibited in sandbox.' },
   { pattern: /\bSystem\s*\.\s*IO\s*\.\s*(File|Directory|FileStream|StreamReader|StreamWriter|FileInfo|DirectoryInfo|DriveInfo|FileSystemWatcher|MemoryMappedFiles|Pipes|Compression)\b/i, rule: 'FILESYSTEM_IO', message: 'Restricted API: Direct filesystem, compression, or pipe I/O is prohibited in sandbox.' },
   { pattern: /\b(ZipFile|ZipArchive|GZipStream|DeflateStream)\b/i, rule: 'FILESYSTEM_IO', message: 'Restricted API: Archive/compression stream I/O is prohibited in sandbox.' },
-  { pattern: /\b(XDocument|XmlDocument|XmlReader|XmlTextReader)\s*\.\s*(Load|Create)\b/i, rule: 'FILESYSTEM_IO', message: 'Restricted API: External XML loader APIs are prohibited in sandbox.' },
+  { pattern: /\b(XDocument|XmlDocument|XmlReader|XmlTextReader|XPathDocument|XmlUrlResolver)\b/i, rule: 'FILESYSTEM_IO', message: 'Restricted API: External XML loader/resolver APIs are prohibited in sandbox.' },
+  { pattern: /\.\s*ReadXml\s*\(/i, rule: 'FILESYSTEM_IO', message: 'Restricted API: External XML DataSet/DataTable loading is prohibited in sandbox.' },
   { pattern: /\b(File|Directory)\s*\.\s*(Read|Write|Append|Open|Create|Delete|Move|Copy|Exists|GetFiles|GetDirectories|Enumerate|SetAttributes|Replace)\w*/i, rule: 'FILESYSTEM_IO', message: 'Restricted API: Direct filesystem access is prohibited in sandbox.' },
   { pattern: /\bnew\s+(FileStream|StreamReader|StreamWriter|FileInfo|DirectoryInfo|DriveInfo|FileSystemWatcher|NamedPipeClientStream|NamedPipeServerStream|ZipArchive|GZipStream|DeflateStream|XmlTextReader)\b/i, rule: 'FILESYSTEM_IO', message: 'Restricted API: Direct file/stream/pipe handles are prohibited in sandbox.' },
   { pattern: /\bMemoryMappedFile\b/i, rule: 'FILESYSTEM_IO', message: 'Restricted API: MemoryMappedFile is prohibited in sandbox.' },

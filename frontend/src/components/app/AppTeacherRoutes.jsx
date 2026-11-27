@@ -1,11 +1,12 @@
-import { lazy, Suspense } from 'react';
+import { Suspense } from 'react';
 import ProtectedRoute from '../ProtectedRoute';
 import PageLoader from '../PageLoader';
 import TeacherDashboard from '../../pages/TeacherDashboard';
+import { lazyWithRetry } from '../../utils/lazyWithRetry';
 
-const TeacherClasswork = lazy(() => import('../../pages/TeacherClasswork'));
-const TeacherGrading = lazy(() => import('../../pages/TeacherGrading'));
-const TeacherView = lazy(() => import('../../pages/TeacherView'));
+const TeacherClasswork = lazyWithRetry(() => import('../../pages/TeacherClasswork'));
+const TeacherGrading = lazyWithRetry(() => import('../../pages/TeacherGrading'));
+const TeacherView = lazyWithRetry(() => import('../../pages/TeacherView'));
 
 export default function AppTeacherRoutes({
   currentScreen,
